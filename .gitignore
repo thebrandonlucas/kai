@@ -1,0 +1,4 @@
+.zig-cache/
+zig-out/
+platform/targets/*/libhost.a
+platform/targets/*/host.lib
