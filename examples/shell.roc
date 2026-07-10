@@ -5,18 +5,16 @@ import kai.Stdout
 
 main! : List(Str) => I32
 main! = |_args| {
-    spec = { target: "." }
+    output = Kai.nixShell!({
+        target: "./fixtures/shell",
+        command: ["sh", "-c", "guix --version >/dev/null && printf kai-nix-ok"],
+    })
 
-    nix = Kai.nixShell!(spec)
-    guix = Kai.guixShell!(spec)
-
-    if nix == "nix develop ." and guix == "guix shell ." {
-        Stdout.line!(nix)
-        Stdout.line!(guix)
+    if output == "kai-nix-ok" {
+        Stdout.line!(output)
         0
     } else {
-        Stdout.line!("unexpected nix: ${nix}")
-        Stdout.line!("unexpected guix: ${guix}")
+        Stdout.line!("unexpected nix output: ${output}")
         1
     }
 }

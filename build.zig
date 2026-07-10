@@ -80,7 +80,7 @@ pub fn build(b: *std.Build) void {
     const install_step = b.getInstallStep();
     install_step.dependOn(native_step);
 
-    const test_step = b.step("test", "Run Zig unit tests and the Roc shell example");
+    const test_step = b.step("test", "Run Zig unit tests");
 
     const host_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -92,10 +92,16 @@ pub fn build(b: *std.Build) void {
     const run_host_tests = b.addRunArtifact(host_tests);
     test_step.dependOn(&run_host_tests.step);
 
-    const run_example = b.addSystemCommand(&.{ "roc", "examples/shell.roc" });
-    run_example.step.dependOn(&copy_native.step);
-    run_example.step.dependOn(&run_host_tests.step);
-    test_step.dependOn(&run_example.step);
+    const e2e_step = b.step("e2e", "Run real nix/guix subprocess examples");
+    const run_nix_example = b.addSystemCommand(&.{ "roc", "examples/shell.roc" });
+    run_nix_example.step.dependOn(&copy_native.step);
+    run_nix_example.step.dependOn(&run_host_tests.step);
+    e2e_step.dependOn(&run_nix_example.step);
+
+    const run_guix_example = b.addSystemCommand(&.{ "roc", "examples/shell-guix.roc" });
+    run_guix_example.step.dependOn(&copy_native.step);
+    run_guix_example.step.dependOn(&run_host_tests.step);
+    e2e_step.dependOn(&run_guix_example.step);
 }
 
 fn detectNativeRocTarget(target: std.Target) ?RocTarget {
