@@ -18,6 +18,7 @@ const HostEnv = struct {
 extern fn roc_main(args: abi.RocList(abi.RocStr)) callconv(.c) i32;
 
 var g_roc_host: ?*abi.RocHost = null;
+var g_process_environ: std.process.Environ = .empty;
 
 comptime {
     if (!builtin.is_test) {
@@ -31,8 +32,20 @@ comptime {
 
 fn __main() callconv(.c) void {}
 
-fn main(argc: c_int, argv: [*][*:0]u8) callconv(.c) c_int {
+fn main(argc: c_int, argv: [*][*:0]u8, envp: [*:null]?[*:0]u8) callconv(.c) c_int {
+    g_process_environ = processEnvironFromEnvp(envp);
     return platformMain(@intCast(argc), argv);
+}
+
+fn processEnvironFromEnvp(envp: [*:null]?[*:0]u8) std.process.Environ {
+    return switch (builtin.os.tag) {
+        .windows => .{ .block = .global },
+        else => blk: {
+            var env_count: usize = 0;
+            while (envp[env_count] != null) : (env_count += 1) {}
+            break :blk .{ .block = .{ .slice = envp[0..env_count :null] } };
+        },
+    };
 }
 
 fn hostedStdoutLine(str: abi.RocStr) callconv(.c) void {
@@ -63,9 +76,12 @@ fn hostedKaiShell(backend: abi.RocStr, command: abi.RocStr, target: abi.RocStr, 
     };
     defer roc_env.allocator.free(command_arg_slices);
 
+    var threaded_io = std.Io.Threaded.init(roc_env.allocator, .{ .environ = g_process_environ });
+    defer threaded_io.deinit();
+
     const output = executeProtocolCommand(
         roc_env.allocator,
-        std.Io.Threaded.global_single_threaded.io(),
+        threaded_io.io(),
         owned_backend.asSlice(),
         owned_command.asSlice(),
         owned_target.asSlice(),
