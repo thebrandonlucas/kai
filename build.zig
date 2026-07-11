@@ -116,7 +116,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_host_tests.step);
 
     const e2e_step = b.step("e2e", "Run real nix/guix subprocess examples");
-    const run_nix_example = b.addSystemCommand(&.{ "roc", "examples/shell.roc" });
+    const run_nix_example = b.addSystemCommand(&.{ "roc", "examples/shell-nix.roc" });
     run_nix_example.step.dependOn(install_step);
     run_nix_example.step.dependOn(&run_host_tests.step);
     e2e_step.dependOn(&run_nix_example.step);

@@ -93,6 +93,13 @@ Build only Roc adapters:
 zig build roc-adapters
 ```
 
+Run the individual examples:
+
+```sh
+roc examples/shell-nix.roc
+roc examples/shell-guix.roc
+```
+
 Opt-in real subprocess proof (requires Roc plus nix/guix, and Nix flakes enabled):
 
 ```sh
