@@ -1,35 +1,37 @@
 //! Tiny dependency-free Kai CLI.
 const std = @import("std");
+const backend_mod = @import("backend.zig");
+const registry_mod = @import("command_registry.zig");
 
-const adapter_config_file = ".kai-adapter";
 const default_config_file = "kai.roc";
 
-const BuiltinAdapter = struct {
-    name: []const u8,
-    executable: []const u8,
-};
-
-const builtin_adapters = [_]BuiltinAdapter{
-    .{ .name = "nix", .executable = "kai-adapter-nix" },
-    .{ .name = "guix", .executable = "kai-adapter-guix" },
-};
-
 const ConfigCommand = struct {
+    cli_name: []const u8,
     path: []const u8,
 };
 
 const Command = union(enum) {
     help,
-    shell: ConfigCommand,
-    build: ConfigCommand,
+    protocol: ConfigCommand,
     adapter_list,
     adapter_get,
     adapter_set: []const u8,
+    unavailable: []const u8,
 };
 
-const Selection = struct {
-    setting: []u8,
-    source: []const u8,
+const DispatchPlan = struct {
+    command_name: []const u8,
+    implementation_id: []const u8,
+    active_backend: backend_mod.Backend,
+    config_path: []const u8,
+};
+
+const DispatchResult = union(enum) {
+    ok: DispatchPlan,
+    command_not_available,
+    unsupported_backend,
+    implementation_not_found,
+    implementation_backend_mismatch: *const registry_mod.CommandImplementation,
 };
 
 pub fn main(init: std.process.Init) u8 {
@@ -51,7 +53,10 @@ fn run(init: std.process.Init) !u8 {
         try args.append(arg);
     }
 
-    const command = try parseCommand(args.items);
+    const command = parseCommand(args.items) catch {
+        try writeAll(init.io, .stderr, "kai: invalid command usage\n");
+        return 1;
+    };
     return executeCommand(init.gpa, init.io, init.environ_map, command);
 }
 
@@ -59,19 +64,18 @@ fn parseCommand(args: []const []const u8) !Command {
     if (args.len == 0) return .help;
     if (args.len == 1 and std.mem.eql(u8, args[0], "help")) return .help;
 
-    if (args.len >= 1 and std.mem.eql(u8, args[0], "shell")) {
-        return .{ .shell = .{ .path = try parseOptionalConfigPath(args[1..]) } };
-    }
-    if (args.len >= 1 and std.mem.eql(u8, args[0], "build")) {
-        return .{ .build = .{ .path = try parseOptionalConfigPath(args[1..]) } };
+    if (args.len >= 1 and (std.mem.eql(u8, args[0], "shell") or std.mem.eql(u8, args[0], "build"))) {
+        return .{ .protocol = .{ .cli_name = args[0], .path = try parseOptionalConfigPath(args[1..]) } };
     }
 
     if (args.len >= 2 and std.mem.eql(u8, args[0], "adapter")) {
         if (args.len == 2 and std.mem.eql(u8, args[1], "list")) return .adapter_list;
         if (args.len == 2 and std.mem.eql(u8, args[1], "get")) return .adapter_get;
         if (args.len == 3 and std.mem.eql(u8, args[1], "set")) return .{ .adapter_set = args[2] };
+        return error.InvalidCommand;
     }
 
+    if (args.len >= 1) return .{ .unavailable = args[0] };
     return error.InvalidCommand;
 }
 
@@ -94,16 +98,15 @@ fn executeCommand(
             try writeAll(io, .stdout, help_text);
             return 0;
         },
-        .shell => |config| return runRocConfigSection(allocator, io, env_map, config.path, "shell"),
-        .build => |config| return runRocConfigSection(allocator, io, env_map, config.path, "build"),
+        .protocol => |config| return dispatchProtocolCommand(allocator, io, env_map, config),
         .adapter_list => {
             try listAdapters(allocator, io, env_map);
             return 0;
         },
         .adapter_get => {
-            var selection = try selectedAdapterSetting(allocator, io, env_map);
+            var selection = try backend_mod.selectedBackend(allocator, io, env_map);
             if (selection) |*sel| {
-                defer allocator.free(sel.setting);
+                defer sel.deinit(allocator);
                 try writeFmt(allocator, io, .stdout, "{s}\n", .{sel.setting});
             } else {
                 try writeAll(io, .stdout, "none\n");
@@ -111,10 +114,14 @@ fn executeCommand(
             return 0;
         },
         .adapter_set => |adapter| {
-            try validateAdapterSetting(adapter);
-            try writeConfiguredAdapter(allocator, io, adapter);
+            try backend_mod.validateBackendSetting(adapter);
+            try backend_mod.writeConfiguredBackend(allocator, io, adapter);
             try writeFmt(allocator, io, .stdout, "{s}\n", .{adapter});
             return 0;
+        },
+        .unavailable => |name| {
+            try writeFmt(allocator, io, .stderr, "kai: command not available: {s}\n", .{name});
+            return 1;
         },
     }
 }
@@ -126,25 +133,110 @@ const help_text =
     \\  kai build [config.roc]
     \\  kai adapter list
     \\  kai adapter get
-    \\  kai adapter set <adapter>
+    \\  kai adapter set <backend-or-adapter>
     \\
     \\Config defaults to kai.roc.
-    \\kai shell runs the config.shell section.
-    \\kai build runs the config.machine.build section.
-    \\Adapters are selected from .kai-adapter, then KAI_BACKEND_ADAPTER.
-    \\Built-in adapter names: nix, guix.
+    \\kai shell dispatches protocol command shell.
+    \\kai build dispatches protocol command machine.build.
+    \\Backend selection is read from .kai-adapter, then KAI_BACKEND_ADAPTER.
+    \\Built-in backend names: nix, guix.
     \\
 ;
 
-fn runRocConfigSection(
+fn dispatchProtocolCommand(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    env_map: *std.process.Environ.Map,
+    config: ConfigCommand,
+) !u8 {
+    var active = try backend_mod.selectedBackend(allocator, io, env_map) orelse {
+        try writeAll(io, .stderr, "kai: missing active backend; run `kai adapter set nix` or set KAI_BACKEND_ADAPTER\n");
+        return 1;
+    };
+    defer active.deinit(allocator);
+
+    const override_id = try implementationOverride(allocator, env_map, config.cli_name);
+    defer if (override_id) |id| allocator.free(id);
+
+    const result = planProtocolDispatch(
+        registry_mod.default_protocol_registry,
+        config.cli_name,
+        config.path,
+        active.backend,
+        override_id,
+    );
+
+    return switch (result) {
+        .ok => |plan| runRocConfigProtocolCommand(allocator, io, env_map, plan.config_path, plan.command_name),
+        .command_not_available, .implementation_not_found => blk: {
+            try writeFmt(allocator, io, .stderr, "kai: command not available: {s}\n", .{config.cli_name});
+            break :blk 1;
+        },
+        .unsupported_backend => blk: {
+            const command = registry_mod.default_protocol_registry.lookup(config.cli_name).?;
+            try writeFmt(allocator, io, .stderr, "kai: backend {s} does not support protocol command {s}\n", .{ active.backendName(), command.name });
+            break :blk 1;
+        },
+        .implementation_backend_mismatch => |implementation| blk: {
+            const command = registry_mod.default_protocol_registry.lookup(config.cli_name).?;
+            try writeFmt(
+                allocator,
+                io,
+                .stderr,
+                "kai: implementation backend mismatch: command {s} requires {s}, active backend is {s}\n",
+                .{ command.name, implementation.backend.name(), active.backendName() },
+            );
+            break :blk 1;
+        },
+    };
+}
+
+fn planProtocolDispatch(
+    registry: registry_mod.ProtocolRegistry,
+    cli_name: []const u8,
+    config_path: []const u8,
+    active_backend: backend_mod.Backend,
+    override_id: ?[]const u8,
+) DispatchResult {
+    const command = registry.lookup(cli_name) orelse return .command_not_available;
+    const selected = registry.selectImplementation(command.name, active_backend, override_id);
+    return switch (selected) {
+        .ok => |implementation| .{ .ok = .{
+            .command_name = command.name,
+            .implementation_id = implementation.id,
+            .active_backend = active_backend,
+            .config_path = config_path,
+        } },
+        .command_not_registered => .command_not_available,
+        .backend_unsupported => .unsupported_backend,
+        .implementation_not_found => .implementation_not_found,
+        .implementation_backend_mismatch => |implementation| .{ .implementation_backend_mismatch = implementation },
+    };
+}
+
+fn implementationOverride(
+    allocator: std.mem.Allocator,
+    env_map: *std.process.Environ.Map,
+    cli_name: []const u8,
+) !?[]u8 {
+    const command = registry_mod.default_protocol_registry.lookup(cli_name) orelse return null;
+    const env_name = try registry_mod.cliImplementationOverrideName(allocator, command.name);
+    defer allocator.free(env_name);
+    if (env_map.get(env_name)) |value| {
+        if (value.len != 0) return try allocator.dupe(u8, value);
+    }
+    return null;
+}
+
+fn runRocConfigProtocolCommand(
     allocator: std.mem.Allocator,
     io: std.Io,
     env_map: *std.process.Environ.Map,
     config_path: []const u8,
-    section: []const u8,
+    command_name: []const u8,
 ) !u8 {
     const roc_exe = env_map.get("KAI_ROC") orelse "roc";
-    const argv = rocConfigArgv(roc_exe, config_path, section);
+    const argv = rocConfigArgv(roc_exe, config_path, command_name);
     const result = try std.process.run(allocator, io, .{
         .argv = &argv,
         .stdout_limit = .limited(64 * 1024),
@@ -160,8 +252,8 @@ fn runRocConfigSection(
     return exitCode(result.term);
 }
 
-fn rocConfigArgv(roc_exe: []const u8, config_path: []const u8, section: []const u8) [4][]const u8 {
-    return .{ roc_exe, config_path, "--", section };
+fn rocConfigArgv(roc_exe: []const u8, config_path: []const u8, command_name: []const u8) [4][]const u8 {
+    return .{ roc_exe, config_path, "--", command_name };
 }
 
 fn exitCode(term: std.process.Child.Term) u8 {
@@ -171,109 +263,21 @@ fn exitCode(term: std.process.Child.Term) u8 {
     };
 }
 
-fn selectedAdapterSetting(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    env_map: *std.process.Environ.Map,
-) !?Selection {
-    if (try readConfiguredAdapter(allocator, io)) |setting| {
-        return .{ .setting = setting, .source = adapter_config_file };
-    }
-
-    if (env_map.get("KAI_BACKEND_ADAPTER")) |env_adapter| {
-        if (env_adapter.len != 0) {
-            return .{
-                .setting = try allocator.dupe(u8, env_adapter),
-                .source = "KAI_BACKEND_ADAPTER",
-            };
-        }
-    }
-
-    return null;
-}
-
-fn readConfiguredAdapter(allocator: std.mem.Allocator, io: std.Io) !?[]u8 {
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, adapter_config_file, allocator, .limited(4096)) catch |err| switch (err) {
-        error.FileNotFound => return null,
-        else => return err,
-    };
-    defer allocator.free(bytes);
-
-    const trimmed = trimConfig(bytes);
-    if (trimmed.len == 0) return null;
-    return try allocator.dupe(u8, trimmed);
-}
-
-fn writeConfiguredAdapter(allocator: std.mem.Allocator, io: std.Io, adapter: []const u8) !void {
-    const bytes = try std.fmt.allocPrint(allocator, "{s}\n", .{adapter});
-    defer allocator.free(bytes);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = adapter_config_file, .data = bytes });
-}
-
-fn validateAdapterSetting(adapter: []const u8) !void {
-    if (adapter.len == 0) return error.InvalidAdapter;
-    if (std.mem.indexOfAny(u8, adapter, "\r\n") != null) return error.InvalidAdapter;
-}
-
-fn trimConfig(bytes: []const u8) []const u8 {
-    return std.mem.trim(u8, bytes, " \t\r\n");
-}
-
-fn resolveAdapter(allocator: std.mem.Allocator, io: std.Io, setting: []const u8) ![]u8 {
-    if (builtinAdapter(setting)) |adapter| {
-        if (try siblingAdapterPath(allocator, io, adapter.executable)) |path| {
-            return path;
-        }
-        return allocator.dupe(u8, adapter.executable);
-    }
-
-    return allocator.dupe(u8, setting);
-}
-
-fn siblingAdapterPath(allocator: std.mem.Allocator, io: std.Io, executable: []const u8) !?[]u8 {
-    const bin_dir = std.process.executableDirPathAlloc(io, allocator) catch return null;
-    defer allocator.free(bin_dir);
-
-    const path = try std.fs.path.join(allocator, &.{ bin_dir, executable });
-    errdefer allocator.free(path);
-
-    std.Io.Dir.accessAbsolute(io, path, .{ .execute = true }) catch |err| switch (err) {
-        error.FileNotFound, error.AccessDenied, error.PermissionDenied => {
-            allocator.free(path);
-            return null;
-        },
-        else => return err,
-    };
-
-    return path;
-}
-
-fn builtinAdapter(name: []const u8) ?BuiltinAdapter {
-    for (builtin_adapters) |adapter| {
-        if (std.mem.eql(u8, adapter.name, name)) return adapter;
-    }
-    return null;
-}
-
 fn listAdapters(allocator: std.mem.Allocator, io: std.Io, env_map: *std.process.Environ.Map) !void {
-    const selection = try selectedAdapterSetting(allocator, io, env_map);
-    defer if (selection) |sel| allocator.free(sel.setting);
-
-    if (selection) |sel| {
-        const resolved = try resolveAdapter(allocator, io, sel.setting);
-        defer allocator.free(resolved);
-        try writeFmt(allocator, io, .stdout, "current\t{s}\t{s}\t{s}\n", .{ sel.source, sel.setting, resolved });
+    var selection = try backend_mod.selectedBackend(allocator, io, env_map);
+    if (selection) |*sel| {
+        defer sel.deinit(allocator);
+        try writeFmt(allocator, io, .stdout, "current\t{s}\t{s}\t{s}\tbackend={s}\n", .{ sel.source, sel.setting, sel.adapter_executable, sel.backendName() });
     } else {
         try writeAll(io, .stdout, "current\tnone\n");
     }
 
     var found = false;
-    for (builtin_adapters) |adapter| {
-        if (try siblingAdapterPath(allocator, io, adapter.executable)) |path| {
-            defer allocator.free(path);
-            found = true;
-            try writeFmt(allocator, io, .stdout, "{s}\t{s}\n", .{ adapter.name, path });
-        }
+    for (backend_mod.builtin_adapters) |adapter| {
+        const resolved = try backend_mod.resolveAdapter(allocator, io, adapter.name);
+        defer allocator.free(resolved);
+        found = true;
+        try writeFmt(allocator, io, .stdout, "{s}\t{s}\tbackend={s}\n", .{ adapter.name, resolved, adapter.backend.name() });
     }
 
     if (!found) {
@@ -307,14 +311,16 @@ test "parses supported commands" {
     try std.testing.expectEqual(Command.help, try parseCommand(&.{"help"}));
 
     const shell_default = try parseCommand(&.{"shell"});
-    try std.testing.expectEqualStrings(default_config_file, shell_default.shell.path);
+    try std.testing.expectEqualStrings("shell", shell_default.protocol.cli_name);
+    try std.testing.expectEqualStrings(default_config_file, shell_default.protocol.path);
     const shell_file = try parseCommand(&.{ "shell", "examples/shell.roc" });
-    try std.testing.expectEqualStrings("examples/shell.roc", shell_file.shell.path);
+    try std.testing.expectEqualStrings("examples/shell.roc", shell_file.protocol.path);
 
     const build_default = try parseCommand(&.{"build"});
-    try std.testing.expectEqualStrings(default_config_file, build_default.build.path);
+    try std.testing.expectEqualStrings("build", build_default.protocol.cli_name);
+    try std.testing.expectEqualStrings(default_config_file, build_default.protocol.path);
     const build_file = try parseCommand(&.{ "build", "examples/shell.roc" });
-    try std.testing.expectEqualStrings("examples/shell.roc", build_file.build.path);
+    try std.testing.expectEqualStrings("examples/shell.roc", build_file.protocol.path);
 
     try std.testing.expectEqual(Command.adapter_list, try parseCommand(&.{ "adapter", "list" }));
     try std.testing.expectEqual(Command.adapter_get, try parseCommand(&.{ "adapter", "get" }));
@@ -323,27 +329,62 @@ test "parses supported commands" {
     try std.testing.expect(std.mem.eql(u8, command.adapter_set, "nix"));
 }
 
-test "rejects unsupported commands" {
-    try std.testing.expectError(error.InvalidCommand, parseCommand(&.{"version"}));
+test "rejects invalid command usage" {
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "shell", "a", "b" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "build", "a", "b" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "adapter", "delete" }));
 }
 
-test "builds roc config argv" {
-    const argv = rocConfigArgv("roc", "examples/shell.roc", "build");
+test "preserves unavailable command name" {
+    const command = try parseCommand(&.{"deploy"});
+    try std.testing.expectEqualStrings("deploy", command.unavailable);
+}
+
+test "builds roc config argv with protocol command name" {
+    const argv = rocConfigArgv("roc", "examples/shell.roc", "machine.build");
     try std.testing.expectEqualStrings("roc", argv[0]);
     try std.testing.expectEqualStrings("examples/shell.roc", argv[1]);
     try std.testing.expectEqualStrings("--", argv[2]);
-    try std.testing.expectEqualStrings("build", argv[3]);
+    try std.testing.expectEqualStrings("machine.build", argv[3]);
 }
 
-test "trims adapter config" {
-    try std.testing.expectEqualStrings("nix", trimConfig(" \tnix\r\n"));
+test "plans shell command dispatch" {
+    const result = planProtocolDispatch(registry_mod.default_protocol_registry, "shell", "examples/shell.roc", .nix, null);
+    switch (result) {
+        .ok => |plan| {
+            try std.testing.expectEqualStrings("shell", plan.command_name);
+            try std.testing.expectEqualStrings("shell.default.nix", plan.implementation_id);
+            try std.testing.expectEqual(backend_mod.Backend.nix, plan.active_backend);
+        },
+        else => return error.TestExpectedShellDispatch,
+    }
 }
 
-test "recognizes built-in adapter names" {
-    try std.testing.expect(builtinAdapter("nix") != null);
-    try std.testing.expect(builtinAdapter("guix") != null);
-    try std.testing.expect(builtinAdapter("custom") == null);
+test "plans build alias dispatch to machine.build" {
+    const result = planProtocolDispatch(registry_mod.default_protocol_registry, "build", "kai.roc", .nix, null);
+    switch (result) {
+        .ok => |plan| {
+            try std.testing.expectEqualStrings("machine.build", plan.command_name);
+            try std.testing.expectEqualStrings("machine.build.default.nix", plan.implementation_id);
+        },
+        else => return error.TestExpectedBuildDispatch,
+    }
+}
+
+test "reports unsupported backend for machine build on guix" {
+    const result = planProtocolDispatch(registry_mod.default_protocol_registry, "build", "kai.roc", .guix, null);
+    try std.testing.expectEqual(DispatchResult.unsupported_backend, result);
+}
+
+test "reports command not registered" {
+    const result = planProtocolDispatch(registry_mod.default_protocol_registry, "deploy", "kai.roc", .nix, null);
+    try std.testing.expectEqual(DispatchResult.command_not_available, result);
+}
+
+test "reports implementation backend mismatch" {
+    const result = planProtocolDispatch(registry_mod.default_protocol_registry, "shell", "kai.roc", .guix, "shell.default.nix");
+    switch (result) {
+        .implementation_backend_mismatch => |implementation| try std.testing.expectEqualStrings("shell.default.nix", implementation.id),
+        else => return error.TestExpectedBackendMismatch,
+    }
 }

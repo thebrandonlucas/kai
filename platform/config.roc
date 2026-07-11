@@ -1,21 +1,16 @@
 platform "kai-config"
 	requires {
-		config : {
-			shell : {
-				environment : Str,
-				run : Str,
-			},
-			machine : {
-				build : {
-					hostname : Str,
-					system : Str,
-					install : List(Str),
-					ssh_keys : List(Str),
-					state_version : Str,
-					image : { format : Str },
-				},
-			},
-		}
+		config : List([
+			Shell({ environment : Str, run : Str }),
+			MachineBuild({
+				hostname : Str,
+				system : Str,
+				install : List(Str),
+				ssh_keys : List(Str),
+				state_version : Str,
+				image : { format : Str },
+			}),
+		])
 	}
 	exposes [Kai, Stdout, Adapter]
 	packages {}

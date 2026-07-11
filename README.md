@@ -2,27 +2,25 @@
 
 Minimal Roc platform for Kai protocol experiments.
 
-Roc apps can be written as a small config DSL with sections for `shell` and `machine.build`.
+Roc apps can be written as a small modular config DSL with only the protocol command entries they use.
 
 ```roc
 app [config] { kai: platform "./platform/config.roc" }
 
-config = {
-    shell: {
+config = [
+    Shell({
         environment: "./fixtures/shell",
         run: "zig version >/dev/null && printf kai-shell-ok",
-    },
-    machine: {
-        build: {
-            hostname: "kai-example",
-            system: "x86_64-linux",
-            install: ["git"],
-            ssh_keys: [],
-            state_version: "25.05",
-            image: { format: "qcow2" },
-        },
-    },
-}
+    }),
+    MachineBuild({
+        hostname: "kai-example",
+        system: "x86_64-linux",
+        install: ["git"],
+        ssh_keys: [],
+        state_version: "25.05",
+        image: { format: "qcow2" },
+    }),
+]
 ```
 
 Adapter choice is outside the Roc file:
@@ -35,12 +33,13 @@ Adapter choice is outside the Roc file:
 
 Architecture:
 
-1. `kai shell [config.roc]` runs the Roc config app with the `shell` section.
-2. The generic Zig host selects a backend adapter from `.kai-adapter` or `KAI_BACKEND_ADAPTER`.
-3. The backend adapter is a small Roc program using `kai.Adapter`.
-4. The adapter lowers the portable `shell` request to normalized argv.
-5. The Zig host parses that argv plan and executes it directly.
-6. `kai build [config.roc]` runs the `machine.build` section: it writes `.kai/flake.nix`, prints the machine output attr, then runs `nix build path:.kai#packages.<system>.<hostname>-image`.
+1. `src/command_registry.zig` declares protocol commands separately from extra/non-protocol commands.
+2. `src/backend.zig` selects exactly one active backend from `.kai-adapter` or `KAI_BACKEND_ADAPTER`.
+3. `kai shell [config.roc]` dispatches protocol command `shell`.
+4. `kai build [config.roc]` is a CLI alias for protocol command `machine.build`.
+5. The selected implementation must target the active backend; otherwise Kai reports a backend mismatch or unsupported backend.
+6. The backend adapter is a small Roc program using `kai.Adapter`; it lowers portable `shell` requests to normalized argv.
+7. `machine.build` currently supports only backend `nix`: it writes `.kai/flake.nix`, prints the machine output attr, then runs `nix build path:.kai#packages.<system>.<hostname>-image`.
 
 The shell protocol host does not contain Nix/Guix lowering logic. Adding a shell backend means adding a Roc adapter, not editing `src/host.zig`. Machine image builds are Nix-specific and follow the kai-zig `nix build path:.kai#...` flow.
 
@@ -70,7 +69,7 @@ kai.adapter.plan.v1\n
 
 Rules:
 
-- Only command `shell` is defined.
+- Adapter executables currently handle protocol command `shell`.
 - `argv` is a structured argument array. Do not return shell-interpolated command strings.
 - Argument lengths are UTF-8 byte counts. Newlines inside args are allowed because the host consumes exact byte lengths plus the trailing newline emitted by the Roc adapter.
 - Non-zero adapter exit means adapter failure.
@@ -119,8 +118,8 @@ Commands:
 - `kai adapter list`: show the current adapter and built adapters found next to `kai`.
 - `kai adapter get`: print the selected adapter, or `none`.
 - `kai adapter set <adapter>`: write `<adapter>` to the local `.kai-adapter` config file. Built-in names `nix` and `guix` resolve to sibling `kai-adapter-nix`/`kai-adapter-guix` executables when present.
-- `kai shell [config.roc]`: run `config.shell`; defaults to `kai.roc`.
-- `kai build [config.roc]`: run `config.machine.build`; defaults to `kai.roc`. This writes `.kai/flake.nix` and runs `nix build` for the configured image output, following the kai-zig machine build behavior.
+- `kai shell [config.roc]`: dispatch protocol command `shell`; defaults to `kai.roc`.
+- `kai build [config.roc]`: dispatch protocol command `machine.build`; defaults to `kai.roc`. This writes `.kai/flake.nix` and runs `nix build` for the configured image output when the active backend is `nix`.
 
 Adapter selection order for both the CLI and Roc config apps is `.kai-adapter`, then `KAI_BACKEND_ADAPTER`. `Kai.shellWithAdapter!` can still override this in lower-level Roc code.
 

@@ -145,6 +145,26 @@ pub fn build(b: *std.Build) void {
     const run_machine_tests = b.addRunArtifact(machine_tests);
     test_step.dependOn(&run_machine_tests.step);
 
+    const backend_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/backend.zig"),
+            .target = native_target,
+            .optimize = optimize,
+        }),
+    });
+    const run_backend_tests = b.addRunArtifact(backend_tests);
+    test_step.dependOn(&run_backend_tests.step);
+
+    const command_registry_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/command_registry.zig"),
+            .target = native_target,
+            .optimize = optimize,
+        }),
+    });
+    const run_command_registry_tests = b.addRunArtifact(command_registry_tests);
+    test_step.dependOn(&run_command_registry_tests.step);
+
     const cli_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/cli.zig"),
