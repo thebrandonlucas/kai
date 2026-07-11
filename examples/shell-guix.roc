@@ -5,7 +5,8 @@ import kai.Stdout
 
 main! : List(Str) => I32
 main! = |_args| {
-    output = Kai.guixShell!({
+    output = Kai.shellWithAdapter!({
+        adapter: "./zig-out/bin/kai-adapter-guix",
         target: "./fixtures/shell/manifest.scm",
         command: ["sh", "-c", "hello --version >/dev/null && printf kai-guix-ok"],
     })

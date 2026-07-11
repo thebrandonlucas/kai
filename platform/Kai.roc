@@ -1,26 +1,27 @@
 import Host
 
-## Kai backend selector plus shell protocol helpers.
+## Kai shell protocol helpers.
 ##
-## Roc code emits the backend-neutral `shell` command; the Zig host lowers and executes it.
-Kai := [Nix, Guix].{
-    ## Emit the portable `shell` protocol command and execute it for a backend.
-    shell! : Kai, { target : Str, command : List(Str) } => Str
-    shell! = |backend, spec|
-        Host.kai_shell!(backendName(backend), "shell", spec.target, spec.command)
+## Roc code emits only the backend-neutral `shell` command. The Zig host sends
+## the request to a selected backend adapter executable, receives an argv plan,
+## and executes that argv directly.
+Kai := [].{
+    ## Emit the portable `shell` protocol command using the host-selected adapter.
+    ## The host uses `KAI_BACKEND_ADAPTER` when set, otherwise `kai-adapter-nix`.
+    shell! : { target : Str, command : List(Str) } => Str
+    shell! = |spec|
+        Host.kai_shell!("", "shell", spec.target, spec.command)
 
-    ## Execute `shell` with the Nix backend (`nix develop ... --command`).
+    ## Emit `shell` using an explicit adapter executable path or PATH name.
+    shellWithAdapter! : { adapter : Str, target : Str, command : List(Str) } => Str
+    shellWithAdapter! = |spec|
+        Host.kai_shell!(spec.adapter, "shell", spec.target, spec.command)
+
+    ## Convenience wrapper for the Nix adapter executable.
     nixShell! : { target : Str, command : List(Str) } => Str
-    nixShell! = |spec| shell!(Nix, spec)
+    nixShell! = |spec| shellWithAdapter!({ adapter: "kai-adapter-nix", target: spec.target, command: spec.command })
 
-    ## Execute `shell` with the Guix backend (`guix shell ... --`).
+    ## Convenience wrapper for the Guix adapter executable.
     guixShell! : { target : Str, command : List(Str) } => Str
-    guixShell! = |spec| shell!(Guix, spec)
+    guixShell! = |spec| shellWithAdapter!({ adapter: "kai-adapter-guix", target: spec.target, command: spec.command })
 }
-
-backendName : Kai -> Str
-backendName = |backend|
-    match backend {
-        Nix => "nix"
-        Guix => "guix"
-    }

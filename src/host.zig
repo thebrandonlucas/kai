@@ -1,7 +1,8 @@
 //! Minimal Kai Roc platform host.
 //!
 //! Roc code emits a backend-neutral protocol command (`shell`). This Zig host
-//! lowers that command to backend-specific argv and executes it.
+//! sends that command to a backend adapter executable, receives a normalized
+//! argv execution plan, and executes it without shell interpolation.
 const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("roc_platform_abi.zig");
@@ -59,13 +60,13 @@ fn hostedStdoutLine(str: abi.RocStr) callconv(.c) void {
     stdout.writeStreamingAll(io, "\n") catch return;
 }
 
-fn hostedKaiShell(backend: abi.RocStr, command: abi.RocStr, target: abi.RocStr, command_args: abi.RocList(abi.RocStr)) callconv(.c) abi.RocStr {
+fn hostedKaiShell(adapter: abi.RocStr, command: abi.RocStr, target: abi.RocStr, command_args: abi.RocList(abi.RocStr)) callconv(.c) abi.RocStr {
     const roc_host = g_roc_host.?;
-    var owned_backend = backend;
+    var owned_adapter = adapter;
     var owned_command = command;
     var owned_target = target;
     const owned_command_args = command_args;
-    defer owned_backend.decref(roc_host);
+    defer owned_adapter.decref(roc_host);
     defer owned_command.decref(roc_host);
     defer owned_target.decref(roc_host);
     defer decrefRocStrList(owned_command_args, roc_host);
@@ -76,13 +77,17 @@ fn hostedKaiShell(backend: abi.RocStr, command: abi.RocStr, target: abi.RocStr, 
     };
     defer roc_env.allocator.free(command_arg_slices);
 
+    const selected_adapter = selectedAdapter(owned_adapter.asSlice()) orelse {
+        return abi.RocStr.fromSlice(@errorName(error.MissingBackendAdapter), roc_host);
+    };
+
     var threaded_io = std.Io.Threaded.init(roc_env.allocator, .{ .environ = g_process_environ });
     defer threaded_io.deinit();
 
     const output = executeProtocolCommand(
         roc_env.allocator,
         threaded_io.io(),
-        owned_backend.asSlice(),
+        selected_adapter,
         owned_command.asSlice(),
         owned_target.asSlice(),
         command_arg_slices,
@@ -108,119 +113,99 @@ comptime {
     }
 }
 
-const LoweredCommand = struct {
-    argv: []const []const u8,
+const adapter_protocol = "kai.adapter.v0";
+const default_adapter = "kai-adapter-nix";
 
-    fn deinit(self: LoweredCommand, allocator: std.mem.Allocator) void {
-        allocator.free(self.argv);
-    }
+const AdapterRequest = struct {
+    protocol: []const u8,
+    command: []const u8,
+    target: []const u8,
+    argv: []const []const u8,
+};
+
+const AdapterPlan = struct {
+    protocol: []const u8,
+    argv: []const []const u8,
 };
 
 pub fn executeProtocolCommand(
     allocator: std.mem.Allocator,
     io: std.Io,
-    backend: []const u8,
+    adapter: []const u8,
     command: []const u8,
     target: []const u8,
     command_args: []const []const u8,
 ) ![]u8 {
-    const lowered = try lowerProtocolCommand(allocator, backend, command, target, command_args);
-    defer lowered.deinit(allocator);
-    return runArgv(allocator, io, lowered.argv);
-}
-
-pub fn lowerProtocolCommand(
-    allocator: std.mem.Allocator,
-    backend: []const u8,
-    command: []const u8,
-    target: []const u8,
-    command_args: []const []const u8,
-) !LoweredCommand {
     if (!std.mem.eql(u8, command, "shell")) {
         return error.UnsupportedProtocolCommand;
     }
-
-    return lowerShellCommand(allocator, backend, target, command_args);
-}
-
-pub fn lowerShellCommand(
-    allocator: std.mem.Allocator,
-    backend: []const u8,
-    target: []const u8,
-    command_args: []const []const u8,
-) !LoweredCommand {
     if (command_args.len == 0) {
         return error.EmptyShellCommand;
     }
 
-    if (std.mem.eql(u8, backend, "nix")) {
-        return lowerNixShellCommand(allocator, target, command_args);
+    const request_json = try renderAdapterRequest(allocator, command, target, command_args);
+    defer allocator.free(request_json);
+
+    const plan_json = try runAdapter(allocator, io, adapter, request_json);
+    defer allocator.free(plan_json);
+
+    var parsed = try std.json.parseFromSlice(AdapterPlan, allocator, plan_json, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+
+    if (!std.mem.eql(u8, parsed.value.protocol, adapter_protocol)) {
+        return error.UnsupportedAdapterProtocol;
+    }
+    if (parsed.value.argv.len == 0) {
+        return error.EmptyExecutionPlan;
     }
 
-    if (std.mem.eql(u8, backend, "guix")) {
-        return lowerGuixShellCommand(allocator, target, command_args);
-    }
-
-    return error.UnsupportedBackend;
+    return runArgv(allocator, io, parsed.value.argv);
 }
 
-fn lowerNixShellCommand(
+pub fn renderAdapterRequest(
     allocator: std.mem.Allocator,
+    command: []const u8,
     target: []const u8,
     command_args: []const []const u8,
-) !LoweredCommand {
-    const has_target = target.len != 0;
-    const target_arg_count: usize = if (has_target) 1 else 0;
-    const argv = try allocator.alloc([]const u8, 4 + target_arg_count + command_args.len);
-    var index: usize = 0;
-    argv[index] = "nix";
-    index += 1;
-    argv[index] = "develop";
-    index += 1;
-    argv[index] = "--no-write-lock-file";
-    index += 1;
-    if (has_target) {
-        argv[index] = target;
-        index += 1;
-    }
-    argv[index] = "--command";
-    index += 1;
-    copyArgvTail(argv, index, command_args);
-    return .{ .argv = argv };
+) ![]u8 {
+    const request = AdapterRequest{
+        .protocol = adapter_protocol,
+        .command = command,
+        .target = target,
+        .argv = command_args,
+    };
+    return std.fmt.allocPrint(allocator, "{f}", .{std.json.fmt(request, .{})});
 }
 
-fn lowerGuixShellCommand(
+pub fn runAdapter(
     allocator: std.mem.Allocator,
-    target: []const u8,
-    command_args: []const []const u8,
-) !LoweredCommand {
-    const has_target = target.len != 0;
-    const uses_manifest = has_target and std.mem.endsWith(u8, target, ".scm");
-    const target_arg_count: usize = if (uses_manifest) 2 else if (has_target) 1 else 0;
-    const argv = try allocator.alloc([]const u8, 3 + target_arg_count + command_args.len);
-    var index: usize = 0;
-    argv[index] = "guix";
-    index += 1;
-    argv[index] = "shell";
-    index += 1;
-    if (uses_manifest) {
-        argv[index] = "-m";
-        index += 1;
-        argv[index] = target;
-        index += 1;
-    } else if (has_target) {
-        argv[index] = target;
-        index += 1;
+    io: std.Io,
+    adapter: []const u8,
+    request_json: []const u8,
+) ![]u8 {
+    if (adapter.len == 0) {
+        return error.MissingBackendAdapter;
     }
-    argv[index] = "--";
-    index += 1;
-    copyArgvTail(argv, index, command_args);
-    return .{ .argv = argv };
-}
 
-fn copyArgvTail(argv: [][]const u8, start: usize, tail: []const []const u8) void {
-    for (tail, 0..) |arg, offset| {
-        argv[start + offset] = arg;
+    const adapter_argv = [_][]const u8{ adapter, request_json };
+    const result = try std.process.run(allocator, io, .{
+        .argv = &adapter_argv,
+        .stdout_limit = .limited(64 * 1024),
+        .stderr_limit = .limited(64 * 1024),
+    });
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+
+    switch (result.term) {
+        .exited => |code| {
+            if (code == 0) {
+                return allocator.dupe(u8, result.stdout);
+            }
+            return error.AdapterFailed;
+        },
+        .signal => return error.AdapterFailed,
+        .stopped => return error.AdapterFailed,
+        .unknown => return error.AdapterFailed,
     }
 }
 
@@ -264,6 +249,32 @@ pub fn runArgv(allocator: std.mem.Allocator, io: std.Io, argv: []const []const u
             .{ status, result.stdout, result.stderr },
         ),
     }
+}
+
+fn selectedAdapter(explicit_adapter: []const u8) ?[]const u8 {
+    if (explicit_adapter.len != 0) {
+        return explicit_adapter;
+    }
+    if (processEnvValue("KAI_BACKEND_ADAPTER")) |env_adapter| {
+        if (env_adapter.len != 0) return env_adapter;
+    }
+    return default_adapter;
+}
+
+fn processEnvValue(name: []const u8) ?[]const u8 {
+    return switch (builtin.os.tag) {
+        .windows => null,
+        else => blk: {
+            const view = g_process_environ.block.view();
+            for (view.slice) |entry_z| {
+                const entry = std.mem.span(entry_z);
+                if (entry.len > name.len and entry[name.len] == '=' and std.mem.eql(u8, entry[0..name.len], name)) {
+                    break :blk entry[name.len + 1 ..];
+                }
+            }
+            break :blk null;
+        },
+    };
 }
 
 fn rocStringListSlices(allocator: std.mem.Allocator, list: abi.RocList(abi.RocStr)) ![]const []const u8 {
@@ -348,24 +359,23 @@ fn buildStrArgsList(argc: usize, argv: [*][*:0]u8, roc_host: *abi.RocHost) abi.R
     return args_list;
 }
 
-test "lowers shell protocol to nix develop argv" {
-    const lowered = try lowerProtocolCommand(std.testing.allocator, "nix", "shell", ".", &.{ "guix", "--version" });
-    defer lowered.deinit(std.testing.allocator);
-    const rendered = try renderArgv(std.testing.allocator, lowered.argv);
-    defer std.testing.allocator.free(rendered);
-    try std.testing.expectEqualStrings("nix develop --no-write-lock-file . --command guix --version", rendered);
-}
-
-test "lowers shell protocol to guix shell argv" {
-    const lowered = try lowerProtocolCommand(std.testing.allocator, "guix", "shell", "fixtures/shell/manifest.scm", &.{ "hello", "--version" });
-    defer lowered.deinit(std.testing.allocator);
-    const rendered = try renderArgv(std.testing.allocator, lowered.argv);
-    defer std.testing.allocator.free(rendered);
-    try std.testing.expectEqualStrings("guix shell -m fixtures/shell/manifest.scm -- hello --version", rendered);
+test "renders backend-neutral shell adapter request" {
+    const request = try renderAdapterRequest(std.testing.allocator, "shell", ".", &.{ "hello", "kai quoted" });
+    defer std.testing.allocator.free(request);
+    try std.testing.expectEqualStrings(
+        "{\"protocol\":\"kai.adapter.v0\",\"command\":\"shell\",\"target\":\".\",\"argv\":[\"hello\",\"kai quoted\"]}",
+        request,
+    );
 }
 
 test "requires a non-interactive shell command" {
-    try std.testing.expectError(error.EmptyShellCommand, lowerProtocolCommand(std.testing.allocator, "nix", "shell", ".", &.{}));
+    try std.testing.expectError(error.EmptyShellCommand, executeProtocolCommand(std.testing.allocator, std.testing.io, "fixtures/adapters/static-plan", "shell", ".", &.{}));
+}
+
+test "calls adapter subprocess and executes normalized argv" {
+    const output = try executeProtocolCommand(std.heap.page_allocator, std.testing.io, "fixtures/adapters/static-plan", "shell", ".", &.{ "ignored" });
+    defer std.heap.page_allocator.free(output);
+    try std.testing.expectEqualStrings("kai-adapter-ok", output);
 }
 
 test "executes argv and captures stdout" {

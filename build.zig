@@ -69,6 +69,11 @@ pub fn build(b: *std.Build) void {
     const native_lib = buildHostLib(b, b.resolveTargetQuery(native_roc_target.toZigTarget()), optimize);
     b.installArtifact(native_lib);
 
+    const nix_adapter = buildAdapter(b, "kai-adapter-nix", "src/adapters/nix.zig", native_target, optimize);
+    const guix_adapter = buildAdapter(b, "kai-adapter-guix", "src/adapters/guix.zig", native_target, optimize);
+    b.installArtifact(nix_adapter);
+    b.installArtifact(guix_adapter);
+
     const copy_native = b.addUpdateSourceFiles();
     copy_native.addCopyFileToSource(
         native_lib.getEmittedBin(),
@@ -94,12 +99,12 @@ pub fn build(b: *std.Build) void {
 
     const e2e_step = b.step("e2e", "Run real nix/guix subprocess examples");
     const run_nix_example = b.addSystemCommand(&.{ "roc", "examples/shell.roc" });
-    run_nix_example.step.dependOn(&copy_native.step);
+    run_nix_example.step.dependOn(install_step);
     run_nix_example.step.dependOn(&run_host_tests.step);
     e2e_step.dependOn(&run_nix_example.step);
 
     const run_guix_example = b.addSystemCommand(&.{ "roc", "examples/shell-guix.roc" });
-    run_guix_example.step.dependOn(&copy_native.step);
+    run_guix_example.step.dependOn(install_step);
     run_guix_example.step.dependOn(&run_host_tests.step);
     e2e_step.dependOn(&run_guix_example.step);
 }
@@ -153,6 +158,24 @@ const CleanupStep = struct {
         };
     }
 };
+
+fn buildAdapter(
+    b: *std.Build,
+    name: []const u8,
+    root_source_file: []const u8,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Step.Compile {
+    return b.addExecutable(.{
+        .name = name,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(root_source_file),
+            .target = target,
+            .optimize = optimize,
+            .strip = optimize != .Debug,
+        }),
+    });
+}
 
 fn buildHostLib(
     b: *std.Build,

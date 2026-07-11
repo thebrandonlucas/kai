@@ -1,0 +1,6 @@
+#!/bin/sh
+case "$1" in
+  *'"protocol":"kai.adapter.v0"'*'"command":"shell"'*) ;;
+  *) echo 'invalid request' >&2; exit 2 ;;
+esac
+printf '%s\n' '{"protocol":"kai.adapter.v0","argv":["sh","-c","printf kai-adapter-ok"]}'
