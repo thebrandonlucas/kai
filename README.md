@@ -2,20 +2,34 @@
 
 Minimal Roc platform for Kai protocol experiments.
 
-Roc apps emit one portable protocol command: `shell`.
+Roc apps can be written as a small config DSL that emits one portable protocol command: `shell`.
 
 ```roc
-Kai.shell!({ target: "./fixtures/shell", command: ["sh", "-c", "printf ok"] })
-Kai.shellWithAdapter!({ adapter: "./zig-out/bin/kai-adapter-nix", target: "./fixtures/shell", command: ["sh", "-c", "printf ok"] })
+app [config] { kai: platform "../platform/config.roc" }
+
+config = {
+    shell: {
+        environment: "./fixtures/shell",
+        run: "zig version >/dev/null && printf kai-shell-ok",
+    },
+    stdout: "kai-shell-ok",
+}
+```
+
+Adapter choice is outside the Roc file:
+
+```sh
+./zig-out/bin/kai adapter set nix   # or guix
+roc examples/shell.roc
 ```
 
 Architecture:
 
-1. Top-level Roc app calls `kai.Kai.shell!` or `shellWithAdapter!`.
-2. The generic Zig host sends a structured request to a backend adapter executable.
+1. The Roc config declares a backend-neutral shell environment and command.
+2. The generic Zig host selects a backend adapter from `.kai-adapter` or `KAI_BACKEND_ADAPTER`.
 3. The backend adapter is a small Roc program using `kai.Adapter`.
 4. The adapter lowers the portable `shell` request to normalized argv.
-5. The Zig host parses that argv plan and executes it directly, with no shell interpolation.
+5. The Zig host parses that argv plan and executes it directly.
 
 The host does not contain Nix/Guix lowering logic. Adding a backend means adding a Roc adapter, not editing `src/host.zig`.
 
@@ -49,7 +63,8 @@ Rules:
 - `argv` is a structured argument array. Do not return shell-interpolated command strings.
 - Argument lengths are UTF-8 byte counts. Newlines inside args are allowed because the host consumes exact byte lengths plus the trailing newline emitted by the Roc adapter.
 - Non-zero adapter exit means adapter failure.
-- `Kai.shellWithAdapter!` selects an explicit adapter. `Kai.shell!` uses `KAI_BACKEND_ADAPTER`; if it is unset, the host returns `MissingBackendAdapter`.
+- The config platform and `Kai.shell!` select adapters from `.kai-adapter`, then `KAI_BACKEND_ADAPTER`; if neither is set, the host returns `MissingBackendAdapter`.
+- `Kai.shellWithAdapter!` selects an explicit adapter executable path, built-in name (`nix` or `guix`), or PATH name.
 
 ## Roc backend DSL
 
@@ -68,8 +83,8 @@ main! = |args| Adapter.main!(args, |req|
 
 Included Roc adapters:
 
-- `adapters/roc/nix.roc`: `shell -> nix develop --no-write-lock-file <target> --command <argv...>`
-- `adapters/roc/guix.roc`: `shell -> guix shell [-m manifest.scm|target] -- <argv...>`
+- `adapters/roc/nix.roc`: `shell -> nix develop --no-write-lock-file <environment> --command <argv...>`
+- `adapters/roc/guix.roc`: `shell -> guix shell -m <environment>/manifest.scm -- <argv...>` for directory environments, or `guix shell -m <environment> --` when the environment already ends in `.scm`.
 
 They depend only on this local Kai platform; no remote packages like `basic-cli` or `roc-json` are used.
 
@@ -94,7 +109,7 @@ Commands:
 - `kai adapter set <adapter>`: write `<adapter>` to the local `.kai-adapter` config file. Built-in names `nix` and `guix` resolve to sibling `kai-adapter-nix`/`kai-adapter-guix` executables when present.
 - `kai shell`: run `sh` through the selected adapter using the existing `shell` protocol with target `.`.
 
-Adapter selection order for the CLI is `.kai-adapter`, then `KAI_BACKEND_ADAPTER`. The generic Roc host still uses explicit `Kai.shellWithAdapter!` or `KAI_BACKEND_ADAPTER` for `Kai.shell!`.
+Adapter selection order for both the CLI and Roc config apps is `.kai-adapter`, then `KAI_BACKEND_ADAPTER`. `Kai.shellWithAdapter!` can still override this in lower-level Roc code.
 
 Examples:
 
@@ -125,11 +140,18 @@ Build only Roc adapters:
 zig build roc-adapters
 ```
 
-Run the individual examples:
+Run the generic config example:
 
 ```sh
-roc examples/shell-nix.roc
-roc examples/shell-guix.roc
+./zig-out/bin/kai adapter set nix   # or guix
+roc examples/shell.roc
+```
+
+Run the per-adapter e2e entries directly:
+
+```sh
+KAI_BACKEND_ADAPTER=./zig-out/bin/kai-adapter-nix roc examples/shell-nix.roc
+KAI_BACKEND_ADAPTER=./zig-out/bin/kai-adapter-guix roc examples/shell-guix.roc
 ```
 
 Opt-in real subprocess proof (requires Roc plus nix/guix, and Nix flakes enabled):

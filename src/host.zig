@@ -22,6 +22,23 @@ extern fn roc_main(args: abi.RocList(abi.RocStr)) callconv(.c) i32;
 var g_roc_host: ?*abi.RocHost = null;
 var g_process_environ: std.process.Environ = .empty;
 
+const config_file = ".kai-adapter";
+
+const BuiltinAdapter = struct {
+    name: []const u8,
+    executable: []const u8,
+};
+
+const builtin_adapters = [_]BuiltinAdapter{
+    .{ .name = "nix", .executable = "kai-adapter-nix" },
+    .{ .name = "guix", .executable = "kai-adapter-guix" },
+};
+
+const AdapterSelection = struct {
+    path: []const u8,
+    owned: bool,
+};
+
 comptime {
     if (!builtin.is_test) {
         @export(&main, .{ .name = "main" });
@@ -78,17 +95,20 @@ fn hostedKaiShell(adapter: abi.RocStr, command: abi.RocStr, target: abi.RocStr, 
     };
     defer roc_env.allocator.free(command_arg_slices);
 
-    const selected_adapter = selectedAdapter(owned_adapter.asSlice()) orelse {
-        return abi.RocStr.fromSlice(@errorName(error.MissingBackendAdapter), roc_host);
-    };
-
     var threaded_io = std.Io.Threaded.init(roc_env.allocator, .{ .environ = g_process_environ });
     defer threaded_io.deinit();
+
+    const selected_adapter = selectedAdapter(roc_env.allocator, threaded_io.io(), owned_adapter.asSlice()) catch |err| {
+        return abi.RocStr.fromSlice(@errorName(err), roc_host);
+    } orelse {
+        return abi.RocStr.fromSlice(@errorName(error.MissingBackendAdapter), roc_host);
+    };
+    defer if (selected_adapter.owned) roc_env.allocator.free(selected_adapter.path);
 
     const output = protocol.executeProtocolCommand(
         roc_env.allocator,
         threaded_io.io(),
-        selected_adapter,
+        selected_adapter.path,
         owned_command.asSlice(),
         owned_target.asSlice(),
         command_arg_slices,
@@ -114,12 +134,94 @@ comptime {
     }
 }
 
-fn selectedAdapter(explicit_adapter: []const u8) ?[]const u8 {
+fn selectedAdapter(allocator: std.mem.Allocator, io: std.Io, explicit_adapter: []const u8) !?AdapterSelection {
     if (explicit_adapter.len != 0) {
-        return explicit_adapter;
+        return .{ .path = try resolveAdapter(allocator, io, explicit_adapter), .owned = true };
     }
+
+    if (try readConfiguredAdapter(allocator, io)) |setting| {
+        defer allocator.free(setting);
+        return .{ .path = try resolveAdapter(allocator, io, setting), .owned = true };
+    }
+
     if (processEnvValue("KAI_BACKEND_ADAPTER")) |env_adapter| {
-        if (env_adapter.len != 0) return env_adapter;
+        if (env_adapter.len != 0) {
+            return .{ .path = try resolveAdapter(allocator, io, env_adapter), .owned = true };
+        }
+    }
+
+    return null;
+}
+
+fn readConfiguredAdapter(allocator: std.mem.Allocator, io: std.Io) !?[]u8 {
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, config_file, allocator, .limited(4096)) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    defer allocator.free(bytes);
+
+    const trimmed = trimConfig(bytes);
+    if (trimmed.len == 0) return null;
+    return try allocator.dupe(u8, trimmed);
+}
+
+fn trimConfig(bytes: []const u8) []const u8 {
+    return std.mem.trim(u8, bytes, " \t\r\n");
+}
+
+fn resolveAdapter(allocator: std.mem.Allocator, io: std.Io, setting: []const u8) ![]u8 {
+    if (builtinAdapter(setting)) |adapter| {
+        if (try siblingAdapterPath(allocator, io, adapter.executable)) |path| {
+            return path;
+        }
+        if (try cwdAdapterPath(allocator, io, &.{ "zig-out", "bin", adapter.executable })) |path| {
+            return path;
+        }
+        if (try cwdAdapterPath(allocator, io, &.{adapter.executable})) |path| {
+            return path;
+        }
+        return allocator.dupe(u8, adapter.executable);
+    }
+
+    return allocator.dupe(u8, setting);
+}
+
+fn cwdAdapterPath(allocator: std.mem.Allocator, io: std.Io, parts: []const []const u8) !?[]u8 {
+    const path = try std.fs.path.join(allocator, parts);
+    errdefer allocator.free(path);
+
+    std.Io.Dir.cwd().access(io, path, .{ .execute = true }) catch |err| switch (err) {
+        error.FileNotFound, error.AccessDenied, error.PermissionDenied => {
+            allocator.free(path);
+            return null;
+        },
+        else => return err,
+    };
+
+    return path;
+}
+
+fn siblingAdapterPath(allocator: std.mem.Allocator, io: std.Io, executable: []const u8) !?[]u8 {
+    const bin_dir = std.process.executableDirPathAlloc(io, allocator) catch return null;
+    defer allocator.free(bin_dir);
+
+    const path = try std.fs.path.join(allocator, &.{ bin_dir, executable });
+    errdefer allocator.free(path);
+
+    std.Io.Dir.accessAbsolute(io, path, .{ .execute = true }) catch |err| switch (err) {
+        error.FileNotFound, error.AccessDenied, error.PermissionDenied => {
+            allocator.free(path);
+            return null;
+        },
+        else => return err,
+    };
+
+    return path;
+}
+
+fn builtinAdapter(name: []const u8) ?BuiltinAdapter {
+    for (builtin_adapters) |adapter| {
+        if (std.mem.eql(u8, adapter.name, name)) return adapter;
     }
     return null;
 }

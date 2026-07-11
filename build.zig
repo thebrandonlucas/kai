@@ -146,12 +146,22 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_cli_tests.step);
 
     const e2e_step = b.step("e2e", "Run real nix/guix subprocess examples");
-    const run_nix_example = b.addSystemCommand(&.{ "roc", "examples/shell-nix.roc" });
+    const run_nix_example = b.addSystemCommand(&.{
+        "env",
+        b.fmt("KAI_BACKEND_ADAPTER={s}", .{b.getInstallPath(.bin, "kai-adapter-nix")}),
+        "roc",
+        "examples/shell-nix.roc",
+    });
     run_nix_example.step.dependOn(install_step);
     run_nix_example.step.dependOn(&run_host_tests.step);
     e2e_step.dependOn(&run_nix_example.step);
 
-    const run_guix_example = b.addSystemCommand(&.{ "roc", "examples/shell-guix.roc" });
+    const run_guix_example = b.addSystemCommand(&.{
+        "env",
+        b.fmt("KAI_BACKEND_ADAPTER={s}", .{b.getInstallPath(.bin, "kai-adapter-guix")}),
+        "roc",
+        "examples/shell-guix.roc",
+    });
     run_guix_example.step.dependOn(install_step);
     run_guix_example.step.dependOn(&run_host_tests.step);
     e2e_step.dependOn(&run_guix_example.step);

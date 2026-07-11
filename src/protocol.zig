@@ -73,6 +73,7 @@ pub fn runAdapter(
         .argv = adapter_argv,
         .stdout_limit = .limited(64 * 1024),
         .stderr_limit = .limited(64 * 1024),
+        .expand_arg0 = .expand,
     });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
@@ -158,6 +159,7 @@ pub fn runArgv(allocator: std.mem.Allocator, io: std.Io, argv: []const []const u
         .argv = argv,
         .stdout_limit = .limited(64 * 1024),
         .stderr_limit = .limited(64 * 1024),
+        .expand_arg0 = .expand,
     });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
