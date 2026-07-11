@@ -23,10 +23,10 @@ config = [
 ]
 ```
 
-Adapter choice is outside the Roc file:
+Backend choice is outside the Roc file:
 
 ```sh
-./zig-out/bin/kai adapter set nix   # or guix
+./zig-out/bin/kai backend set nix   # or guix
 ./zig-out/bin/kai shell             # defaults to kai.roc
 ./zig-out/bin/kai shell examples/shell.roc
 ```
@@ -34,7 +34,7 @@ Adapter choice is outside the Roc file:
 Architecture:
 
 1. `src/command_registry.zig` declares protocol commands separately from extra/non-protocol commands.
-2. `src/backend.zig` selects exactly one active backend from `.kai-adapter` or `KAI_BACKEND_ADAPTER`.
+2. `src/backend.zig` selects exactly one active backend from `.kai-backend`, legacy `.kai-adapter`, or `KAI_BACKEND_ADAPTER`.
 3. `kai shell [config.roc]` dispatches protocol command `shell`.
 4. `kai build [config.roc]` is a CLI alias for protocol command `machine.build`.
 5. The selected implementation must target the active backend; otherwise Kai reports a backend mismatch or unsupported backend.
@@ -73,7 +73,7 @@ Rules:
 - `argv` is a structured argument array. Do not return shell-interpolated command strings.
 - Argument lengths are UTF-8 byte counts. Newlines inside args are allowed because the host consumes exact byte lengths plus the trailing newline emitted by the Roc adapter.
 - Non-zero adapter exit means adapter failure.
-- The config platform and `Kai.shell!` select adapters from `.kai-adapter`, then `KAI_BACKEND_ADAPTER`; if neither is set, the host returns `MissingBackendAdapter`.
+- The config platform and `Kai.shell!` select the active backend from `.kai-backend`, legacy `.kai-adapter`, then `KAI_BACKEND_ADAPTER`; if none is set, the host returns `MissingBackendAdapter`.
 - `Kai.shellWithAdapter!` selects an explicit adapter executable path, built-in name (`nix` or `guix`), or PATH name.
 
 ## Roc backend DSL
@@ -105,9 +105,9 @@ They depend only on this local Kai platform; no remote packages like `basic-cli`
 ```sh
 zig build
 ./zig-out/bin/kai help
-./zig-out/bin/kai adapter list
-./zig-out/bin/kai adapter set nix     # or guix, or an adapter executable/path
-./zig-out/bin/kai adapter get
+./zig-out/bin/kai backend list
+./zig-out/bin/kai backend set nix     # or guix, or an adapter executable/path
+./zig-out/bin/kai backend get
 ./zig-out/bin/kai shell [config.roc]
 ./zig-out/bin/kai build [config.roc]
 ```
@@ -115,18 +115,19 @@ zig build
 Commands:
 
 - `kai help`: print usage.
-- `kai adapter list`: show the current adapter and built adapters found next to `kai`.
-- `kai adapter get`: print the selected adapter, or `none`.
-- `kai adapter set <adapter>`: write `<adapter>` to the local `.kai-adapter` config file. Built-in names `nix` and `guix` resolve to sibling `kai-adapter-nix`/`kai-adapter-guix` executables when present.
+- `kai backend list`: show the current backend and built adapter executables found next to `kai`.
+- `kai backend get`: print the selected backend setting, or `none`.
+- `kai backend set <backend-or-adapter>`: write `<backend-or-adapter>` to the local `.kai-backend` config file. Built-in names `nix` and `guix` resolve to sibling `kai-adapter-nix`/`kai-adapter-guix` executables when present.
+- `kai adapter ...`: legacy alias for `kai backend ...`.
 - `kai shell [config.roc]`: dispatch protocol command `shell`; defaults to `kai.roc`.
 - `kai build [config.roc]`: dispatch protocol command `machine.build`; defaults to `kai.roc`. This writes `.kai/flake.nix` and runs `nix build` for the configured image output when the active backend is `nix`.
 
-Adapter selection order for both the CLI and Roc config apps is `.kai-adapter`, then `KAI_BACKEND_ADAPTER`. `Kai.shellWithAdapter!` can still override this in lower-level Roc code.
+Backend selection order for both the CLI and Roc config apps is `.kai-backend`, legacy `.kai-adapter`, then `KAI_BACKEND_ADAPTER`. `Kai.shellWithAdapter!` can still override this in lower-level Roc code.
 
 Examples:
 
 ```sh
-./zig-out/bin/kai adapter set nix
+./zig-out/bin/kai backend set nix
 ./zig-out/bin/kai shell
 ./zig-out/bin/kai build
 
@@ -156,7 +157,7 @@ zig build roc-adapters
 Run the generic config example through the CLI:
 
 ```sh
-./zig-out/bin/kai adapter set nix   # or guix
+./zig-out/bin/kai backend set nix   # or guix
 ./zig-out/bin/kai shell examples/shell.roc
 ```
 

@@ -68,7 +68,7 @@ fn parseCommand(args: []const []const u8) !Command {
         return .{ .protocol = .{ .cli_name = args[0], .path = try parseOptionalConfigPath(args[1..]) } };
     }
 
-    if (args.len >= 2 and std.mem.eql(u8, args[0], "adapter")) {
+    if (args.len >= 2 and (std.mem.eql(u8, args[0], "backend") or std.mem.eql(u8, args[0], "adapter"))) {
         if (args.len == 2 and std.mem.eql(u8, args[1], "list")) return .adapter_list;
         if (args.len == 2 and std.mem.eql(u8, args[1], "get")) return .adapter_get;
         if (args.len == 3 and std.mem.eql(u8, args[1], "set")) return .{ .adapter_set = args[2] };
@@ -131,14 +131,15 @@ const help_text =
     \\  kai help
     \\  kai shell [config.roc]
     \\  kai build [config.roc]
-    \\  kai adapter list
-    \\  kai adapter get
-    \\  kai adapter set <backend-or-adapter>
+    \\  kai backend list
+    \\  kai backend get
+    \\  kai backend set <backend-or-adapter>
+    \\  kai adapter ...  # legacy alias for kai backend ...
     \\
     \\Config defaults to kai.roc.
     \\kai shell dispatches protocol command shell.
     \\kai build dispatches protocol command machine.build.
-    \\Backend selection is read from .kai-adapter, then KAI_BACKEND_ADAPTER.
+    \\Backend selection is read from .kai-backend, legacy .kai-adapter, then KAI_BACKEND_ADAPTER.
     \\Built-in backend names: nix, guix.
     \\
 ;
@@ -150,7 +151,7 @@ fn dispatchProtocolCommand(
     config: ConfigCommand,
 ) !u8 {
     var active = try backend_mod.selectedBackend(allocator, io, env_map) orelse {
-        try writeAll(io, .stderr, "kai: missing active backend; run `kai adapter set nix` or set KAI_BACKEND_ADAPTER\n");
+        try writeAll(io, .stderr, "kai: missing active backend; run `kai backend set nix` or set KAI_BACKEND_ADAPTER\n");
         return 1;
     };
     defer active.deinit(allocator);
@@ -322,10 +323,11 @@ test "parses supported commands" {
     const build_file = try parseCommand(&.{ "build", "examples/shell.roc" });
     try std.testing.expectEqualStrings("examples/shell.roc", build_file.protocol.path);
 
+    try std.testing.expectEqual(Command.adapter_list, try parseCommand(&.{ "backend", "list" }));
+    try std.testing.expectEqual(Command.adapter_get, try parseCommand(&.{ "backend", "get" }));
     try std.testing.expectEqual(Command.adapter_list, try parseCommand(&.{ "adapter", "list" }));
-    try std.testing.expectEqual(Command.adapter_get, try parseCommand(&.{ "adapter", "get" }));
 
-    const command = try parseCommand(&.{ "adapter", "set", "nix" });
+    const command = try parseCommand(&.{ "backend", "set", "nix" });
     try std.testing.expect(std.mem.eql(u8, command.adapter_set, "nix"));
 }
 
@@ -333,6 +335,7 @@ test "rejects invalid command usage" {
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "shell", "a", "b" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "build", "a", "b" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "adapter", "delete" }));
+    try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "backend", "delete" }));
 }
 
 test "preserves unavailable command name" {

@@ -1,6 +1,7 @@
 const std = @import("std");
 
-pub const adapter_config_file = ".kai-adapter";
+pub const backend_config_file = ".kai-backend";
+pub const legacy_adapter_config_file = ".kai-adapter";
 pub const env_adapter_name = "KAI_BACKEND_ADAPTER";
 
 pub const Backend = enum {
@@ -34,6 +35,15 @@ pub const BuiltinAdapter = struct {
 pub const builtin_adapters = [_]BuiltinAdapter{
     .{ .backend = .nix, .name = "nix", .executable = "kai-adapter-nix" },
     .{ .backend = .guix, .name = "guix", .executable = "kai-adapter-guix" },
+};
+
+const ConfiguredBackend = struct {
+    setting: []u8,
+    source: []const u8,
+
+    fn deinit(self: ConfiguredBackend, allocator: std.mem.Allocator) void {
+        allocator.free(self.setting);
+    }
 };
 
 pub const Selection = struct {
@@ -70,14 +80,15 @@ pub fn selectedBackendWithExplicit(
         return try selectionFromSetting(allocator, io, explicit_backend_or_adapter, "explicit");
     }
 
-    if (try readConfiguredBackend(allocator, io)) |setting| {
-        defer allocator.free(setting);
-        return try selectionFromSetting(allocator, io, setting, adapter_config_file);
+    if (try readConfiguredBackendWithSource(allocator, io)) |configured| {
+        defer configured.deinit(allocator);
+        return try selectionFromSetting(allocator, io, configured.setting, configured.source);
     }
 
     if (env_adapter) |setting| {
         if (setting.len != 0) {
-            return try selectionFromSetting(allocator, io, setting, env_adapter_name);        }
+            return try selectionFromSetting(allocator, io, setting, env_adapter_name);
+        }
     }
 
     return null;
@@ -105,7 +116,25 @@ pub fn backendFromSetting(setting: []const u8) Backend {
 }
 
 pub fn readConfiguredBackend(allocator: std.mem.Allocator, io: std.Io) !?[]u8 {
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, adapter_config_file, allocator, .limited(4096)) catch |err| switch (err) {
+    if (try readConfiguredBackendWithSource(allocator, io)) |configured| {
+        defer configured.deinit(allocator);
+        return try allocator.dupe(u8, configured.setting);
+    }
+    return null;
+}
+
+fn readConfiguredBackendWithSource(allocator: std.mem.Allocator, io: std.Io) !?ConfiguredBackend {
+    if (try readConfiguredBackendFile(allocator, io, backend_config_file)) |setting| {
+        return .{ .setting = setting, .source = backend_config_file };
+    }
+    if (try readConfiguredBackendFile(allocator, io, legacy_adapter_config_file)) |setting| {
+        return .{ .setting = setting, .source = legacy_adapter_config_file };
+    }
+    return null;
+}
+
+fn readConfiguredBackendFile(allocator: std.mem.Allocator, io: std.Io, path: []const u8) !?[]u8 {
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(4096)) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return err,
     };
@@ -119,7 +148,7 @@ pub fn readConfiguredBackend(allocator: std.mem.Allocator, io: std.Io) !?[]u8 {
 pub fn writeConfiguredBackend(allocator: std.mem.Allocator, io: std.Io, setting: []const u8) !void {
     const bytes = try std.fmt.allocPrint(allocator, "{s}\n", .{setting});
     defer allocator.free(bytes);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = adapter_config_file, .data = bytes });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = backend_config_file, .data = bytes });
 }
 
 pub fn validateBackendSetting(setting: []const u8) !void {
@@ -217,6 +246,11 @@ test "recognizes built-in adapter names" {
     try std.testing.expect(builtinAdapter("nix") != null);
     try std.testing.expect(builtinAdapter("guix") != null);
     try std.testing.expect(builtinAdapter("custom") == null);
+}
+
+test "uses .kai-backend as primary config and keeps legacy adapter path" {
+    try std.testing.expectEqualStrings(".kai-backend", backend_config_file);
+    try std.testing.expectEqualStrings(".kai-adapter", legacy_adapter_config_file);
 }
 
 test "trims backend config" {
