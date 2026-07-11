@@ -7,6 +7,7 @@ platform "kai"
 	provides { "roc_main": main_for_host! }
 	hosted {
 		"roc_kai_shell": Host.kai_shell!,
+		"roc_kai_config_shell": Host.kai_config_shell!,
 		"roc_kai_machine_build": Host.kai_machine_build!,
 		"roc_stdout_line": Host.stdout_line!,
 	}

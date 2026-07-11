@@ -1,7 +1,7 @@
 platform "kai-config"
 	requires {
 		config : List([
-			Shell({ environment : Str, run : Str }),
+			Shell({ install : List(Str), run : Str }),
 			MachineBuild({
 				hostname : Str,
 				system : Str,
@@ -17,6 +17,7 @@ platform "kai-config"
 	provides { "roc_main": main_for_host! }
 	hosted {
 		"roc_kai_shell": Host.kai_shell!,
+		"roc_kai_config_shell": Host.kai_config_shell!,
 		"roc_kai_machine_build": Host.kai_machine_build!,
 		"roc_stdout_line": Host.stdout_line!,
 	}

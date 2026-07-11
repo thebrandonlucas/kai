@@ -145,6 +145,16 @@ pub fn build(b: *std.Build) void {
     const run_machine_tests = b.addRunArtifact(machine_tests);
     test_step.dependOn(&run_machine_tests.step);
 
+    const shell_env_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/shell_env.zig"),
+            .target = native_target,
+            .optimize = optimize,
+        }),
+    });
+    const run_shell_env_tests = b.addRunArtifact(shell_env_tests);
+    test_step.dependOn(&run_shell_env_tests.step);
+
     const backend_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/backend.zig"),

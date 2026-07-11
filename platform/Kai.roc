@@ -3,7 +3,7 @@ import Stdout
 
 ## Kai protocol helpers and modular config dispatch.
 Kai := [].{
-	ShellConfig : { environment : Str, run : Str }
+	ShellConfig : { install : List(Str), run : Str }
 
 	MachineBuildConfig : {
 		hostname : Str,
@@ -15,7 +15,7 @@ Kai := [].{
 	}
 
 	ConfigEntry : [
-		Shell({ environment : Str, run : Str }),
+		Shell({ install : List(Str), run : Str }),
 		MachineBuild({
 			hostname : Str,
 			system : Str,
@@ -90,9 +90,7 @@ Kai := [].{
 	## Run the `shell` config entry.
 	runShell! : ShellConfig => I32
 	runShell! = |shell| {
-		output = Host.kai_shell!("", "shell", shell.environment, ["sh", "-c", shell.run])
-		Stdout.line!(output)
-		0
+		Host.kai_config_shell!(shell.install, shell.run)
 	}
 
 	## Build the `machine.build` config entry.

@@ -9,7 +9,7 @@ app [config] { kai: platform "./platform/config.roc" }
 
 config = [
     Shell({
-        environment: "./fixtures/shell",
+        install: ["zig"],
         run: "zig version >/dev/null && printf kai-shell-ok",
     }),
     MachineBuild({
@@ -35,13 +35,13 @@ Architecture:
 
 1. `src/command_registry.zig` declares protocol commands separately from extra/non-protocol commands.
 2. `src/backend.zig` selects exactly one active backend from `.kai-backend`, legacy `.kai-adapter`, or `KAI_BACKEND_ADAPTER`.
-3. `kai shell [config.roc]` dispatches protocol command `shell`.
+3. `kai shell [config.roc]` dispatches protocol command `shell`; on first run or config changes it writes the backend file under `.kai/shell/` and tells the user.
 4. `kai build [config.roc]` is a CLI alias for protocol command `machine.build`.
 5. The selected implementation must target the active backend; otherwise Kai reports a backend mismatch or unsupported backend.
 6. The backend adapter is a small Roc program using `kai.Adapter`; it lowers portable `shell` requests to normalized argv.
 7. `machine.build` currently supports only backend `nix`: it writes `.kai/flake.nix`, prints the machine output attr, then runs `nix build path:.kai#packages.<system>.<hostname>-image`.
 
-The shell protocol host does not contain Nix/Guix lowering logic. Adding a shell backend means adding a Roc adapter, not editing `src/host.zig`. Machine image builds are Nix-specific and follow the kai-zig `nix build path:.kai#...` flow.
+For config-driven shell commands, Kai generates backend state under `.kai/shell/` (`flake.nix` for nix, `manifest.scm` for guix) from the `Shell.install` package list, then passes that generated target to the adapter. Subsequent runs reuse the generated file unless the rendered content changes. Machine image builds are Nix-specific and follow the kai-zig `nix build path:.kai#...` flow.
 
 ## Adapter contract
 
@@ -93,8 +93,8 @@ main! = |args| Adapter.main!(args, |req|
 
 Included Roc adapters:
 
-- `adapters/roc/nix.roc`: `shell -> nix develop --no-write-lock-file <environment> --command <argv...>`
-- `adapters/roc/guix.roc`: `shell -> guix shell -m <environment>/manifest.scm -- <argv...>` for directory environments, or `guix shell -m <environment> --` when the environment already ends in `.scm`.
+- `adapters/roc/nix.roc`: `shell -> nix develop --no-write-lock-file <target> --command <argv...>`. Config shells use generated target `path:.kai/shell`.
+- `adapters/roc/guix.roc`: `shell -> guix shell -m <target>/manifest.scm -- <argv...>` for directory targets, or `guix shell -m <target> --` when the target already ends in `.scm`. Config shells use generated target `.kai/shell`.
 
 They depend only on this local Kai platform; no remote packages like `basic-cli` or `roc-json` are used.
 
@@ -119,7 +119,7 @@ Commands:
 - `kai backend get`: print the selected backend setting, or `none`.
 - `kai backend set <backend-or-adapter>`: write `<backend-or-adapter>` to the local `.kai-backend` config file. Built-in names `nix` and `guix` resolve to sibling `kai-adapter-nix`/`kai-adapter-guix` executables when present.
 - `kai adapter ...`: legacy alias for `kai backend ...`.
-- `kai shell [config.roc]`: dispatch protocol command `shell`; defaults to `kai.roc`.
+- `kai shell [config.roc]`: dispatch protocol command `shell`; defaults to `kai.roc`. Generates `.kai/shell/flake.nix` for nix or `.kai/shell/manifest.scm` for guix on first run or when content changes.
 - `kai build [config.roc]`: dispatch protocol command `machine.build`; defaults to `kai.roc`. This writes `.kai/flake.nix` and runs `nix build` for the configured image output when the active backend is `nix`.
 
 Backend selection order for both the CLI and Roc config apps is `.kai-backend`, legacy `.kai-adapter`, then `KAI_BACKEND_ADAPTER`. `Kai.shellWithAdapter!` can still override this in lower-level Roc code.
@@ -174,7 +174,7 @@ Opt-in real subprocess proof (requires Roc plus nix/guix, and Nix flakes enabled
 zig build e2e
 ```
 
-The e2e fixtures live in `fixtures/shell/`:
+The adapter unit fixtures live in `fixtures/shell/` and are not referenced by user configs:
 
 - `flake.nix` provides a Nix dev shell containing `zig`.
 - `manifest.scm` provides a Guix shell containing `zig` and `bash-minimal`.

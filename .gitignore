@@ -1,5 +1,6 @@
 .zig-cache/
 zig-out/
+.kai/
 .kai-backend
 .kai-adapter
 platform/targets/*/libhost.a

@@ -1,8 +1,9 @@
 //! Minimal Kai Roc platform host.
 //!
-//! Roc code emits a backend-neutral protocol command (`shell`). This Zig host
-//! sends that command to a backend adapter executable, receives a normalized
-//! argv execution plan, and executes it without shell interpolation.
+//! Roc code emits backend-neutral Kai protocol commands. For config-driven
+//! shell commands, this host generates backend state under `.kai/shell/`, sends
+//! the shell request to a backend adapter executable, receives a normalized argv
+//! execution plan, and executes it without shell interpolation.
 const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("roc_platform_abi.zig");
@@ -10,6 +11,7 @@ const backend_mod = @import("backend.zig");
 const registry_mod = @import("command_registry.zig");
 const machine = @import("machine.zig");
 const protocol = @import("protocol.zig");
+const shell_env = @import("shell_env.zig");
 
 pub const std_options: std.Options = .{
     .allow_stack_tracing = false,
@@ -119,6 +121,89 @@ fn hostedKaiShell(adapter: abi.RocStr, command: abi.RocStr, target: abi.RocStr, 
     return abi.RocStr.fromSlice(output, roc_host);
 }
 
+fn hostedKaiConfigShell(packages: abi.RocList(abi.RocStr), run_command: abi.RocStr) callconv(.c) i32 {
+    const roc_host = g_roc_host.?;
+    const owned_packages = packages;
+    var owned_run_command = run_command;
+    defer decrefRocStrList(owned_packages, roc_host);
+    defer owned_run_command.decref(roc_host);
+
+    const roc_env: *abi.RocEnv = @ptrCast(@alignCast(roc_host.env));
+    const package_slices = rocStringListSlices(roc_env.allocator, owned_packages) catch |err| {
+        writeHostError(@errorName(err));
+        return 1;
+    };
+    defer roc_env.allocator.free(package_slices);
+
+    var threaded_io = std.Io.Threaded.init(roc_env.allocator, .{ .environ = g_process_environ });
+    defer threaded_io.deinit();
+
+    var selected_backend = backend_mod.selectedBackendWithExplicit(
+        roc_env.allocator,
+        threaded_io.io(),
+        "",
+        processEnvValue(backend_mod.env_adapter_name),
+    ) catch |err| {
+        writeHostError(@errorName(err));
+        return 1;
+    } orelse {
+        writeHostError(@errorName(error.MissingBackendAdapter));
+        return 1;
+    };
+    defer selected_backend.deinit(roc_env.allocator);
+
+    switch (registry_mod.default_protocol_registry.selectImplementation("shell", selected_backend.backend, null)) {
+        .ok => {},
+        .backend_unsupported => {
+            writeUnsupportedBackend(selected_backend.backendName(), "shell");
+            return 1;
+        },
+        .command_not_registered => {
+            writeHostError(@errorName(error.UnsupportedProtocolCommand));
+            return 1;
+        },
+        .implementation_not_found => {
+            writeHostError(@errorName(error.MissingProtocolImplementation));
+            return 1;
+        },
+        .implementation_backend_mismatch => {
+            writeHostError(@errorName(error.ImplementationBackendMismatch));
+            return 1;
+        },
+    }
+
+    const prepared = shell_env.prepare(
+        roc_env.allocator,
+        threaded_io.io(),
+        selected_backend.backend,
+        package_slices,
+    ) catch |err| {
+        writeHostError(@errorName(err));
+        return 1;
+    };
+
+    if (prepared.written_path) |path| {
+        writeGeneratedShellPath(path);
+    }
+
+    const command_args = [_][]const u8{ "sh", "-c", owned_run_command.asSlice() };
+    const output = protocol.executeProtocolCommand(
+        roc_env.allocator,
+        threaded_io.io(),
+        selected_backend.adapter_executable,
+        "shell",
+        prepared.target,
+        &command_args,
+    ) catch |err| {
+        writeHostError(@errorName(err));
+        return 1;
+    };
+    defer roc_env.allocator.free(output);
+
+    writeHostStdout(output);
+    return 0;
+}
+
 fn hostedKaiMachineBuild(
     hostname: abi.RocStr,
     system: abi.RocStr,
@@ -193,6 +278,20 @@ fn hostedKaiMachineBuild(
     };
 }
 
+fn writeHostStdout(message: []const u8) void {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const stdout = std.Io.File.stdout();
+    stdout.writeStreamingAll(io, message) catch return;
+}
+
+fn writeGeneratedShellPath(path: []const u8) void {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const stdout = std.Io.File.stdout();
+    stdout.writeStreamingAll(io, "wrote ") catch return;
+    stdout.writeStreamingAll(io, path) catch return;
+    stdout.writeStreamingAll(io, "\n") catch return;
+}
+
 fn writeHostError(message: []const u8) void {
     const io = std.Io.Threaded.global_single_threaded.io();
     const stderr = std.Io.File.stderr();
@@ -214,6 +313,7 @@ fn writeUnsupportedBackend(active_backend: []const u8, command_name: []const u8)
 comptime {
     if (!builtin.is_test) {
         @export(&hostedKaiShell, .{ .name = "roc_kai_shell", .visibility = .hidden });
+        @export(&hostedKaiConfigShell, .{ .name = "roc_kai_config_shell", .visibility = .hidden });
         @export(&hostedKaiMachineBuild, .{ .name = "roc_kai_machine_build", .visibility = .hidden });
         @export(&hostedStdoutLine, .{ .name = "roc_stdout_line", .visibility = .hidden });
 

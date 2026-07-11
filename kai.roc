@@ -2,7 +2,7 @@ app [config] { kai: platform "./platform/config.roc" }
 
 config = [
 	Shell({
-		environment: "./fixtures/shell",
+		install: ["zig"],
 		run: "zig version >/dev/null && printf kai-shell-ok",
 	}),
 	MachineBuild({
