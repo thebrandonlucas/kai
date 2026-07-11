@@ -10,20 +10,49 @@ Kai := [].{
 
 	## Run a config-style Kai app.
 	##
-	## The app supplies only declarative shell configuration; adapter selection
-	## comes from `.kai-adapter` or `KAI_BACKEND_ADAPTER`.
-	runConfig! : { shell : { environment : Str, run : Str }, stdout : Str } => I32
-	runConfig! = |config| {
-		output = Host.kai_shell!("", "shell", config.shell.environment, ["sh", "-c", config.shell.run])
-
-		if output == config.stdout {
-			Stdout.line!(output)
-			0
+	## The app supplies declarative `shell` and `machine.build` sections.
+	## Adapter selection for `shell` comes from `.kai-adapter` or
+	## `KAI_BACKEND_ADAPTER`.
+	runConfig! : List(Str),
+	{
+		shell : { environment : Str, run : Str },
+		machine : {
+			build : {
+				hostname : Str,
+				system : Str,
+				install : List(Str),
+				ssh_keys : List(Str),
+				state_version : Str,
+				image : { format : Str },
+			},
+		},
+	} => I32
+	runConfig! = |args, config|
+		if List.contains(args, "build") {
+			runMachineBuild!(config.machine.build)
 		} else {
-			Stdout.line!("expected stdout ${config.stdout}, got: ${output}")
-			1
+			runShell!(config.shell)
 		}
+
+	## Run the `shell` config section.
+	runShell! : { environment : Str, run : Str } => I32
+	runShell! = |shell| {
+		output = Host.kai_shell!("", "shell", shell.environment, ["sh", "-c", shell.run])
+		Stdout.line!(output)
+		0
 	}
+
+	## Build the `machine.build` config section.
+	runMachineBuild! : {
+		hostname : Str,
+		system : Str,
+		install : List(Str),
+		ssh_keys : List(Str),
+		state_version : Str,
+		image : { format : Str },
+	} => I32
+	runMachineBuild! = |build|
+		Host.kai_machine_build!(build.hostname, build.system, build.install, build.ssh_keys, build.state_version, build.image.format)
 
 	## Emit the portable `shell` protocol command using the adapter selected by
 	## `.kai-adapter` or `KAI_BACKEND_ADAPTER`.

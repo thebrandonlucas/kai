@@ -135,6 +135,16 @@ pub fn build(b: *std.Build) void {
     const run_protocol_tests = b.addRunArtifact(protocol_tests);
     test_step.dependOn(&run_protocol_tests.step);
 
+    const machine_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/machine.zig"),
+            .target = native_target,
+            .optimize = optimize,
+        }),
+    });
+    const run_machine_tests = b.addRunArtifact(machine_tests);
+    test_step.dependOn(&run_machine_tests.step);
+
     const cli_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/cli.zig"),
@@ -149,7 +159,8 @@ pub fn build(b: *std.Build) void {
     const run_nix_example = b.addSystemCommand(&.{
         "env",
         b.fmt("KAI_BACKEND_ADAPTER={s}", .{b.getInstallPath(.bin, "kai-adapter-nix")}),
-        "roc",
+        b.getInstallPath(.bin, "kai"),
+        "shell",
         "examples/shell-nix.roc",
     });
     run_nix_example.step.dependOn(install_step);
@@ -159,7 +170,8 @@ pub fn build(b: *std.Build) void {
     const run_guix_example = b.addSystemCommand(&.{
         "env",
         b.fmt("KAI_BACKEND_ADAPTER={s}", .{b.getInstallPath(.bin, "kai-adapter-guix")}),
-        "roc",
+        b.getInstallPath(.bin, "kai"),
+        "shell",
         "examples/shell-guix.roc",
     });
     run_guix_example.step.dependOn(install_step);

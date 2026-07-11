@@ -5,13 +5,26 @@ platform "kai-config"
 				environment : Str,
 				run : Str,
 			},
-			stdout : Str,
+			machine : {
+				build : {
+					hostname : Str,
+					system : Str,
+					install : List(Str),
+					ssh_keys : List(Str),
+					state_version : Str,
+					image : { format : Str },
+				},
+			},
 		}
 	}
 	exposes [Kai, Stdout, Adapter]
 	packages {}
 	provides { "roc_main": main_for_host! }
-	hosted { "roc_kai_shell": Host.kai_shell!, "roc_stdout_line": Host.stdout_line! }
+	hosted {
+		"roc_kai_shell": Host.kai_shell!,
+		"roc_kai_machine_build": Host.kai_machine_build!,
+		"roc_stdout_line": Host.stdout_line!,
+	}
 	targets: {
 		inputs_dir: "targets/",
 		x64mac: { inputs: ["libhost.a", app] },
@@ -28,4 +41,4 @@ import Adapter
 import Host
 
 main_for_host! : List(Str) => I32
-main_for_host! = |_args| Kai.runConfig!(config)
+main_for_host! = |args| Kai.runConfig!(args, config)

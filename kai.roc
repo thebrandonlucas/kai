@@ -1,4 +1,4 @@
-app [config] { kai: platform "../platform/config.roc" }
+app [config] { kai: platform "./platform/config.roc" }
 
 config = {
 	shell: {

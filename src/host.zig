@@ -6,6 +6,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("roc_platform_abi.zig");
+const machine = @import("machine.zig");
 const protocol = @import("protocol.zig");
 
 pub const std_options: std.Options = .{
@@ -120,9 +121,73 @@ fn hostedKaiShell(adapter: abi.RocStr, command: abi.RocStr, target: abi.RocStr, 
     return abi.RocStr.fromSlice(output, roc_host);
 }
 
+fn hostedKaiMachineBuild(
+    hostname: abi.RocStr,
+    system: abi.RocStr,
+    packages: abi.RocList(abi.RocStr),
+    ssh_keys: abi.RocList(abi.RocStr),
+    state_version: abi.RocStr,
+    image_format: abi.RocStr,
+) callconv(.c) i32 {
+    const roc_host = g_roc_host.?;
+    var owned_hostname = hostname;
+    var owned_system = system;
+    const owned_packages = packages;
+    const owned_ssh_keys = ssh_keys;
+    var owned_state_version = state_version;
+    var owned_image_format = image_format;
+    defer owned_hostname.decref(roc_host);
+    defer owned_system.decref(roc_host);
+    defer decrefRocStrList(owned_packages, roc_host);
+    defer decrefRocStrList(owned_ssh_keys, roc_host);
+    defer owned_state_version.decref(roc_host);
+    defer owned_image_format.decref(roc_host);
+
+    const roc_env: *abi.RocEnv = @ptrCast(@alignCast(roc_host.env));
+    const package_slices = rocStringListSlices(roc_env.allocator, owned_packages) catch |err| {
+        writeHostError(@errorName(err));
+        return 1;
+    };
+    defer roc_env.allocator.free(package_slices);
+    const ssh_key_slices = rocStringListSlices(roc_env.allocator, owned_ssh_keys) catch |err| {
+        writeHostError(@errorName(err));
+        return 1;
+    };
+    defer roc_env.allocator.free(ssh_key_slices);
+
+    const parsed_format = machine.ImageFormat.parse(owned_image_format.asSlice()) orelse {
+        writeHostError("machine.image.format must be one of: raw, qcow2");
+        return 2;
+    };
+
+    var threaded_io = std.Io.Threaded.init(roc_env.allocator, .{ .environ = g_process_environ });
+    defer threaded_io.deinit();
+
+    return machine.build(roc_env.allocator, threaded_io.io(), .{
+        .hostname = owned_hostname.asSlice(),
+        .system = owned_system.asSlice(),
+        .packages = package_slices,
+        .ssh_keys = ssh_key_slices,
+        .state_version = owned_state_version.asSlice(),
+        .image_format = parsed_format,
+    }) catch |err| {
+        writeHostError(@errorName(err));
+        return 1;
+    };
+}
+
+fn writeHostError(message: []const u8) void {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const stderr = std.Io.File.stderr();
+    stderr.writeStreamingAll(io, "kai: ") catch return;
+    stderr.writeStreamingAll(io, message) catch return;
+    stderr.writeStreamingAll(io, "\n") catch return;
+}
+
 comptime {
     if (!builtin.is_test) {
         @export(&hostedKaiShell, .{ .name = "roc_kai_shell", .visibility = .hidden });
+        @export(&hostedKaiMachineBuild, .{ .name = "roc_kai_machine_build", .visibility = .hidden });
         @export(&hostedStdoutLine, .{ .name = "roc_stdout_line", .visibility = .hidden });
 
         @export(&hostAlloc, .{ .name = "roc_alloc", .visibility = .hidden });

@@ -1,10 +1,8 @@
 //! Tiny dependency-free Kai CLI.
 const std = @import("std");
-const protocol = @import("protocol.zig");
 
-const config_file = ".kai-adapter";
-const shell_target = ".";
-const default_shell = "sh";
+const adapter_config_file = ".kai-adapter";
+const default_config_file = "kai.roc";
 
 const BuiltinAdapter = struct {
     name: []const u8,
@@ -16,9 +14,14 @@ const builtin_adapters = [_]BuiltinAdapter{
     .{ .name = "guix", .executable = "kai-adapter-guix" },
 };
 
+const ConfigCommand = struct {
+    path: []const u8,
+};
+
 const Command = union(enum) {
     help,
-    shell,
+    shell: ConfigCommand,
+    build: ConfigCommand,
     adapter_list,
     adapter_get,
     adapter_set: []const u8,
@@ -42,22 +45,26 @@ fn run(init: std.process.Init) !u8 {
 
     _ = it.next(); // argv[0]
 
-    var args_buf: [4][]const u8 = undefined;
-    var args_len: usize = 0;
+    var args = std.array_list.Managed([]const u8).init(init.gpa);
+    defer args.deinit();
     while (it.next()) |arg| {
-        if (args_len == args_buf.len) return error.InvalidCommand;
-        args_buf[args_len] = arg;
-        args_len += 1;
+        try args.append(arg);
     }
 
-    const command = try parseCommand(args_buf[0..args_len]);
+    const command = try parseCommand(args.items);
     return executeCommand(init.gpa, init.io, init.environ_map, command);
 }
 
 fn parseCommand(args: []const []const u8) !Command {
     if (args.len == 0) return .help;
     if (args.len == 1 and std.mem.eql(u8, args[0], "help")) return .help;
-    if (args.len == 1 and std.mem.eql(u8, args[0], "shell")) return .shell;
+
+    if (args.len >= 1 and std.mem.eql(u8, args[0], "shell")) {
+        return .{ .shell = .{ .path = try parseOptionalConfigPath(args[1..]) } };
+    }
+    if (args.len >= 1 and std.mem.eql(u8, args[0], "build")) {
+        return .{ .build = .{ .path = try parseOptionalConfigPath(args[1..]) } };
+    }
 
     if (args.len >= 2 and std.mem.eql(u8, args[0], "adapter")) {
         if (args.len == 2 and std.mem.eql(u8, args[1], "list")) return .adapter_list;
@@ -66,6 +73,14 @@ fn parseCommand(args: []const []const u8) !Command {
     }
 
     return error.InvalidCommand;
+}
+
+fn parseOptionalConfigPath(args: []const []const u8) ![]const u8 {
+    return switch (args.len) {
+        0 => default_config_file,
+        1 => args[0],
+        else => error.InvalidCommand,
+    };
 }
 
 fn executeCommand(
@@ -79,7 +94,8 @@ fn executeCommand(
             try writeAll(io, .stdout, help_text);
             return 0;
         },
-        .shell => return runShell(allocator, io, env_map),
+        .shell => |config| return runRocConfigSection(allocator, io, env_map, config.path, "shell"),
+        .build => |config| return runRocConfigSection(allocator, io, env_map, config.path, "build"),
         .adapter_list => {
             try listAdapters(allocator, io, env_map);
             return 0;
@@ -106,37 +122,53 @@ fn executeCommand(
 const help_text =
     \\kai commands:
     \\  kai help
-    \\  kai shell
+    \\  kai shell [config.roc]
+    \\  kai build [config.roc]
     \\  kai adapter list
     \\  kai adapter get
     \\  kai adapter set <adapter>
     \\
+    \\Config defaults to kai.roc.
+    \\kai shell runs the config.shell section.
+    \\kai build runs the config.machine.build section.
     \\Adapters are selected from .kai-adapter, then KAI_BACKEND_ADAPTER.
     \\Built-in adapter names: nix, guix.
-    \\kai shell runs `sh` in target `.` through the selected adapter.
     \\
 ;
 
-fn runShell(allocator: std.mem.Allocator, io: std.Io, env_map: *std.process.Environ.Map) !u8 {
-    const selection = try selectedAdapterSetting(allocator, io, env_map);
-    if (selection == null) return error.MissingBackendAdapter;
-    defer allocator.free(selection.?.setting);
+fn runRocConfigSection(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    env_map: *std.process.Environ.Map,
+    config_path: []const u8,
+    section: []const u8,
+) !u8 {
+    const roc_exe = env_map.get("KAI_ROC") orelse "roc";
+    const argv = rocConfigArgv(roc_exe, config_path, section);
+    const result = try std.process.run(allocator, io, .{
+        .argv = &argv,
+        .stdout_limit = .limited(64 * 1024),
+        .stderr_limit = .limited(64 * 1024),
+        .expand_arg0 = .expand,
+    });
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
 
-    const adapter = try resolveAdapter(allocator, io, selection.?.setting);
-    defer allocator.free(adapter);
+    try writeAll(io, .stdout, result.stdout);
+    try writeAll(io, .stderr, result.stderr);
 
-    const output = try protocol.executeProtocolCommand(
-        allocator,
-        io,
-        adapter,
-        "shell",
-        shell_target,
-        &.{default_shell},
-    );
-    defer allocator.free(output);
+    return exitCode(result.term);
+}
 
-    try writeAll(io, .stdout, output);
-    return 0;
+fn rocConfigArgv(roc_exe: []const u8, config_path: []const u8, section: []const u8) [4][]const u8 {
+    return .{ roc_exe, config_path, "--", section };
+}
+
+fn exitCode(term: std.process.Child.Term) u8 {
+    return switch (term) {
+        .exited => |code| if (code > 255) 1 else @intCast(code),
+        .signal, .stopped, .unknown => 1,
+    };
 }
 
 fn selectedAdapterSetting(
@@ -145,7 +177,7 @@ fn selectedAdapterSetting(
     env_map: *std.process.Environ.Map,
 ) !?Selection {
     if (try readConfiguredAdapter(allocator, io)) |setting| {
-        return .{ .setting = setting, .source = config_file };
+        return .{ .setting = setting, .source = adapter_config_file };
     }
 
     if (env_map.get("KAI_BACKEND_ADAPTER")) |env_adapter| {
@@ -161,7 +193,7 @@ fn selectedAdapterSetting(
 }
 
 fn readConfiguredAdapter(allocator: std.mem.Allocator, io: std.Io) !?[]u8 {
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, config_file, allocator, .limited(4096)) catch |err| switch (err) {
+    const bytes = std.Io.Dir.cwd().readFileAlloc(io, adapter_config_file, allocator, .limited(4096)) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return err,
     };
@@ -175,7 +207,7 @@ fn readConfiguredAdapter(allocator: std.mem.Allocator, io: std.Io) !?[]u8 {
 fn writeConfiguredAdapter(allocator: std.mem.Allocator, io: std.Io, adapter: []const u8) !void {
     const bytes = try std.fmt.allocPrint(allocator, "{s}\n", .{adapter});
     defer allocator.free(bytes);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = config_file, .data = bytes });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = adapter_config_file, .data = bytes });
 }
 
 fn validateAdapterSetting(adapter: []const u8) !void {
@@ -273,7 +305,17 @@ fn writeFmt(
 
 test "parses supported commands" {
     try std.testing.expectEqual(Command.help, try parseCommand(&.{"help"}));
-    try std.testing.expectEqual(Command.shell, try parseCommand(&.{"shell"}));
+
+    const shell_default = try parseCommand(&.{"shell"});
+    try std.testing.expectEqualStrings(default_config_file, shell_default.shell.path);
+    const shell_file = try parseCommand(&.{ "shell", "examples/shell.roc" });
+    try std.testing.expectEqualStrings("examples/shell.roc", shell_file.shell.path);
+
+    const build_default = try parseCommand(&.{"build"});
+    try std.testing.expectEqualStrings(default_config_file, build_default.build.path);
+    const build_file = try parseCommand(&.{ "build", "examples/shell.roc" });
+    try std.testing.expectEqualStrings("examples/shell.roc", build_file.build.path);
+
     try std.testing.expectEqual(Command.adapter_list, try parseCommand(&.{ "adapter", "list" }));
     try std.testing.expectEqual(Command.adapter_get, try parseCommand(&.{ "adapter", "get" }));
 
@@ -283,8 +325,17 @@ test "parses supported commands" {
 
 test "rejects unsupported commands" {
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{"version"}));
-    try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "shell", "extra" }));
+    try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "shell", "a", "b" }));
+    try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "build", "a", "b" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "adapter", "delete" }));
+}
+
+test "builds roc config argv" {
+    const argv = rocConfigArgv("roc", "examples/shell.roc", "build");
+    try std.testing.expectEqualStrings("roc", argv[0]);
+    try std.testing.expectEqualStrings("examples/shell.roc", argv[1]);
+    try std.testing.expectEqualStrings("--", argv[2]);
+    try std.testing.expectEqualStrings("build", argv[3]);
 }
 
 test "trims adapter config" {

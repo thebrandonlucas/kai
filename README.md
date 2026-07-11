@@ -2,17 +2,26 @@
 
 Minimal Roc platform for Kai protocol experiments.
 
-Roc apps can be written as a small config DSL that emits one portable protocol command: `shell`.
+Roc apps can be written as a small config DSL with sections for `shell` and `machine.build`.
 
 ```roc
-app [config] { kai: platform "../platform/config.roc" }
+app [config] { kai: platform "./platform/config.roc" }
 
 config = {
     shell: {
         environment: "./fixtures/shell",
         run: "zig version >/dev/null && printf kai-shell-ok",
     },
-    stdout: "kai-shell-ok",
+    machine: {
+        build: {
+            hostname: "kai-example",
+            system: "x86_64-linux",
+            install: ["git"],
+            ssh_keys: [],
+            state_version: "25.05",
+            image: { format: "qcow2" },
+        },
+    },
 }
 ```
 
@@ -20,18 +29,20 @@ Adapter choice is outside the Roc file:
 
 ```sh
 ./zig-out/bin/kai adapter set nix   # or guix
-roc examples/shell.roc
+./zig-out/bin/kai shell             # defaults to kai.roc
+./zig-out/bin/kai shell examples/shell.roc
 ```
 
 Architecture:
 
-1. The Roc config declares a backend-neutral shell environment and command.
+1. `kai shell [config.roc]` runs the Roc config app with the `shell` section.
 2. The generic Zig host selects a backend adapter from `.kai-adapter` or `KAI_BACKEND_ADAPTER`.
 3. The backend adapter is a small Roc program using `kai.Adapter`.
 4. The adapter lowers the portable `shell` request to normalized argv.
 5. The Zig host parses that argv plan and executes it directly.
+6. `kai build [config.roc]` runs the `machine.build` section: it writes `.kai/flake.nix`, prints the machine output attr, then runs `nix build path:.kai#packages.<system>.<hostname>-image`.
 
-The host does not contain Nix/Guix lowering logic. Adding a backend means adding a Roc adapter, not editing `src/host.zig`.
+The shell protocol host does not contain Nix/Guix lowering logic. Adding a shell backend means adding a Roc adapter, not editing `src/host.zig`. Machine image builds are Nix-specific and follow the kai-zig `nix build path:.kai#...` flow.
 
 ## Adapter contract
 
@@ -98,7 +109,8 @@ zig build
 ./zig-out/bin/kai adapter list
 ./zig-out/bin/kai adapter set nix     # or guix, or an adapter executable/path
 ./zig-out/bin/kai adapter get
-./zig-out/bin/kai shell
+./zig-out/bin/kai shell [config.roc]
+./zig-out/bin/kai build [config.roc]
 ```
 
 Commands:
@@ -107,7 +119,8 @@ Commands:
 - `kai adapter list`: show the current adapter and built adapters found next to `kai`.
 - `kai adapter get`: print the selected adapter, or `none`.
 - `kai adapter set <adapter>`: write `<adapter>` to the local `.kai-adapter` config file. Built-in names `nix` and `guix` resolve to sibling `kai-adapter-nix`/`kai-adapter-guix` executables when present.
-- `kai shell`: run `sh` through the selected adapter using the existing `shell` protocol with target `.`.
+- `kai shell [config.roc]`: run `config.shell`; defaults to `kai.roc`.
+- `kai build [config.roc]`: run `config.machine.build`; defaults to `kai.roc`. This writes `.kai/flake.nix` and runs `nix build` for the configured image output, following the kai-zig machine build behavior.
 
 Adapter selection order for both the CLI and Roc config apps is `.kai-adapter`, then `KAI_BACKEND_ADAPTER`. `Kai.shellWithAdapter!` can still override this in lower-level Roc code.
 
@@ -116,8 +129,9 @@ Examples:
 ```sh
 ./zig-out/bin/kai adapter set nix
 ./zig-out/bin/kai shell
+./zig-out/bin/kai build
 
-KAI_BACKEND_ADAPTER=./fixtures/adapters/static-plan ./zig-out/bin/kai shell
+KAI_BACKEND_ADAPTER=./fixtures/adapters/static-plan ./zig-out/bin/kai shell examples/shell.roc
 ```
 
 ## Run
@@ -140,18 +154,18 @@ Build only Roc adapters:
 zig build roc-adapters
 ```
 
-Run the generic config example:
+Run the generic config example through the CLI:
 
 ```sh
 ./zig-out/bin/kai adapter set nix   # or guix
-roc examples/shell.roc
+./zig-out/bin/kai shell examples/shell.roc
 ```
 
-Run the per-adapter e2e entries directly:
+Run the config app directly:
 
 ```sh
-KAI_BACKEND_ADAPTER=./zig-out/bin/kai-adapter-nix roc examples/shell-nix.roc
-KAI_BACKEND_ADAPTER=./zig-out/bin/kai-adapter-guix roc examples/shell-guix.roc
+KAI_BACKEND_ADAPTER=./zig-out/bin/kai-adapter-nix roc examples/shell-nix.roc -- shell
+KAI_BACKEND_ADAPTER=./zig-out/bin/kai-adapter-nix roc examples/shell-nix.roc -- build
 ```
 
 Opt-in real subprocess proof (requires Roc plus nix/guix, and Nix flakes enabled):
