@@ -181,7 +181,7 @@ pub fn build(b: *std.Build) void {
         b.fmt("KAI_BACKEND_ADAPTER={s}", .{b.getInstallPath(.bin, "kai-adapter-nix")}),
         b.getInstallPath(.bin, "kai"),
         "shell",
-        "examples/shell-nix.roc",
+        "examples/shell.roc",
     });
     run_nix_example.step.dependOn(install_step);
     run_nix_example.step.dependOn(&run_host_tests.step);
@@ -192,7 +192,7 @@ pub fn build(b: *std.Build) void {
         b.fmt("KAI_BACKEND_ADAPTER={s}", .{b.getInstallPath(.bin, "kai-adapter-guix")}),
         b.getInstallPath(.bin, "kai"),
         "shell",
-        "examples/shell-guix.roc",
+        "examples/shell.roc",
     });
     run_guix_example.step.dependOn(install_step);
     run_guix_example.step.dependOn(&run_host_tests.step);

@@ -163,8 +163,8 @@ Run the generic config example through the CLI:
 Run the config app directly:
 
 ```sh
-KAI_BACKEND_ADAPTER=./zig-out/bin/kai-adapter-nix roc examples/shell-nix.roc -- shell
-KAI_BACKEND_ADAPTER=./zig-out/bin/kai-adapter-nix roc examples/shell-nix.roc -- build
+KAI_BACKEND_ADAPTER=./zig-out/bin/kai-adapter-nix roc examples/shell.roc -- shell
+KAI_BACKEND_ADAPTER=./zig-out/bin/kai-adapter-nix roc examples/shell.roc -- build
 ```
 
 Opt-in real subprocess proof (requires Roc plus nix/guix, and Nix flakes enabled):
