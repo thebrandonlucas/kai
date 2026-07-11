@@ -113,20 +113,9 @@ comptime {
     }
 }
 
-const adapter_protocol = "kai.adapter.v0";
+const adapter_request_protocol = "kai.adapter.argv.v1";
+const adapter_plan_protocol = "kai.adapter.plan.v1";
 const default_adapter = "kai-adapter-nix";
-
-const AdapterRequest = struct {
-    protocol: []const u8,
-    command: []const u8,
-    target: []const u8,
-    argv: []const []const u8,
-};
-
-const AdapterPlan = struct {
-    protocol: []const u8,
-    argv: []const []const u8,
-};
 
 pub fn executeProtocolCommand(
     allocator: std.mem.Allocator,
@@ -143,53 +132,55 @@ pub fn executeProtocolCommand(
         return error.EmptyShellCommand;
     }
 
-    const request_json = try renderAdapterRequest(allocator, command, target, command_args);
-    defer allocator.free(request_json);
+    const adapter_argv = try buildAdapterArgv(allocator, adapter, command, target, command_args);
+    defer allocator.free(adapter_argv);
 
-    const plan_json = try runAdapter(allocator, io, adapter, request_json);
-    defer allocator.free(plan_json);
+    const plan_bytes = try runAdapter(allocator, io, adapter_argv);
+    defer allocator.free(plan_bytes);
 
-    var parsed = try std.json.parseFromSlice(AdapterPlan, allocator, plan_json, .{ .ignore_unknown_fields = true });
-    defer parsed.deinit();
+    const plan_argv = try parseAdapterPlan(allocator, plan_bytes);
+    defer freeAdapterPlan(allocator, plan_argv);
 
-    if (!std.mem.eql(u8, parsed.value.protocol, adapter_protocol)) {
-        return error.UnsupportedAdapterProtocol;
-    }
-    if (parsed.value.argv.len == 0) {
+    if (plan_argv.len == 0) {
         return error.EmptyExecutionPlan;
     }
 
-    return runArgv(allocator, io, parsed.value.argv);
+    return runArgv(allocator, io, plan_argv);
 }
 
-pub fn renderAdapterRequest(
+pub fn buildAdapterArgv(
     allocator: std.mem.Allocator,
+    adapter: []const u8,
     command: []const u8,
     target: []const u8,
     command_args: []const []const u8,
-) ![]u8 {
-    const request = AdapterRequest{
-        .protocol = adapter_protocol,
-        .command = command,
-        .target = target,
-        .argv = command_args,
-    };
-    return std.fmt.allocPrint(allocator, "{f}", .{std.json.fmt(request, .{})});
+) ![]const []const u8 {
+    if (adapter.len == 0) {
+        return error.MissingBackendAdapter;
+    }
+
+    const adapter_argv = try allocator.alloc([]const u8, 4 + command_args.len);
+    adapter_argv[0] = adapter;
+    adapter_argv[1] = adapter_request_protocol;
+    adapter_argv[2] = command;
+    adapter_argv[3] = target;
+    for (command_args, 0..) |arg, index| {
+        adapter_argv[4 + index] = arg;
+    }
+    return adapter_argv;
 }
 
 pub fn runAdapter(
     allocator: std.mem.Allocator,
     io: std.Io,
-    adapter: []const u8,
-    request_json: []const u8,
+    adapter_argv: []const []const u8,
 ) ![]u8 {
-    if (adapter.len == 0) {
+    if (adapter_argv.len == 0 or adapter_argv[0].len == 0) {
         return error.MissingBackendAdapter;
     }
 
-    const adapter_argv = [_][]const u8{ adapter, request_json };
     const result = try std.process.run(allocator, io, .{
-        .argv = &adapter_argv,
+        .argv = adapter_argv,
         .stdout_limit = .limited(64 * 1024),
         .stderr_limit = .limited(64 * 1024),
     });
@@ -207,6 +198,65 @@ pub fn runAdapter(
         .stopped => return error.AdapterFailed,
         .unknown => return error.AdapterFailed,
     }
+}
+
+pub fn parseAdapterPlan(allocator: std.mem.Allocator, plan_bytes: []const u8) ![]const []const u8 {
+    var cursor: usize = 0;
+
+    const protocol = try readPlanLine(plan_bytes, &cursor);
+    if (!std.mem.eql(u8, protocol, adapter_plan_protocol)) {
+        return error.UnsupportedAdapterProtocol;
+    }
+
+    const count_line = try readPlanLine(plan_bytes, &cursor);
+    const count = try std.fmt.parseInt(usize, count_line, 10);
+    const argv = try allocator.alloc([]const u8, count);
+    var initialized: usize = 0;
+    errdefer {
+        for (argv[0..initialized]) |arg| {
+            allocator.free(arg);
+        }
+        allocator.free(argv);
+    }
+
+    while (initialized < count) : (initialized += 1) {
+        const len_line = try readPlanLine(plan_bytes, &cursor);
+        const arg_len = try std.fmt.parseInt(usize, len_line, 10);
+        if (cursor + arg_len > plan_bytes.len) {
+            return error.InvalidAdapterPlan;
+        }
+
+        argv[initialized] = try allocator.dupe(u8, plan_bytes[cursor .. cursor + arg_len]);
+        cursor += arg_len;
+
+        if (cursor >= plan_bytes.len or plan_bytes[cursor] != '\n') {
+            return error.InvalidAdapterPlan;
+        }
+        cursor += 1;
+    }
+
+    if (cursor != plan_bytes.len) {
+        return error.InvalidAdapterPlan;
+    }
+
+    return argv;
+}
+
+pub fn freeAdapterPlan(allocator: std.mem.Allocator, argv: []const []const u8) void {
+    for (argv) |arg| {
+        allocator.free(arg);
+    }
+    allocator.free(argv);
+}
+
+fn readPlanLine(bytes: []const u8, cursor: *usize) ![]const u8 {
+    if (cursor.* > bytes.len) {
+        return error.InvalidAdapterPlan;
+    }
+    const newline_index = std.mem.indexOfScalarPos(u8, bytes, cursor.*, '\n') orelse return error.InvalidAdapterPlan;
+    const line = bytes[cursor.*..newline_index];
+    cursor.* = newline_index + 1;
+    return line;
 }
 
 pub fn renderArgv(allocator: std.mem.Allocator, argv: []const []const u8) ![]u8 {
@@ -359,13 +409,36 @@ fn buildStrArgsList(argc: usize, argv: [*][*:0]u8, roc_host: *abi.RocHost) abi.R
     return args_list;
 }
 
-test "renders backend-neutral shell adapter request" {
-    const request = try renderAdapterRequest(std.testing.allocator, "shell", ".", &.{ "hello", "kai quoted" });
-    defer std.testing.allocator.free(request);
-    try std.testing.expectEqualStrings(
-        "{\"protocol\":\"kai.adapter.v0\",\"command\":\"shell\",\"target\":\".\",\"argv\":[\"hello\",\"kai quoted\"]}",
-        request,
-    );
+test "builds adapter argv request" {
+    const argv = try buildAdapterArgv(std.testing.allocator, "adapter-bin", "shell", ".", &.{ "hello", "kai quoted" });
+    defer std.testing.allocator.free(argv);
+
+    try std.testing.expectEqual(@as(usize, 6), argv.len);
+    try std.testing.expectEqualStrings("adapter-bin", argv[0]);
+    try std.testing.expectEqualStrings("kai.adapter.argv.v1", argv[1]);
+    try std.testing.expectEqualStrings("shell", argv[2]);
+    try std.testing.expectEqualStrings(".", argv[3]);
+    try std.testing.expectEqualStrings("hello", argv[4]);
+    try std.testing.expectEqualStrings("kai quoted", argv[5]);
+}
+
+test "parses adapter plan with spaces and newlines" {
+    const plan = "kai.adapter.plan.v1\n3\n2\nsh\n2\n-c\n16\nprintf 'a b\nc d'\n";
+    const argv = try parseAdapterPlan(std.testing.allocator, plan);
+    defer freeAdapterPlan(std.testing.allocator, argv);
+
+    try std.testing.expectEqual(@as(usize, 3), argv.len);
+    try std.testing.expectEqualStrings("sh", argv[0]);
+    try std.testing.expectEqualStrings("-c", argv[1]);
+    try std.testing.expectEqualStrings("printf 'a b\nc d'", argv[2]);
+}
+
+test "rejects empty adapter plan" {
+    const plan = "kai.adapter.plan.v1\n0\n";
+    const argv = try parseAdapterPlan(std.testing.allocator, plan);
+    defer freeAdapterPlan(std.testing.allocator, argv);
+    try std.testing.expectEqual(@as(usize, 0), argv.len);
+    try std.testing.expectError(error.EmptyExecutionPlan, executeProtocolCommand(std.testing.allocator, std.testing.io, "fixtures/adapters/empty-plan", "shell", ".", &.{ "ignored" }));
 }
 
 test "requires a non-interactive shell command" {

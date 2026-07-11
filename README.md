@@ -9,56 +9,88 @@ Kai.shell!({ target: "./fixtures/shell", command: ["sh", "-c", "printf ok"] })
 Kai.shellWithAdapter!({ adapter: "./zig-out/bin/kai-adapter-nix", target: "./fixtures/shell", command: ["sh", "-c", "printf ok"] })
 ```
 
-The Zig host does not lower Nix or Guix itself. It serializes the shell request to a backend adapter executable, reads a normalized argv execution plan, and executes that argv directly.
+Architecture:
+
+1. Top-level Roc app calls `kai.Kai.shell!` or `shellWithAdapter!`.
+2. The generic Zig host sends a structured request to a backend adapter executable.
+3. The backend adapter is a small Roc program using `kai.Adapter`.
+4. The adapter lowers the portable `shell` request to normalized argv.
+5. The Zig host parses that argv plan and executes it directly, with no shell interpolation.
+
+The host does not contain Nix/Guix lowering logic. Adding a backend means adding a Roc adapter, not editing `src/host.zig`.
 
 ## Adapter contract
 
 Host calls:
 
-```sh
-<adapter-executable> '<request-json>'
+```text
+argv[0] = <adapter-executable>
+argv[1] = kai.adapter.argv.v1
+argv[2] = shell
+argv[3] = <target>
+argv[4..] = <command argv>
 ```
 
-Request JSON:
+Adapter stdout must be a length-prefixed plan:
 
-```json
-{"protocol":"kai.adapter.v0","command":"shell","target":"./fixtures/shell","argv":["sh","-c","printf ok"]}
-```
-
-Adapter stdout must be plan JSON:
-
-```json
-{"protocol":"kai.adapter.v0","argv":["nix","develop","--no-write-lock-file","./fixtures/shell","--command","sh","-c","printf ok"]}
+```text
+kai.adapter.plan.v1\n
+<count>\n
+<len0>\n
+<arg0 bytes>\n
+<len1>\n
+<arg1 bytes>\n
+...
 ```
 
 Rules:
 
-- Only `command: "shell"` is defined.
+- Only command `shell` is defined.
 - `argv` is a structured argument array. Do not return shell-interpolated command strings.
+- Argument lengths are UTF-8 byte counts. Newlines inside args are allowed because the host consumes exact byte lengths plus the trailing newline emitted by the Roc adapter.
 - Non-zero adapter exit means adapter failure.
-- The host selects an explicit adapter from `Kai.shellWithAdapter!`; `Kai.shell!` uses `KAI_BACKEND_ADAPTER`, falling back to `kai-adapter-nix` on `PATH`.
+- `Kai.shellWithAdapter!` selects an explicit adapter. `Kai.shell!` uses `KAI_BACKEND_ADAPTER`, falling back to `kai-adapter-nix` on `PATH`.
 
-## Included adapters
+## Roc backend DSL
 
-Built Zig adapters:
+`platform/Adapter.roc` provides the adapter executable helper:
 
-- `kai-adapter-nix`: `shell -> nix develop --no-write-lock-file <target> --command <argv...>`
-- `kai-adapter-guix`: `shell -> guix shell [-m manifest.scm|target] -- <argv...>`
+```roc
+app [main!] { kai: platform "../../platform/main.roc" }
 
-Roc source sketches live in `adapters/roc/`. They use basic-cli plus roc-json and are not built by the default Zig build yet. In this environment `roc check adapters/roc/nix.roc` reached package resolution but failed with `PACKAGE DOWNLOAD FAILED ... Error: DownloadFailed` for the remote basic-cli and roc-json packages.
+import kai.Adapter
+
+main! : List(Str) => I32
+main! = |args| Adapter.main!(args, |req|
+    List.concat(["tool", "shell", req.target, "--"], req.argv)
+)
+```
+
+Included Roc adapters:
+
+- `adapters/roc/nix.roc`: `shell -> nix develop --no-write-lock-file <target> --command <argv...>`
+- `adapters/roc/guix.roc`: `shell -> guix shell [-m manifest.scm|target] -- <argv...>`
+
+They depend only on this local Kai platform; no remote packages like `basic-cli` or `roc-json` are used.
 
 ## Run
 
-Fast tests:
+Fast Zig tests:
 
 ```sh
 zig build test
 ```
 
-Build host library and adapters:
+Build host library and Roc adapters:
 
 ```sh
 zig build
+```
+
+Build only Roc adapters:
+
+```sh
+zig build roc-adapters
 ```
 
 Opt-in real subprocess proof (requires Roc plus nix/guix, and Nix flakes enabled):
@@ -71,13 +103,3 @@ The e2e fixtures live in `fixtures/shell/`:
 
 - `flake.nix` provides a Nix dev shell containing `guix`.
 - `manifest.scm` provides a Guix shell containing `hello` and `bash-minimal`.
-
-## Third-party backend adapter
-
-Write any executable that accepts the request JSON as argv[1] and prints plan JSON to stdout. Then call it from Roc:
-
-```roc
-Kai.shellWithAdapter!({ adapter: "/path/to/my-kai-adapter", target: "my-target", command: ["tool", "--version"] })
-```
-
-No `host.zig` edit is required for a new backend.

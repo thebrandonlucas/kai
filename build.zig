@@ -69,11 +69,6 @@ pub fn build(b: *std.Build) void {
     const native_lib = buildHostLib(b, b.resolveTargetQuery(native_roc_target.toZigTarget()), optimize);
     b.installArtifact(native_lib);
 
-    const nix_adapter = buildAdapter(b, "kai-adapter-nix", "src/adapters/nix.zig", native_target, optimize);
-    const guix_adapter = buildAdapter(b, "kai-adapter-guix", "src/adapters/guix.zig", native_target, optimize);
-    b.installArtifact(nix_adapter);
-    b.installArtifact(guix_adapter);
-
     const copy_native = b.addUpdateSourceFiles();
     copy_native.addCopyFileToSource(
         native_lib.getEmittedBin(),
@@ -82,8 +77,31 @@ pub fn build(b: *std.Build) void {
     native_step.dependOn(&native_lib.step);
     native_step.dependOn(&copy_native.step);
 
+    const roc_adapters_step = b.step("roc-adapters", "Build dependency-free Roc backend adapters");
+    const make_bin_dir = b.addSystemCommand(&.{ "mkdir", "-p", b.getInstallPath(.bin, "") });
+    make_bin_dir.step.dependOn(native_step);
+
+    const build_nix_adapter = b.addSystemCommand(&.{
+        "roc",
+        "build",
+        "adapters/roc/nix.roc",
+        b.fmt("--output={s}", .{b.getInstallPath(.bin, "kai-adapter-nix")}),
+    });
+    build_nix_adapter.step.dependOn(&make_bin_dir.step);
+    roc_adapters_step.dependOn(&build_nix_adapter.step);
+
+    const build_guix_adapter = b.addSystemCommand(&.{
+        "roc",
+        "build",
+        "adapters/roc/guix.roc",
+        b.fmt("--output={s}", .{b.getInstallPath(.bin, "kai-adapter-guix")}),
+    });
+    build_guix_adapter.step.dependOn(&make_bin_dir.step);
+    roc_adapters_step.dependOn(&build_guix_adapter.step);
+
     const install_step = b.getInstallStep();
     install_step.dependOn(native_step);
+    install_step.dependOn(roc_adapters_step);
 
     const test_step = b.step("test", "Run Zig unit tests");
 
@@ -158,24 +176,6 @@ const CleanupStep = struct {
         };
     }
 };
-
-fn buildAdapter(
-    b: *std.Build,
-    name: []const u8,
-    root_source_file: []const u8,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-) *std.Build.Step.Compile {
-    return b.addExecutable(.{
-        .name = name,
-        .root_module = b.createModule(.{
-            .root_source_file = b.path(root_source_file),
-            .target = target,
-            .optimize = optimize,
-            .strip = optimize != .Debug,
-        }),
-    });
-}
 
 fn buildHostLib(
     b: *std.Build,
