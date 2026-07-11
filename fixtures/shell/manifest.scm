@@ -1,1 +1,1 @@
-(specifications->manifest '("hello" "bash-minimal"))
+(specifications->manifest '("zig" "bash-minimal"))

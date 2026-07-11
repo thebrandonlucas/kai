@@ -108,5 +108,5 @@ zig build e2e
 
 The e2e fixtures live in `fixtures/shell/`:
 
-- `flake.nix` provides a Nix dev shell containing `guix`.
-- `manifest.scm` provides a Guix shell containing `hello` and `bash-minimal`.
+- `flake.nix` provides a Nix dev shell containing `zig`.
+- `manifest.scm` provides a Guix shell containing `zig` and `bash-minimal`.

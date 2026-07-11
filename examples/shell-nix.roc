@@ -8,7 +8,7 @@ main! = |_args| {
     output = Kai.shellWithAdapter!({
         adapter: "./zig-out/bin/kai-adapter-nix",
         target: "./fixtures/shell",
-        command: ["sh", "-c", "guix --version >/dev/null && printf kai-nix-ok"],
+        command: ["sh", "-c", "zig version >/dev/null && printf kai-nix-ok"],
     })
 
     if output == "kai-nix-ok" {
