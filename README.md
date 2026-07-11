@@ -49,11 +49,11 @@ Rules:
 - `argv` is a structured argument array. Do not return shell-interpolated command strings.
 - Argument lengths are UTF-8 byte counts. Newlines inside args are allowed because the host consumes exact byte lengths plus the trailing newline emitted by the Roc adapter.
 - Non-zero adapter exit means adapter failure.
-- `Kai.shellWithAdapter!` selects an explicit adapter. `Kai.shell!` uses `KAI_BACKEND_ADAPTER`, falling back to `kai-adapter-nix` on `PATH`.
+- `Kai.shellWithAdapter!` selects an explicit adapter. `Kai.shell!` uses `KAI_BACKEND_ADAPTER`; if it is unset, the host returns `MissingBackendAdapter`.
 
 ## Roc backend DSL
 
-`platform/Adapter.roc` provides the adapter executable helper:
+`platform/Adapter.roc` provides only the generic adapter contract and executable helper. Backend-specific lowering belongs in adapter files under `adapters/roc/` or in a third-party Roc adapter:
 
 ```roc
 app [main!] { kai: platform "../../platform/main.roc" }

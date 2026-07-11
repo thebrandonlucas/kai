@@ -115,7 +115,6 @@ comptime {
 
 const adapter_request_protocol = "kai.adapter.argv.v1";
 const adapter_plan_protocol = "kai.adapter.plan.v1";
-const default_adapter = "kai-adapter-nix";
 
 pub fn executeProtocolCommand(
     allocator: std.mem.Allocator,
@@ -308,7 +307,7 @@ fn selectedAdapter(explicit_adapter: []const u8) ?[]const u8 {
     if (processEnvValue("KAI_BACKEND_ADAPTER")) |env_adapter| {
         if (env_adapter.len != 0) return env_adapter;
     }
-    return default_adapter;
+    return null;
 }
 
 fn processEnvValue(name: []const u8) ?[]const u8 {

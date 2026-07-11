@@ -1,12 +1,16 @@
 import Stdout
 
-## Request sent by the generic Kai host to a Roc backend adapter.
-Request : { target : Str, argv : List(Str) }
-
-## Pure backend lowering from Kai's portable shell request to executable argv.
-Backend : Request -> List(Str)
-
+## Generic helper API for writing backend adapters in Roc.
+##
+## This module defines the adapter protocol and plan encoder only; backend-specific
+## lowering belongs in adapter executables, not in the platform.
 Adapter := [].{
+    ## Request sent by the generic Kai host to a Roc backend adapter.
+    Request : { target : Str, argv : List(Str) }
+
+    ## Pure backend lowering from Kai's portable shell request to executable argv.
+    Backend : Request -> List(Str)
+
     requestProtocol : Str
     requestProtocol = "kai.adapter.argv.v1"
 
@@ -36,34 +40,6 @@ Adapter := [].{
                 0
             }
         }
-    }
-
-    ## Nix backend: nix develop --no-write-lock-file <target> --command <command...>
-    nixDevelop : Backend
-    nixDevelop = |request| {
-        prefix =
-            if request.target == "" {
-                ["nix", "develop", "--no-write-lock-file", "--command"]
-            } else {
-                ["nix", "develop", "--no-write-lock-file", request.target, "--command"]
-            }
-
-        List.concat(prefix, request.argv)
-    }
-
-    ## Guix backend: guix shell [-m manifest.scm|target] -- <command...>
-    guixShell : Backend
-    guixShell = |request| {
-        prefix =
-            if Str.ends_with(request.target, ".scm") {
-                ["guix", "shell", "-m", request.target, "--"]
-            } else if request.target == "" {
-                ["guix", "shell", "--"]
-            } else {
-                ["guix", "shell", request.target, "--"]
-            }
-
-        List.concat(prefix, request.argv)
     }
 
     emitPlan! : List(Str) => {}
