@@ -69,6 +69,16 @@ pub fn build(b: *std.Build) void {
     const native_lib = buildHostLib(b, b.resolveTargetQuery(native_roc_target.toZigTarget()), optimize);
     b.installArtifact(native_lib);
 
+    const kai_cli = b.addExecutable(.{
+        .name = "kai",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/cli.zig"),
+            .target = native_target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(kai_cli);
+
     const copy_native = b.addUpdateSourceFiles();
     copy_native.addCopyFileToSource(
         native_lib.getEmittedBin(),
@@ -114,6 +124,26 @@ pub fn build(b: *std.Build) void {
     });
     const run_host_tests = b.addRunArtifact(host_tests);
     test_step.dependOn(&run_host_tests.step);
+
+    const protocol_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/protocol.zig"),
+            .target = native_target,
+            .optimize = optimize,
+        }),
+    });
+    const run_protocol_tests = b.addRunArtifact(protocol_tests);
+    test_step.dependOn(&run_protocol_tests.step);
+
+    const cli_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/cli.zig"),
+            .target = native_target,
+            .optimize = optimize,
+        }),
+    });
+    const run_cli_tests = b.addRunArtifact(cli_tests);
+    test_step.dependOn(&run_cli_tests.step);
 
     const e2e_step = b.step("e2e", "Run real nix/guix subprocess examples");
     const run_nix_example = b.addSystemCommand(&.{ "roc", "examples/shell-nix.roc" });

@@ -73,6 +73,38 @@ Included Roc adapters:
 
 They depend only on this local Kai platform; no remote packages like `basic-cli` or `roc-json` are used.
 
+## CLI
+
+`zig build` installs a tiny dependency-free CLI at `zig-out/bin/kai` alongside the Roc adapters.
+
+```sh
+zig build
+./zig-out/bin/kai help
+./zig-out/bin/kai adapter list
+./zig-out/bin/kai adapter set nix     # or guix, or an adapter executable/path
+./zig-out/bin/kai adapter get
+./zig-out/bin/kai shell
+```
+
+Commands:
+
+- `kai help`: print usage.
+- `kai adapter list`: show the current adapter and built adapters found next to `kai`.
+- `kai adapter get`: print the selected adapter, or `none`.
+- `kai adapter set <adapter>`: write `<adapter>` to the local `.kai-adapter` config file. Built-in names `nix` and `guix` resolve to sibling `kai-adapter-nix`/`kai-adapter-guix` executables when present.
+- `kai shell`: run `sh` through the selected adapter using the existing `shell` protocol with target `.`.
+
+Adapter selection order for the CLI is `.kai-adapter`, then `KAI_BACKEND_ADAPTER`. The generic Roc host still uses explicit `Kai.shellWithAdapter!` or `KAI_BACKEND_ADAPTER` for `Kai.shell!`.
+
+Examples:
+
+```sh
+./zig-out/bin/kai adapter set nix
+./zig-out/bin/kai shell
+
+KAI_BACKEND_ADAPTER=./fixtures/adapters/static-plan ./zig-out/bin/kai shell
+```
+
 ## Run
 
 Fast Zig tests:
@@ -81,7 +113,7 @@ Fast Zig tests:
 zig build test
 ```
 
-Build host library and Roc adapters:
+Build host library, CLI, and Roc adapters:
 
 ```sh
 zig build
