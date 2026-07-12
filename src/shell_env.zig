@@ -3,7 +3,8 @@ const backend_mod = @import("backend.zig");
 
 pub const PreparedShell = struct {
     target: []const u8,
-    written_path: ?[]const u8,
+    generated_path: ?[]const u8,
+    wrote: bool,
 };
 
 pub const shell_workspace_dir = ".kai/shell";
@@ -26,15 +27,15 @@ pub fn prepare(
             const flake = try renderNixFlake(allocator, name, packages);
             defer allocator.free(flake);
             const wrote = try writeIfChanged(allocator, io, nix_flake_path, flake);
-            break :blk .{ .target = "path:" ++ shell_workspace_dir, .written_path = if (wrote) nix_flake_path else null };
+            break :blk .{ .target = "path:" ++ shell_workspace_dir, .generated_path = nix_flake_path, .wrote = wrote };
         },
         .guix => blk: {
             const manifest = try renderGuixManifest(allocator, packages);
             defer allocator.free(manifest);
             const wrote = try writeIfChanged(allocator, io, guix_manifest_path, manifest);
-            break :blk .{ .target = shell_workspace_dir, .written_path = if (wrote) guix_manifest_path else null };
+            break :blk .{ .target = shell_workspace_dir, .generated_path = guix_manifest_path, .wrote = wrote };
         },
-        .adapter => .{ .target = shell_workspace_dir, .written_path = null },
+        .adapter => .{ .target = shell_workspace_dir, .generated_path = null, .wrote = false },
     };
 }
 

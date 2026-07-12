@@ -38,24 +38,15 @@ pub fn build(allocator: std.mem.Allocator, io: std.Io, spec: BuildSpec) !u8 {
     defer allocator.free(flake);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = machine_flake_path, .data = flake });
 
-    const output = try imagePackageOutput(allocator, spec);
+    const attr = try imagePackageAttr(allocator, spec);
+    defer allocator.free(attr);
+    const output = try imagePackageOutputFromAttr(allocator, attr);
     defer allocator.free(output);
 
-    try writeFmt(allocator, io, .stdout, "wrote {s}\nmachine output: {s}\n", .{ machine_flake_path, output });
+    const argv = nixBuildArgv(output);
+    try writeFmt(allocator, io, .stdout, "wrote {s}\nmachine output: {s}\nrunning nix build {s}\n", .{ machine_flake_path, attr, output });
 
-    const result = try std.process.run(allocator, io, .{
-        .argv = &.{ "nix", "build", output },
-        .stdout_limit = .limited(64 * 1024),
-        .stderr_limit = .limited(64 * 1024),
-        .expand_arg0 = .expand,
-    });
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-
-    try writeAll(io, .stdout, result.stdout);
-    try writeAll(io, .stderr, result.stderr);
-
-    return exitCode(result.term);
+    return runArgvStatus(io, &argv);
 }
 
 pub fn imagePackageAttr(allocator: std.mem.Allocator, spec: BuildSpec) ![]u8 {
@@ -65,7 +56,15 @@ pub fn imagePackageAttr(allocator: std.mem.Allocator, spec: BuildSpec) ![]u8 {
 pub fn imagePackageOutput(allocator: std.mem.Allocator, spec: BuildSpec) ![]u8 {
     const attr = try imagePackageAttr(allocator, spec);
     defer allocator.free(attr);
+    return imagePackageOutputFromAttr(allocator, attr);
+}
+
+fn imagePackageOutputFromAttr(allocator: std.mem.Allocator, attr: []const u8) ![]u8 {
     return std.fmt.allocPrint(allocator, "path:" ++ machine_workspace_dir ++ "#{s}", .{attr});
+}
+
+pub fn nixBuildArgv(output: []const u8) [3][]const u8 {
+    return .{ "nix", "build", output };
 }
 
 pub fn renderFlake(allocator: std.mem.Allocator, spec: BuildSpec) ![]u8 {
@@ -223,9 +222,22 @@ fn writeFmt(allocator: std.mem.Allocator, io: std.Io, stream: Stream, comptime f
     try writeAll(io, stream, bytes);
 }
 
+fn runArgvStatus(io: std.Io, argv: []const []const u8) !u8 {
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
+        .expand_arg0 = .expand,
+    });
+    errdefer child.kill(io);
+
+    return exitCode(try child.wait(io));
+}
+
 fn exitCode(term: std.process.Child.Term) u8 {
     return switch (term) {
-        .exited => |code| if (code > 255) 1 else @intCast(code),
+        .exited => |code| code,
         .signal, .stopped, .unknown => 1,
     };
 }
@@ -248,6 +260,18 @@ test "renders image package output under machine subflake" {
     });
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualStrings("path:.kai/machine#packages.x86_64-linux.web-image", output);
+}
+
+test "builds nix build argv" {
+    const argv = nixBuildArgv("path:.kai/machine#packages.x86_64-linux.web-image");
+    try std.testing.expectEqualStrings("nix", argv[0]);
+    try std.testing.expectEqualStrings("build", argv[1]);
+    try std.testing.expectEqualStrings("path:.kai/machine#packages.x86_64-linux.web-image", argv[2]);
+}
+
+test "run argv status returns child exit code" {
+    const code = try runArgvStatus(std.testing.io, &.{ "sh", "-c", "exit 6" });
+    try std.testing.expectEqual(@as(u8, 6), code);
 }
 
 test "renders machine flake" {

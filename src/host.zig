@@ -183,12 +183,12 @@ fn hostedKaiConfigShell(name: abi.RocStr, packages: abi.RocList(abi.RocStr)) cal
         return 1;
     };
 
-    if (prepared.written_path) |path| {
-        writeGeneratedShellPath(path);
+    if (prepared.generated_path) |path| {
+        writeGeneratedShellPath(if (prepared.wrote) "wrote" else "using", path);
     }
 
     const command_args = [_][]const u8{"sh"};
-    const output = protocol.executeProtocolCommand(
+    return protocol.executeProtocolCommandStatus(
         roc_env.allocator,
         threaded_io.io(),
         selected_backend.adapter_executable,
@@ -199,10 +199,6 @@ fn hostedKaiConfigShell(name: abi.RocStr, packages: abi.RocList(abi.RocStr)) cal
         writeHostError(@errorName(err));
         return 1;
     };
-    defer roc_env.allocator.free(output);
-
-    writeHostStdout(output);
-    return 0;
 }
 
 fn hostedKaiMachineBuild(
@@ -285,10 +281,11 @@ fn writeHostStdout(message: []const u8) void {
     stdout.writeStreamingAll(io, message) catch return;
 }
 
-fn writeGeneratedShellPath(path: []const u8) void {
+fn writeGeneratedShellPath(status: []const u8, path: []const u8) void {
     const io = std.Io.Threaded.global_single_threaded.io();
     const stdout = std.Io.File.stdout();
-    stdout.writeStreamingAll(io, "wrote ") catch return;
+    stdout.writeStreamingAll(io, status) catch return;
+    stdout.writeStreamingAll(io, " ") catch return;
     stdout.writeStreamingAll(io, path) catch return;
     stdout.writeStreamingAll(io, "\n") catch return;
 }

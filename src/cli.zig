@@ -480,7 +480,7 @@ fn dispatchProtocolCommand(
     );
 
     return switch (result) {
-        .ok => |plan| runRocConfigProtocolCommand(allocator, io, env_map, plan.config_path, plan.command_name),
+        .ok => |plan| runRocConfigProtocolCommand(io, env_map, plan.config_path, plan.command_name),
         .command_not_available, .implementation_not_found => blk: {
             try writeFmt(allocator, io, .stderr, "kai: command not available: {s}\n", .{config.cli_name});
             break :blk 1;
@@ -542,7 +542,6 @@ fn implementationOverride(
 }
 
 fn runRocConfigProtocolCommand(
-    allocator: std.mem.Allocator,
     io: std.Io,
     env_map: *std.process.Environ.Map,
     config_path: []const u8,
@@ -550,28 +549,29 @@ fn runRocConfigProtocolCommand(
 ) !u8 {
     const roc_exe = env_map.get("KAI_ROC") orelse "roc";
     const argv = rocConfigArgv(roc_exe, config_path, command_name);
-    const result = try std.process.run(allocator, io, .{
-        .argv = &argv,
-        .stdout_limit = .limited(64 * 1024),
-        .stderr_limit = .limited(64 * 1024),
-        .expand_arg0 = .expand,
-    });
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-
-    try writeAll(io, .stdout, result.stdout);
-    try writeAll(io, .stderr, result.stderr);
-
-    return exitCode(result.term);
+    return runProcessStatus(io, &argv);
 }
 
 fn rocConfigArgv(roc_exe: []const u8, config_path: []const u8, command_name: []const u8) [4][]const u8 {
     return .{ roc_exe, config_path, "--", command_name };
 }
 
+fn runProcessStatus(io: std.Io, argv: []const []const u8) !u8 {
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
+        .expand_arg0 = .expand,
+    });
+    errdefer child.kill(io);
+
+    return exitCode(try child.wait(io));
+}
+
 fn exitCode(term: std.process.Child.Term) u8 {
     return switch (term) {
-        .exited => |code| if (code > 255) 1 else @intCast(code),
+        .exited => |code| code,
         .signal, .stopped, .unknown => 1,
     };
 }
@@ -668,6 +668,11 @@ test "builds roc config argv with protocol command name" {
     try std.testing.expectEqualStrings("examples/shell.roc", argv[1]);
     try std.testing.expectEqualStrings("--", argv[2]);
     try std.testing.expectEqualStrings("machine.build", argv[3]);
+}
+
+test "run process status returns child exit code" {
+    const code = try runProcessStatus(std.testing.io, &.{ "sh", "-c", "exit 5" });
+    try std.testing.expectEqual(@as(u8, 5), code);
 }
 
 test "styled help uses bold headers and ANSI command color" {

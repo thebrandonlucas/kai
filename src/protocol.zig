@@ -15,6 +15,33 @@ pub fn executeProtocolCommand(
     target: []const u8,
     command_args: []const []const u8,
 ) ![]u8 {
+    const code = try executeProtocolCommandStatus(allocator, io, adapter, command, target, command_args);
+    if (code == 0) return allocator.dupe(u8, "");
+    return std.fmt.allocPrint(allocator, "kai: subprocess exited with status {d}\n", .{code});
+}
+
+pub fn executeProtocolCommandStatus(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    adapter: []const u8,
+    command: []const u8,
+    target: []const u8,
+    command_args: []const []const u8,
+) !u8 {
+    const plan_argv = try adapterPlanArgv(allocator, io, adapter, command, target, command_args);
+    defer freeAdapterPlan(allocator, plan_argv);
+
+    return runArgvStatus(io, plan_argv);
+}
+
+fn adapterPlanArgv(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    adapter: []const u8,
+    command: []const u8,
+    target: []const u8,
+    command_args: []const []const u8,
+) ![]const []const u8 {
     if (!std.mem.eql(u8, command, "shell")) {
         return error.UnsupportedProtocolCommand;
     }
@@ -29,13 +56,13 @@ pub fn executeProtocolCommand(
     defer allocator.free(plan_bytes);
 
     const plan_argv = try parseAdapterPlan(allocator, plan_bytes);
-    defer freeAdapterPlan(allocator, plan_argv);
+    errdefer freeAdapterPlan(allocator, plan_argv);
 
     if (plan_argv.len == 0) {
         return error.EmptyExecutionPlan;
     }
 
-    return runArgv(allocator, io, plan_argv);
+    return plan_argv;
 }
 
 pub fn buildAdapterArgv(
@@ -154,43 +181,28 @@ pub fn renderArgv(allocator: std.mem.Allocator, argv: []const []const u8) ![]u8 
     return std.mem.join(allocator, " ", argv);
 }
 
-pub fn runArgv(allocator: std.mem.Allocator, io: std.Io, argv: []const []const u8) ![]u8 {
-    const result = try std.process.run(allocator, io, .{
+pub fn runArgvStatus(io: std.Io, argv: []const []const u8) !u8 {
+    if (argv.len == 0 or argv[0].len == 0) {
+        return error.EmptyExecutionPlan;
+    }
+
+    var child = try std.process.spawn(io, .{
         .argv = argv,
-        .stdout_limit = .limited(64 * 1024),
-        .stderr_limit = .limited(64 * 1024),
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
         .expand_arg0 = .expand,
     });
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
+    errdefer child.kill(io);
 
-    switch (result.term) {
-        .exited => |code| {
-            if (code == 0) {
-                return allocator.dupe(u8, result.stdout);
-            }
-            return std.fmt.allocPrint(
-                allocator,
-                "kai: subprocess exited with status {d}\nstdout:\n{s}\nstderr:\n{s}",
-                .{ code, result.stdout, result.stderr },
-            );
-        },
-        .signal => |signal| return std.fmt.allocPrint(
-            allocator,
-            "kai: subprocess terminated by signal {d}\nstdout:\n{s}\nstderr:\n{s}",
-            .{ @intFromEnum(signal), result.stdout, result.stderr },
-        ),
-        .stopped => |signal| return std.fmt.allocPrint(
-            allocator,
-            "kai: subprocess stopped by signal {d}\nstdout:\n{s}\nstderr:\n{s}",
-            .{ @intFromEnum(signal), result.stdout, result.stderr },
-        ),
-        .unknown => |status| return std.fmt.allocPrint(
-            allocator,
-            "kai: subprocess ended with unknown status {d}\nstdout:\n{s}\nstderr:\n{s}",
-            .{ status, result.stdout, result.stderr },
-        ),
-    }
+    return exitCode(try child.wait(io));
+}
+
+fn exitCode(term: std.process.Child.Term) u8 {
+    return switch (term) {
+        .exited => |code| code,
+        .signal, .stopped, .unknown => 1,
+    };
 }
 
 test "builds adapter argv request" {
@@ -230,13 +242,11 @@ test "requires a non-interactive shell command" {
 }
 
 test "calls adapter subprocess and executes normalized argv" {
-    const output = try executeProtocolCommand(std.heap.page_allocator, std.testing.io, "fixtures/adapters/static-plan", "shell", ".", &.{"ignored"});
-    defer std.heap.page_allocator.free(output);
-    try std.testing.expectEqualStrings("kai-adapter-ok", output);
+    const code = try executeProtocolCommandStatus(std.testing.allocator, std.testing.io, "fixtures/adapters/exit-plan", "shell", ".", &.{"ignored"});
+    try std.testing.expectEqual(@as(u8, 8), code);
 }
 
-test "executes argv and captures stdout" {
-    const output = try runArgv(std.heap.page_allocator, std.testing.io, &.{ "sh", "-c", "printf kai-ok" });
-    defer std.heap.page_allocator.free(output);
-    try std.testing.expectEqualStrings("kai-ok", output);
+test "executes argv with inherited stdio and returns exit code" {
+    const code = try runArgvStatus(std.testing.io, &.{ "sh", "-c", "exit 7" });
+    try std.testing.expectEqual(@as(u8, 7), code);
 }
