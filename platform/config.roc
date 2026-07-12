@@ -1,7 +1,8 @@
 platform "kai-config"
 	requires {
+		# `packages` is a Roc header keyword in this compiler, so shell configs use `pkgs`.
 		config : List([
-			Shell({ name : Str, package_list : List(Str) }),
+			Shell({ name : Str, pkgs : List(Str) }),
 			MachineBuild({
 				hostname : Str,
 				system : Str,

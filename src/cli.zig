@@ -278,7 +278,8 @@ fn starterKaiRoc(allocator: std.mem.Allocator, name: []const u8, platform_path: 
         \\config = [
         \\    Shell({{
         \\        name: "{s}",
-        \\        package_list: [],
+        \\        # `packages` is a Roc header keyword in this compiler, so shell configs use `pkgs`.
+        \\        pkgs: [],
         \\    }}),
         \\]
         \\

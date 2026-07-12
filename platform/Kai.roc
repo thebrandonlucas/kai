@@ -3,7 +3,8 @@ import Stdout
 
 ## Kai protocol helpers and modular config dispatch.
 Kai := [].{
-	ShellConfig : { name : Str, package_list : List(Str) }
+	# `packages` is a Roc header keyword in this compiler, so shell configs use `pkgs`.
+	ShellConfig : { name : Str, pkgs : List(Str) }
 
 	MachineBuildConfig : {
 		hostname : Str,
@@ -15,7 +16,7 @@ Kai := [].{
 	}
 
 	ConfigEntry : [
-		Shell({ name : Str, package_list : List(Str) }),
+		Shell({ name : Str, pkgs : List(Str) }),
 		MachineBuild({
 			hostname : Str,
 			system : Str,
@@ -90,7 +91,7 @@ Kai := [].{
 	## Run the `shell` config entry.
 	runShell! : ShellConfig => I32
 	runShell! = |shell| {
-		Host.kai_config_shell!(shell.name, shell.package_list)
+		Host.kai_config_shell!(shell.name, shell.pkgs)
 	}
 
 	## Build the `machine.build` config entry.

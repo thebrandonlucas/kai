@@ -3,6 +3,7 @@ app [config] { kai: platform "../platform/config.roc" }
 config = [
 	Shell({
 		name: "shell-only",
-		package_list: ["zig"],
+		# `packages` is a Roc header keyword in this compiler, so shell configs use `pkgs`.
+		pkgs: ["zig"],
 	}),
 ]

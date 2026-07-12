@@ -3,7 +3,8 @@ app [config] { kai: platform "./platform/config.roc" }
 config = [
 	Shell({
 		name: "kai",
-		package_list: ["cargo"],
+		# `packages` is a Roc header keyword in this compiler, so shell configs use `pkgs`.
+		pkgs: ["cargo"],
 	}),
 	MachineBuild({
 		hostname: "kai-example",
