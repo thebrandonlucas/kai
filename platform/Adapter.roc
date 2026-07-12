@@ -9,6 +9,7 @@ Adapter := [].{
     Request : { target : Str, argv : List(Str) }
 
     ## Pure backend lowering from Kai's portable shell request to executable argv.
+    ## Empty argv means enter the backend-native interactive shell.
     Backend : Request -> List(Str)
 
     requestProtocol : Str
@@ -31,14 +32,9 @@ Adapter := [].{
             crash "unsupported Kai adapter command"
         } else {
             commandArgv = List.drop_first(args, 4)
-
-            if List.len(commandArgv) == 0 {
-                crash "empty Kai shell command"
-            } else {
-                planArgv = backend({ target, argv: commandArgv })
-                emitPlan!(planArgv)
-                0
-            }
+            planArgv = backend({ target, argv: commandArgv })
+            emitPlan!(planArgv)
+            0
         }
     }
 

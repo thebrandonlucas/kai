@@ -2,17 +2,21 @@ app [main!] { kai: platform "../../platform/main.roc" }
 
 import kai.Adapter
 
-## Nix backend: nix develop --no-write-lock-file <target> --command <command...>
+## Nix backend: nix develop --no-write-lock-file <target> [--command <command...>]
 nixDevelop : Adapter.Backend
 nixDevelop = |request| {
     prefix =
         if request.target == "" {
-            ["nix", "develop", "--no-write-lock-file", "--command"]
+            ["nix", "develop", "--no-write-lock-file"]
         } else {
-            ["nix", "develop", "--no-write-lock-file", request.target, "--command"]
+            ["nix", "develop", "--no-write-lock-file", request.target]
         }
 
-    List.concat(prefix, request.argv)
+    if List.len(request.argv) == 0 {
+        prefix
+    } else {
+        List.concat(List.concat(prefix, ["--command"]), request.argv)
+    }
 }
 
 main! : List(Str) => I32

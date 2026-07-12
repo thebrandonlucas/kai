@@ -100,11 +100,13 @@ Kai := [].{
 		Host.kai_machine_build!(build.hostname, build.system, build.install, build.ssh_keys, build.state_version, build.image.format)
 
 	## Emit the portable `shell` protocol command using the selected backend.
+	## Empty command requests the backend-native interactive shell.
 	shell! : { target : Str, command : List(Str) } => Str
 	shell! = |spec|
 		Host.kai_shell!("", "shell", spec.target, spec.command)
 
 	## Emit `shell` using an explicit backend name or adapter executable path.
+	## Empty command requests the backend-native interactive shell.
 	shellWithAdapter! : { adapter : Str, target : Str, command : List(Str) } => Str
 	shellWithAdapter! = |spec|
 		Host.kai_shell!(spec.adapter, "shell", spec.target, spec.command)

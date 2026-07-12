@@ -45,9 +45,6 @@ fn adapterPlanArgv(
     if (!std.mem.eql(u8, command, "shell")) {
         return error.UnsupportedProtocolCommand;
     }
-    if (command_args.len == 0) {
-        return error.EmptyShellCommand;
-    }
 
     const adapter_argv = try buildAdapterArgv(allocator, adapter, command, target, command_args);
     defer allocator.free(adapter_argv);
@@ -234,15 +231,22 @@ test "rejects empty adapter plan" {
     const argv = try parseAdapterPlan(std.testing.allocator, plan);
     defer freeAdapterPlan(std.testing.allocator, argv);
     try std.testing.expectEqual(@as(usize, 0), argv.len);
-    try std.testing.expectError(error.EmptyExecutionPlan, executeProtocolCommand(std.testing.allocator, std.testing.io, "fixtures/adapters/empty-plan", "shell", ".", &.{"ignored"}));
+    try std.testing.expectError(error.EmptyExecutionPlan, executeProtocolCommand(std.testing.allocator, std.testing.io, "fixtures/adapters/empty-plan", "shell", ".", &.{}));
 }
 
-test "requires a non-interactive shell command" {
-    try std.testing.expectError(error.EmptyShellCommand, executeProtocolCommand(std.testing.allocator, std.testing.io, "fixtures/adapters/static-plan", "shell", ".", &.{}));
+test "allows empty command argv for backend-native interactive shell" {
+    const argv = try buildAdapterArgv(std.testing.allocator, "adapter-bin", "shell", ".", &.{});
+    defer std.testing.allocator.free(argv);
+
+    try std.testing.expectEqual(@as(usize, 4), argv.len);
+    try std.testing.expectEqualStrings("adapter-bin", argv[0]);
+    try std.testing.expectEqualStrings("kai.adapter.argv.v1", argv[1]);
+    try std.testing.expectEqualStrings("shell", argv[2]);
+    try std.testing.expectEqualStrings(".", argv[3]);
 }
 
 test "calls adapter subprocess and executes normalized argv" {
-    const code = try executeProtocolCommandStatus(std.testing.allocator, std.testing.io, "fixtures/adapters/exit-plan", "shell", ".", &.{"ignored"});
+    const code = try executeProtocolCommandStatus(std.testing.allocator, std.testing.io, "fixtures/adapters/exit-plan", "shell", ".", &.{});
     try std.testing.expectEqual(@as(u8, 8), code);
 }
 

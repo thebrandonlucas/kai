@@ -53,7 +53,7 @@ argv[0] = <adapter-executable>
 argv[1] = kai.adapter.argv.v1
 argv[2] = shell
 argv[3] = <target>
-argv[4..] = <command argv>
+argv[4..] = <command argv, possibly empty>
 ```
 
 Adapter stdout must be a length-prefixed plan:
@@ -71,6 +71,7 @@ kai.adapter.plan.v1\n
 Rules:
 
 - Adapter executables currently handle protocol command `shell`.
+- Empty command argv means enter the backend-native interactive shell; non-empty command argv means run that argv inside the backend environment.
 - `argv` is a structured argument array. Do not return shell-interpolated command strings.
 - Argument lengths are UTF-8 byte counts. Newlines inside args are allowed because the host consumes exact byte lengths plus the trailing newline emitted by the Roc adapter.
 - Non-zero adapter exit means adapter failure.
@@ -87,15 +88,21 @@ app [main!] { kai: platform "../../platform/main.roc" }
 import kai.Adapter
 
 main! : List(Str) => I32
-main! = |args| Adapter.main!(args, |req|
-    List.concat(["tool", "shell", req.target, "--"], req.argv)
-)
+main! = |args| Adapter.main!(args, |req| {
+    prefix = ["tool", "shell", req.target]
+
+    if List.len(req.argv) == 0 {
+        prefix
+    } else {
+        List.concat(List.concat(prefix, ["--"]), req.argv)
+    }
+})
 ```
 
 Included Roc adapters:
 
-- `adapters/roc/nix.roc`: `shell -> nix develop --no-write-lock-file <target> --command <argv...>`. Config shells use generated target `path:.kai/shell`.
-- `adapters/roc/guix.roc`: `shell -> guix shell -m <target>/manifest.scm -- <argv...>` for directory targets, or `guix shell -m <target> --` when the target already ends in `.scm`. Config shells use generated target `.kai/shell`.
+- `adapters/roc/nix.roc`: empty argv lowers to `nix develop --no-write-lock-file <target>` for native interactive shell behavior; non-empty argv lowers to `nix develop --no-write-lock-file <target> --command <argv...>`. Config shells use generated target `path:.kai/shell`.
+- `adapters/roc/guix.roc`: empty argv lowers to `guix shell -m <target>/manifest.scm` for directory targets, or `guix shell -m <target>` when the target already ends in `.scm`; non-empty argv appends `-- <argv...>`. Config shells use generated target `.kai/shell`.
 
 They depend only on this local Kai platform; no remote packages like `basic-cli` or `roc-json` are used.
 

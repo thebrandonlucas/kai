@@ -187,14 +187,13 @@ fn hostedKaiConfigShell(name: abi.RocStr, packages: abi.RocList(abi.RocStr)) cal
         writeGeneratedShellPath(if (prepared.wrote) "wrote" else "using", path);
     }
 
-    const command_args = [_][]const u8{"sh"};
     return protocol.executeProtocolCommandStatus(
         roc_env.allocator,
         threaded_io.io(),
         selected_backend.adapter_executable,
         "shell",
         prepared.target,
-        &command_args,
+        &.{},
     ) catch |err| {
         writeHostError(@errorName(err));
         return 1;
