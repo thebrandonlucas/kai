@@ -6,9 +6,9 @@ pub const PreparedShell = struct {
     written_path: ?[]const u8,
 };
 
-const workspace_dir = ".kai";
-const nix_flake_path = ".kai/flake.nix";
-const guix_manifest_path = ".kai/manifest.scm";
+pub const shell_workspace_dir = ".kai/shell";
+pub const nix_flake_path = shell_workspace_dir ++ "/flake.nix";
+pub const guix_manifest_path = shell_workspace_dir ++ "/manifest.scm";
 
 pub fn prepare(
     allocator: std.mem.Allocator,
@@ -19,22 +19,22 @@ pub fn prepare(
 ) !PreparedShell {
     try validateShellName(name);
     try validatePackages(packages);
-    try std.Io.Dir.cwd().createDirPath(io, workspace_dir);
+    try std.Io.Dir.cwd().createDirPath(io, shell_workspace_dir);
 
     return switch (backend) {
         .nix => blk: {
             const flake = try renderNixFlake(allocator, name, packages);
             defer allocator.free(flake);
             const wrote = try writeIfChanged(allocator, io, nix_flake_path, flake);
-            break :blk .{ .target = "path:.kai", .written_path = if (wrote) nix_flake_path else null };
+            break :blk .{ .target = "path:" ++ shell_workspace_dir, .written_path = if (wrote) nix_flake_path else null };
         },
         .guix => blk: {
             const manifest = try renderGuixManifest(allocator, packages);
             defer allocator.free(manifest);
             const wrote = try writeIfChanged(allocator, io, guix_manifest_path, manifest);
-            break :blk .{ .target = workspace_dir, .written_path = if (wrote) guix_manifest_path else null };
+            break :blk .{ .target = shell_workspace_dir, .written_path = if (wrote) guix_manifest_path else null };
         },
-        .adapter => .{ .target = workspace_dir, .written_path = null },
+        .adapter => .{ .target = shell_workspace_dir, .written_path = null },
     };
 }
 
@@ -170,6 +170,12 @@ fn appendFmt(out: *std.array_list.Managed(u8), comptime fmt: []const u8, args: a
 
 fn appendSpaces(out: *std.array_list.Managed(u8), count: usize) !void {
     try out.appendNTimes(' ', count);
+}
+
+test "uses shell subdirectory paths" {
+    try std.testing.expectEqualStrings(".kai/shell", shell_workspace_dir);
+    try std.testing.expectEqualStrings(".kai/shell/flake.nix", nix_flake_path);
+    try std.testing.expectEqualStrings(".kai/shell/manifest.scm", guix_manifest_path);
 }
 
 test "renders nix shell flake" {

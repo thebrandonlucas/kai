@@ -1,6 +1,7 @@
 //! Tiny dependency-free Kai CLI.
 const std = @import("std");
 const backend_mod = @import("backend.zig");
+const machine = @import("machine.zig");
 const registry_mod = @import("command_registry.zig");
 const shell_env = @import("shell_env.zig");
 
@@ -232,11 +233,11 @@ fn shellInit(
     defer allocator.free(config);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = config_path, .data = config });
 
-    const kai_dir = try std.fs.path.join(allocator, &.{ init.directory, ".kai" });
-    defer allocator.free(kai_dir);
-    try std.Io.Dir.cwd().createDirPath(io, kai_dir);
+    const shell_dir = try std.fs.path.join(allocator, &.{ init.directory, shell_env.shell_workspace_dir });
+    defer allocator.free(shell_dir);
+    try std.Io.Dir.cwd().createDirPath(io, shell_dir);
 
-    const flake_path = try std.fs.path.join(allocator, &.{ kai_dir, "flake.nix" });
+    const flake_path = try std.fs.path.join(allocator, &.{ init.directory, shell_env.nix_flake_path });
     defer allocator.free(flake_path);
     const flake = try shell_env.renderNixFlake(allocator, name, &.{});
     defer allocator.free(flake);
@@ -333,15 +334,15 @@ fn appendGeneralHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
     try appendStyled(out, use_color, "Commands:", .heading);
     try out.appendSlice("\n");
     try appendCommandRow(out, use_color, "shell (sh)", "Create or manage persistent or temporary shells");
-    try appendCommandRow(out, use_color, "build [config.roc]", "render .kai/flake.nix and build machine image");
+    try appendCommandRow(out, use_color, "build [config.roc]", "render " ++ machine.machine_flake_path ++ " and build machine image");
     try out.appendSlice("\n");
     try out.appendSlice("kai is a tool to help you harness the power of determinate computing by\n");
     try out.appendSlice("wrapping nix commands in a friendly interface.\n\n");
     try appendStyled(out, use_color, "Some things you can do:", .heading);
     try out.appendSlice("\n\n");
-    try appendExample(out, use_color, "kai shell init", "Create a starter kai.roc and generated .kai/flake.nix.");
+    try appendExample(out, use_color, "kai shell init", "Create a starter kai.roc and generated " ++ shell_env.nix_flake_path ++ ".");
     try appendExample(out, use_color, "kai shell", "Render the shell from kai.roc and enter it through the active backend.");
-    try appendExample(out, use_color, "kai build", "Render .kai/flake.nix and build the configured machine image.");
+    try appendExample(out, use_color, "kai build", "Render " ++ machine.machine_flake_path ++ " and build the configured machine image.");
     try appendStyled(out, use_color, "Flags:", .heading);
     try out.appendSlice("\n  -h, --help                             print help information\n");
 }
@@ -358,7 +359,7 @@ fn appendShellHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
     try out.appendSlice("\n\n");
     try appendStyled(out, use_color, "Commands:", .heading);
     try out.appendSlice("\n");
-    try appendCommandRow(out, use_color, "kai shell init", "Create starter kai.roc and .kai/flake.nix files");
+    try appendCommandRow(out, use_color, "kai shell init", "Create starter kai.roc and " ++ shell_env.nix_flake_path ++ " files");
     try out.appendSlice("\n");
     try appendStyled(out, use_color, "Examples:", .heading);
     try out.appendSlice("\n");
@@ -371,7 +372,7 @@ fn appendShellHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
 }
 
 fn appendBuildHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
-    try out.appendSlice("Render .kai/flake.nix and build the configured machine image output.\n\n");
+    try out.appendSlice("Render " ++ machine.machine_flake_path ++ " and build the configured machine image output.\n\n");
     try appendStyled(out, use_color, "Usage:", .heading);
     try out.appendSlice("\n  ");
     try appendStyled(out, use_color, "kai build [config.roc]", .command);

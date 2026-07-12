@@ -1,7 +1,7 @@
 //! Minimal Kai Roc platform host.
 //!
 //! Roc code emits backend-neutral Kai protocol commands. For config-driven
-//! shell commands, this host generates backend state under `.kai/`, sends
+//! shell commands, this host generates backend state under `.kai/shell/`, sends
 //! the shell request to a backend adapter executable, receives a normalized argv
 //! execution plan, and executes it without shell interpolation.
 const std = @import("std");

@@ -28,19 +28,20 @@ pub const BuildSpec = struct {
     image_format: ImageFormat,
 };
 
+pub const machine_workspace_dir = ".kai/machine";
+pub const machine_flake_path = machine_workspace_dir ++ "/flake.nix";
+
 pub fn build(allocator: std.mem.Allocator, io: std.Io, spec: BuildSpec) !u8 {
-    try std.Io.Dir.cwd().createDirPath(io, ".kai");
+    try std.Io.Dir.cwd().createDirPath(io, machine_workspace_dir);
 
     const flake = try renderFlake(allocator, spec);
     defer allocator.free(flake);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ".kai/flake.nix", .data = flake });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = machine_flake_path, .data = flake });
 
-    const attr = try imagePackageAttr(allocator, spec);
-    defer allocator.free(attr);
-    const output = try std.fmt.allocPrint(allocator, "path:.kai#{s}", .{attr});
+    const output = try imagePackageOutput(allocator, spec);
     defer allocator.free(output);
 
-    try writeFmt(allocator, io, .stdout, "wrote .kai/flake.nix\nmachine output: {s}\n", .{output});
+    try writeFmt(allocator, io, .stdout, "wrote {s}\nmachine output: {s}\n", .{ machine_flake_path, output });
 
     const result = try std.process.run(allocator, io, .{
         .argv = &.{ "nix", "build", output },
@@ -59,6 +60,12 @@ pub fn build(allocator: std.mem.Allocator, io: std.Io, spec: BuildSpec) !u8 {
 
 pub fn imagePackageAttr(allocator: std.mem.Allocator, spec: BuildSpec) ![]u8 {
     return std.fmt.allocPrint(allocator, "packages.{s}.{s}-image", .{ spec.system, spec.hostname });
+}
+
+pub fn imagePackageOutput(allocator: std.mem.Allocator, spec: BuildSpec) ![]u8 {
+    const attr = try imagePackageAttr(allocator, spec);
+    defer allocator.free(attr);
+    return std.fmt.allocPrint(allocator, "path:" ++ machine_workspace_dir ++ "#{s}", .{attr});
 }
 
 pub fn renderFlake(allocator: std.mem.Allocator, spec: BuildSpec) ![]u8 {
@@ -230,8 +237,8 @@ test "parses image formats" {
     try std.testing.expect(ImageFormat.parse("vmdk") == null);
 }
 
-test "renders image package attr" {
-    const attr = try imagePackageAttr(std.testing.allocator, .{
+test "renders image package output under machine subflake" {
+    const output = try imagePackageOutput(std.testing.allocator, .{
         .hostname = "web",
         .system = "x86_64-linux",
         .packages = &.{},
@@ -239,8 +246,8 @@ test "renders image package attr" {
         .state_version = "25.05",
         .image_format = .qcow2,
     });
-    defer std.testing.allocator.free(attr);
-    try std.testing.expectEqualStrings("packages.x86_64-linux.web-image", attr);
+    defer std.testing.allocator.free(output);
+    try std.testing.expectEqualStrings("path:.kai/machine#packages.x86_64-linux.web-image", output);
 }
 
 test "renders machine flake" {
