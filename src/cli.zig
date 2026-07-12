@@ -6,6 +6,7 @@ const registry_mod = @import("command_registry.zig");
 const shell_env = @import("shell_env.zig");
 
 const default_config_file = "kai.roc";
+const kai_zen = "κινδυνεύεις ἐν καιρῷ τινι οὐκ ἐγεῖραί με\n";
 
 const ConfigCommand = struct {
     cli_name: []const u8,
@@ -21,6 +22,7 @@ const HelpTopic = enum {
     general,
     shell,
     build,
+    zen,
 };
 
 const Command = union(enum) {
@@ -30,6 +32,7 @@ const Command = union(enum) {
     adapter_list,
     adapter_get,
     adapter_set: []const u8,
+    zen,
     unavailable: []const u8,
 };
 
@@ -94,6 +97,7 @@ fn parseCommand(args: []const []const u8) !Command {
         if (args.len == 1) return .{ .help = .general };
         if (args.len == 2 and isShellName(args[1])) return .{ .help = .shell };
         if (args.len == 2 and std.mem.eql(u8, args[1], "build")) return .{ .help = .build };
+        if (args.len == 2 and std.mem.eql(u8, args[1], "zen")) return .{ .help = .zen };
         return error.InvalidCommand;
     }
 
@@ -112,6 +116,12 @@ fn parseCommand(args: []const []const u8) !Command {
     if (std.mem.eql(u8, args[0], "build")) {
         if (args.len >= 2 and isHelp(args[1])) return .{ .help = .build };
         return .{ .protocol = .{ .cli_name = "build", .path = try parseOptionalConfigPath(args[1..]) } };
+    }
+
+    if (std.mem.eql(u8, args[0], "zen")) {
+        if (args.len == 1) return .zen;
+        if (args.len == 2 and isHelp(args[1])) return .{ .help = .zen };
+        return error.InvalidCommand;
     }
 
     if (args.len >= 2 and (std.mem.eql(u8, args[0], "backend") or std.mem.eql(u8, args[0], "adapter"))) {
@@ -193,6 +203,10 @@ fn executeCommand(
             try backend_mod.validateBackendSetting(adapter);
             try backend_mod.writeConfiguredBackend(allocator, io, adapter);
             try writeFmt(allocator, io, .stdout, "{s}\n", .{adapter});
+            return 0;
+        },
+        .zen => {
+            try writeAll(io, .stdout, zenText());
             return 0;
         },
         .unavailable => |name| {
@@ -318,6 +332,7 @@ fn helpText(allocator: std.mem.Allocator, topic: HelpTopic, use_color: bool) ![]
         .general => try appendGeneralHelp(&out, use_color),
         .shell => try appendShellHelp(&out, use_color),
         .build => try appendBuildHelp(&out, use_color),
+        .zen => try appendZenHelp(&out, use_color),
     }
 
     return out.toOwnedSlice();
@@ -335,6 +350,7 @@ fn appendGeneralHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
     try out.appendSlice("\n");
     try appendCommandRow(out, use_color, "shell (sh)", "Create or manage persistent or temporary shells");
     try appendCommandRow(out, use_color, "build [config.roc]", "render " ++ machine.machine_flake_path ++ " and build machine image");
+    try appendCommandRow(out, use_color, "zen", "print kai zen");
     try out.appendSlice("\n");
     try out.appendSlice("kai is a tool to help you harness the power of determinate computing by\n");
     try out.appendSlice("wrapping nix commands in a friendly interface.\n\n");
@@ -384,6 +400,24 @@ fn appendBuildHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
     try out.appendSlice("\n");
     try appendStyled(out, use_color, "Flags:", .heading);
     try out.appendSlice("\n  -h, --help                             print help information\n");
+}
+
+fn appendZenHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
+    try out.appendSlice("Print kai zen.\n\n");
+    try appendStyled(out, use_color, "Usage:", .heading);
+    try out.appendSlice("\n  ");
+    try appendStyled(out, use_color, "kai zen", .command);
+    try out.appendSlice("\n\n");
+    try appendStyled(out, use_color, "Examples:", .heading);
+    try out.appendSlice("\n");
+    try appendCommandRow(out, use_color, "kai zen", "Print kai zen");
+    try out.appendSlice("\n");
+    try appendStyled(out, use_color, "Flags:", .heading);
+    try out.appendSlice("\n  -h, --help                             print help information\n");
+}
+
+fn zenText() []const u8 {
+    return kai_zen;
 }
 
 fn appendCommandRow(out: *std.array_list.Managed(u8), use_color: bool, command: []const u8, description: []const u8) !void {
@@ -624,6 +658,9 @@ test "parses supported commands" {
     try std.testing.expectEqual(HelpTopic.general, (try parseCommand(&.{"help"})).help);
     try std.testing.expectEqual(HelpTopic.shell, (try parseCommand(&.{ "help", "shell" })).help);
     try std.testing.expectEqual(HelpTopic.build, (try parseCommand(&.{ "build", "--help" })).help);
+    try std.testing.expectEqual(HelpTopic.zen, (try parseCommand(&.{ "help", "zen" })).help);
+    try std.testing.expectEqual(HelpTopic.zen, (try parseCommand(&.{ "zen", "--help" })).help);
+    try std.testing.expectEqual(Command.zen, try parseCommand(&.{"zen"}));
 
     const shell_default = try parseCommand(&.{"shell"});
     try std.testing.expectEqualStrings("shell", shell_default.protocol.cli_name);
@@ -655,6 +692,7 @@ test "rejects invalid command usage" {
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "shell", "init", "one", "two" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "adapter", "delete" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "backend", "delete" }));
+    try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "zen", "one" }));
 }
 
 test "preserves unavailable command name" {
@@ -681,6 +719,20 @@ test "styled help uses bold headers and ANSI command color" {
     try std.testing.expect(std.mem.indexOf(u8, text, ansi.bold ++ "Usage:" ++ ansi.normal_intensity) != null);
     try std.testing.expect(std.mem.indexOf(u8, text, ansi.command ++ "kai" ++ ansi.foreground_default) != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "target") == null);
+}
+
+test "prints and documents kai zen" {
+    try std.testing.expectEqualStrings("κινδυνεύεις ἐν καιρῷ τινι οὐκ ἐγεῖραί με\n", zenText());
+
+    const general = try helpText(std.testing.allocator, .general, false);
+    defer std.testing.allocator.free(general);
+    try std.testing.expect(std.mem.indexOf(u8, general, "zen") != null);
+    try std.testing.expect(std.mem.indexOf(u8, general, "print kai zen") != null);
+
+    const zen_help = try helpText(std.testing.allocator, .zen, false);
+    defer std.testing.allocator.free(zen_help);
+    try std.testing.expect(std.mem.indexOf(u8, zen_help, "Print kai zen.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, zen_help, "kai zen") != null);
 }
 
 test "plans shell command dispatch" {

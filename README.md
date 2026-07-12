@@ -118,6 +118,7 @@ zig build
 ./zig-out/bin/kai backend get
 ./zig-out/bin/kai shell [config.roc]
 ./zig-out/bin/kai build [config.roc]
+./zig-out/bin/kai zen
 ```
 
 Commands:
@@ -129,6 +130,7 @@ Commands:
 - `kai adapter ...`: legacy alias for `kai backend ...`.
 - `kai shell [config.roc]`: dispatch protocol command `shell`; defaults to `kai.roc`. Generates `.kai/shell/flake.nix` for nix or `.kai/shell/manifest.scm` for guix on first run or when content changes.
 - `kai build [config.roc]`: dispatch protocol command `machine.build`; defaults to `kai.roc`. This writes `.kai/machine/flake.nix` and runs `nix build path:.kai/machine#...` for the configured image output when the active backend is `nix`.
+- `kai zen`: print kai zen.
 
 Backend selection order for both the CLI and Roc config apps is `.kai/backend`, legacy `.kai/adapter`, then `KAI_BACKEND_ADAPTER`. `Kai.shellWithAdapter!` can still override this in lower-level Roc code.
 
