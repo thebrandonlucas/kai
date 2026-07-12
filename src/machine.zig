@@ -248,7 +248,7 @@ fn runArgvStatusQuietWithSpinner(allocator: std.mem.Allocator, io: std.Io, argv:
 
     const message = try std.fmt.allocPrint(allocator, "{s}…", .{description});
     defer allocator.free(message);
-    var spinner = try spinner_mod.Spinner.start(allocator, io, message, .random);
+    var spinner = try spinner_mod.Spinner.start(allocator, io, message, .animal);
     defer spinner.deinit();
 
     const term = child.wait(io);
