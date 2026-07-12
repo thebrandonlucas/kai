@@ -1,8 +1,10 @@
 //! Backend-neutral Kai shell protocol execution.
 //!
-//! This module contains the generic host/CLI adapter protocol plumbing. It does
-//! not know about any specific backend; backend lowering stays in Roc adapters.
+//! This module contains the generic host/CLI adapter protocol plumbing. Backend
+//! lowering stays in Roc adapters; host-side process execution may still wrap
+//! recognized backend subprocesses to preserve terminal UX.
 const std = @import("std");
+const spinner_mod = @import("spinner.zig");
 
 const adapter_request_protocol = "kai.adapter.argv.v1";
 const adapter_plan_protocol = "kai.adapter.plan.v1";
@@ -31,7 +33,7 @@ pub fn executeProtocolCommandStatus(
     const plan_argv = try adapterPlanArgv(allocator, io, adapter, command, target, command_args);
     defer freeAdapterPlan(allocator, plan_argv);
 
-    return runArgvStatus(io, plan_argv);
+    return runShellArgvStatus(allocator, io, plan_argv);
 }
 
 fn adapterPlanArgv(
@@ -195,6 +197,138 @@ pub fn runArgvStatus(io: std.Io, argv: []const []const u8) !u8 {
     return exitCode(try child.wait(io));
 }
 
+fn runShellArgvStatus(allocator: std.mem.Allocator, io: std.Io, argv: []const []const u8) !u8 {
+    if (isNixDevelopShellPlan(argv)) {
+        return runQuietNixDevelopShell(allocator, io, argv);
+    }
+    return runArgvStatus(io, argv);
+}
+
+fn isNixDevelopShellPlan(argv: []const []const u8) bool {
+    if (argv.len < 2) return false;
+    if (!std.mem.eql(u8, argv[0], "nix")) return false;
+    if (!std.mem.eql(u8, argv[1], "develop")) return false;
+    for (argv[2..]) |arg| {
+        if (std.mem.eql(u8, arg, "--command")) return false;
+    }
+    return true;
+}
+
+const ChildWaitState = struct {
+    child: std.process.Child,
+    done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    term: ?std.process.Child.Term = null,
+    err: ?anyerror = null,
+};
+
+fn waitChildThread(state: *ChildWaitState, io: std.Io) void {
+    state.term = state.child.wait(io) catch |err| {
+        state.err = err;
+        state.done.store(true, .release);
+        return;
+    };
+    state.done.store(true, .release);
+}
+
+fn runQuietNixDevelopShell(allocator: std.mem.Allocator, io: std.Io, nix_argv: []const []const u8) !u8 {
+    const ready_path = try tempPath(allocator, io, "kai-dev-ready");
+    defer allocator.free(ready_path);
+    const ack_path = try tempPath(allocator, io, "kai-dev-ack");
+    defer allocator.free(ack_path);
+    deleteFileIfExists(io, ready_path);
+    deleteFileIfExists(io, ack_path);
+    defer deleteFileIfExists(io, ready_path);
+    defer deleteFileIfExists(io, ack_path);
+
+    const wrapper_argv = try quietNixDevelopShellArgv(allocator, ready_path, ack_path, nix_argv);
+    defer allocator.free(wrapper_argv);
+
+    const command_line = try renderArgv(allocator, nix_argv);
+    defer allocator.free(command_line);
+    const truncated = try spinner_mod.truncateDisplay(allocator, command_line, 96);
+    defer allocator.free(truncated);
+    const message = try std.fmt.allocPrint(allocator, "preparing nix dev shell: {s}", .{truncated});
+    defer allocator.free(message);
+    var spinner = try spinner_mod.Spinner.start(allocator, io, message, .random);
+    defer spinner.deinit();
+
+    const wait_state = try allocator.create(ChildWaitState);
+    var destroy_wait_state_on_error = true;
+    errdefer if (destroy_wait_state_on_error) allocator.destroy(wait_state);
+    const child = try std.process.spawn(io, .{
+        .argv = wrapper_argv,
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
+        .expand_arg0 = .expand,
+    });
+    wait_state.* = .{ .child = child };
+    const wait_thread = std.Thread.spawn(.{}, waitChildThread, .{ wait_state, io }) catch |err| {
+        wait_state.child.kill(io);
+        return err;
+    };
+    destroy_wait_state_on_error = false;
+
+    while (true) {
+        if (fileExists(io, ready_path)) {
+            spinner.stop();
+            std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ack_path, .data = "" }) catch {};
+            wait_thread.join();
+            defer allocator.destroy(wait_state);
+            if (wait_state.err) |err| return err;
+            return exitCode(wait_state.term.?);
+        }
+
+        if (wait_state.done.load(.acquire)) {
+            spinner.stop();
+            wait_thread.join();
+            defer allocator.destroy(wait_state);
+            if (wait_state.err) |err| return err;
+            return exitCode(wait_state.term.?);
+        }
+
+        io.sleep(.fromMilliseconds(50), .awake) catch {};
+    }
+}
+
+const quiet_nix_develop_script =
+    "ready_path=$1; ack_path=$2; shift 2; " ++
+    "exec 3>&1 4>&2; " ++
+    "nix --quiet --option warn-dirty false \"$@\" --command sh -c '" ++
+    "ready_path=$1; ack_path=$2; " ++
+    "if [ -n \"$ready_path\" ]; then : > \"$ready_path\"; i=0; while [ -n \"$ack_path\" ] && [ ! -e \"$ack_path\" ] && [ \"$i\" -lt 200 ]; do i=$((i + 1)); sleep 0.05; done; fi; " ++
+    "exec 1>&3 2>&4; shell=${SHELL:-/bin/sh}; export SHELL=\"$shell\"; export KAI_SHELL=1; unset PS1 PROMPT_COMMAND BASH_ENV ENV; exec \"$shell\"' " ++
+    "kai-dev-shell \"$ready_path\" \"$ack_path\" >/dev/null 2>/dev/null";
+
+pub fn quietNixDevelopShellArgv(allocator: std.mem.Allocator, ready_path: []const u8, ack_path: []const u8, nix_argv: []const []const u8) ![]const []const u8 {
+    if (!isNixDevelopShellPlan(nix_argv)) return error.UnsupportedProtocolCommand;
+    const argv = try allocator.alloc([]const u8, nix_argv.len + 5);
+    argv[0] = "sh";
+    argv[1] = "-c";
+    argv[2] = quiet_nix_develop_script;
+    argv[3] = "kai-dev-wrapper";
+    argv[4] = ready_path;
+    argv[5] = ack_path;
+    for (nix_argv[1..], 0..) |arg, index| {
+        argv[6 + index] = arg;
+    }
+    return argv;
+}
+
+fn tempPath(allocator: std.mem.Allocator, io: std.Io, prefix: []const u8) ![]u8 {
+    const timestamp = std.Io.Clock.now(.real, io).nanoseconds;
+    return std.fmt.allocPrint(allocator, "/tmp/{s}-{d}", .{ prefix, timestamp });
+}
+
+fn fileExists(io: std.Io, path: []const u8) bool {
+    std.Io.Dir.cwd().access(io, path, .{}) catch return false;
+    return true;
+}
+
+fn deleteFileIfExists(io: std.Io, path: []const u8) void {
+    std.Io.Dir.deleteFileAbsolute(io, path) catch {};
+}
+
 fn exitCode(term: std.process.Child.Term) u8 {
     return switch (term) {
         .exited => |code| code,
@@ -253,4 +387,25 @@ test "calls adapter subprocess and executes normalized argv" {
 test "executes argv with inherited stdio and returns exit code" {
     const code = try runArgvStatus(std.testing.io, &.{ "sh", "-c", "exit 7" });
     try std.testing.expectEqual(@as(u8, 7), code);
+}
+
+test "detects nix develop shell plans only before command handoff" {
+    try std.testing.expect(isNixDevelopShellPlan(&.{ "nix", "develop", "--no-write-lock-file", "path:.kai/shell" }));
+    try std.testing.expect(!isNixDevelopShellPlan(&.{ "nix", "develop", "--command", "echo", "hi" }));
+    try std.testing.expect(!isNixDevelopShellPlan(&.{ "guix", "shell" }));
+}
+
+test "builds quiet nix develop wrapper argv" {
+    const argv = try quietNixDevelopShellArgv(std.testing.allocator, "/tmp/ready", "/tmp/ack", &.{ "nix", "develop", "--no-write-lock-file", "path:.kai/shell" });
+    defer std.testing.allocator.free(argv);
+
+    try std.testing.expectEqualStrings("sh", argv[0]);
+    try std.testing.expectEqualStrings("-c", argv[1]);
+    try std.testing.expect(std.mem.indexOf(u8, argv[2], "nix --quiet --option warn-dirty false") != null);
+    try std.testing.expectEqualStrings("kai-dev-wrapper", argv[3]);
+    try std.testing.expectEqualStrings("/tmp/ready", argv[4]);
+    try std.testing.expectEqualStrings("/tmp/ack", argv[5]);
+    try std.testing.expectEqualStrings("develop", argv[6]);
+    try std.testing.expectEqualStrings("--no-write-lock-file", argv[7]);
+    try std.testing.expectEqualStrings("path:.kai/shell", argv[8]);
 }

@@ -185,6 +185,16 @@ pub fn build(b: *std.Build) void {
     const run_cli_tests = b.addRunArtifact(cli_tests);
     test_step.dependOn(&run_cli_tests.step);
 
+    const spinner_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/spinner.zig"),
+            .target = native_target,
+            .optimize = optimize,
+        }),
+    });
+    const run_spinner_tests = b.addRunArtifact(spinner_tests);
+    test_step.dependOn(&run_spinner_tests.step);
+
     const e2e_step = b.step("e2e", "Run real nix/guix subprocess examples");
     const run_nix_example = b.addSystemCommand(&.{
         "env",

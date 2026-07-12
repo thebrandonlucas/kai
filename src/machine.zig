@@ -1,4 +1,5 @@
 const std = @import("std");
+const spinner_mod = @import("spinner.zig");
 
 pub const ImageFormat = enum {
     raw,
@@ -46,7 +47,7 @@ pub fn build(allocator: std.mem.Allocator, io: std.Io, spec: BuildSpec) !u8 {
     const argv = nixBuildArgv(output);
     try writeFmt(allocator, io, .stdout, "wrote {s}\nmachine output: {s}\nrunning nix build {s}\n", .{ machine_flake_path, attr, output });
 
-    return runArgvStatus(io, &argv);
+    return runArgvStatusQuietWithSpinner(allocator, io, &argv, "nix build");
 }
 
 pub fn imagePackageAttr(allocator: std.mem.Allocator, spec: BuildSpec) ![]u8 {
@@ -233,6 +234,26 @@ fn runArgvStatus(io: std.Io, argv: []const []const u8) !u8 {
     errdefer child.kill(io);
 
     return exitCode(try child.wait(io));
+}
+
+fn runArgvStatusQuietWithSpinner(allocator: std.mem.Allocator, io: std.Io, argv: []const []const u8, description: []const u8) !u8 {
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .stdin = .inherit,
+        .stdout = .ignore,
+        .stderr = .ignore,
+        .expand_arg0 = .expand,
+    });
+    errdefer child.kill(io);
+
+    const message = try std.fmt.allocPrint(allocator, "{s}…", .{description});
+    defer allocator.free(message);
+    var spinner = try spinner_mod.Spinner.start(allocator, io, message, .random);
+    defer spinner.deinit();
+
+    const term = child.wait(io);
+    spinner.stop();
+    return exitCode(try term);
 }
 
 fn exitCode(term: std.process.Child.Term) u8 {
