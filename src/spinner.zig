@@ -76,14 +76,13 @@ const frame_interval_ms = 120;
 
 const State = struct {
     allocator: std.mem.Allocator,
-    done: std.atomic.Value(bool),
     message: []const u8,
     frames: []const []const u8,
+    index: usize = 0,
 };
 
 pub const Spinner = struct {
     state: ?*State = null,
-    thread: ?std.Thread = null,
 
     pub fn start(allocator: std.mem.Allocator, io: std.Io, message: []const u8, preference: FramePreference) !Spinner {
         if (!try stderrIsTerminal(io)) return .{};
@@ -95,36 +94,35 @@ pub const Spinner = struct {
 
         state.* = .{
             .allocator = allocator,
-            .done = std.atomic.Value(bool).init(false),
             .message = owned_message,
             .frames = chooseFrames(io, preference),
         };
 
-        const thread = std.Thread.spawn(.{}, spinnerThread, .{state}) catch |err| {
-            allocator.free(owned_message);
-            allocator.destroy(state);
-            return err;
-        };
-
-        return .{ .state = state, .thread = thread };
+        var spinner = Spinner{ .state = state };
+        spinner.tick();
+        return spinner;
     }
 
     pub fn isActive(self: Spinner) bool {
         return self.state != null;
     }
 
+    pub fn tick(self: *Spinner) void {
+        const state = self.state orelse return;
+        writeStderrRaw(clear_line);
+        writeStderrRaw(state.frames[state.index % state.frames.len]);
+        writeStderrRaw(" ");
+        writeStderrRaw(state.message);
+        state.index += 1;
+    }
+
     pub fn stop(self: *Spinner) void {
         const state = self.state orelse return;
-        state.done.store(true, .release);
-        if (self.thread) |thread| {
-            thread.join();
-            std.debug.print(clear_line, .{});
-        }
+        writeStderrRaw(clear_line);
         state.allocator.free(state.message);
         const allocator = state.allocator;
         allocator.destroy(state);
         self.state = null;
-        self.thread = null;
     }
 
     pub fn deinit(self: *Spinner) void {
@@ -132,12 +130,10 @@ pub const Spinner = struct {
     }
 };
 
-fn spinnerThread(state: *State) void {
-    var index: usize = 0;
-    while (!state.done.load(.acquire)) {
-        std.debug.print("" ++ clear_line ++ "{s} {s}", .{ state.frames[index % state.frames.len], state.message });
-        index += 1;
-        sleepMilliseconds(frame_interval_ms);
+fn writeStderrRaw(bytes: []const u8) void {
+    switch (builtin.os.tag) {
+        .linux => _ = std.os.linux.write(2, bytes.ptr, bytes.len),
+        else => {},
     }
 }
 
@@ -155,7 +151,15 @@ fn sleepMilliseconds(milliseconds: i64) void {
 }
 
 pub fn stderrIsTerminal(io: std.Io) !bool {
-    return std.Io.File.stderr().isTty(io) catch false;
+    _ = io;
+    return switch (builtin.os.tag) {
+        .linux => blk: {
+            var termios: std.os.linux.termios = undefined;
+            const rc = std.os.linux.tcgetattr(2, &termios);
+            break :blk std.os.linux.errno(rc) == .SUCCESS;
+        },
+        else => false,
+    };
 }
 
 pub fn chooseFrames(io: std.Io, preference: FramePreference) []const []const u8 {

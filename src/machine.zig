@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const spinner_mod = @import("spinner.zig");
 
 pub const ImageFormat = enum {
@@ -251,9 +252,49 @@ fn runArgvStatusQuietWithSpinner(allocator: std.mem.Allocator, io: std.Io, argv:
     var spinner = try spinner_mod.Spinner.start(allocator, io, message, .animal);
     defer spinner.deinit();
 
-    const term = child.wait(io);
-    spinner.stop();
-    return exitCode(try term);
+    while (true) {
+        if (try pollChildExit(&child)) |term| {
+            spinner.stop();
+            return exitCode(term);
+        }
+        io.sleep(.fromMilliseconds(120), .awake) catch {};
+        spinner.tick();
+    }
+}
+
+fn pollChildExit(child: *std.process.Child) !?std.process.Child.Term {
+    return switch (builtin.os.tag) {
+        .linux => pollLinuxChildExit(child),
+        else => null,
+    };
+}
+
+fn pollLinuxChildExit(child: *std.process.Child) !?std.process.Child.Term {
+    const pid = child.id orelse return null;
+    var status: u32 = 0;
+    const rc = std.os.linux.waitpid(pid, &status, std.os.linux.W.NOHANG);
+    return switch (std.os.linux.errno(rc)) {
+        .SUCCESS => blk: {
+            if (rc == 0) break :blk null;
+            child.id = null;
+            break :blk linuxStatusToTerm(status);
+        },
+        .INTR => null,
+        else => error.UnexpectedWaitPidError,
+    };
+}
+
+fn linuxStatusToTerm(status: u32) std.process.Child.Term {
+    if (std.os.linux.W.IFEXITED(status)) {
+        return .{ .exited = std.os.linux.W.EXITSTATUS(status) };
+    }
+    if (std.os.linux.W.IFSIGNALED(status)) {
+        return .{ .signal = @enumFromInt(@intFromEnum(std.os.linux.W.TERMSIG(status))) };
+    }
+    if (std.os.linux.W.IFSTOPPED(status)) {
+        return .{ .stopped = @enumFromInt(@intFromEnum(std.os.linux.W.STOPSIG(status))) };
+    }
+    return .{ .unknown = status };
 }
 
 fn exitCode(term: std.process.Child.Term) u8 {

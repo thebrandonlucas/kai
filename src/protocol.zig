@@ -258,7 +258,8 @@ fn runQuietNixDevelopShell(allocator: std.mem.Allocator, io: std.Io, nix_argv: [
             return exitCode(term);
         }
 
-        io.sleep(.fromMilliseconds(50), .awake) catch {};
+        io.sleep(.fromMilliseconds(120), .awake) catch {};
+        spinner.tick();
     }
 }
 
