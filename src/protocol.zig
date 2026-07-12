@@ -264,13 +264,15 @@ fn runQuietNixDevelopShell(allocator: std.mem.Allocator, io: std.Io, nix_argv: [
 }
 
 const quiet_nix_develop_script =
-    "ready_path=$1; ack_path=$2; shift 2; " ++
+    "ready_path=$1; ack_path=$2; shell=${SHELL:-/bin/sh}; shift 2; " ++
     "exec 3>&1 4>&2; " ++
     "nix --quiet --option warn-dirty false \"$@\" --command sh -c '" ++
-    "ready_path=$1; ack_path=$2; " ++
+    "ready_path=$1; ack_path=$2; shell=$3; " ++
     "if [ -n \"$ready_path\" ]; then : > \"$ready_path\"; i=0; while [ -n \"$ack_path\" ] && [ ! -e \"$ack_path\" ] && [ \"$i\" -lt 200 ]; do i=$((i + 1)); sleep 0.05; done; fi; " ++
-    "exec 1>&3 2>&4; shell=${SHELL:-/bin/sh}; export SHELL=\"$shell\"; export KAI_SHELL=1; unset PS1 PROMPT_COMMAND BASH_ENV ENV; exec \"$shell\"' " ++
-    "kai-dev-shell \"$ready_path\" \"$ack_path\" >/dev/null 2>/dev/null";
+    "exec 1>&3 2>&4; export SHELL=\"$shell\"; export KAI_SHELL=1; unset PS1 PROMPT_COMMAND BASH_ENV ENV; " ++
+    "case \"$shell\" in */bash|*/zsh|*/fish|*/ksh|*/sh|bash|zsh|fish|ksh|sh) exec env -u PS1 -u PROMPT_COMMAND -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS \"$shell\" -i ;; " ++
+    "*) exec env -u PS1 -u PROMPT_COMMAND -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS \"$shell\" ;; esac' " ++
+    "kai-dev-shell \"$ready_path\" \"$ack_path\" \"$shell\" >/dev/null 2>/dev/null";
 
 pub fn quietNixDevelopShellArgv(allocator: std.mem.Allocator, ready_path: []const u8, ack_path: []const u8, nix_argv: []const []const u8) ![]const []const u8 {
     if (!isNixDevelopShellPlan(nix_argv)) return error.UnsupportedProtocolCommand;
@@ -408,7 +410,11 @@ test "builds quiet nix develop wrapper argv" {
 
     try std.testing.expectEqualStrings("sh", argv[0]);
     try std.testing.expectEqualStrings("-c", argv[1]);
+    try std.testing.expect(std.mem.indexOf(u8, argv[2], "shell=${SHELL:-/bin/sh}; shift 2") != null);
     try std.testing.expect(std.mem.indexOf(u8, argv[2], "nix --quiet --option warn-dirty false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, argv[2], "shell=$3") != null);
+    try std.testing.expect(std.mem.indexOf(u8, argv[2], "env -u PS1 -u PROMPT_COMMAND -u BASH_ENV -u ENV -u SHELLOPTS -u BASHOPTS") != null);
+    try std.testing.expect(std.mem.indexOf(u8, argv[2], "\"$shell\" -i") != null);
     try std.testing.expectEqualStrings("kai-dev-wrapper", argv[3]);
     try std.testing.expectEqualStrings("/tmp/ready", argv[4]);
     try std.testing.expectEqualStrings("/tmp/ack", argv[5]);
