@@ -1,7 +1,7 @@
 platform "kai-config"
 	requires {
 		config : List([
-			Shell({ install : List(Str), run : Str }),
+			Shell({ name : Str, package_list : List(Str) }),
 			MachineBuild({
 				hostname : Str,
 				system : Str,

@@ -1,7 +1,7 @@
 //! Minimal Kai Roc platform host.
 //!
 //! Roc code emits backend-neutral Kai protocol commands. For config-driven
-//! shell commands, this host generates backend state under `.kai/shell/`, sends
+//! shell commands, this host generates backend state under `.kai/`, sends
 //! the shell request to a backend adapter executable, receives a normalized argv
 //! execution plan, and executes it without shell interpolation.
 const std = @import("std");
@@ -121,12 +121,12 @@ fn hostedKaiShell(adapter: abi.RocStr, command: abi.RocStr, target: abi.RocStr, 
     return abi.RocStr.fromSlice(output, roc_host);
 }
 
-fn hostedKaiConfigShell(packages: abi.RocList(abi.RocStr), run_command: abi.RocStr) callconv(.c) i32 {
+fn hostedKaiConfigShell(name: abi.RocStr, packages: abi.RocList(abi.RocStr)) callconv(.c) i32 {
     const roc_host = g_roc_host.?;
+    var owned_name = name;
     const owned_packages = packages;
-    var owned_run_command = run_command;
+    defer owned_name.decref(roc_host);
     defer decrefRocStrList(owned_packages, roc_host);
-    defer owned_run_command.decref(roc_host);
 
     const roc_env: *abi.RocEnv = @ptrCast(@alignCast(roc_host.env));
     const package_slices = rocStringListSlices(roc_env.allocator, owned_packages) catch |err| {
@@ -176,6 +176,7 @@ fn hostedKaiConfigShell(packages: abi.RocList(abi.RocStr), run_command: abi.RocS
         roc_env.allocator,
         threaded_io.io(),
         selected_backend.backend,
+        owned_name.asSlice(),
         package_slices,
     ) catch |err| {
         writeHostError(@errorName(err));
@@ -186,7 +187,7 @@ fn hostedKaiConfigShell(packages: abi.RocList(abi.RocStr), run_command: abi.RocS
         writeGeneratedShellPath(path);
     }
 
-    const command_args = [_][]const u8{ "sh", "-c", owned_run_command.asSlice() };
+    const command_args = [_][]const u8{"sh"};
     const output = protocol.executeProtocolCommand(
         roc_env.allocator,
         threaded_io.io(),

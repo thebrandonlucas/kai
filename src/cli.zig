@@ -2,6 +2,7 @@
 const std = @import("std");
 const backend_mod = @import("backend.zig");
 const registry_mod = @import("command_registry.zig");
+const shell_env = @import("shell_env.zig");
 
 const default_config_file = "kai.roc";
 
@@ -10,9 +11,21 @@ const ConfigCommand = struct {
     path: []const u8,
 };
 
+const ShellInit = struct {
+    directory: []const u8,
+    force: bool = false,
+};
+
+const HelpTopic = enum {
+    general,
+    shell,
+    build,
+};
+
 const Command = union(enum) {
-    help,
+    help: HelpTopic,
     protocol: ConfigCommand,
+    shell_init: ShellInit,
     adapter_list,
     adapter_get,
     adapter_set: []const u8,
@@ -34,6 +47,15 @@ const DispatchResult = union(enum) {
     implementation_backend_mismatch: *const registry_mod.CommandImplementation,
 };
 
+const ansi = struct {
+    const bold = "\x1b[1m";
+    const normal_intensity = "\x1b[22m";
+    const command = "\x1b[36m";
+    const path = "\x1b[34m";
+    const success = "\x1b[32m";
+    const foreground_default = "\x1b[39m";
+};
+
 pub fn main(init: std.process.Init) u8 {
     return run(init) catch |err| {
         writeFmt(init.gpa, init.io, .stderr, "kai: {s}\n", .{@errorName(err)}) catch {};
@@ -53,19 +75,42 @@ fn run(init: std.process.Init) !u8 {
         try args.append(arg);
     }
 
-    const command = parseCommand(args.items) catch {
-        try writeAll(init.io, .stderr, "kai: invalid command usage\n");
-        return 1;
+    const command = parseCommand(args.items) catch |err| switch (err) {
+        error.HelpRequested => Command{ .help = .general },
+        else => {
+            try writeAll(init.io, .stderr, "kai: invalid command usage\n");
+            return 1;
+        },
     };
     return executeCommand(init.gpa, init.io, init.environ_map, command);
 }
 
 fn parseCommand(args: []const []const u8) !Command {
-    if (args.len == 0) return .help;
-    if (args.len == 1 and std.mem.eql(u8, args[0], "help")) return .help;
+    if (args.len == 0) return .{ .help = .general };
+    if (args.len == 1 and isHelp(args[0])) return .{ .help = .general };
 
-    if (args.len >= 1 and (std.mem.eql(u8, args[0], "shell") or std.mem.eql(u8, args[0], "build"))) {
-        return .{ .protocol = .{ .cli_name = args[0], .path = try parseOptionalConfigPath(args[1..]) } };
+    if (std.mem.eql(u8, args[0], "help")) {
+        if (args.len == 1) return .{ .help = .general };
+        if (args.len == 2 and isShellName(args[1])) return .{ .help = .shell };
+        if (args.len == 2 and std.mem.eql(u8, args[1], "build")) return .{ .help = .build };
+        return error.InvalidCommand;
+    }
+
+    if (isShellName(args[0])) {
+        if (args.len >= 2 and isHelp(args[1])) return .{ .help = .shell };
+        if (args.len >= 2 and std.mem.eql(u8, args[1], "init")) {
+            const init = parseShellInit(args[2..]) catch |err| switch (err) {
+                error.HelpRequested => return .{ .help = .shell },
+                else => return err,
+            };
+            return .{ .shell_init = init };
+        }
+        return .{ .protocol = .{ .cli_name = "shell", .path = try parseOptionalConfigPath(args[1..]) } };
+    }
+
+    if (std.mem.eql(u8, args[0], "build")) {
+        if (args.len >= 2 and isHelp(args[1])) return .{ .help = .build };
+        return .{ .protocol = .{ .cli_name = "build", .path = try parseOptionalConfigPath(args[1..]) } };
     }
 
     if (args.len >= 2 and (std.mem.eql(u8, args[0], "backend") or std.mem.eql(u8, args[0], "adapter"))) {
@@ -75,8 +120,35 @@ fn parseCommand(args: []const []const u8) !Command {
         return error.InvalidCommand;
     }
 
-    if (args.len >= 1) return .{ .unavailable = args[0] };
-    return error.InvalidCommand;
+    return .{ .unavailable = args[0] };
+}
+
+fn isHelp(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "help") or std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h");
+}
+
+fn isShellName(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "shell") or std.mem.eql(u8, arg, "sh");
+}
+
+fn parseShellInit(args: []const []const u8) !ShellInit {
+    var init = ShellInit{ .directory = "." };
+    var saw_directory = false;
+
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--force")) {
+            init.force = true;
+        } else if (isHelp(arg)) {
+            return error.HelpRequested;
+        } else if (!saw_directory) {
+            init.directory = arg;
+            saw_directory = true;
+        } else {
+            return error.InvalidCommand;
+        }
+    }
+
+    return init;
 }
 
 fn parseOptionalConfigPath(args: []const []const u8) ![]const u8 {
@@ -94,10 +166,13 @@ fn executeCommand(
     command: Command,
 ) !u8 {
     switch (command) {
-        .help => {
-            try writeAll(io, .stdout, help_text);
+        .help => |topic| {
+            const text = try helpText(allocator, topic, colorEnabled(env_map));
+            defer allocator.free(text);
+            try writeAll(io, .stdout, text);
             return 0;
         },
+        .shell_init => |init| return shellInit(allocator, io, env_map, init),
         .protocol => |config| return dispatchProtocolCommand(allocator, io, env_map, config),
         .adapter_list => {
             try listAdapters(allocator, io, env_map);
@@ -126,23 +201,258 @@ fn executeCommand(
     }
 }
 
-const help_text =
-    \\kai commands:
-    \\  kai help
-    \\  kai shell [config.roc]
-    \\  kai build [config.roc]
-    \\  kai backend list
-    \\  kai backend get
-    \\  kai backend set <backend-or-adapter>
-    \\  kai adapter ...  # legacy alias for kai backend ...
-    \\
-    \\Config defaults to kai.roc.
-    \\kai shell dispatches protocol command shell.
-    \\kai build dispatches protocol command machine.build.
-    \\Backend selection is read from .kai-backend, legacy .kai-adapter, then KAI_BACKEND_ADAPTER.
-    \\Built-in backend names: nix, guix.
-    \\
-;
+fn shellInit(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    env_map: *std.process.Environ.Map,
+    init: ShellInit,
+) !u8 {
+    const config_path = try std.fs.path.join(allocator, &.{ init.directory, default_config_file });
+    defer allocator.free(config_path);
+
+    if (!init.force) {
+        std.Io.Dir.cwd().access(io, config_path, .{}) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
+        if (fileExists(io, config_path)) {
+            try writeFmt(allocator, io, .stderr, "kai: refusing to overwrite {s}; pass --force\n", .{config_path});
+            return 1;
+        }
+    }
+
+    try std.Io.Dir.cwd().createDirPath(io, init.directory);
+
+    const name = try defaultShellName(allocator, init.directory);
+    defer allocator.free(name);
+
+    const platform_path = try platformPathForStarter(allocator, init.directory);
+    defer allocator.free(platform_path);
+    const config = try starterKaiRoc(allocator, name, platform_path);
+    defer allocator.free(config);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = config_path, .data = config });
+
+    const kai_dir = try std.fs.path.join(allocator, &.{ init.directory, ".kai" });
+    defer allocator.free(kai_dir);
+    try std.Io.Dir.cwd().createDirPath(io, kai_dir);
+
+    const flake_path = try std.fs.path.join(allocator, &.{ kai_dir, "flake.nix" });
+    defer allocator.free(flake_path);
+    const flake = try shell_env.renderNixFlake(allocator, name, &.{});
+    defer allocator.free(flake);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = flake_path, .data = flake });
+
+    const use_color = colorEnabled(env_map);
+    try writeStatusLine(allocator, io, use_color, "wrote", config_path);
+    try writeStatusLine(allocator, io, use_color, "wrote", flake_path);
+    const next = try styledLiteral(allocator, use_color, "next:", .success);
+    defer allocator.free(next);
+    const command = try styledLiteral(allocator, use_color, "kai shell", .command);
+    defer allocator.free(command);
+    try writeFmt(allocator, io, .stdout, "{s} edit packages in {s}, then run `{s}`\n", .{ next, default_config_file, command });
+    return 0;
+}
+
+fn fileExists(io: std.Io, path: []const u8) bool {
+    std.Io.Dir.cwd().access(io, path, .{}) catch return false;
+    return true;
+}
+
+fn defaultShellName(allocator: std.mem.Allocator, directory: []const u8) ![]u8 {
+    const base = std.fs.path.basename(directory);
+    const raw = if (base.len == 0 or std.mem.eql(u8, base, ".")) "kai" else base;
+    var out = try allocator.alloc(u8, raw.len);
+    for (raw, 0..) |ch, i| {
+        out[i] = switch (ch) {
+            'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.', '+' => ch,
+            else => '-',
+        };
+    }
+    return out;
+}
+
+fn starterKaiRoc(allocator: std.mem.Allocator, name: []const u8, platform_path: []const u8) ![]u8 {
+    return std.fmt.allocPrint(allocator,
+        \\app [config] {{ kai: platform "{s}" }}
+        \\
+        \\config = [
+        \\    Shell({{
+        \\        name: "{s}",
+        \\        package_list: [],
+        \\    }}),
+        \\]
+        \\
+    , .{ platform_path, name });
+}
+
+fn platformPathForStarter(allocator: std.mem.Allocator, directory: []const u8) ![]u8 {
+    if (directory.len == 0 or std.mem.eql(u8, directory, ".")) {
+        return allocator.dupe(u8, "./platform/config.roc");
+    }
+
+    var depth: usize = 0;
+    var it = std.mem.tokenizeAny(u8, directory, "/\\");
+    while (it.next()) |part| {
+        if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
+        if (std.mem.eql(u8, part, "..")) continue;
+        depth += 1;
+    }
+    if (depth == 0) return allocator.dupe(u8, "./platform/config.roc");
+
+    var out = std.array_list.Managed(u8).init(allocator);
+    errdefer out.deinit();
+    for (0..depth) |_| try out.appendSlice("../");
+    try out.appendSlice("platform/config.roc");
+    return out.toOwnedSlice();
+}
+
+const StyledKind = enum { heading, command, path, success };
+
+fn helpText(allocator: std.mem.Allocator, topic: HelpTopic, use_color: bool) ![]u8 {
+    var out = std.array_list.Managed(u8).init(allocator);
+    errdefer out.deinit();
+
+    switch (topic) {
+        .general => try appendGeneralHelp(&out, use_color),
+        .shell => try appendShellHelp(&out, use_color),
+        .build => try appendBuildHelp(&out, use_color),
+    }
+
+    return out.toOwnedSlice();
+}
+
+fn appendGeneralHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
+    try out.appendSlice("A friendly frontend for determinate computing\n\n");
+    try appendStyled(out, use_color, "Usage:", .heading);
+    try out.appendSlice(" ");
+    try appendStyled(out, use_color, "kai", .command);
+    try out.appendSlice(" ");
+    try appendStyled(out, use_color, "<command> [...flags] [...args]", .heading);
+    try out.appendSlice("\n\n");
+    try appendStyled(out, use_color, "Commands:", .heading);
+    try out.appendSlice("\n");
+    try appendCommandRow(out, use_color, "shell (sh)", "Create or manage persistent or temporary shells");
+    try appendCommandRow(out, use_color, "build [config.roc]", "render .kai/flake.nix and build machine image");
+    try out.appendSlice("\n");
+    try out.appendSlice("kai is a tool to help you harness the power of determinate computing by\n");
+    try out.appendSlice("wrapping nix commands in a friendly interface.\n\n");
+    try appendStyled(out, use_color, "Some things you can do:", .heading);
+    try out.appendSlice("\n\n");
+    try appendExample(out, use_color, "kai shell init", "Create a starter kai.roc and generated .kai/flake.nix.");
+    try appendExample(out, use_color, "kai shell", "Render the shell from kai.roc and enter it through the active backend.");
+    try appendExample(out, use_color, "kai build", "Render .kai/flake.nix and build the configured machine image.");
+    try appendStyled(out, use_color, "Flags:", .heading);
+    try out.appendSlice("\n  -h, --help                             print help information\n");
+}
+
+fn appendShellHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
+    try out.appendSlice("Create, initialize, and enter the top-level dev shell from kai.roc. `sh` is an alias for `shell`.\n\n");
+    try appendStyled(out, use_color, "Usage:", .heading);
+    try out.appendSlice("\n  ");
+    try appendStyled(out, use_color, "kai shell [config.roc]", .command);
+    try out.appendSlice("\n  ");
+    try appendStyled(out, use_color, "kai shell init [directory]", .command);
+    try out.appendSlice("\n  ");
+    try appendStyled(out, use_color, "kai sh init [directory]", .command);
+    try out.appendSlice("\n\n");
+    try appendStyled(out, use_color, "Commands:", .heading);
+    try out.appendSlice("\n");
+    try appendCommandRow(out, use_color, "kai shell init", "Create starter kai.roc and .kai/flake.nix files");
+    try out.appendSlice("\n");
+    try appendStyled(out, use_color, "Examples:", .heading);
+    try out.appendSlice("\n");
+    try appendCommandRow(out, use_color, "kai shell", "Enter the shell described by kai.roc");
+    try appendCommandRow(out, use_color, "kai shell examples/shell.roc", "Enter a shell from another Roc config");
+    try appendCommandRow(out, use_color, "kai shell init my-app", "Create starter files");
+    try out.appendSlice("\n");
+    try appendStyled(out, use_color, "Flags:", .heading);
+    try out.appendSlice("\n  --force                                overwrite an existing kai.roc during init\n  -h, --help                             print help information\n");
+}
+
+fn appendBuildHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
+    try out.appendSlice("Render .kai/flake.nix and build the configured machine image output.\n\n");
+    try appendStyled(out, use_color, "Usage:", .heading);
+    try out.appendSlice("\n  ");
+    try appendStyled(out, use_color, "kai build [config.roc]", .command);
+    try out.appendSlice("\n\n`kai build` expects the selected Roc config to contain a MachineBuild entry.\n\n");
+    try appendStyled(out, use_color, "Examples:", .heading);
+    try out.appendSlice("\n");
+    try appendCommandRow(out, use_color, "kai build", "Build the machine image from kai.roc");
+    try appendCommandRow(out, use_color, "kai build examples/shell.roc", "Build from another Roc config");
+    try out.appendSlice("\n");
+    try appendStyled(out, use_color, "Flags:", .heading);
+    try out.appendSlice("\n  -h, --help                             print help information\n");
+}
+
+fn appendCommandRow(out: *std.array_list.Managed(u8), use_color: bool, command: []const u8, description: []const u8) !void {
+    try out.appendSlice("  ");
+    try appendStyled(out, use_color, command, .command);
+    const width: usize = 34;
+    const pad = if (command.len < width) width - command.len else 2;
+    try out.appendNTimes(' ', pad);
+    try out.appendSlice(description);
+    try out.append('\n');
+}
+
+fn appendExample(out: *std.array_list.Managed(u8), use_color: bool, command: []const u8, description: []const u8) !void {
+    try out.appendSlice("    ");
+    try appendStyled(out, use_color, command, .command);
+    try out.appendSlice("\n        ");
+    try out.appendSlice(description);
+    try out.appendSlice("\n\n");
+}
+
+fn appendStyled(out: *std.array_list.Managed(u8), use_color: bool, text: []const u8, kind: StyledKind) !void {
+    if (!use_color) {
+        try out.appendSlice(text);
+        return;
+    }
+    const open = switch (kind) {
+        .heading => ansi.bold,
+        .command => ansi.command,
+        .path => ansi.path,
+        .success => ansi.success,
+    };
+    const close = switch (kind) {
+        .heading => ansi.normal_intensity,
+        .command, .path, .success => ansi.foreground_default,
+    };
+    try out.appendSlice(open);
+    try out.appendSlice(text);
+    try out.appendSlice(close);
+}
+
+fn styledLiteral(allocator: std.mem.Allocator, use_color: bool, text: []const u8, kind: StyledKind) ![]u8 {
+    if (!use_color) return allocator.dupe(u8, text);
+    return std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ switch (kind) {
+        .heading => ansi.bold,
+        .command => ansi.command,
+        .path => ansi.path,
+        .success => ansi.success,
+    }, text, switch (kind) {
+        .heading => ansi.normal_intensity,
+        .command, .path, .success => ansi.foreground_default,
+    } });
+}
+
+fn writeStatusLine(allocator: std.mem.Allocator, io: std.Io, use_color: bool, status: []const u8, path: []const u8) !void {
+    const styled_status = try styledLiteral(allocator, use_color, status, .success);
+    defer allocator.free(styled_status);
+    const styled_path = try styledLiteral(allocator, use_color, path, .path);
+    defer allocator.free(styled_path);
+    try writeFmt(allocator, io, .stdout, "{s} {s}\n", .{ styled_status, styled_path });
+}
+
+fn colorEnabled(env_map: *std.process.Environ.Map) bool {
+    if (env_map.get("NO_COLOR")) |value| {
+        _ = value;
+        return false;
+    }
+    if (env_map.get("KAI_COLOR")) |value| {
+        if (std.mem.eql(u8, value, "never")) return false;
+    }
+    return true;
+}
 
 fn dispatchProtocolCommand(
     allocator: std.mem.Allocator,
@@ -309,13 +619,19 @@ fn writeFmt(
 }
 
 test "parses supported commands" {
-    try std.testing.expectEqual(Command.help, try parseCommand(&.{"help"}));
+    try std.testing.expectEqual(HelpTopic.general, (try parseCommand(&.{"help"})).help);
+    try std.testing.expectEqual(HelpTopic.shell, (try parseCommand(&.{ "help", "shell" })).help);
+    try std.testing.expectEqual(HelpTopic.build, (try parseCommand(&.{ "build", "--help" })).help);
 
     const shell_default = try parseCommand(&.{"shell"});
     try std.testing.expectEqualStrings("shell", shell_default.protocol.cli_name);
     try std.testing.expectEqualStrings(default_config_file, shell_default.protocol.path);
-    const shell_file = try parseCommand(&.{ "shell", "examples/shell.roc" });
+    const shell_file = try parseCommand(&.{ "sh", "examples/shell.roc" });
     try std.testing.expectEqualStrings("examples/shell.roc", shell_file.protocol.path);
+
+    const init = try parseCommand(&.{ "shell", "init", "my-app", "--force" });
+    try std.testing.expectEqualStrings("my-app", init.shell_init.directory);
+    try std.testing.expect(init.shell_init.force);
 
     const build_default = try parseCommand(&.{"build"});
     try std.testing.expectEqualStrings("build", build_default.protocol.cli_name);
@@ -334,6 +650,7 @@ test "parses supported commands" {
 test "rejects invalid command usage" {
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "shell", "a", "b" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "build", "a", "b" }));
+    try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "shell", "init", "one", "two" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "adapter", "delete" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "backend", "delete" }));
 }
@@ -349,6 +666,14 @@ test "builds roc config argv with protocol command name" {
     try std.testing.expectEqualStrings("examples/shell.roc", argv[1]);
     try std.testing.expectEqualStrings("--", argv[2]);
     try std.testing.expectEqualStrings("machine.build", argv[3]);
+}
+
+test "styled help uses bold headers and ANSI command color" {
+    const text = try helpText(std.testing.allocator, .general, true);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, ansi.bold ++ "Usage:" ++ ansi.normal_intensity) != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, ansi.command ++ "kai" ++ ansi.foreground_default) != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "target") == null);
 }
 
 test "plans shell command dispatch" {

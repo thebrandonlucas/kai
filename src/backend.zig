@@ -1,7 +1,7 @@
 const std = @import("std");
 
-pub const backend_config_file = ".kai-backend";
-pub const legacy_adapter_config_file = ".kai-adapter";
+pub const backend_config_file = ".kai/backend";
+pub const legacy_adapter_config_file = ".kai/adapter";
 pub const env_adapter_name = "KAI_BACKEND_ADAPTER";
 
 pub const Backend = enum {
@@ -148,6 +148,7 @@ fn readConfiguredBackendFile(allocator: std.mem.Allocator, io: std.Io, path: []c
 pub fn writeConfiguredBackend(allocator: std.mem.Allocator, io: std.Io, setting: []const u8) !void {
     const bytes = try std.fmt.allocPrint(allocator, "{s}\n", .{setting});
     defer allocator.free(bytes);
+    try std.Io.Dir.cwd().createDirPath(io, ".kai");
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = backend_config_file, .data = bytes });
 }
 
@@ -248,9 +249,9 @@ test "recognizes built-in adapter names" {
     try std.testing.expect(builtinAdapter("custom") == null);
 }
 
-test "uses .kai-backend as primary config and keeps legacy adapter path" {
-    try std.testing.expectEqualStrings(".kai-backend", backend_config_file);
-    try std.testing.expectEqualStrings(".kai-adapter", legacy_adapter_config_file);
+test "uses .kai directory for backend config and keeps adapter path" {
+    try std.testing.expectEqualStrings(".kai/backend", backend_config_file);
+    try std.testing.expectEqualStrings(".kai/adapter", legacy_adapter_config_file);
 }
 
 test "trims backend config" {

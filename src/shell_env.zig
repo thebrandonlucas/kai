@@ -6,37 +6,39 @@ pub const PreparedShell = struct {
     written_path: ?[]const u8,
 };
 
-const shell_dir = ".kai/shell";
-const nix_flake_path = ".kai/shell/flake.nix";
-const guix_manifest_path = ".kai/shell/manifest.scm";
+const workspace_dir = ".kai";
+const nix_flake_path = ".kai/flake.nix";
+const guix_manifest_path = ".kai/manifest.scm";
 
 pub fn prepare(
     allocator: std.mem.Allocator,
     io: std.Io,
     backend: backend_mod.Backend,
+    name: []const u8,
     packages: []const []const u8,
 ) !PreparedShell {
+    try validateShellName(name);
     try validatePackages(packages);
-    try std.Io.Dir.cwd().createDirPath(io, shell_dir);
+    try std.Io.Dir.cwd().createDirPath(io, workspace_dir);
 
     return switch (backend) {
         .nix => blk: {
-            const flake = try renderNixFlake(allocator, packages);
+            const flake = try renderNixFlake(allocator, name, packages);
             defer allocator.free(flake);
             const wrote = try writeIfChanged(allocator, io, nix_flake_path, flake);
-            break :blk .{ .target = "path:.kai/shell", .written_path = if (wrote) nix_flake_path else null };
+            break :blk .{ .target = "path:.kai", .written_path = if (wrote) nix_flake_path else null };
         },
         .guix => blk: {
             const manifest = try renderGuixManifest(allocator, packages);
             defer allocator.free(manifest);
             const wrote = try writeIfChanged(allocator, io, guix_manifest_path, manifest);
-            break :blk .{ .target = shell_dir, .written_path = if (wrote) guix_manifest_path else null };
+            break :blk .{ .target = workspace_dir, .written_path = if (wrote) guix_manifest_path else null };
         },
-        .adapter => .{ .target = shell_dir, .written_path = null },
+        .adapter => .{ .target = workspace_dir, .written_path = null },
     };
 }
 
-pub fn renderNixFlake(allocator: std.mem.Allocator, packages: []const []const u8) ![]u8 {
+pub fn renderNixFlake(allocator: std.mem.Allocator, name: []const u8, packages: []const []const u8) ![]u8 {
     var out = std.array_list.Managed(u8).init(allocator);
     errdefer out.deinit();
 
@@ -45,7 +47,7 @@ pub fn renderNixFlake(allocator: std.mem.Allocator, packages: []const []const u8
 
     try appendFmt(&out,
         \\{{
-        \\  description = "Kai generated dev shell";
+        \\  description = "Kai dev shell for {s}";
         \\
         \\  inputs = {{
         \\    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -61,14 +63,14 @@ pub fn renderNixFlake(allocator: std.mem.Allocator, packages: []const []const u8
         \\          pkgs = import nixpkgs {{ inherit system; }};
         \\        in {{
         \\          default = pkgs.mkShell {{
-        \\            name = "kai-shell";
+        \\            name = "{s}";
         \\            packages = [{s}];
         \\          }};
         \\        }});
         \\    }};
         \\}}
         \\
-    , .{package_block});
+    , .{ name, sanitizedShellName(name), package_block });
 
     return out.toOwnedSlice();
 }
@@ -85,6 +87,16 @@ pub fn renderGuixManifest(allocator: std.mem.Allocator, packages: []const []cons
     }
     try out.appendSlice("))\n");
     return out.toOwnedSlice();
+}
+
+fn validateShellName(name: []const u8) !void {
+    if (name.len == 0) return error.InvalidShellName;
+    for (name) |ch| {
+        switch (ch) {
+            'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.', '+' => {},
+            else => return error.InvalidShellName,
+        }
+    }
 }
 
 fn validatePackages(packages: []const []const u8) !void {
@@ -111,6 +123,10 @@ fn renderNixPackageBlock(allocator: std.mem.Allocator, packages: []const []const
     }
     try appendSpaces(&out, closing_indent);
     return out.toOwnedSlice();
+}
+
+fn sanitizedShellName(name: []const u8) []const u8 {
+    return if (name.len == 0) "kai-shell" else name;
 }
 
 fn writeIfChanged(allocator: std.mem.Allocator, io: std.Io, path: []const u8, content: []const u8) !bool {
@@ -157,9 +173,11 @@ fn appendSpaces(out: *std.array_list.Managed(u8), count: usize) !void {
 }
 
 test "renders nix shell flake" {
-    const flake = try renderNixFlake(std.testing.allocator, &.{ "zig", "python3Packages.numpy" });
+    const flake = try renderNixFlake(std.testing.allocator, "demo", &.{ "zig", "python3Packages.numpy" });
     defer std.testing.allocator.free(flake);
     try std.testing.expect(std.mem.indexOf(u8, flake, "devShells") != null);
+    try std.testing.expect(std.mem.indexOf(u8, flake, "description = \"Kai dev shell for demo\";") != null);
+    try std.testing.expect(std.mem.indexOf(u8, flake, "name = \"demo\";") != null);
     try std.testing.expect(std.mem.indexOf(u8, flake, "pkgs.zig") != null);
     try std.testing.expect(std.mem.indexOf(u8, flake, "pkgs.python3Packages.numpy") != null);
 }
@@ -171,5 +189,5 @@ test "renders guix manifest" {
 }
 
 test "rejects invalid package names" {
-    try std.testing.expectError(error.InvalidShellPackage, prepare(std.testing.allocator, std.testing.io, .nix, &.{"bad;pkg"}));
+    try std.testing.expectError(error.InvalidShellPackage, prepare(std.testing.allocator, std.testing.io, .nix, "demo", &.{"bad;pkg"}));
 }
