@@ -4,6 +4,7 @@
 //! lowering stays in Roc adapters; host-side process execution may still wrap
 //! recognized backend subprocesses to preserve terminal UX.
 const std = @import("std");
+const builtin = @import("builtin");
 const spinner_mod = @import("spinner.zig");
 
 const adapter_request_protocol = "kai.adapter.argv.v1";
@@ -214,22 +215,6 @@ fn isNixDevelopShellPlan(argv: []const []const u8) bool {
     return true;
 }
 
-const ChildWaitState = struct {
-    child: std.process.Child,
-    done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-    term: ?std.process.Child.Term = null,
-    err: ?anyerror = null,
-};
-
-fn waitChildThread(state: *ChildWaitState, io: std.Io) void {
-    state.term = state.child.wait(io) catch |err| {
-        state.err = err;
-        state.done.store(true, .release);
-        return;
-    };
-    state.done.store(true, .release);
-}
-
 fn runQuietNixDevelopShell(allocator: std.mem.Allocator, io: std.Io, nix_argv: []const []const u8) !u8 {
     const ready_path = try tempPath(allocator, io, "kai-dev-ready");
     defer allocator.free(ready_path);
@@ -252,39 +237,25 @@ fn runQuietNixDevelopShell(allocator: std.mem.Allocator, io: std.Io, nix_argv: [
     var spinner = try spinner_mod.Spinner.start(allocator, io, message, .animal);
     defer spinner.deinit();
 
-    const wait_state = try allocator.create(ChildWaitState);
-    var destroy_wait_state_on_error = true;
-    errdefer if (destroy_wait_state_on_error) allocator.destroy(wait_state);
-    const child = try std.process.spawn(io, .{
+    var child = try std.process.spawn(io, .{
         .argv = wrapper_argv,
         .stdin = .inherit,
         .stdout = .inherit,
         .stderr = .inherit,
         .expand_arg0 = .expand,
     });
-    wait_state.* = .{ .child = child };
-    const wait_thread = std.Thread.spawn(.{}, waitChildThread, .{ wait_state, io }) catch |err| {
-        wait_state.child.kill(io);
-        return err;
-    };
-    destroy_wait_state_on_error = false;
+    errdefer child.kill(io);
 
     while (true) {
         if (fileExists(io, ready_path)) {
             spinner.stop();
             std.Io.Dir.cwd().writeFile(io, .{ .sub_path = ack_path, .data = "" }) catch {};
-            wait_thread.join();
-            defer allocator.destroy(wait_state);
-            if (wait_state.err) |err| return err;
-            return exitCode(wait_state.term.?);
+            return exitCode(try child.wait(io));
         }
 
-        if (wait_state.done.load(.acquire)) {
+        if (try pollChildExit(&child)) |term| {
             spinner.stop();
-            wait_thread.join();
-            defer allocator.destroy(wait_state);
-            if (wait_state.err) |err| return err;
-            return exitCode(wait_state.term.?);
+            return exitCode(term);
         }
 
         io.sleep(.fromMilliseconds(50), .awake) catch {};
@@ -327,6 +298,41 @@ fn fileExists(io: std.Io, path: []const u8) bool {
 
 fn deleteFileIfExists(io: std.Io, path: []const u8) void {
     std.Io.Dir.deleteFileAbsolute(io, path) catch {};
+}
+
+fn pollChildExit(child: *std.process.Child) !?std.process.Child.Term {
+    return switch (builtin.os.tag) {
+        .linux => pollLinuxChildExit(child),
+        else => null,
+    };
+}
+
+fn pollLinuxChildExit(child: *std.process.Child) !?std.process.Child.Term {
+    const pid = child.id orelse return null;
+    var status: u32 = 0;
+    const rc = std.os.linux.waitpid(pid, &status, std.os.linux.W.NOHANG);
+    return switch (std.os.linux.errno(rc)) {
+        .SUCCESS => blk: {
+            if (rc == 0) break :blk null;
+            child.id = null;
+            break :blk linuxStatusToTerm(status);
+        },
+        .INTR => null,
+        else => error.UnexpectedWaitPidError,
+    };
+}
+
+fn linuxStatusToTerm(status: u32) std.process.Child.Term {
+    if (std.os.linux.W.IFEXITED(status)) {
+        return .{ .exited = std.os.linux.W.EXITSTATUS(status) };
+    }
+    if (std.os.linux.W.IFSIGNALED(status)) {
+        return .{ .signal = @enumFromInt(@intFromEnum(std.os.linux.W.TERMSIG(status))) };
+    }
+    if (std.os.linux.W.IFSTOPPED(status)) {
+        return .{ .stopped = @enumFromInt(@intFromEnum(std.os.linux.W.STOPSIG(status))) };
+    }
+    return .{ .unknown = status };
 }
 
 fn exitCode(term: std.process.Child.Term) u8 {

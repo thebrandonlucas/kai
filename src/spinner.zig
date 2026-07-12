@@ -1,5 +1,6 @@
 //! Terminal loading spinner helpers shared by CLI/host subprocess runners.
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const CLOCK_FRAMES = [_][]const u8{
     "🕛",
@@ -141,8 +142,16 @@ fn spinnerThread(state: *State) void {
 }
 
 fn sleepMilliseconds(milliseconds: i64) void {
-    const io = std.Io.Threaded.global_single_threaded.io();
-    io.sleep(.fromMilliseconds(milliseconds), .awake) catch {};
+    switch (builtin.os.tag) {
+        .linux => {
+            const request = std.os.linux.timespec{
+                .sec = @divTrunc(milliseconds, 1000),
+                .nsec = @mod(milliseconds, 1000) * std.time.ns_per_ms,
+            };
+            _ = std.os.linux.nanosleep(&request, null);
+        },
+        else => {},
+    }
 }
 
 pub fn stderrIsTerminal(io: std.Io) !bool {
