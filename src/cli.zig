@@ -22,6 +22,7 @@ const HelpTopic = enum {
     general,
     shell,
     build,
+    blueprint,
     zen,
 };
 
@@ -97,6 +98,7 @@ fn parseCommand(args: []const []const u8) !Command {
         if (args.len == 1) return .{ .help = .general };
         if (args.len == 2 and isShellName(args[1])) return .{ .help = .shell };
         if (args.len == 2 and std.mem.eql(u8, args[1], "build")) return .{ .help = .build };
+        if (args.len == 2 and isBlueprintCommandName(args[1])) return .{ .help = .blueprint };
         if (args.len == 2 and std.mem.eql(u8, args[1], "zen")) return .{ .help = .zen };
         return error.InvalidCommand;
     }
@@ -124,7 +126,9 @@ fn parseCommand(args: []const []const u8) !Command {
         return error.InvalidCommand;
     }
 
-    if (args.len >= 2 and isBlueprintCommandName(args[0])) {
+    if (isBlueprintCommandName(args[0])) {
+        if (args.len == 1) return .{ .help = .blueprint };
+        if (args.len == 2 and isHelp(args[1])) return .{ .help = .blueprint };
         if (args.len == 2 and std.mem.eql(u8, args[1], "list")) return .blueprint_list;
         if (args.len == 2 and std.mem.eql(u8, args[1], "get")) return .blueprint_get;
         if (args.len == 3 and std.mem.eql(u8, args[1], "set")) return .{ .blueprint_set = args[2] };
@@ -336,6 +340,7 @@ fn helpText(allocator: std.mem.Allocator, topic: HelpTopic, use_color: bool) ![]
         .general => try appendGeneralHelp(&out, use_color),
         .shell => try appendShellHelp(&out, use_color),
         .build => try appendBuildHelp(&out, use_color),
+        .blueprint => try appendBlueprintHelp(&out, use_color),
         .zen => try appendZenHelp(&out, use_color),
     }
 
@@ -402,6 +407,27 @@ fn appendBuildHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
     try out.appendSlice("\n");
     try appendCommandRow(out, use_color, "kai build", "Build the machine image from kai.roc");
     try appendCommandRow(out, use_color, "kai build examples/shell.roc", "Build from another Roc config");
+    try out.appendSlice("\n");
+    try appendStyled(out, use_color, "Flags:", .heading);
+    try out.appendSlice("\n  -h, --help                             print help information\n");
+}
+
+fn appendBlueprintHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
+    try out.appendSlice("Select the active execution blueprint. `backend` and `adapter` are legacy aliases.\n\n");
+    try appendStyled(out, use_color, "Usage:", .heading);
+    try out.appendSlice("\n  ");
+    try appendStyled(out, use_color, "kai blueprint list", .command);
+    try out.appendSlice("\n  ");
+    try appendStyled(out, use_color, "kai blueprint get", .command);
+    try out.appendSlice("\n  ");
+    try appendStyled(out, use_color, "kai blueprint set <blueprint>", .command);
+    try out.appendSlice("\n\n");
+    try appendStyled(out, use_color, "Commands:", .heading);
+    try out.appendSlice("\n");
+    try appendCommandRow(out, use_color, "kai blueprint list", "Show current and available blueprints");
+    try appendCommandRow(out, use_color, "kai blueprint get", "Print the selected blueprint, or none");
+    try appendCommandRow(out, use_color, "kai blueprint set nix", "Select the Nix blueprint");
+    try appendCommandRow(out, use_color, "kai blueprint set guix", "Select the Guix blueprint");
     try out.appendSlice("\n");
     try appendStyled(out, use_color, "Flags:", .heading);
     try out.appendSlice("\n  -h, --help                             print help information\n");
@@ -663,6 +689,9 @@ test "parses supported commands" {
     try std.testing.expectEqual(HelpTopic.general, (try parseCommand(&.{"help"})).help);
     try std.testing.expectEqual(HelpTopic.shell, (try parseCommand(&.{ "help", "shell" })).help);
     try std.testing.expectEqual(HelpTopic.build, (try parseCommand(&.{ "build", "--help" })).help);
+    try std.testing.expectEqual(HelpTopic.blueprint, (try parseCommand(&.{"blueprint"})).help);
+    try std.testing.expectEqual(HelpTopic.blueprint, (try parseCommand(&.{ "blueprint", "--help" })).help);
+    try std.testing.expectEqual(HelpTopic.blueprint, (try parseCommand(&.{ "help", "blueprint" })).help);
     try std.testing.expectEqual(HelpTopic.zen, (try parseCommand(&.{ "help", "zen" })).help);
     try std.testing.expectEqual(HelpTopic.zen, (try parseCommand(&.{ "zen", "--help" })).help);
     try std.testing.expectEqual(Command.zen, try parseCommand(&.{"zen"}));
