@@ -353,7 +353,7 @@ fn appendGeneralHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
     try appendStyled(out, use_color, "Commands:", .heading);
     try out.appendSlice("\n");
     try appendCommandRow(out, use_color, "shell (sh)", "Create or manage persistent or temporary shells");
-    try appendCommandRow(out, use_color, "build [config.roc]", "render " ++ machine.machine_flake_path ++ " and build machine image");
+    try appendCommandRow(out, use_color, "build [kai.roc]", "render " ++ machine.machine_flake_path ++ " and build machine image");
     try appendCommandRow(out, use_color, "blueprint list|get|set", "select the active execution blueprint");
     try appendCommandRow(out, use_color, "zen", "print kai zen");
     try out.appendSlice("\n");
@@ -372,7 +372,7 @@ fn appendShellHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
     try out.appendSlice("Create, initialize, and enter the top-level dev shell from kai.roc. `sh` is an alias for `shell`.\n\n");
     try appendStyled(out, use_color, "Usage:", .heading);
     try out.appendSlice("\n  ");
-    try appendStyled(out, use_color, "kai shell [config.roc]", .command);
+    try appendStyled(out, use_color, "kai shell [kai.roc]", .command);
     try out.appendSlice("\n  ");
     try appendStyled(out, use_color, "kai shell init [directory]", .command);
     try out.appendSlice("\n  ");
@@ -396,7 +396,7 @@ fn appendBuildHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
     try out.appendSlice("Render " ++ machine.machine_flake_path ++ " and build the configured machine image output.\n\n");
     try appendStyled(out, use_color, "Usage:", .heading);
     try out.appendSlice("\n  ");
-    try appendStyled(out, use_color, "kai build [config.roc]", .command);
+    try appendStyled(out, use_color, "kai build [kai.roc]", .command);
     try out.appendSlice("\n\n`kai build` expects the selected Roc config to contain a MachineBuild entry.\n\n");
     try appendStyled(out, use_color, "Examples:", .heading);
     try out.appendSlice("\n");

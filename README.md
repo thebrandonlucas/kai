@@ -36,8 +36,8 @@ Architecture:
 
 1. `src/command_registry.zig` declares protocol commands separately from extra/non-protocol commands.
 2. `src/blueprint.zig` selects exactly one active blueprint from `.kai/blueprint`, legacy `.kai/backend`, legacy `.kai/adapter`, `KAI_BLUEPRINT`, or legacy `KAI_BACKEND_ADAPTER`.
-3. `kai shell [config.roc]` dispatches protocol command `shell`; on first run or config changes it writes generated blueprint state under `.kai/` and tells the user.
-4. `kai build [config.roc]` is a CLI alias for protocol command `machine.build`.
+3. `kai shell [kai.roc]` dispatches protocol command `shell`; on first run or config changes it writes generated blueprint state under `.kai/` and tells the user.
+4. `kai build [kai.roc]` is a CLI alias for protocol command `machine.build`.
 5. The selected implementation must target the active blueprint; otherwise Kai reports a blueprint mismatch or unsupported blueprint.
 6. A blueprint executable is a small Roc program using `kai.Blueprint`; it lowers portable `shell` requests to normalized argv.
 7. `machine.build` currently supports only blueprint `nix`: it writes `.kai/machine/flake.nix`, prints the machine output attr, then runs `nix build path:.kai/machine#packages.<system>.<hostname>-image`.
@@ -119,8 +119,8 @@ zig build
 ./zig-out/bin/kai blueprint list
 ./zig-out/bin/kai blueprint set nix     # or guix, or a blueprint executable/path
 ./zig-out/bin/kai blueprint get
-./zig-out/bin/kai shell [config.roc]
-./zig-out/bin/kai build [config.roc]
+./zig-out/bin/kai shell [kai.roc]
+./zig-out/bin/kai build [kai.roc]
 ./zig-out/bin/kai zen
 ```
 
@@ -131,8 +131,8 @@ Commands:
 - `kai blueprint get`: print the selected blueprint setting, or `none`.
 - `kai blueprint set <blueprint-or-executable>`: write `<blueprint-or-executable>` to the local `.kai/blueprint` config file. Built-in names `nix` and `guix` resolve to sibling `kai-blueprint-nix`/`kai-blueprint-guix` executables when present, with `kai-adapter-nix`/`kai-adapter-guix` accepted as legacy binary names.
 - `kai backend ...` and `kai adapter ...`: legacy aliases for `kai blueprint ...`.
-- `kai shell [config.roc]`: dispatch protocol command `shell`; defaults to `kai.roc`. Generates `.kai/shell/flake.nix` for nix or `.kai/shell/manifest.scm` for guix on first run or when content changes.
-- `kai build [config.roc]`: dispatch protocol command `machine.build`; defaults to `kai.roc`. This writes `.kai/machine/flake.nix` and runs `nix build path:.kai/machine#...` for the configured image output when the active blueprint is `nix`.
+- `kai shell [kai.roc]`: dispatch protocol command `shell`; defaults to `kai.roc`. Generates `.kai/shell/flake.nix` for nix or `.kai/shell/manifest.scm` for guix on first run or when content changes.
+- `kai build [kai.roc]`: dispatch protocol command `machine.build`; defaults to `kai.roc`. This writes `.kai/machine/flake.nix` and runs `nix build path:.kai/machine#...` for the configured image output when the active blueprint is `nix`.
 - `kai zen`: print kai zen.
 
 Blueprint selection order for both the CLI and Roc config apps is `.kai/blueprint`, legacy `.kai/backend`, legacy `.kai/adapter`, `KAI_BLUEPRINT`, then legacy `KAI_BACKEND_ADAPTER`. `Kai.shellWithBlueprint!` can override this in lower-level Roc code.
