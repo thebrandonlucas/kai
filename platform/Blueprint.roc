@@ -1,14 +1,14 @@
 import Stdout
 
-## Legacy helper API for writing Kai blueprint executables in Roc.
+## Generic helper API for writing Kai blueprints in Roc.
 ##
-## Prefer `kai.Blueprint` for new code. This module keeps the historical Adapter
-## name and stable adapter wire protocol for compatibility.
-Adapter := [].{
+## This module defines the stable adapter wire protocol and plan encoder only;
+## blueprint-specific lowering belongs in blueprint executables, not in the platform.
+Blueprint := [].{
     ## Request sent by the generic Kai host to a Roc blueprint executable.
     Request : { target : Str, argv : List(Str) }
 
-    ## Pure blueprint lowering from Kai's portable shell request to executable argv.
+    ## Pure lowering from Kai's portable shell request to executable argv.
     ## Empty argv means enter the blueprint-native interactive shell.
     Backend : Request -> List(Str)
 
@@ -21,7 +21,7 @@ Adapter := [].{
     ## Entrypoint helper for blueprint executables.
     ## Expected argv: executable, request protocol, command, target, command argv...
     main! : List(Str), Backend => I32
-    main! = |args, backend| {
+    main! = |args, blueprint| {
         protocol = argAt(args, 1)
         command = argAt(args, 2)
         target = argAt(args, 3)
@@ -32,7 +32,7 @@ Adapter := [].{
             crash "unsupported Kai adapter command"
         } else {
             commandArgv = List.drop_first(args, 4)
-            planArgv = backend({ target, argv: commandArgv })
+            planArgv = blueprint({ target, argv: commandArgv })
             emitPlan!(planArgv)
             0
         }

@@ -1,6 +1,6 @@
 //! Tiny dependency-free Kai CLI.
 const std = @import("std");
-const backend_mod = @import("backend.zig");
+const blueprint_mod = @import("blueprint.zig");
 const machine = @import("machine.zig");
 const registry_mod = @import("command_registry.zig");
 const shell_env = @import("shell_env.zig");
@@ -29,9 +29,9 @@ const Command = union(enum) {
     help: HelpTopic,
     protocol: ConfigCommand,
     shell_init: ShellInit,
-    adapter_list,
-    adapter_get,
-    adapter_set: []const u8,
+    blueprint_list,
+    blueprint_get,
+    blueprint_set: []const u8,
     zen,
     unavailable: []const u8,
 };
@@ -39,16 +39,16 @@ const Command = union(enum) {
 const DispatchPlan = struct {
     command_name: []const u8,
     implementation_id: []const u8,
-    active_backend: backend_mod.Backend,
+    active_blueprint: blueprint_mod.Blueprint,
     config_path: []const u8,
 };
 
 const DispatchResult = union(enum) {
     ok: DispatchPlan,
     command_not_available,
-    unsupported_backend,
+    unsupported_blueprint,
     implementation_not_found,
-    implementation_backend_mismatch: *const registry_mod.CommandImplementation,
+    implementation_blueprint_mismatch: *const registry_mod.CommandImplementation,
 };
 
 const ansi = struct {
@@ -124,10 +124,10 @@ fn parseCommand(args: []const []const u8) !Command {
         return error.InvalidCommand;
     }
 
-    if (args.len >= 2 and (std.mem.eql(u8, args[0], "backend") or std.mem.eql(u8, args[0], "adapter"))) {
-        if (args.len == 2 and std.mem.eql(u8, args[1], "list")) return .adapter_list;
-        if (args.len == 2 and std.mem.eql(u8, args[1], "get")) return .adapter_get;
-        if (args.len == 3 and std.mem.eql(u8, args[1], "set")) return .{ .adapter_set = args[2] };
+    if (args.len >= 2 and isBlueprintCommandName(args[0])) {
+        if (args.len == 2 and std.mem.eql(u8, args[1], "list")) return .blueprint_list;
+        if (args.len == 2 and std.mem.eql(u8, args[1], "get")) return .blueprint_get;
+        if (args.len == 3 and std.mem.eql(u8, args[1], "set")) return .{ .blueprint_set = args[2] };
         return error.InvalidCommand;
     }
 
@@ -140,6 +140,10 @@ fn isHelp(arg: []const u8) bool {
 
 fn isShellName(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "shell") or std.mem.eql(u8, arg, "sh");
+}
+
+fn isBlueprintCommandName(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "blueprint") or std.mem.eql(u8, arg, "backend") or std.mem.eql(u8, arg, "adapter");
 }
 
 fn parseShellInit(args: []const []const u8) !ShellInit {
@@ -185,12 +189,12 @@ fn executeCommand(
         },
         .shell_init => |init| return shellInit(allocator, io, env_map, init),
         .protocol => |config| return dispatchProtocolCommand(allocator, io, env_map, config),
-        .adapter_list => {
-            try listAdapters(allocator, io, env_map);
+        .blueprint_list => {
+            try listBlueprints(allocator, io, env_map);
             return 0;
         },
-        .adapter_get => {
-            var selection = try backend_mod.selectedBackend(allocator, io, env_map);
+        .blueprint_get => {
+            var selection = try blueprint_mod.selectedBlueprint(allocator, io, env_map);
             if (selection) |*sel| {
                 defer sel.deinit(allocator);
                 try writeFmt(allocator, io, .stdout, "{s}\n", .{sel.setting});
@@ -199,10 +203,10 @@ fn executeCommand(
             }
             return 0;
         },
-        .adapter_set => |adapter| {
-            try backend_mod.validateBackendSetting(adapter);
-            try backend_mod.writeConfiguredBackend(allocator, io, adapter);
-            try writeFmt(allocator, io, .stdout, "{s}\n", .{adapter});
+        .blueprint_set => |blueprint| {
+            try blueprint_mod.validateBlueprintSetting(blueprint);
+            try blueprint_mod.writeConfiguredBlueprint(allocator, io, blueprint);
+            try writeFmt(allocator, io, .stdout, "{s}\n", .{blueprint});
             return 0;
         },
         .zen => {
@@ -350,6 +354,7 @@ fn appendGeneralHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
     try out.appendSlice("\n");
     try appendCommandRow(out, use_color, "shell (sh)", "Create or manage persistent or temporary shells");
     try appendCommandRow(out, use_color, "build [config.roc]", "render " ++ machine.machine_flake_path ++ " and build machine image");
+    try appendCommandRow(out, use_color, "blueprint list|get|set", "select the active execution blueprint");
     try appendCommandRow(out, use_color, "zen", "print kai zen");
     try out.appendSlice("\n");
     try out.appendSlice("kai is a tool to help you harness the power of determinate computing by\n");
@@ -357,7 +362,7 @@ fn appendGeneralHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
     try appendStyled(out, use_color, "Some things you can do:", .heading);
     try out.appendSlice("\n\n");
     try appendExample(out, use_color, "kai shell init", "Create a starter kai.roc and generated " ++ shell_env.nix_flake_path ++ ".");
-    try appendExample(out, use_color, "kai shell", "Render the shell from kai.roc and enter it through the active backend.");
+    try appendExample(out, use_color, "kai shell", "Render the shell from kai.roc and enter it through the active blueprint.");
     try appendExample(out, use_color, "kai build", "Render " ++ machine.machine_flake_path ++ " and build the configured machine image.");
     try appendStyled(out, use_color, "Flags:", .heading);
     try out.appendSlice("\n  -h, --help                             print help information\n");
@@ -496,8 +501,8 @@ fn dispatchProtocolCommand(
     env_map: *std.process.Environ.Map,
     config: ConfigCommand,
 ) !u8 {
-    var active = try backend_mod.selectedBackend(allocator, io, env_map) orelse {
-        try writeAll(io, .stderr, "kai: missing active backend; run `kai backend set nix` or set KAI_BACKEND_ADAPTER\n");
+    var active = try blueprint_mod.selectedBlueprint(allocator, io, env_map) orelse {
+        try writeAll(io, .stderr, "kai: missing active blueprint; run `kai blueprint set nix` or set KAI_BLUEPRINT\n");
         return 1;
     };
     defer active.deinit(allocator);
@@ -509,7 +514,7 @@ fn dispatchProtocolCommand(
         registry_mod.default_protocol_registry,
         config.cli_name,
         config.path,
-        active.backend,
+        active.blueprint,
         override_id,
     );
 
@@ -519,19 +524,19 @@ fn dispatchProtocolCommand(
             try writeFmt(allocator, io, .stderr, "kai: command not available: {s}\n", .{config.cli_name});
             break :blk 1;
         },
-        .unsupported_backend => blk: {
+        .unsupported_blueprint => blk: {
             const command = registry_mod.default_protocol_registry.lookup(config.cli_name).?;
-            try writeFmt(allocator, io, .stderr, "kai: backend {s} does not support protocol command {s}\n", .{ active.backendName(), command.name });
+            try writeFmt(allocator, io, .stderr, "kai: blueprint {s} does not support protocol command {s}\n", .{ active.blueprintName(), command.name });
             break :blk 1;
         },
-        .implementation_backend_mismatch => |implementation| blk: {
+        .implementation_blueprint_mismatch => |implementation| blk: {
             const command = registry_mod.default_protocol_registry.lookup(config.cli_name).?;
             try writeFmt(
                 allocator,
                 io,
                 .stderr,
-                "kai: implementation backend mismatch: command {s} requires {s}, active backend is {s}\n",
-                .{ command.name, implementation.backend.name(), active.backendName() },
+                "kai: implementation blueprint mismatch: command {s} requires {s}, active blueprint is {s}\n",
+                .{ command.name, implementation.blueprint.name(), active.blueprintName() },
             );
             break :blk 1;
         },
@@ -542,22 +547,22 @@ fn planProtocolDispatch(
     registry: registry_mod.ProtocolRegistry,
     cli_name: []const u8,
     config_path: []const u8,
-    active_backend: backend_mod.Backend,
+    active_blueprint: blueprint_mod.Blueprint,
     override_id: ?[]const u8,
 ) DispatchResult {
     const command = registry.lookup(cli_name) orelse return .command_not_available;
-    const selected = registry.selectImplementation(command.name, active_backend, override_id);
+    const selected = registry.selectImplementation(command.name, active_blueprint, override_id);
     return switch (selected) {
         .ok => |implementation| .{ .ok = .{
             .command_name = command.name,
             .implementation_id = implementation.id,
-            .active_backend = active_backend,
+            .active_blueprint = active_blueprint,
             .config_path = config_path,
         } },
         .command_not_registered => .command_not_available,
-        .backend_unsupported => .unsupported_backend,
+        .blueprint_unsupported => .unsupported_blueprint,
         .implementation_not_found => .implementation_not_found,
-        .implementation_backend_mismatch => |implementation| .{ .implementation_backend_mismatch = implementation },
+        .implementation_blueprint_mismatch => |implementation| .{ .implementation_blueprint_mismatch = implementation },
     };
 }
 
@@ -610,21 +615,21 @@ fn exitCode(term: std.process.Child.Term) u8 {
     };
 }
 
-fn listAdapters(allocator: std.mem.Allocator, io: std.Io, env_map: *std.process.Environ.Map) !void {
-    var selection = try backend_mod.selectedBackend(allocator, io, env_map);
+fn listBlueprints(allocator: std.mem.Allocator, io: std.Io, env_map: *std.process.Environ.Map) !void {
+    var selection = try blueprint_mod.selectedBlueprint(allocator, io, env_map);
     if (selection) |*sel| {
         defer sel.deinit(allocator);
-        try writeFmt(allocator, io, .stdout, "current\t{s}\t{s}\t{s}\tbackend={s}\n", .{ sel.source, sel.setting, sel.adapter_executable, sel.backendName() });
+        try writeFmt(allocator, io, .stdout, "current\t{s}\t{s}\t{s}\tblueprint={s}\n", .{ sel.source, sel.setting, sel.blueprint_executable, sel.blueprintName() });
     } else {
         try writeAll(io, .stdout, "current\tnone\n");
     }
 
     var found = false;
-    for (backend_mod.builtin_adapters) |adapter| {
-        const resolved = try backend_mod.resolveAdapter(allocator, io, adapter.name);
+    for (blueprint_mod.builtin_blueprints) |blueprint| {
+        const resolved = try blueprint_mod.resolveBlueprint(allocator, io, blueprint.name);
         defer allocator.free(resolved);
         found = true;
-        try writeFmt(allocator, io, .stdout, "{s}\t{s}\tbackend={s}\n", .{ adapter.name, resolved, adapter.backend.name() });
+        try writeFmt(allocator, io, .stdout, "{s}\t{s}\tblueprint={s}\n", .{ blueprint.name, resolved, blueprint.blueprint.name() });
     }
 
     if (!found) {
@@ -678,18 +683,20 @@ test "parses supported commands" {
     const build_file = try parseCommand(&.{ "build", "examples/shell.roc" });
     try std.testing.expectEqualStrings("examples/shell.roc", build_file.protocol.path);
 
-    try std.testing.expectEqual(Command.adapter_list, try parseCommand(&.{ "backend", "list" }));
-    try std.testing.expectEqual(Command.adapter_get, try parseCommand(&.{ "backend", "get" }));
-    try std.testing.expectEqual(Command.adapter_list, try parseCommand(&.{ "adapter", "list" }));
+    try std.testing.expectEqual(Command.blueprint_list, try parseCommand(&.{ "blueprint", "list" }));
+    try std.testing.expectEqual(Command.blueprint_get, try parseCommand(&.{ "blueprint", "get" }));
+    try std.testing.expectEqual(Command.blueprint_list, try parseCommand(&.{ "backend", "list" }));
+    try std.testing.expectEqual(Command.blueprint_list, try parseCommand(&.{ "adapter", "list" }));
 
-    const command = try parseCommand(&.{ "backend", "set", "nix" });
-    try std.testing.expect(std.mem.eql(u8, command.adapter_set, "nix"));
+    const command = try parseCommand(&.{ "blueprint", "set", "nix" });
+    try std.testing.expect(std.mem.eql(u8, command.blueprint_set, "nix"));
 }
 
 test "rejects invalid command usage" {
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "shell", "a", "b" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "build", "a", "b" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "shell", "init", "one", "two" }));
+    try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "blueprint", "delete" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "adapter", "delete" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "backend", "delete" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "zen", "one" }));
@@ -741,7 +748,7 @@ test "plans shell command dispatch" {
         .ok => |plan| {
             try std.testing.expectEqualStrings("shell", plan.command_name);
             try std.testing.expectEqualStrings("shell.default.nix", plan.implementation_id);
-            try std.testing.expectEqual(backend_mod.Backend.nix, plan.active_backend);
+            try std.testing.expectEqual(blueprint_mod.Blueprint.nix, plan.active_blueprint);
         },
         else => return error.TestExpectedShellDispatch,
     }
@@ -758,9 +765,9 @@ test "plans build alias dispatch to machine.build" {
     }
 }
 
-test "reports unsupported backend for machine build on guix" {
+test "reports unsupported blueprint for machine build on guix" {
     const result = planProtocolDispatch(registry_mod.default_protocol_registry, "build", "kai.roc", .guix, null);
-    try std.testing.expectEqual(DispatchResult.unsupported_backend, result);
+    try std.testing.expectEqual(DispatchResult.unsupported_blueprint, result);
 }
 
 test "reports command not registered" {
@@ -768,10 +775,10 @@ test "reports command not registered" {
     try std.testing.expectEqual(DispatchResult.command_not_available, result);
 }
 
-test "reports implementation backend mismatch" {
+test "reports implementation blueprint mismatch" {
     const result = planProtocolDispatch(registry_mod.default_protocol_registry, "shell", "kai.roc", .guix, "shell.default.nix");
     switch (result) {
-        .implementation_backend_mismatch => |implementation| try std.testing.expectEqualStrings("shell.default.nix", implementation.id),
-        else => return error.TestExpectedBackendMismatch,
+        .implementation_blueprint_mismatch => |implementation| try std.testing.expectEqualStrings("shell.default.nix", implementation.id),
+        else => return error.TestExpectedBlueprintMismatch,
     }
 }

@@ -1,9 +1,9 @@
 app [main!] { kai: platform "../../platform/main.roc" }
 
-import kai.Adapter
+import kai.Blueprint
 
-## Nix backend: nix develop --no-write-lock-file <target> [--command <command...>]
-nixDevelop : Adapter.Backend
+## Nix blueprint: nix develop --no-write-lock-file <target> [--command <command...>]
+nixDevelop : Blueprint.Backend
 nixDevelop = |request| {
     prefix =
         if request.target == "" {
@@ -20,4 +20,4 @@ nixDevelop = |request| {
 }
 
 main! : List(Str) => I32
-main! = |args| Adapter.main!(args, nixDevelop)
+main! = |args| Blueprint.main!(args, nixDevelop)

@@ -1,12 +1,12 @@
 app [main!] { kai: platform "../../platform/main.roc" }
 
-import kai.Adapter
+import kai.Blueprint
 
-## Guix backend: guix shell [-m manifest.scm] [-- <command...>]
+## Guix blueprint: guix shell [-m manifest.scm] [-- <command...>]
 ##
 ## For the generic Kai `environment` convention, a directory target means
 ## `<target>/manifest.scm`.
-guixShell : Adapter.Backend
+guixShell : Blueprint.Backend
 guixShell = |request| {
 	targetArgs =
 		if request.target == "" {
@@ -27,4 +27,4 @@ guixShell = |request| {
 }
 
 main! : List(Str) => I32
-main! = |args| Adapter.main!(args, guixShell)
+main! = |args| Blueprint.main!(args, guixShell)

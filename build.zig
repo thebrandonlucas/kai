@@ -87,31 +87,49 @@ pub fn build(b: *std.Build) void {
     native_step.dependOn(&native_lib.step);
     native_step.dependOn(&copy_native.step);
 
-    const roc_adapters_step = b.step("roc-adapters", "Build dependency-free Roc backend adapters");
+    const roc_blueprints_step = b.step("roc-blueprints", "Build dependency-free Roc blueprints");
+    const roc_adapters_step = b.step("roc-adapters", "Legacy alias for roc-blueprints");
+    roc_adapters_step.dependOn(roc_blueprints_step);
     const make_bin_dir = b.addSystemCommand(&.{ "mkdir", "-p", b.getInstallPath(.bin, "") });
     make_bin_dir.step.dependOn(native_step);
 
-    const build_nix_adapter = b.addSystemCommand(&.{
+    const build_nix_blueprint = b.addSystemCommand(&.{
         "roc",
         "build",
-        "adapters/roc/nix.roc",
-        b.fmt("--output={s}", .{b.getInstallPath(.bin, "kai-adapter-nix")}),
+        "blueprints/roc/nix.roc",
+        b.fmt("--output={s}", .{b.getInstallPath(.bin, "kai-blueprint-nix")}),
     });
-    build_nix_adapter.step.dependOn(&make_bin_dir.step);
-    roc_adapters_step.dependOn(&build_nix_adapter.step);
+    build_nix_blueprint.step.dependOn(&make_bin_dir.step);
+    roc_blueprints_step.dependOn(&build_nix_blueprint.step);
 
-    const build_guix_adapter = b.addSystemCommand(&.{
+    const install_nix_legacy_alias = b.addSystemCommand(&.{
+        "cp",
+        b.getInstallPath(.bin, "kai-blueprint-nix"),
+        b.getInstallPath(.bin, "kai-adapter-nix"),
+    });
+    install_nix_legacy_alias.step.dependOn(&build_nix_blueprint.step);
+    roc_blueprints_step.dependOn(&install_nix_legacy_alias.step);
+
+    const build_guix_blueprint = b.addSystemCommand(&.{
         "roc",
         "build",
-        "adapters/roc/guix.roc",
-        b.fmt("--output={s}", .{b.getInstallPath(.bin, "kai-adapter-guix")}),
+        "blueprints/roc/guix.roc",
+        b.fmt("--output={s}", .{b.getInstallPath(.bin, "kai-blueprint-guix")}),
     });
-    build_guix_adapter.step.dependOn(&make_bin_dir.step);
-    roc_adapters_step.dependOn(&build_guix_adapter.step);
+    build_guix_blueprint.step.dependOn(&make_bin_dir.step);
+    roc_blueprints_step.dependOn(&build_guix_blueprint.step);
+
+    const install_guix_legacy_alias = b.addSystemCommand(&.{
+        "cp",
+        b.getInstallPath(.bin, "kai-blueprint-guix"),
+        b.getInstallPath(.bin, "kai-adapter-guix"),
+    });
+    install_guix_legacy_alias.step.dependOn(&build_guix_blueprint.step);
+    roc_blueprints_step.dependOn(&install_guix_legacy_alias.step);
 
     const install_step = b.getInstallStep();
     install_step.dependOn(native_step);
-    install_step.dependOn(roc_adapters_step);
+    install_step.dependOn(roc_blueprints_step);
 
     const test_step = b.step("test", "Run Zig unit tests");
 
@@ -155,15 +173,15 @@ pub fn build(b: *std.Build) void {
     const run_shell_env_tests = b.addRunArtifact(shell_env_tests);
     test_step.dependOn(&run_shell_env_tests.step);
 
-    const backend_tests = b.addTest(.{
+    const blueprint_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/backend.zig"),
+            .root_source_file = b.path("src/blueprint.zig"),
             .target = native_target,
             .optimize = optimize,
         }),
     });
-    const run_backend_tests = b.addRunArtifact(backend_tests);
-    test_step.dependOn(&run_backend_tests.step);
+    const run_blueprint_tests = b.addRunArtifact(blueprint_tests);
+    test_step.dependOn(&run_blueprint_tests.step);
 
     const command_registry_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -198,7 +216,7 @@ pub fn build(b: *std.Build) void {
     const e2e_step = b.step("e2e", "Run real nix/guix subprocess examples");
     const run_nix_example = b.addSystemCommand(&.{
         "env",
-        b.fmt("KAI_BACKEND_ADAPTER={s}", .{b.getInstallPath(.bin, "kai-adapter-nix")}),
+        b.fmt("KAI_BLUEPRINT={s}", .{b.getInstallPath(.bin, "kai-blueprint-nix")}),
         b.getInstallPath(.bin, "kai"),
         "shell",
         "examples/shell.roc",
@@ -209,7 +227,7 @@ pub fn build(b: *std.Build) void {
 
     const run_guix_example = b.addSystemCommand(&.{
         "env",
-        b.fmt("KAI_BACKEND_ADAPTER={s}", .{b.getInstallPath(.bin, "kai-adapter-guix")}),
+        b.fmt("KAI_BLUEPRINT={s}", .{b.getInstallPath(.bin, "kai-blueprint-guix")}),
         b.getInstallPath(.bin, "kai"),
         "shell",
         "examples/shell.roc",

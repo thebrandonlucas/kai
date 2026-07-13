@@ -1,5 +1,5 @@
 const std = @import("std");
-const backend_mod = @import("backend.zig");
+const blueprint_mod = @import("blueprint.zig");
 
 pub const PreparedShell = struct {
     target: []const u8,
@@ -14,7 +14,7 @@ pub const guix_manifest_path = shell_workspace_dir ++ "/manifest.scm";
 pub fn prepare(
     allocator: std.mem.Allocator,
     io: std.Io,
-    backend: backend_mod.Backend,
+    blueprint: blueprint_mod.Blueprint,
     name: []const u8,
     packages: []const []const u8,
 ) !PreparedShell {
@@ -22,7 +22,7 @@ pub fn prepare(
     try validatePackages(packages);
     try std.Io.Dir.cwd().createDirPath(io, shell_workspace_dir);
 
-    return switch (backend) {
+    return switch (blueprint) {
         .nix => blk: {
             const flake = try renderNixFlake(allocator, name, packages);
             defer allocator.free(flake);
@@ -35,7 +35,7 @@ pub fn prepare(
             const wrote = try writeIfChanged(allocator, io, guix_manifest_path, manifest);
             break :blk .{ .target = shell_workspace_dir, .generated_path = guix_manifest_path, .wrote = wrote };
         },
-        .adapter => .{ .target = shell_workspace_dir, .generated_path = null, .wrote = false },
+        .custom => .{ .target = shell_workspace_dir, .generated_path = null, .wrote = false },
     };
 }
 

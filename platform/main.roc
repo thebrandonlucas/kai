@@ -2,7 +2,7 @@ platform "kai"
 	requires {
 		main! : List(Str) => I32
 	}
-	exposes [Kai, Stdout, Adapter]
+	exposes [Kai, Stdout, Blueprint, Adapter]
 	packages {}
 	provides { "roc_main": main_for_host! }
 	hosted {
@@ -23,6 +23,7 @@ platform "kai"
 
 import Kai
 import Stdout
+import Blueprint
 import Adapter
 import Host
 

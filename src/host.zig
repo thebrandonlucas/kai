@@ -1,13 +1,13 @@
 //! Minimal Kai Roc platform host.
 //!
-//! Roc code emits backend-neutral Kai protocol commands. For config-driven
-//! shell commands, this host generates backend state under `.kai/shell/`, sends
-//! the shell request to a backend adapter executable, receives a normalized argv
+//! Roc code emits blueprint-neutral Kai protocol commands. For config-driven
+//! shell commands, this host generates blueprint state under `.kai/shell/`, sends
+//! the shell request to a blueprint executable, receives a normalized argv
 //! execution plan, and executes it without shell interpolation.
 const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("roc_platform_abi.zig");
-const backend_mod = @import("backend.zig");
+const blueprint_mod = @import("blueprint.zig");
 const registry_mod = @import("command_registry.zig");
 const machine = @import("machine.zig");
 const protocol = @import("protocol.zig");
@@ -66,13 +66,13 @@ fn hostedStdoutLine(str: abi.RocStr) callconv(.c) void {
     stdout.writeStreamingAll(io, "\n") catch return;
 }
 
-fn hostedKaiShell(adapter: abi.RocStr, command: abi.RocStr, target: abi.RocStr, command_args: abi.RocList(abi.RocStr)) callconv(.c) abi.RocStr {
+fn hostedKaiShell(blueprint: abi.RocStr, command: abi.RocStr, target: abi.RocStr, command_args: abi.RocList(abi.RocStr)) callconv(.c) abi.RocStr {
     const roc_host = g_roc_host.?;
-    var owned_adapter = adapter;
+    var owned_blueprint = blueprint;
     var owned_command = command;
     var owned_target = target;
     const owned_command_args = command_args;
-    defer owned_adapter.decref(roc_host);
+    defer owned_blueprint.decref(roc_host);
     defer owned_command.decref(roc_host);
     defer owned_target.decref(roc_host);
     defer decrefRocStrList(owned_command_args, roc_host);
@@ -86,30 +86,32 @@ fn hostedKaiShell(adapter: abi.RocStr, command: abi.RocStr, target: abi.RocStr, 
     var threaded_io = std.Io.Threaded.init(roc_env.allocator, .{ .environ = g_process_environ });
     defer threaded_io.deinit();
 
-    var selected_backend = backend_mod.selectedBackendWithExplicit(
+    const env_blueprint = processBlueprintEnv();
+    var selected_blueprint = blueprint_mod.selectedBlueprintWithExplicit(
         roc_env.allocator,
         threaded_io.io(),
-        owned_adapter.asSlice(),
-        processEnvValue(backend_mod.env_adapter_name),
+        owned_blueprint.asSlice(),
+        if (env_blueprint) |entry| entry.setting else null,
+        if (env_blueprint) |entry| entry.source else null,
     ) catch |err| {
         return abi.RocStr.fromSlice(@errorName(err), roc_host);
     } orelse {
-        return abi.RocStr.fromSlice(@errorName(error.MissingBackendAdapter), roc_host);
+        return abi.RocStr.fromSlice(@errorName(error.MissingBlueprint), roc_host);
     };
-    defer selected_backend.deinit(roc_env.allocator);
+    defer selected_blueprint.deinit(roc_env.allocator);
 
-    switch (registry_mod.default_protocol_registry.selectImplementation(owned_command.asSlice(), selected_backend.backend, null)) {
+    switch (registry_mod.default_protocol_registry.selectImplementation(owned_command.asSlice(), selected_blueprint.blueprint, null)) {
         .ok => {},
-        .backend_unsupported => return abi.RocStr.fromSlice(@errorName(error.UnsupportedBackend), roc_host),
+        .blueprint_unsupported => return abi.RocStr.fromSlice(@errorName(error.UnsupportedBlueprint), roc_host),
         .command_not_registered => return abi.RocStr.fromSlice(@errorName(error.UnsupportedProtocolCommand), roc_host),
         .implementation_not_found => return abi.RocStr.fromSlice(@errorName(error.MissingProtocolImplementation), roc_host),
-        .implementation_backend_mismatch => return abi.RocStr.fromSlice(@errorName(error.ImplementationBackendMismatch), roc_host),
+        .implementation_blueprint_mismatch => return abi.RocStr.fromSlice(@errorName(error.ImplementationBlueprintMismatch), roc_host),
     }
 
     const output = protocol.executeProtocolCommand(
         roc_env.allocator,
         threaded_io.io(),
-        selected_backend.adapter_executable,
+        selected_blueprint.blueprint_executable,
         owned_command.asSlice(),
         owned_target.asSlice(),
         command_arg_slices,
@@ -138,24 +140,26 @@ fn hostedKaiConfigShell(name: abi.RocStr, packages: abi.RocList(abi.RocStr)) cal
     var threaded_io = std.Io.Threaded.init(roc_env.allocator, .{ .environ = g_process_environ });
     defer threaded_io.deinit();
 
-    var selected_backend = backend_mod.selectedBackendWithExplicit(
+    const env_blueprint = processBlueprintEnv();
+    var selected_blueprint = blueprint_mod.selectedBlueprintWithExplicit(
         roc_env.allocator,
         threaded_io.io(),
         "",
-        processEnvValue(backend_mod.env_adapter_name),
+        if (env_blueprint) |entry| entry.setting else null,
+        if (env_blueprint) |entry| entry.source else null,
     ) catch |err| {
         writeHostError(@errorName(err));
         return 1;
     } orelse {
-        writeHostError(@errorName(error.MissingBackendAdapter));
+        writeHostError(@errorName(error.MissingBlueprint));
         return 1;
     };
-    defer selected_backend.deinit(roc_env.allocator);
+    defer selected_blueprint.deinit(roc_env.allocator);
 
-    switch (registry_mod.default_protocol_registry.selectImplementation("shell", selected_backend.backend, null)) {
+    switch (registry_mod.default_protocol_registry.selectImplementation("shell", selected_blueprint.blueprint, null)) {
         .ok => {},
-        .backend_unsupported => {
-            writeUnsupportedBackend(selected_backend.backendName(), "shell");
+        .blueprint_unsupported => {
+            writeUnsupportedBlueprint(selected_blueprint.blueprintName(), "shell");
             return 1;
         },
         .command_not_registered => {
@@ -166,8 +170,8 @@ fn hostedKaiConfigShell(name: abi.RocStr, packages: abi.RocList(abi.RocStr)) cal
             writeHostError(@errorName(error.MissingProtocolImplementation));
             return 1;
         },
-        .implementation_backend_mismatch => {
-            writeHostError(@errorName(error.ImplementationBackendMismatch));
+        .implementation_blueprint_mismatch => {
+            writeHostError(@errorName(error.ImplementationBlueprintMismatch));
             return 1;
         },
     }
@@ -175,7 +179,7 @@ fn hostedKaiConfigShell(name: abi.RocStr, packages: abi.RocList(abi.RocStr)) cal
     const prepared = shell_env.prepare(
         roc_env.allocator,
         threaded_io.io(),
-        selected_backend.backend,
+        selected_blueprint.blueprint,
         owned_name.asSlice(),
         package_slices,
     ) catch |err| {
@@ -190,7 +194,7 @@ fn hostedKaiConfigShell(name: abi.RocStr, packages: abi.RocList(abi.RocStr)) cal
     return protocol.executeProtocolCommandStatus(
         roc_env.allocator,
         threaded_io.io(),
-        selected_backend.adapter_executable,
+        selected_blueprint.blueprint_executable,
         "shell",
         prepared.target,
         &.{},
@@ -242,22 +246,24 @@ fn hostedKaiMachineBuild(
     var threaded_io = std.Io.Threaded.init(roc_env.allocator, .{ .environ = g_process_environ });
     defer threaded_io.deinit();
 
-    var selected_backend = backend_mod.selectedBackendWithExplicit(
+    const env_blueprint = processBlueprintEnv();
+    var selected_blueprint = blueprint_mod.selectedBlueprintWithExplicit(
         roc_env.allocator,
         threaded_io.io(),
         "",
-        processEnvValue(backend_mod.env_adapter_name),
+        if (env_blueprint) |entry| entry.setting else null,
+        if (env_blueprint) |entry| entry.source else null,
     ) catch |err| {
         writeHostError(@errorName(err));
         return 1;
     } orelse {
-        writeHostError(@errorName(error.MissingBackendAdapter));
+        writeHostError(@errorName(error.MissingBlueprint));
         return 1;
     };
-    defer selected_backend.deinit(roc_env.allocator);
+    defer selected_blueprint.deinit(roc_env.allocator);
 
-    if (selected_backend.backend != .nix) {
-        writeUnsupportedBackend(selected_backend.backendName(), "machine.build");
+    if (selected_blueprint.blueprint != .nix) {
+        writeUnsupportedBlueprint(selected_blueprint.blueprintName(), "machine.build");
         return 1;
     }
 
@@ -297,11 +303,11 @@ fn writeHostError(message: []const u8) void {
     stderr.writeStreamingAll(io, "\n") catch return;
 }
 
-fn writeUnsupportedBackend(active_backend: []const u8, command_name: []const u8) void {
+fn writeUnsupportedBlueprint(active_blueprint: []const u8, command_name: []const u8) void {
     const io = std.Io.Threaded.global_single_threaded.io();
     const stderr = std.Io.File.stderr();
-    stderr.writeStreamingAll(io, "kai: backend ") catch return;
-    stderr.writeStreamingAll(io, active_backend) catch return;
+    stderr.writeStreamingAll(io, "kai: blueprint ") catch return;
+    stderr.writeStreamingAll(io, active_blueprint) catch return;
     stderr.writeStreamingAll(io, " does not support protocol command ") catch return;
     stderr.writeStreamingAll(io, command_name) catch return;
     stderr.writeStreamingAll(io, "\n") catch return;
@@ -321,6 +327,21 @@ comptime {
         @export(&hostExpectFailed, .{ .name = "roc_expect_failed", .visibility = .hidden });
         @export(&hostCrashed, .{ .name = "roc_crashed", .visibility = .hidden });
     }
+}
+
+const ProcessEnvBlueprint = struct {
+    setting: []const u8,
+    source: []const u8,
+};
+
+fn processBlueprintEnv() ?ProcessEnvBlueprint {
+    if (processEnvValue(blueprint_mod.env_blueprint_name)) |setting| {
+        if (setting.len != 0) return .{ .setting = setting, .source = blueprint_mod.env_blueprint_name };
+    }
+    if (processEnvValue(blueprint_mod.legacy_env_adapter_name)) |setting| {
+        if (setting.len != 0) return .{ .setting = setting, .source = blueprint_mod.legacy_env_adapter_name };
+    }
+    return null;
 }
 
 fn processEnvValue(name: []const u8) ?[]const u8 {

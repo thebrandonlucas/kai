@@ -1,8 +1,8 @@
-//! Backend-neutral Kai shell protocol execution.
+//! Blueprint-neutral Kai shell protocol execution.
 //!
-//! This module contains the generic host/CLI adapter protocol plumbing. Backend
-//! lowering stays in Roc adapters; host-side process execution may still wrap
-//! recognized backend subprocesses to preserve terminal UX.
+//! This module contains the generic host/CLI adapter wire protocol plumbing.
+//! Blueprint lowering stays in Roc blueprint executables; host-side process
+//! execution may still wrap recognized subprocesses to preserve terminal UX.
 const std = @import("std");
 const builtin = @import("builtin");
 const spinner_mod = @import("spinner.zig");
@@ -73,7 +73,7 @@ pub fn buildAdapterArgv(
     command_args: []const []const u8,
 ) ![]const []const u8 {
     if (adapter.len == 0) {
-        return error.MissingBackendAdapter;
+        return error.MissingBlueprint;
     }
 
     const adapter_argv = try allocator.alloc([]const u8, 4 + command_args.len);
@@ -93,7 +93,7 @@ pub fn runAdapter(
     adapter_argv: []const []const u8,
 ) ![]u8 {
     if (adapter_argv.len == 0 or adapter_argv[0].len == 0) {
-        return error.MissingBackendAdapter;
+        return error.MissingBlueprint;
     }
 
     const result = try std.process.run(allocator, io, .{
@@ -377,7 +377,7 @@ test "rejects empty adapter plan" {
     try std.testing.expectError(error.EmptyExecutionPlan, executeProtocolCommand(std.testing.allocator, std.testing.io, "fixtures/adapters/empty-plan", "shell", ".", &.{}));
 }
 
-test "allows empty command argv for backend-native interactive shell" {
+test "allows empty command argv for blueprint-native interactive shell" {
     const argv = try buildAdapterArgv(std.testing.allocator, "adapter-bin", "shell", ".", &.{});
     defer std.testing.allocator.free(argv);
 

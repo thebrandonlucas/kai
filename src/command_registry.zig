@@ -1,7 +1,7 @@
 const std = @import("std");
-const backend_mod = @import("backend.zig");
+const blueprint_mod = @import("blueprint.zig");
 
-pub const Backend = backend_mod.Backend;
+pub const Blueprint = blueprint_mod.Blueprint;
 
 pub const ProtocolShape = enum {
     shell_v1,
@@ -10,7 +10,7 @@ pub const ProtocolShape = enum {
 
 pub const Handler = enum {
     roc_config_section,
-    shell_adapter,
+    shell_blueprint,
     machine_nix_build,
     fake,
 };
@@ -24,7 +24,7 @@ pub const ProtocolCommand = struct {
 pub const CommandImplementation = struct {
     id: []const u8,
     command_name: []const u8,
-    backend: Backend,
+    blueprint: Blueprint,
     handler: Handler,
     is_default: bool = false,
 };
@@ -37,9 +37,9 @@ pub const ExtraCommand = struct {
 pub const ImplementationSelection = union(enum) {
     ok: *const CommandImplementation,
     command_not_registered,
-    backend_unsupported,
+    blueprint_unsupported,
     implementation_not_found,
-    implementation_backend_mismatch: *const CommandImplementation,
+    implementation_blueprint_mismatch: *const CommandImplementation,
 };
 
 pub const ProtocolRegistry = struct {
@@ -59,7 +59,7 @@ pub const ProtocolRegistry = struct {
     pub fn selectImplementation(
         self: ProtocolRegistry,
         command_name: []const u8,
-        active_backend: Backend,
+        active_blueprint: Blueprint,
         override_id: ?[]const u8,
     ) ImplementationSelection {
         const command = self.lookup(command_name) orelse return .command_not_registered;
@@ -67,8 +67,8 @@ pub const ProtocolRegistry = struct {
         if (override_id) |id| {
             for (self.implementations) |*implementation| {
                 if (std.mem.eql(u8, implementation.id, id) and std.mem.eql(u8, implementation.command_name, command.name)) {
-                    if (implementation.backend != active_backend) {
-                        return .{ .implementation_backend_mismatch = implementation };
+                    if (implementation.blueprint != active_blueprint) {
+                        return .{ .implementation_blueprint_mismatch = implementation };
                     }
                     return .{ .ok = implementation };
                 }
@@ -80,12 +80,12 @@ pub const ProtocolRegistry = struct {
         for (self.implementations) |*implementation| {
             if (!std.mem.eql(u8, implementation.command_name, command.name)) continue;
             saw_command_implementation = true;
-            if (implementation.backend == active_backend and implementation.is_default) {
+            if (implementation.blueprint == active_blueprint and implementation.is_default) {
                 return .{ .ok = implementation };
             }
         }
 
-        return if (saw_command_implementation) .backend_unsupported else .implementation_not_found;
+        return if (saw_command_implementation) .blueprint_unsupported else .implementation_not_found;
     }
 };
 
@@ -108,10 +108,11 @@ pub const default_protocol_commands = [_]ProtocolCommand{
 };
 
 pub const default_command_implementations = [_]CommandImplementation{
-    .{ .id = "shell.default.nix", .command_name = "shell", .backend = .nix, .handler = .roc_config_section, .is_default = true },
-    .{ .id = "shell.default.guix", .command_name = "shell", .backend = .guix, .handler = .roc_config_section, .is_default = true },
-    .{ .id = "shell.default.adapter", .command_name = "shell", .backend = .adapter, .handler = .roc_config_section, .is_default = true },
-    .{ .id = "machine.build.default.nix", .command_name = "machine.build", .backend = .nix, .handler = .roc_config_section, .is_default = true },
+    .{ .id = "shell.default.nix", .command_name = "shell", .blueprint = .nix, .handler = .roc_config_section, .is_default = true },
+    .{ .id = "shell.default.guix", .command_name = "shell", .blueprint = .guix, .handler = .roc_config_section, .is_default = true },
+    // Keep the legacy implementation id for compatibility with KAI_IMPLEMENTATION_SHELL values.
+    .{ .id = "shell.default.adapter", .command_name = "shell", .blueprint = .custom, .handler = .roc_config_section, .is_default = true },
+    .{ .id = "machine.build.default.nix", .command_name = "machine.build", .blueprint = .nix, .handler = .roc_config_section, .is_default = true },
 };
 
 pub const default_protocol_registry = ProtocolRegistry{
@@ -150,7 +151,7 @@ test "keeps extra commands separate from protocol registry" {
     try std.testing.expect(extra_registry.lookup("deploy") != null);
 }
 
-test "selects default implementation for active backend" {
+test "selects default implementation for active blueprint" {
     const selected = default_protocol_registry.selectImplementation("shell", .nix, null);
     switch (selected) {
         .ok => |implementation| try std.testing.expectEqualStrings("shell.default.nix", implementation.id),
@@ -161,8 +162,8 @@ test "selects default implementation for active backend" {
 test "selects alternate implementation when requested" {
     const commands = [_]ProtocolCommand{.{ .name = "shell", .shape = .shell_v1 }};
     const implementations = [_]CommandImplementation{
-        .{ .id = "shell.default.nix", .command_name = "shell", .backend = .nix, .handler = .fake, .is_default = true },
-        .{ .id = "shell.tvix.nix", .command_name = "shell", .backend = .nix, .handler = .fake, .is_default = false },
+        .{ .id = "shell.default.nix", .command_name = "shell", .blueprint = .nix, .handler = .fake, .is_default = true },
+        .{ .id = "shell.tvix.nix", .command_name = "shell", .blueprint = .nix, .handler = .fake, .is_default = false },
     };
     const registry = ProtocolRegistry{ .commands = &commands, .implementations = &implementations };
     const selected = registry.selectImplementation("shell", .nix, "shell.tvix.nix");
@@ -172,9 +173,9 @@ test "selects alternate implementation when requested" {
     }
 }
 
-test "reports unsupported backend for machine build on guix" {
+test "reports unsupported blueprint for machine build on guix" {
     const selected = default_protocol_registry.selectImplementation("machine.build", .guix, null);
-    try std.testing.expectEqual(ImplementationSelection.backend_unsupported, selected);
+    try std.testing.expectEqual(ImplementationSelection.blueprint_unsupported, selected);
 }
 
 test "reports unregistered command" {
@@ -182,11 +183,11 @@ test "reports unregistered command" {
     try std.testing.expectEqual(ImplementationSelection.command_not_registered, selected);
 }
 
-test "reports implementation backend mismatch" {
+test "reports implementation blueprint mismatch" {
     const selected = default_protocol_registry.selectImplementation("shell", .guix, "shell.default.nix");
     switch (selected) {
-        .implementation_backend_mismatch => |implementation| try std.testing.expectEqualStrings("shell.default.nix", implementation.id),
-        else => return error.TestExpectedBackendMismatch,
+        .implementation_blueprint_mismatch => |implementation| try std.testing.expectEqualStrings("shell.default.nix", implementation.id),
+        else => return error.TestExpectedBlueprintMismatch,
     }
 }
 
