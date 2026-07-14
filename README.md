@@ -1,55 +1,91 @@
 # Kai
 
-## A friendly frontend for determinate computing
+Minimal Roc platform and CLI for `roc-blueprint` shell projects.
 
-> NOTE: This is very much a prototype and work in progress. Expect bugs and do not use for anything other than toy projects at the moment.
-
-`kai` is a prototype proof-of-concept CLI tool for using determinate systems like `nix`. It aims to make using reproducible software in your day-to-day life easy, fun, and powerful.
-
-
-It is built on an Embedded DSL within the `roc` language that aims to be a generic protocol for determinate computing operations. The idea is to enumerate the most useful subset of operations provided by reproducible software in general, such as dev shells, build targets, rollbacks, garbage collection, etc. such that we may use any [_blueprint_](https://github.com/lukewilliamboswell/roc-blueprint) which uses the command. A blueprint in this case is a mapping between the generic protocol and a given implementation. Right now, there are essentially two implementations of determinate systems: `nix` (and the system `nixOS`) and `guix` (whose OS is called `guix system`). So the idea is that you could write your `kai.roc` generically and have it select which backend to use.
-
-More on the design thinking and motivation [here](https://blu.cx/posts/articles/2026-07-13-kai-friendly-frontend/).
-
-`kai` manages a `kai.roc` file which uses the EDSL. For now, this is just a sketch of two of many possible future commands:
+User-authored `kai.roc` files are portable Blueprint data only. Kai generates wrapper code under `.kai/`, renders Nix source, writes `.kai/shell/flake.nix`, then runs `nix develop --no-write-lock-file path:.kai/shell#default`.
 
 ```roc
-app [config] { kai: platform "./platform/config.roc" }
+package [workspace] {
+    blueprint: "https://github.com/lukewilliamboswell/roc-blueprint/releases/download/0.0.3-blueprint/HmTRQhvSpRQsj78WCR7j5y3anhqMVB4zuMejydrdAGeV.tar.zst",
+}
 
-config = [
-    Shell({
-        name: "kai",
-        # `packages` is a Roc header keyword in this compiler, so shell configs use `pkgs`.
-        pkgs: ["cargo"],
-    }),
-    MachineBuild({
-        hostname: "kai-example",
-        system: "x86_64-linux",
-        install: ["git"],
-        ssh_keys: [],
-        state_version: "25.05",
-        image: { format: "qcow2" },
-    }),
-]
+import blueprint.Blueprint
+import blueprint.Environment
+import blueprint.Requirement
+import blueprint.Target
+
+hello = Requirement.new({ id: "hello", display_name: "Hello" })
+
+workspace : Blueprint.Draft
+workspace = Blueprint.workspace({
+    name: "hello-shell",
+    target_systems: [Target.X86_64Linux],
+    envs: [Environment.new({ name: "default", requirements: [hello] })],
+})
 ```
-
-Blueprint choice is outside the Roc file:
 
 ```sh
-./zig-out/bin/kai blueprint set nix   # or guix
-./zig-out/bin/kai shell               # defaults to kai.roc
-./zig-out/bin/kai shell examples/shell.roc
+zig build
+./zig-out/bin/kai shell
 ```
 
-Architecture:
+On first shell render Kai also writes editable default bindings to `.kai/nix.roc`. The default convention maps each requirement id to the same `nixpkgs` attribute path, e.g. requirement `zig` becomes `pkgs.zig`.
 
-1. `src/command_registry.zig` declares protocol commands separately from extra/non-protocol commands.
-2. `src/blueprint.zig` selects exactly one active blueprint from `.kai/blueprint`, legacy `.kai/backend`, legacy `.kai/adapter`, `KAI_BLUEPRINT`, or legacy `KAI_BACKEND_ADAPTER`.
-3. `kai shell [kai.roc]` dispatches protocol command `shell`; on first run or config changes it writes generated blueprint state under `.kai/` and tells the user.
-4. `kai build [kai.roc]` is a CLI alias for protocol command `machine.build`.
-5. The selected implementation must target the active blueprint; otherwise Kai reports a blueprint mismatch or unsupported blueprint.
-6. A blueprint executable is a small Roc program using `kai.Blueprint`; it lowers portable `shell` requests to normalized argv.
-7. `machine.build` currently supports only blueprint `nix`: it writes `.kai/machine/flake.nix`, prints the machine output attr, then runs `nix build path:.kai/machine#packages.<system>.<hostname>-image`.
+## Architecture
 
-For config-driven shell commands, Kai generates blueprint state under `.kai/shell/` (`flake.nix` for nix, `manifest.scm` for guix) from the shell package list, then passes that generated target to the blueprint executable. Subsequent runs reuse the generated file unless the rendered content changes. Machine image builds are Nix-specific and follow the kai-zig `nix build path:.kai/machine#...` flow.
+1. User config is a `package [workspace]` that imports external `roc-blueprint`.
+2. Kai does not vendor `roc-blueprint` or `roc-blueprint-nix` source.
+3. `kai shell [kai.roc]` generates `.kai/render-nix.roc` and `.kai/nix.roc`.
+4. The CLI renders Nix source with a roc-blueprint-compatible host renderer. Set `KAI_USE_ROC_BLUEPRINT_RENDERER=1` to run the generated `roc-blueprint-nix` wrapper when the Roc compiler supports it.
+5. The CLI writes rendered source to `.kai/shell/flake.nix`.
+6. The CLI runs `nix develop --no-write-lock-file path:.kai/shell#default`.
 
+Kai intentionally has no machine-build path until `roc-blueprint` can model that capability.
+
+## CLI
+
+```sh
+./zig-out/bin/kai help
+./zig-out/bin/kai shell [kai.roc]
+./zig-out/bin/kai shell init [directory]
+./zig-out/bin/kai zen
+```
+
+Commands:
+
+- `kai shell [kai.roc]`: render a clean Blueprint package, write `.kai/shell/flake.nix`, and enter the generated Nix shell.
+- `kai shell init [directory]`: create starter `kai.roc`, `.kai/nix.roc`, and `.kai/shell/`.
+- `kai zen`: print kai zen.
+
+## Examples
+
+The examples mirror the `roc-blueprint` example set, but as package-style Kai inputs:
+
+- `examples/hello-shell/main.roc`
+- `examples/dev-shell/main.roc`
+- `examples/dev-and-ci-workflow/main.roc`
+- `examples/rust-tooling/main.roc`
+- `examples/python-tooling/main.roc`
+- `examples/node-tooling/main.roc`
+- `examples/multi-platform-shell/main.roc`
+
+Each example includes `flake.golden.nix` and `flake.lock` copied from the matching `roc-blueprint` example.
+
+## Files managed by Kai
+
+- `.kai/nix.roc`: editable Nix binding policy generated on first shell run.
+- `.kai/render-nix.roc`: generated wrapper app; do not edit.
+- `.kai/shell/flake.nix`: rendered Nix shell source; do not edit.
+
+## Build and test
+
+```sh
+zig build test
+zig build
+```
+
+Example:
+
+```sh
+./zig-out/bin/kai shell examples/hello-shell/main.roc
+```

@@ -9,14 +9,14 @@ import blueprint.Environment
 import blueprint.Requirement
 import blueprint.Target
 
-cargo : Requirement
-cargo = Requirement.new({ id: "cargo", display_name: "Cargo" })
+hello : Requirement
+hello = Requirement.new({ id: "hello", display_name: "Hello" })
 
 workspace : Blueprint.Draft
 workspace = Blueprint.workspace(
 	{
-		name: "kai",
-		target_systems: [Target.X86_64Linux],
-		envs: [Environment.new({ name: "default", requirements: [cargo] })],
+		name: "hello-shell",
+		target_systems: [Target.X86_64Linux, Target.Aarch64Darwin],
+		envs: [Environment.new({ name: "default", requirements: [hello] })],
 	},
 )

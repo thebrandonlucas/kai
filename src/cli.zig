@@ -1,8 +1,5 @@
 //! Tiny dependency-free Kai CLI.
 const std = @import("std");
-const blueprint_mod = @import("blueprint.zig");
-const machine = @import("machine.zig");
-const registry_mod = @import("command_registry.zig");
 const shell_env = @import("shell_env.zig");
 
 const default_config_file = "kai.roc";
@@ -21,35 +18,15 @@ const ShellInit = struct {
 const HelpTopic = enum {
     general,
     shell,
-    build,
-    blueprint,
     zen,
 };
 
 const Command = union(enum) {
     help: HelpTopic,
-    protocol: ConfigCommand,
+    shell: ConfigCommand,
     shell_init: ShellInit,
-    blueprint_list,
-    blueprint_get,
-    blueprint_set: []const u8,
     zen,
     unavailable: []const u8,
-};
-
-const DispatchPlan = struct {
-    command_name: []const u8,
-    implementation_id: []const u8,
-    active_blueprint: blueprint_mod.Blueprint,
-    config_path: []const u8,
-};
-
-const DispatchResult = union(enum) {
-    ok: DispatchPlan,
-    command_not_available,
-    unsupported_blueprint,
-    implementation_not_found,
-    implementation_blueprint_mismatch: *const registry_mod.CommandImplementation,
 };
 
 const ansi = struct {
@@ -97,8 +74,6 @@ fn parseCommand(args: []const []const u8) !Command {
     if (std.mem.eql(u8, args[0], "help")) {
         if (args.len == 1) return .{ .help = .general };
         if (args.len == 2 and isShellName(args[1])) return .{ .help = .shell };
-        if (args.len == 2 and std.mem.eql(u8, args[1], "build")) return .{ .help = .build };
-        if (args.len == 2 and isBlueprintCommandName(args[1])) return .{ .help = .blueprint };
         if (args.len == 2 and std.mem.eql(u8, args[1], "zen")) return .{ .help = .zen };
         return error.InvalidCommand;
     }
@@ -112,26 +87,12 @@ fn parseCommand(args: []const []const u8) !Command {
             };
             return .{ .shell_init = init };
         }
-        return .{ .protocol = .{ .cli_name = "shell", .path = try parseOptionalConfigPath(args[1..]) } };
-    }
-
-    if (std.mem.eql(u8, args[0], "build")) {
-        if (args.len >= 2 and isHelp(args[1])) return .{ .help = .build };
-        return .{ .protocol = .{ .cli_name = "build", .path = try parseOptionalConfigPath(args[1..]) } };
+        return .{ .shell = .{ .cli_name = "shell", .path = try parseOptionalConfigPath(args[1..]) } };
     }
 
     if (std.mem.eql(u8, args[0], "zen")) {
         if (args.len == 1) return .zen;
         if (args.len == 2 and isHelp(args[1])) return .{ .help = .zen };
-        return error.InvalidCommand;
-    }
-
-    if (isBlueprintCommandName(args[0])) {
-        if (args.len == 1) return .{ .help = .blueprint };
-        if (args.len == 2 and isHelp(args[1])) return .{ .help = .blueprint };
-        if (args.len == 2 and std.mem.eql(u8, args[1], "list")) return .blueprint_list;
-        if (args.len == 2 and std.mem.eql(u8, args[1], "get")) return .blueprint_get;
-        if (args.len == 3 and std.mem.eql(u8, args[1], "set")) return .{ .blueprint_set = args[2] };
         return error.InvalidCommand;
     }
 
@@ -144,10 +105,6 @@ fn isHelp(arg: []const u8) bool {
 
 fn isShellName(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "shell") or std.mem.eql(u8, arg, "sh");
-}
-
-fn isBlueprintCommandName(arg: []const u8) bool {
-    return std.mem.eql(u8, arg, "blueprint") or std.mem.eql(u8, arg, "backend") or std.mem.eql(u8, arg, "adapter");
 }
 
 fn parseShellInit(args: []const []const u8) !ShellInit {
@@ -192,27 +149,7 @@ fn executeCommand(
             return 0;
         },
         .shell_init => |init| return shellInit(allocator, io, env_map, init),
-        .protocol => |config| return dispatchProtocolCommand(allocator, io, env_map, config),
-        .blueprint_list => {
-            try listBlueprints(allocator, io, env_map);
-            return 0;
-        },
-        .blueprint_get => {
-            var selection = try blueprint_mod.selectedBlueprint(allocator, io, env_map);
-            if (selection) |*sel| {
-                defer sel.deinit(allocator);
-                try writeFmt(allocator, io, .stdout, "{s}\n", .{sel.setting});
-            } else {
-                try writeAll(io, .stdout, "none\n");
-            }
-            return 0;
-        },
-        .blueprint_set => |blueprint| {
-            try blueprint_mod.validateBlueprintSetting(blueprint);
-            try blueprint_mod.writeConfiguredBlueprint(allocator, io, blueprint);
-            try writeFmt(allocator, io, .stdout, "{s}\n", .{blueprint});
-            return 0;
-        },
+        .shell => |config| return runNixBlueprintShell(allocator, io, env_map, config.path),
         .zen => {
             try writeAll(io, .stdout, zenText());
             return 0;
@@ -249,30 +186,30 @@ fn shellInit(
     const name = try defaultShellName(allocator, init.directory);
     defer allocator.free(name);
 
-    const platform_path = try platformPathForStarter(allocator, init.directory);
-    defer allocator.free(platform_path);
-    const config = try starterKaiRoc(allocator, name, platform_path);
+    const config = try starterKaiRoc(allocator, name);
     defer allocator.free(config);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = config_path, .data = config });
+
+    const kai_config_dir = try std.fs.path.join(allocator, &.{ init.directory, kai_dir });
+    defer allocator.free(kai_config_dir);
+    try std.Io.Dir.cwd().createDirPath(io, kai_config_dir);
+
+    const bindings_path = try std.fs.path.join(allocator, &.{ init.directory, nix_bindings_path });
+    defer allocator.free(bindings_path);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = bindings_path, .data = default_nix_bindings_source });
 
     const shell_dir = try std.fs.path.join(allocator, &.{ init.directory, shell_env.shell_workspace_dir });
     defer allocator.free(shell_dir);
     try std.Io.Dir.cwd().createDirPath(io, shell_dir);
 
-    const flake_path = try std.fs.path.join(allocator, &.{ init.directory, shell_env.nix_flake_path });
-    defer allocator.free(flake_path);
-    const flake = try shell_env.renderNixFlake(allocator, name, &.{});
-    defer allocator.free(flake);
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = flake_path, .data = flake });
-
     const use_color = colorEnabled(env_map);
     try writeStatusLine(allocator, io, use_color, "wrote", config_path);
-    try writeStatusLine(allocator, io, use_color, "wrote", flake_path);
+    try writeStatusLine(allocator, io, use_color, "wrote", bindings_path);
     const next = try styledLiteral(allocator, use_color, "next:", .success);
     defer allocator.free(next);
     const command = try styledLiteral(allocator, use_color, "kai shell", .command);
     defer allocator.free(command);
-    try writeFmt(allocator, io, .stdout, "{s} edit packages in {s}, then run `{s}`\n", .{ next, default_config_file, command });
+    try writeFmt(allocator, io, .stdout, "{s} edit requirements in {s} and bindings in {s}, then run `{s}`\n", .{ next, default_config_file, nix_bindings_path, command });
     return 0;
 }
 
@@ -294,40 +231,30 @@ fn defaultShellName(allocator: std.mem.Allocator, directory: []const u8) ![]u8 {
     return out;
 }
 
-fn starterKaiRoc(allocator: std.mem.Allocator, name: []const u8, platform_path: []const u8) ![]u8 {
+fn starterKaiRoc(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
     return std.fmt.allocPrint(allocator,
-        \\app [config] {{ kai: platform "{s}" }}
+        \\package [workspace] {{
+        \\    blueprint: "{s}",
+        \\}}
         \\
-        \\config = [
-        \\    Shell({{
+        \\import blueprint.Blueprint
+        \\import blueprint.Environment
+        \\import blueprint.Requirement
+        \\import blueprint.Target
+        \\
+        \\# Add requirements like:
+        \\# zig = Requirement.new({{ id: "zig", display_name: "Zig" }})
+        \\
+        \\workspace : Blueprint.Draft
+        \\workspace = Blueprint.workspace(
+        \\    {{
         \\        name: "{s}",
-        \\        # `packages` is a Roc header keyword in this compiler, so shell configs use `pkgs`.
-        \\        pkgs: [],
-        \\    }}),
-        \\]
+        \\        target_systems: [Target.X86_64Linux],
+        \\        envs: [Environment.new({{ name: "default", requirements: [] }})],
+        \\    }},
+        \\)
         \\
-    , .{ platform_path, name });
-}
-
-fn platformPathForStarter(allocator: std.mem.Allocator, directory: []const u8) ![]u8 {
-    if (directory.len == 0 or std.mem.eql(u8, directory, ".")) {
-        return allocator.dupe(u8, "./platform/config.roc");
-    }
-
-    var depth: usize = 0;
-    var it = std.mem.tokenizeAny(u8, directory, "/\\");
-    while (it.next()) |part| {
-        if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
-        if (std.mem.eql(u8, part, "..")) continue;
-        depth += 1;
-    }
-    if (depth == 0) return allocator.dupe(u8, "./platform/config.roc");
-
-    var out = std.array_list.Managed(u8).init(allocator);
-    errdefer out.deinit();
-    for (0..depth) |_| try out.appendSlice("../");
-    try out.appendSlice("platform/config.roc");
-    return out.toOwnedSlice();
+    , .{ default_blueprint_url, name });
 }
 
 const StyledKind = enum { heading, command, path, success };
@@ -339,8 +266,6 @@ fn helpText(allocator: std.mem.Allocator, topic: HelpTopic, use_color: bool) ![]
     switch (topic) {
         .general => try appendGeneralHelp(&out, use_color),
         .shell => try appendShellHelp(&out, use_color),
-        .build => try appendBuildHelp(&out, use_color),
-        .blueprint => try appendBlueprintHelp(&out, use_color),
         .zen => try appendZenHelp(&out, use_color),
     }
 
@@ -348,7 +273,7 @@ fn helpText(allocator: std.mem.Allocator, topic: HelpTopic, use_color: bool) ![]
 }
 
 fn appendGeneralHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
-    try out.appendSlice("A friendly frontend for determinate computing\n\n");
+    try out.appendSlice("A friendly roc-blueprint shell frontend\n\n");
     try appendStyled(out, use_color, "Usage:", .heading);
     try out.appendSlice(" ");
     try appendStyled(out, use_color, "kai", .command);
@@ -357,24 +282,20 @@ fn appendGeneralHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
     try out.appendSlice("\n\n");
     try appendStyled(out, use_color, "Commands:", .heading);
     try out.appendSlice("\n");
-    try appendCommandRow(out, use_color, "shell (sh)", "Create or manage persistent or temporary shells");
-    try appendCommandRow(out, use_color, "build [kai.roc]", "render " ++ machine.machine_flake_path ++ " and build machine image");
-    try appendCommandRow(out, use_color, "blueprint list|get|set", "select the active execution blueprint");
+    try appendCommandRow(out, use_color, "shell (sh)", "render and enter a roc-blueprint Nix shell");
     try appendCommandRow(out, use_color, "zen", "print kai zen");
     try out.appendSlice("\n");
-    try out.appendSlice("kai is a tool to help you harness the power of determinate computing by\n");
-    try out.appendSlice("wrapping nix commands in a friendly interface.\n\n");
+    try out.appendSlice("kai reads a package-style roc-blueprint workspace from kai.roc, renders it to Nix, and runs nix develop.\n\n");
     try appendStyled(out, use_color, "Some things you can do:", .heading);
     try out.appendSlice("\n\n");
-    try appendExample(out, use_color, "kai shell init", "Create a starter kai.roc and generated " ++ shell_env.nix_flake_path ++ ".");
-    try appendExample(out, use_color, "kai shell", "Render the shell from kai.roc and enter it through the active blueprint.");
-    try appendExample(out, use_color, "kai build", "Render " ++ machine.machine_flake_path ++ " and build the configured machine image.");
+    try appendExample(out, use_color, "kai shell init", "Create a starter kai.roc and editable " ++ nix_bindings_path ++ ".");
+    try appendExample(out, use_color, "kai shell", "Render the shell from kai.roc and enter it.");
     try appendStyled(out, use_color, "Flags:", .heading);
     try out.appendSlice("\n  -h, --help                             print help information\n");
 }
 
 fn appendShellHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
-    try out.appendSlice("Create, initialize, and enter the top-level dev shell from kai.roc. `sh` is an alias for `shell`.\n\n");
+    try out.appendSlice("Create, initialize, and enter the top-level dev shell from a roc-blueprint package. `sh` is an alias for `shell`.\n\n");
     try appendStyled(out, use_color, "Usage:", .heading);
     try out.appendSlice("\n  ");
     try appendStyled(out, use_color, "kai shell [kai.roc]", .command);
@@ -385,52 +306,16 @@ fn appendShellHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
     try out.appendSlice("\n\n");
     try appendStyled(out, use_color, "Commands:", .heading);
     try out.appendSlice("\n");
-    try appendCommandRow(out, use_color, "kai shell init", "Create starter kai.roc and " ++ shell_env.nix_flake_path ++ " files");
+    try appendCommandRow(out, use_color, "kai shell init", "Create starter kai.roc and " ++ nix_bindings_path ++ " bindings");
     try out.appendSlice("\n");
     try appendStyled(out, use_color, "Examples:", .heading);
     try out.appendSlice("\n");
     try appendCommandRow(out, use_color, "kai shell", "Enter the shell described by kai.roc");
-    try appendCommandRow(out, use_color, "kai shell examples/shell.roc", "Enter a shell from another Roc config");
+    try appendCommandRow(out, use_color, "kai shell examples/hello-shell/main.roc", "Enter a shell from another Roc config");
     try appendCommandRow(out, use_color, "kai shell init my-app", "Create starter files");
     try out.appendSlice("\n");
     try appendStyled(out, use_color, "Flags:", .heading);
     try out.appendSlice("\n  --force                                overwrite an existing kai.roc during init\n  -h, --help                             print help information\n");
-}
-
-fn appendBuildHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
-    try out.appendSlice("Render " ++ machine.machine_flake_path ++ " and build the configured machine image output.\n\n");
-    try appendStyled(out, use_color, "Usage:", .heading);
-    try out.appendSlice("\n  ");
-    try appendStyled(out, use_color, "kai build [kai.roc]", .command);
-    try out.appendSlice("\n\n`kai build` expects the selected Roc config to contain a MachineBuild entry.\n\n");
-    try appendStyled(out, use_color, "Examples:", .heading);
-    try out.appendSlice("\n");
-    try appendCommandRow(out, use_color, "kai build", "Build the machine image from kai.roc");
-    try appendCommandRow(out, use_color, "kai build examples/shell.roc", "Build from another Roc config");
-    try out.appendSlice("\n");
-    try appendStyled(out, use_color, "Flags:", .heading);
-    try out.appendSlice("\n  -h, --help                             print help information\n");
-}
-
-fn appendBlueprintHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
-    try out.appendSlice("Select the active execution blueprint. `backend` and `adapter` are legacy aliases.\n\n");
-    try appendStyled(out, use_color, "Usage:", .heading);
-    try out.appendSlice("\n  ");
-    try appendStyled(out, use_color, "kai blueprint list", .command);
-    try out.appendSlice("\n  ");
-    try appendStyled(out, use_color, "kai blueprint get", .command);
-    try out.appendSlice("\n  ");
-    try appendStyled(out, use_color, "kai blueprint set <blueprint>", .command);
-    try out.appendSlice("\n\n");
-    try appendStyled(out, use_color, "Commands:", .heading);
-    try out.appendSlice("\n");
-    try appendCommandRow(out, use_color, "kai blueprint list", "Show current and available blueprints");
-    try appendCommandRow(out, use_color, "kai blueprint get", "Print the selected blueprint, or none");
-    try appendCommandRow(out, use_color, "kai blueprint set nix", "Select the Nix blueprint");
-    try appendCommandRow(out, use_color, "kai blueprint set guix", "Select the Guix blueprint");
-    try out.appendSlice("\n");
-    try appendStyled(out, use_color, "Flags:", .heading);
-    try out.appendSlice("\n  -h, --help                             print help information\n");
 }
 
 fn appendZenHelp(out: *std.array_list.Managed(u8), use_color: bool) !void {
@@ -521,104 +406,571 @@ fn colorEnabled(env_map: *std.process.Environ.Map) bool {
     return true;
 }
 
-fn dispatchProtocolCommand(
+const kai_dir = ".kai";
+const nix_bindings_path = kai_dir ++ "/nix.roc";
+const render_nix_path = kai_dir ++ "/render-nix.roc";
+const default_blueprint_url = "https://github.com/lukewilliamboswell/roc-blueprint/releases/download/0.0.3-blueprint/HmTRQhvSpRQsj78WCR7j5y3anhqMVB4zuMejydrdAGeV.tar.zst";
+const default_blueprint_nix_url = "https://github.com/lukewilliamboswell/roc-blueprint/releases/download/0.0.3-blueprint-nix/5stkC8nuQYzCjQueDhBLQrFPvfk6MP1byVq8nR3ET72h.tar.zst";
+
+fn runNixBlueprintShell(
     allocator: std.mem.Allocator,
     io: std.Io,
     env_map: *std.process.Environ.Map,
-    config: ConfigCommand,
-) !u8 {
-    var active = try blueprint_mod.selectedBlueprint(allocator, io, env_map) orelse {
-        try writeAll(io, .stderr, "kai: missing active blueprint; run `kai blueprint set nix` or set KAI_BLUEPRINT\n");
-        return 1;
-    };
-    defer active.deinit(allocator);
-
-    const override_id = try implementationOverride(allocator, env_map, config.cli_name);
-    defer if (override_id) |id| allocator.free(id);
-
-    const result = planProtocolDispatch(
-        registry_mod.default_protocol_registry,
-        config.cli_name,
-        config.path,
-        active.blueprint,
-        override_id,
-    );
-
-    return switch (result) {
-        .ok => |plan| runRocConfigProtocolCommand(io, env_map, plan.config_path, plan.command_name),
-        .command_not_available, .implementation_not_found => blk: {
-            try writeFmt(allocator, io, .stderr, "kai: command not available: {s}\n", .{config.cli_name});
-            break :blk 1;
-        },
-        .unsupported_blueprint => blk: {
-            const command = registry_mod.default_protocol_registry.lookup(config.cli_name).?;
-            try writeFmt(allocator, io, .stderr, "kai: blueprint {s} does not support protocol command {s}\n", .{ active.blueprintName(), command.name });
-            break :blk 1;
-        },
-        .implementation_blueprint_mismatch => |implementation| blk: {
-            const command = registry_mod.default_protocol_registry.lookup(config.cli_name).?;
-            try writeFmt(
-                allocator,
-                io,
-                .stderr,
-                "kai: implementation blueprint mismatch: command {s} requires {s}, active blueprint is {s}\n",
-                .{ command.name, implementation.blueprint.name(), active.blueprintName() },
-            );
-            break :blk 1;
-        },
-    };
-}
-
-fn planProtocolDispatch(
-    registry: registry_mod.ProtocolRegistry,
-    cli_name: []const u8,
     config_path: []const u8,
-    active_blueprint: blueprint_mod.Blueprint,
-    override_id: ?[]const u8,
-) DispatchResult {
-    const command = registry.lookup(cli_name) orelse return .command_not_available;
-    const selected = registry.selectImplementation(command.name, active_blueprint, override_id);
-    return switch (selected) {
-        .ok => |implementation| .{ .ok = .{
-            .command_name = command.name,
-            .implementation_id = implementation.id,
-            .active_blueprint = active_blueprint,
-            .config_path = config_path,
-        } },
-        .command_not_registered => .command_not_available,
-        .blueprint_unsupported => .unsupported_blueprint,
-        .implementation_not_found => .implementation_not_found,
-        .implementation_blueprint_mismatch => |implementation| .{ .implementation_blueprint_mismatch = implementation },
+) !u8 {
+    try std.Io.Dir.cwd().createDirPath(io, kai_dir);
+    try ensureDefaultNixBindings(io);
+
+    const wrapper = try renderNixWrapper(allocator, io, config_path);
+    defer allocator.free(wrapper);
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = render_nix_path, .data = wrapper });
+
+    const source = if (useRocNixRenderer(env_map)) blk: {
+        break :blk runRenderNixWrapper(allocator, io, env_map) catch return 1;
+    } else blk: {
+        break :blk renderNixSourceFallback(allocator, io, config_path) catch |err| {
+            try writeFmt(allocator, io, .stderr, "kai: {s}\n", .{@errorName(err)});
+            return 1;
+        };
+    };
+    defer allocator.free(source);
+
+    const prepared = try shell_env.prepareNixSource(allocator, io, "default", source);
+    defer prepared.deinit(allocator);
+
+    if (prepared.generated_path) |path| {
+        try writeFmt(allocator, io, .stdout, "{s} {s}\n", .{ if (prepared.wrote) "wrote" else "using", path });
+    }
+
+    return runNixDevelop(io, prepared.target);
+}
+
+fn ensureDefaultNixBindings(io: std.Io) !void {
+    std.Io.Dir.cwd().access(io, nix_bindings_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => {
+            try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = nix_bindings_path, .data = default_nix_bindings_source });
+            return;
+        },
+        else => return err,
     };
 }
 
-fn implementationOverride(
+fn renderNixWrapper(allocator: std.mem.Allocator, io: std.Io, config_path: []const u8) ![]u8 {
+    const user_source = try std.Io.Dir.cwd().readFileAlloc(io, config_path, allocator, .limited(1024 * 1024));
+    defer allocator.free(user_source);
+    const user_body = stripPackageHeader(user_source) orelse return error.InvalidKaiPackage;
+
+    const bindings_source = try std.Io.Dir.cwd().readFileAlloc(io, nix_bindings_path, allocator, .limited(1024 * 1024));
+    defer allocator.free(bindings_source);
+
+    return std.fmt.allocPrint(allocator,
+        \\app [main!] {{
+        \\    kai: platform "../platform/main.roc",
+        \\    blueprint: "{s}",
+        \\    blueprint_nix: "{s}",
+        \\}}
+        \\
+        \\import kai.Stdout
+        \\import blueprint_nix.Nix
+        \\
+        \\{s}
+        \\
+        \\{s}
+        \\
+        \\main! : List(Str) => I32
+        \\main! = |_args|
+        \\    match Blueprint.validate(workspace) {{
+        \\        Err(_) => {{
+        \\            _ = Stdout.line!("kai: invalid blueprint workspace")
+        \\            1
+        \\        }}
+        \\        Ok(valid) =>
+        \\            match Nix.render(valid, nix_config) {{
+        \\                Err(_) => {{
+        \\                    _ = Stdout.line!("kai: invalid nix blueprint config; edit .kai/nix.roc")
+        \\                    1
+        \\                }}
+        \\                Ok(source) => {{
+        \\                    _ = Stdout.line!(source)
+        \\                    0
+        \\                }}
+        \\            }}
+        \\    }}
+        \\
+    , .{ default_blueprint_url, default_blueprint_nix_url, std.mem.trim(u8, user_body, " \t\r\n"), std.mem.trim(u8, bindings_source, " \t\r\n") });
+}
+
+fn useRocNixRenderer(env_map: *std.process.Environ.Map) bool {
+    if (env_map.get("KAI_USE_ROC_BLUEPRINT_RENDERER")) |value| {
+        return std.mem.eql(u8, value, "1") or std.mem.eql(u8, value, "true");
+    }
+    return false;
+}
+
+fn runRenderNixWrapper(
     allocator: std.mem.Allocator,
+    io: std.Io,
     env_map: *std.process.Environ.Map,
-    cli_name: []const u8,
-) !?[]u8 {
-    const command = registry_mod.default_protocol_registry.lookup(cli_name) orelse return null;
-    const env_name = try registry_mod.cliImplementationOverrideName(allocator, command.name);
-    defer allocator.free(env_name);
-    if (env_map.get(env_name)) |value| {
-        if (value.len != 0) return try allocator.dupe(u8, value);
+) ![]u8 {
+    const roc_exe = env_map.get("KAI_ROC") orelse "roc";
+    const result = try std.process.run(allocator, io, .{
+        .argv = &.{ roc_exe, render_nix_path },
+        .stdout_limit = .limited(2 * 1024 * 1024),
+        .stderr_limit = .limited(1024 * 1024),
+        .expand_arg0 = .expand,
+    });
+    defer allocator.free(result.stderr);
+
+    switch (result.term) {
+        .exited => |code| {
+            if (code == 0) return result.stdout;
+            defer allocator.free(result.stdout);
+            if (result.stdout.len != 0) try writeAll(io, .stderr, result.stdout);
+            if (result.stderr.len != 0) try writeAll(io, .stderr, result.stderr);
+            return error.RenderNixFailed;
+        },
+        .signal, .stopped, .unknown => {
+            defer allocator.free(result.stdout);
+            if (result.stdout.len != 0) try writeAll(io, .stderr, result.stdout);
+            if (result.stderr.len != 0) try writeAll(io, .stderr, result.stderr);
+            return error.RenderNixFailed;
+        },
+    }
+}
+
+fn stripPackageHeader(source: []const u8) ?[]const u8 {
+    var index = skipRocHeaderTrivia(source);
+    if (!std.mem.startsWith(u8, source[index..], "package")) return null;
+    index += "package".len;
+
+    const open_offset = std.mem.indexOfScalarPos(u8, source, index, '{') orelse return null;
+    var depth: usize = 0;
+    var cursor = open_offset;
+    while (cursor < source.len) : (cursor += 1) {
+        switch (source[cursor]) {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if (depth == 0) {
+                    cursor += 1;
+                    while (cursor < source.len and std.ascii.isWhitespace(source[cursor])) : (cursor += 1) {}
+                    return source[cursor..];
+                }
+            },
+            else => {},
+        }
     }
     return null;
 }
 
-fn runRocConfigProtocolCommand(
-    io: std.Io,
-    env_map: *std.process.Environ.Map,
-    config_path: []const u8,
-    command_name: []const u8,
-) !u8 {
-    const roc_exe = env_map.get("KAI_ROC") orelse "roc";
-    const argv = rocConfigArgv(roc_exe, config_path, command_name);
+fn skipRocHeaderTrivia(source: []const u8) usize {
+    var index: usize = 0;
+    while (index < source.len) {
+        while (index < source.len and std.ascii.isWhitespace(source[index])) : (index += 1) {}
+        if (index >= source.len or source[index] != '#') break;
+        while (index < source.len and source[index] != '\n') : (index += 1) {}
+    }
+    return index;
+}
+
+const default_nix_bindings_source =
+    "# Kai-managed editable Nix bindings.\n" ++
+    "# Default convention: requirement id == nixpkgs package attribute.\n" ++
+    "# Edit this file when a requirement needs a different Nix package path.\n\n" ++
+    "nix_config : Nix.Config\n" ++
+    "nix_config = Nix.config(\n" ++
+    "    {\n" ++
+    "        nixpkgs: Nix.github_input(\"nixpkgs\", \"NixOS\", \"nixpkgs\", \"nixos-unstable\"),\n" ++
+    "        bindings: default_bindings(workspace),\n" ++
+    "    },\n" ++
+    ")\n\n" ++
+    "default_bindings : Blueprint.Draft -> List(Nix.Binding)\n" ++
+    "default_bindings = |draft|\n" ++
+    "    collect_env_requirements(draft.envs, []).map(|requirement| Nix.bind(requirement, \"nixpkgs\", [Requirement.id(requirement)]))\n\n" ++
+    "collect_env_requirements : List(Environment), List(Requirement) -> List(Requirement)\n" ++
+    "collect_env_requirements = |envs, seen|\n" ++
+    "    match envs {\n" ++
+    "        [] => seen\n" ++
+    "        [env, .. as rest] => collect_env_requirements(rest, append_new_requirements(env.requirements, seen))\n" ++
+    "    }\n\n" ++
+    "append_new_requirements : List(Requirement), List(Requirement) -> List(Requirement)\n" ++
+    "append_new_requirements = |requirements, seen|\n" ++
+    "    match requirements {\n" ++
+    "        [] => seen\n" ++
+    "        [requirement, .. as rest] =>\n" ++
+    "            if seen.any(|existing| Requirement.id(existing) == Requirement.id(requirement)) {\n" ++
+    "                append_new_requirements(rest, seen)\n" ++
+    "            } else {\n" ++
+    "                append_new_requirements(rest, seen.append(requirement))\n" ++
+    "            }\n" ++
+    "    }\n";
+
+const RequirementDef = struct {
+    name: []u8,
+    id: []u8,
+
+    fn deinit(self: RequirementDef, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        allocator.free(self.id);
+    }
+};
+
+const EnvironmentDef = struct {
+    name: []u8,
+    requirements: []const []u8,
+
+    fn deinit(self: EnvironmentDef, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        for (self.requirements) |requirement| allocator.free(requirement);
+        allocator.free(self.requirements);
+    }
+};
+
+const BindingDef = struct {
+    requirement_id: []u8,
+    path: []const []u8,
+
+    fn deinit(self: BindingDef, allocator: std.mem.Allocator) void {
+        allocator.free(self.requirement_id);
+        for (self.path) |segment| allocator.free(segment);
+        allocator.free(self.path);
+    }
+};
+
+const WorkspaceDef = struct {
+    name: []u8,
+    targets: []const []u8,
+    requirements: []const RequirementDef,
+    environments: []const EnvironmentDef,
+
+    fn deinit(self: WorkspaceDef, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        for (self.targets) |target| allocator.free(target);
+        allocator.free(self.targets);
+        for (self.requirements) |requirement| requirement.deinit(allocator);
+        allocator.free(self.requirements);
+        for (self.environments) |environment| environment.deinit(allocator);
+        allocator.free(self.environments);
+    }
+};
+
+fn renderNixSourceFallback(allocator: std.mem.Allocator, io: std.Io, config_path: []const u8) ![]u8 {
+    const source = try std.Io.Dir.cwd().readFileAlloc(io, config_path, allocator, .limited(1024 * 1024));
+    defer allocator.free(source);
+
+    var workspace = try parseWorkspaceSource(allocator, source);
+    defer workspace.deinit(allocator);
+
+    const bindings_source = try std.Io.Dir.cwd().readFileAlloc(io, nix_bindings_path, allocator, .limited(1024 * 1024));
+    defer allocator.free(bindings_source);
+    const bindings = try parseBindingDefs(allocator, bindings_source, workspace.requirements);
+    defer {
+        for (bindings) |binding| binding.deinit(allocator);
+        allocator.free(bindings);
+    }
+
+    return renderFallbackFlake(allocator, workspace, bindings);
+}
+
+fn parseWorkspaceSource(allocator: std.mem.Allocator, source: []const u8) !WorkspaceDef {
+    const workspace_body = findCallBody(source, "Blueprint.workspace") orelse return error.InvalidKaiWorkspace;
+    const name = try parseStringField(allocator, workspace_body, "name");
+    errdefer allocator.free(name);
+    const targets = try parseTargets(allocator, workspace_body);
+    errdefer {
+        for (targets) |target| allocator.free(target);
+        allocator.free(targets);
+    }
+    const requirements = try parseRequirementDefs(allocator, source);
+    errdefer {
+        for (requirements) |requirement| requirement.deinit(allocator);
+        allocator.free(requirements);
+    }
+    const environments = try parseEnvironments(allocator, source, requirements);
+    errdefer {
+        for (environments) |environment| environment.deinit(allocator);
+        allocator.free(environments);
+    }
+    if (name.len == 0 or targets.len == 0 or environments.len == 0) return error.InvalidKaiWorkspace;
+    return .{ .name = name, .targets = targets, .requirements = requirements, .environments = environments };
+}
+
+fn parseRequirementDefs(allocator: std.mem.Allocator, source: []const u8) ![]const RequirementDef {
+    var out = std.array_list.Managed(RequirementDef).init(allocator);
+    errdefer {
+        for (out.items) |requirement| requirement.deinit(allocator);
+        out.deinit();
+    }
+
+    var cursor: usize = 0;
+    while (std.mem.indexOfPos(u8, source, cursor, "Requirement.new")) |pos| {
+        const line_start = if (std.mem.lastIndexOfScalar(u8, source[0..pos], '\n')) |nl| nl + 1 else 0;
+        const eq = std.mem.indexOfScalarPos(u8, source, line_start, '=') orelse {
+            cursor = pos + 1;
+            continue;
+        };
+        if (eq > pos) {
+            cursor = pos + 1;
+            continue;
+        }
+        const name = std.mem.trim(u8, source[line_start..eq], " \t\r\n");
+        const body = findCallBody(source[pos..], "Requirement.new") orelse return error.InvalidKaiRequirement;
+        const id = try parseStringField(allocator, body, "id");
+        errdefer allocator.free(id);
+        try out.append(.{ .name = try allocator.dupe(u8, name), .id = id });
+        cursor = pos + "Requirement.new".len;
+    }
+    return out.toOwnedSlice();
+}
+
+fn parseBindingDefs(allocator: std.mem.Allocator, source: []const u8, requirements: []const RequirementDef) ![]const BindingDef {
+    var out = std.array_list.Managed(BindingDef).init(allocator);
+    errdefer {
+        for (out.items) |binding| binding.deinit(allocator);
+        out.deinit();
+    }
+
+    var cursor: usize = 0;
+    while (std.mem.indexOfPos(u8, source, cursor, "Nix.bind(")) |pos| {
+        const open = std.mem.indexOfScalarPos(u8, source, pos, '(') orelse break;
+        const close = matchingDelimiter(source, open, '(', ')') orelse return error.InvalidNixBinding;
+        const args = source[open + 1 .. close];
+        const first_comma = std.mem.indexOfScalar(u8, args, ',') orelse return error.InvalidNixBinding;
+        const requirement_name = std.mem.trim(u8, args[0..first_comma], " \t\r\n");
+        const requirement_id = requirementIdForName(requirement_name, requirements) orelse {
+            cursor = close + 1;
+            continue;
+        };
+        const path_start = std.mem.indexOfScalarPos(u8, args, first_comma + 1, '[') orelse return error.InvalidNixBinding;
+        const path_end = matchingDelimiter(args, path_start, '[', ']') orelse return error.InvalidNixBinding;
+        const path = try parseStringList(allocator, args[path_start + 1 .. path_end]);
+        errdefer {
+            for (path) |segment| allocator.free(segment);
+            allocator.free(path);
+        }
+        if (path.len != 0) {
+            try out.append(.{ .requirement_id = try allocator.dupe(u8, requirement_id), .path = path });
+        } else {
+            for (path) |segment| allocator.free(segment);
+            allocator.free(path);
+        }
+        cursor = close + 1;
+    }
+    return out.toOwnedSlice();
+}
+
+fn parseStringList(allocator: std.mem.Allocator, source: []const u8) ![]const []u8 {
+    var out = std.array_list.Managed([]u8).init(allocator);
+    errdefer {
+        for (out.items) |segment| allocator.free(segment);
+        out.deinit();
+    }
+    var cursor: usize = 0;
+    while (std.mem.indexOfScalarPos(u8, source, cursor, '"')) |open| {
+        const close = std.mem.indexOfScalarPos(u8, source, open + 1, '"') orelse return error.InvalidStringList;
+        try out.append(try allocator.dupe(u8, source[open + 1 .. close]));
+        cursor = close + 1;
+    }
+    return out.toOwnedSlice();
+}
+
+fn parseTargets(allocator: std.mem.Allocator, workspace_body: []const u8) ![]const []u8 {
+    const list = findListField(workspace_body, "target_systems") orelse return error.InvalidKaiTargets;
+    var out = std.array_list.Managed([]u8).init(allocator);
+    errdefer {
+        for (out.items) |target| allocator.free(target);
+        out.deinit();
+    }
+
+    var it = std.mem.splitScalar(u8, list, ',');
+    while (it.next()) |raw| {
+        const item = std.mem.trim(u8, raw, " \t\r\n");
+        if (item.len == 0) continue;
+        const variant = if (std.mem.lastIndexOfScalar(u8, item, '.')) |dot| item[dot + 1 ..] else item;
+        const target = targetVariantToString(variant) orelse continue;
+        try out.append(try allocator.dupe(u8, target));
+    }
+    return out.toOwnedSlice();
+}
+
+fn parseEnvironments(allocator: std.mem.Allocator, source: []const u8, requirements: []const RequirementDef) ![]const EnvironmentDef {
+    var out = std.array_list.Managed(EnvironmentDef).init(allocator);
+    errdefer {
+        for (out.items) |environment| environment.deinit(allocator);
+        out.deinit();
+    }
+
+    var cursor: usize = 0;
+    while (std.mem.indexOfPos(u8, source, cursor, "Environment.new")) |pos| {
+        const body = findCallBody(source[pos..], "Environment.new") orelse return error.InvalidKaiEnvironment;
+        const name = try parseStringField(allocator, body, "name");
+        errdefer allocator.free(name);
+        const requirement_names = findListField(body, "requirements") orelse return error.InvalidKaiEnvironment;
+        const ids = try parseEnvironmentRequirementIds(allocator, requirement_names, requirements);
+        errdefer {
+            for (ids) |id| allocator.free(id);
+            allocator.free(ids);
+        }
+        try out.append(.{ .name = name, .requirements = ids });
+        cursor = pos + "Environment.new".len;
+    }
+    return out.toOwnedSlice();
+}
+
+fn parseEnvironmentRequirementIds(allocator: std.mem.Allocator, list: []const u8, requirements: []const RequirementDef) ![]const []u8 {
+    var out = std.array_list.Managed([]u8).init(allocator);
+    errdefer {
+        for (out.items) |id| allocator.free(id);
+        out.deinit();
+    }
+
+    var it = std.mem.splitScalar(u8, list, ',');
+    while (it.next()) |raw| {
+        const name = std.mem.trim(u8, raw, " \t\r\n");
+        if (name.len == 0) continue;
+        const id = requirementIdForName(name, requirements) orelse return error.UnknownRequirement;
+        try out.append(try allocator.dupe(u8, id));
+    }
+    return out.toOwnedSlice();
+}
+
+fn requirementIdForName(name: []const u8, requirements: []const RequirementDef) ?[]const u8 {
+    for (requirements) |requirement| {
+        if (std.mem.eql(u8, requirement.name, name)) return requirement.id;
+    }
+    return null;
+}
+
+fn renderFallbackFlake(allocator: std.mem.Allocator, workspace: WorkspaceDef, bindings: []const BindingDef) ![]u8 {
+    var out = std.array_list.Managed(u8).init(allocator);
+    errdefer out.deinit();
+
+    try appendFmt(&out,
+        \\# Generated by roc-blueprint and roc-blueprint-nix. Do not edit.
+        \\{{
+        \\  "description" = "Development environments for {s}";
+        \\  "inputs" = {{
+        \\    "nixpkgs" = {{
+        \\      "url" = "github:NixOS/nixpkgs/nixos-unstable";
+        \\    }};
+        \\  }};
+        \\  "outputs" = {{ nixpkgs, ... }}:
+        \\    {{
+        \\      "devShells" = {{
+        \\
+    , .{workspace.name});
+
+    for (workspace.targets) |target| {
+        try appendFmt(&out,
+            \\        "{s}" = {{
+            \\
+        , .{target});
+        for (workspace.environments) |environment| {
+            try appendFmt(&out,
+                \\          "{s}" = nixpkgs."legacyPackages"."{s}"."mkShell" {{
+                \\            "packages" = [
+                \\
+            , .{ environment.name, target });
+            for (environment.requirements) |requirement_id| {
+                try out.appendSlice("              nixpkgs.\"legacyPackages\".");
+                try appendFmt(&out, "\"{s}\"", .{target});
+                if (bindingPath(requirement_id, bindings)) |path| {
+                    for (path) |segment| {
+                        try appendFmt(&out, ".\"{s}\"", .{segment});
+                    }
+                } else {
+                    try appendFmt(&out, ".\"{s}\"", .{requirement_id});
+                }
+                try out.append('\n');
+            }
+            try out.appendSlice(
+                \\            ];
+                \\          };
+                \\
+            );
+        }
+        try out.appendSlice(
+            \\        };
+            \\
+        );
+    }
+
+    try out.appendSlice(
+        \\      };
+        \\    };
+        \\}
+        \\
+    );
+    return out.toOwnedSlice();
+}
+
+fn bindingPath(requirement_id: []const u8, bindings: []const BindingDef) ?[]const []u8 {
+    for (bindings) |binding| {
+        if (std.mem.eql(u8, binding.requirement_id, requirement_id)) return binding.path;
+    }
+    return null;
+}
+
+fn findCallBody(source: []const u8, name: []const u8) ?[]const u8 {
+    const name_pos = std.mem.indexOf(u8, source, name) orelse return null;
+    const open = std.mem.indexOfScalarPos(u8, source, name_pos + name.len, '(') orelse return null;
+    const close = matchingDelimiter(source, open, '(', ')') orelse return null;
+    return source[open + 1 .. close];
+}
+
+fn findListField(source: []const u8, field: []const u8) ?[]const u8 {
+    const field_pos = std.mem.indexOf(u8, source, field) orelse return null;
+    const colon = std.mem.indexOfScalarPos(u8, source, field_pos + field.len, ':') orelse return null;
+    const open = std.mem.indexOfScalarPos(u8, source, colon + 1, '[') orelse return null;
+    const close = matchingDelimiter(source, open, '[', ']') orelse return null;
+    return source[open + 1 .. close];
+}
+
+fn parseStringField(allocator: std.mem.Allocator, source: []const u8, field: []const u8) ![]u8 {
+    const field_pos = std.mem.indexOf(u8, source, field) orelse return error.MissingStringField;
+    const colon = std.mem.indexOfScalarPos(u8, source, field_pos + field.len, ':') orelse return error.MissingStringField;
+    const open = std.mem.indexOfScalarPos(u8, source, colon + 1, '"') orelse return error.MissingStringField;
+    const close = std.mem.indexOfScalarPos(u8, source, open + 1, '"') orelse return error.MissingStringField;
+    return allocator.dupe(u8, source[open + 1 .. close]);
+}
+
+fn matchingDelimiter(source: []const u8, open: usize, comptime open_ch: u8, comptime close_ch: u8) ?usize {
+    var depth: usize = 0;
+    var cursor = open;
+    while (cursor < source.len) : (cursor += 1) {
+        const ch = source[cursor];
+        if (ch == '"') {
+            cursor += 1;
+            while (cursor < source.len and source[cursor] != '"') : (cursor += 1) {}
+        } else if (ch == open_ch) {
+            depth += 1;
+        } else if (ch == close_ch) {
+            depth -= 1;
+            if (depth == 0) return cursor;
+        }
+    }
+    return null;
+}
+
+fn appendFmt(out: *std.array_list.Managed(u8), comptime fmt: []const u8, args: anytype) !void {
+    const text = try std.fmt.allocPrint(out.allocator, fmt, args);
+    defer out.allocator.free(text);
+    try out.appendSlice(text);
+}
+
+fn targetVariantToString(variant: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, variant, "X86_64Linux")) return "x86_64-linux";
+    if (std.mem.eql(u8, variant, "Aarch64Darwin")) return "aarch64-darwin";
+    return null;
+}
+
+fn runNixDevelop(io: std.Io, target: []const u8) !u8 {
+    const argv = nixDevelopArgv(target);
     return runProcessStatus(io, &argv);
 }
 
-fn rocConfigArgv(roc_exe: []const u8, config_path: []const u8, command_name: []const u8) [4][]const u8 {
-    return .{ roc_exe, config_path, "--", command_name };
+fn nixDevelopArgv(target: []const u8) [4][]const u8 {
+    return .{ "nix", "develop", "--no-write-lock-file", target };
 }
 
 fn runProcessStatus(io: std.Io, argv: []const []const u8) !u8 {
@@ -639,28 +991,6 @@ fn exitCode(term: std.process.Child.Term) u8 {
         .exited => |code| code,
         .signal, .stopped, .unknown => 1,
     };
-}
-
-fn listBlueprints(allocator: std.mem.Allocator, io: std.Io, env_map: *std.process.Environ.Map) !void {
-    var selection = try blueprint_mod.selectedBlueprint(allocator, io, env_map);
-    if (selection) |*sel| {
-        defer sel.deinit(allocator);
-        try writeFmt(allocator, io, .stdout, "current\t{s}\t{s}\t{s}\tblueprint={s}\n", .{ sel.source, sel.setting, sel.blueprint_executable, sel.blueprintName() });
-    } else {
-        try writeAll(io, .stdout, "current\tnone\n");
-    }
-
-    var found = false;
-    for (blueprint_mod.builtin_blueprints) |blueprint| {
-        const resolved = try blueprint_mod.resolveBlueprint(allocator, io, blueprint.name);
-        defer allocator.free(resolved);
-        found = true;
-        try writeFmt(allocator, io, .stdout, "{s}\t{s}\tblueprint={s}\n", .{ blueprint.name, resolved, blueprint.blueprint.name() });
-    }
-
-    if (!found) {
-        try writeAll(io, .stdout, "built\tnone-found-next-to-kai\n");
-    }
 }
 
 const Stream = enum { stdout, stderr };
@@ -688,46 +1018,25 @@ fn writeFmt(
 test "parses supported commands" {
     try std.testing.expectEqual(HelpTopic.general, (try parseCommand(&.{"help"})).help);
     try std.testing.expectEqual(HelpTopic.shell, (try parseCommand(&.{ "help", "shell" })).help);
-    try std.testing.expectEqual(HelpTopic.build, (try parseCommand(&.{ "build", "--help" })).help);
-    try std.testing.expectEqual(HelpTopic.blueprint, (try parseCommand(&.{"blueprint"})).help);
-    try std.testing.expectEqual(HelpTopic.blueprint, (try parseCommand(&.{ "blueprint", "--help" })).help);
-    try std.testing.expectEqual(HelpTopic.blueprint, (try parseCommand(&.{ "help", "blueprint" })).help);
+    try std.testing.expectEqual(HelpTopic.shell, (try parseCommand(&.{ "shell", "--help" })).help);
     try std.testing.expectEqual(HelpTopic.zen, (try parseCommand(&.{ "help", "zen" })).help);
     try std.testing.expectEqual(HelpTopic.zen, (try parseCommand(&.{ "zen", "--help" })).help);
     try std.testing.expectEqual(Command.zen, try parseCommand(&.{"zen"}));
 
     const shell_default = try parseCommand(&.{"shell"});
-    try std.testing.expectEqualStrings("shell", shell_default.protocol.cli_name);
-    try std.testing.expectEqualStrings(default_config_file, shell_default.protocol.path);
-    const shell_file = try parseCommand(&.{ "sh", "examples/shell.roc" });
-    try std.testing.expectEqualStrings("examples/shell.roc", shell_file.protocol.path);
+    try std.testing.expectEqualStrings("shell", shell_default.shell.cli_name);
+    try std.testing.expectEqualStrings(default_config_file, shell_default.shell.path);
+    const shell_file = try parseCommand(&.{ "sh", "examples/hello-shell/main.roc" });
+    try std.testing.expectEqualStrings("examples/hello-shell/main.roc", shell_file.shell.path);
 
     const init = try parseCommand(&.{ "shell", "init", "my-app", "--force" });
     try std.testing.expectEqualStrings("my-app", init.shell_init.directory);
     try std.testing.expect(init.shell_init.force);
-
-    const build_default = try parseCommand(&.{"build"});
-    try std.testing.expectEqualStrings("build", build_default.protocol.cli_name);
-    try std.testing.expectEqualStrings(default_config_file, build_default.protocol.path);
-    const build_file = try parseCommand(&.{ "build", "examples/shell.roc" });
-    try std.testing.expectEqualStrings("examples/shell.roc", build_file.protocol.path);
-
-    try std.testing.expectEqual(Command.blueprint_list, try parseCommand(&.{ "blueprint", "list" }));
-    try std.testing.expectEqual(Command.blueprint_get, try parseCommand(&.{ "blueprint", "get" }));
-    try std.testing.expectEqual(Command.blueprint_list, try parseCommand(&.{ "backend", "list" }));
-    try std.testing.expectEqual(Command.blueprint_list, try parseCommand(&.{ "adapter", "list" }));
-
-    const command = try parseCommand(&.{ "blueprint", "set", "nix" });
-    try std.testing.expect(std.mem.eql(u8, command.blueprint_set, "nix"));
 }
 
 test "rejects invalid command usage" {
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "shell", "a", "b" }));
-    try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "build", "a", "b" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "shell", "init", "one", "two" }));
-    try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "blueprint", "delete" }));
-    try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "adapter", "delete" }));
-    try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "backend", "delete" }));
     try std.testing.expectError(error.InvalidCommand, parseCommand(&.{ "zen", "one" }));
 }
 
@@ -736,17 +1045,96 @@ test "preserves unavailable command name" {
     try std.testing.expectEqualStrings("deploy", command.unavailable);
 }
 
-test "builds roc config argv with protocol command name" {
-    const argv = rocConfigArgv("roc", "examples/shell.roc", "machine.build");
-    try std.testing.expectEqualStrings("roc", argv[0]);
-    try std.testing.expectEqualStrings("examples/shell.roc", argv[1]);
-    try std.testing.expectEqualStrings("--", argv[2]);
-    try std.testing.expectEqualStrings("machine.build", argv[3]);
+test "strips package header for generated nix wrapper" {
+    const source =
+        \\package [workspace] {
+        \\    blueprint: "url",
+        \\}
+        \\
+        \\import blueprint.Blueprint
+        \\workspace = Blueprint.workspace({ name: "demo", target_systems: [], envs: [] })
+        \\
+    ;
+    const body = stripPackageHeader(source) orelse return error.ExpectedPackageBody;
+    try std.testing.expect(std.mem.startsWith(u8, body, "import blueprint.Blueprint"));
+    try std.testing.expect(stripPackageHeader("app [main!] {}") == null);
 }
 
-test "run process status returns child exit code" {
-    const code = try runProcessStatus(std.testing.io, &.{ "sh", "-c", "exit 5" });
-    try std.testing.expectEqual(@as(u8, 5), code);
+test "skips Roc header trivia" {
+    try std.testing.expectEqual(@as(usize, 0), skipRocHeaderTrivia("package [workspace] {}"));
+    try std.testing.expect(skipRocHeaderTrivia("# comment\npackage [workspace] {}") > 0);
+}
+
+test "default nix bindings document generated convention" {
+    try std.testing.expect(std.mem.indexOf(u8, default_nix_bindings_source, "requirement id == nixpkgs package attribute") != null);
+    try std.testing.expect(std.mem.indexOf(u8, default_nix_bindings_source, "Nix.bind(requirement, \"nixpkgs\", [Requirement.id(requirement)])") != null);
+}
+
+test "fallback renderer renders package-style blueprint workspace" {
+    const source =
+        \\package [workspace] { blueprint: "url" }
+        \\import blueprint.Blueprint
+        \\import blueprint.Environment
+        \\import blueprint.Requirement
+        \\import blueprint.Target
+        \\
+        \\hello : Requirement
+        \\hello = Requirement.new({ id: "hello", display_name: "Hello" })
+        \\
+        \\workspace : Blueprint.Draft
+        \\workspace = Blueprint.workspace({
+        \\    name: "hello-shell",
+        \\    target_systems: [Target.X86_64Linux, Target.Aarch64Linux, Target.X86_64Darwin, Target.Aarch64Darwin],
+        \\    envs: [Environment.new({ name: "default", requirements: [hello] })],
+        \\})
+        \\
+    ;
+    var workspace = try parseWorkspaceSource(std.testing.allocator, source);
+    defer workspace.deinit(std.testing.allocator);
+
+    const flake = try renderFallbackFlake(std.testing.allocator, workspace, &[_]BindingDef{});
+    defer std.testing.allocator.free(flake);
+
+    const expected =
+        \\# Generated by roc-blueprint and roc-blueprint-nix. Do not edit.
+        \\{
+        \\  "description" = "Development environments for hello-shell";
+        \\  "inputs" = {
+        \\    "nixpkgs" = {
+        \\      "url" = "github:NixOS/nixpkgs/nixos-unstable";
+        \\    };
+        \\  };
+        \\  "outputs" = { nixpkgs, ... }:
+        \\    {
+        \\      "devShells" = {
+        \\        "x86_64-linux" = {
+        \\          "default" = nixpkgs."legacyPackages"."x86_64-linux"."mkShell" {
+        \\            "packages" = [
+        \\              nixpkgs."legacyPackages"."x86_64-linux"."hello"
+        \\            ];
+        \\          };
+        \\        };
+        \\        "aarch64-darwin" = {
+        \\          "default" = nixpkgs."legacyPackages"."aarch64-darwin"."mkShell" {
+        \\            "packages" = [
+        \\              nixpkgs."legacyPackages"."aarch64-darwin"."hello"
+        \\            ];
+        \\          };
+        \\        };
+        \\      };
+        \\    };
+        \\}
+        \\
+    ;
+    try std.testing.expectEqualStrings(expected, flake);
+}
+
+test "builds nix develop argv" {
+    const argv = nixDevelopArgv("path:.kai/shell#default");
+    try std.testing.expectEqualStrings("nix", argv[0]);
+    try std.testing.expectEqualStrings("develop", argv[1]);
+    try std.testing.expectEqualStrings("--no-write-lock-file", argv[2]);
+    try std.testing.expectEqualStrings("path:.kai/shell#default", argv[3]);
 }
 
 test "styled help uses bold headers and ANSI command color" {
@@ -769,45 +1157,4 @@ test "prints and documents kai zen" {
     defer std.testing.allocator.free(zen_help);
     try std.testing.expect(std.mem.indexOf(u8, zen_help, "Print kai zen.") != null);
     try std.testing.expect(std.mem.indexOf(u8, zen_help, "kai zen") != null);
-}
-
-test "plans shell command dispatch" {
-    const result = planProtocolDispatch(registry_mod.default_protocol_registry, "shell", "examples/shell.roc", .nix, null);
-    switch (result) {
-        .ok => |plan| {
-            try std.testing.expectEqualStrings("shell", plan.command_name);
-            try std.testing.expectEqualStrings("shell.default.nix", plan.implementation_id);
-            try std.testing.expectEqual(blueprint_mod.Blueprint.nix, plan.active_blueprint);
-        },
-        else => return error.TestExpectedShellDispatch,
-    }
-}
-
-test "plans build alias dispatch to machine.build" {
-    const result = planProtocolDispatch(registry_mod.default_protocol_registry, "build", "kai.roc", .nix, null);
-    switch (result) {
-        .ok => |plan| {
-            try std.testing.expectEqualStrings("machine.build", plan.command_name);
-            try std.testing.expectEqualStrings("machine.build.default.nix", plan.implementation_id);
-        },
-        else => return error.TestExpectedBuildDispatch,
-    }
-}
-
-test "reports unsupported blueprint for machine build on guix" {
-    const result = planProtocolDispatch(registry_mod.default_protocol_registry, "build", "kai.roc", .guix, null);
-    try std.testing.expectEqual(DispatchResult.unsupported_blueprint, result);
-}
-
-test "reports command not registered" {
-    const result = planProtocolDispatch(registry_mod.default_protocol_registry, "deploy", "kai.roc", .nix, null);
-    try std.testing.expectEqual(DispatchResult.command_not_available, result);
-}
-
-test "reports implementation blueprint mismatch" {
-    const result = planProtocolDispatch(registry_mod.default_protocol_registry, "shell", "kai.roc", .guix, "shell.default.nix");
-    switch (result) {
-        .implementation_blueprint_mismatch => |implementation| try std.testing.expectEqualStrings("shell.default.nix", implementation.id),
-        else => return error.TestExpectedBlueprintMismatch,
-    }
 }

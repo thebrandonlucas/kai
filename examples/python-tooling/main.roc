@@ -9,14 +9,17 @@ import blueprint.Environment
 import blueprint.Requirement
 import blueprint.Target
 
-cargo : Requirement
-cargo = Requirement.new({ id: "cargo", display_name: "Cargo" })
+python3 : Requirement
+python3 = Requirement.new({ id: "python3", display_name: "Python" })
+
+git : Requirement
+git = Requirement.new({ id: "git", display_name: "Git" })
 
 workspace : Blueprint.Draft
 workspace = Blueprint.workspace(
 	{
-		name: "kai",
-		target_systems: [Target.X86_64Linux],
-		envs: [Environment.new({ name: "default", requirements: [cargo] })],
+		name: "python-tooling",
+		target_systems: [Target.X86_64Linux, Target.Aarch64Darwin],
+		envs: [Environment.new({ name: "default", requirements: [python3, git] })],
 	},
 )

@@ -9,14 +9,14 @@ import blueprint.Environment
 import blueprint.Requirement
 import blueprint.Target
 
-cargo : Requirement
-cargo = Requirement.new({ id: "cargo", display_name: "Cargo" })
+git : Requirement
+git = Requirement.new({ id: "git", display_name: "Shell tools" })
 
 workspace : Blueprint.Draft
 workspace = Blueprint.workspace(
 	{
-		name: "kai",
-		target_systems: [Target.X86_64Linux],
-		envs: [Environment.new({ name: "default", requirements: [cargo] })],
+		name: "multi-platform-shell",
+		target_systems: [Target.X86_64Linux, Target.Aarch64Linux, Target.X86_64Darwin, Target.Aarch64Darwin],
+		envs: [Environment.new({ name: "default", requirements: [git] })],
 	},
 )

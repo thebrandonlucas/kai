@@ -2,13 +2,10 @@ platform "kai"
 	requires {
 		main! : List(Str) => I32
 	}
-	exposes [Kai, Stdout, Blueprint, Adapter]
+	exposes [Stdout]
 	packages {}
 	provides { "roc_main": main_for_host! }
 	hosted {
-		"roc_kai_shell": Host.kai_shell!,
-		"roc_kai_config_shell": Host.kai_config_shell!,
-		"roc_kai_machine_build": Host.kai_machine_build!,
 		"roc_stdout_line": Host.stdout_line!,
 	}
 	targets: {
@@ -21,10 +18,7 @@ platform "kai"
 		arm64win: { inputs: ["host.lib", app] },
 	}
 
-import Kai
 import Stdout
-import Blueprint
-import Adapter
 import Host
 
 main_for_host! : List(Str) => I32

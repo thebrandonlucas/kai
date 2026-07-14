@@ -9,14 +9,17 @@ import blueprint.Environment
 import blueprint.Requirement
 import blueprint.Target
 
-cargo : Requirement
-cargo = Requirement.new({ id: "cargo", display_name: "Cargo" })
+nodejs : Requirement
+nodejs = Requirement.new({ id: "nodejs", display_name: "Node.js" })
+
+git : Requirement
+git = Requirement.new({ id: "git", display_name: "Git" })
 
 workspace : Blueprint.Draft
 workspace = Blueprint.workspace(
 	{
-		name: "kai",
-		target_systems: [Target.X86_64Linux],
-		envs: [Environment.new({ name: "default", requirements: [cargo] })],
+		name: "node-tooling",
+		target_systems: [Target.X86_64Linux, Target.Aarch64Darwin],
+		envs: [Environment.new({ name: "default", requirements: [nodejs, git] })],
 	},
 )
