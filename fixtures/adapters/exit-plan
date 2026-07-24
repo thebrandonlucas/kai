@@ -1,6 +1,0 @@
-#!/bin/sh
-if [ "$1" != "kai.adapter.argv.v1" ] || [ "$2" != "shell" ]; then
-  echo 'invalid request' >&2
-  exit 2
-fi
-printf 'kai.adapter.plan.v1\n3\n2\nsh\n2\n-c\n6\nexit 8\n'

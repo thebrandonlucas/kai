@@ -14,6 +14,18 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+/// Runtime representation of Roc's fixed-point `Dec` value.
+///
+/// `num` stores the decimal value scaled by 10^18.
+pub const RocDec = extern struct {
+    num: i128,
+};
+
+comptime {
+    if (@sizeOf(RocDec) != 16) @compileError("RocDec size mismatch");
+    if (@alignOf(RocDec) != 16) @compileError("RocDec alignment mismatch");
+}
+
 /// Runtime representation of an opaque `Box(T)` value.
 pub const RocBox = ?*anyopaque;
 
@@ -429,6 +441,10 @@ pub fn RocListWith(comptime T: type, comptime elements_refcounted: bool) type {
             const data_ptr = base + header_bytes;
             const rc: *isize = @ptrFromInt(@intFromPtr(data_ptr) - @sizeOf(isize));
             rc.* = 1;
+            if (elements_refcounted) {
+                const count: *usize = @ptrFromInt(@intFromPtr(data_ptr) - (2 * @sizeOf(usize)));
+                count.* = length;
+            }
             return .{
                 .elements_ptr = @ptrCast(@alignCast(data_ptr)),
                 .length = length,
@@ -564,174 +580,223 @@ pub const RocEnv = struct {
     roc_io: RocIo,
 };
 
-/// Tag discriminant for Try.
-pub const TryType0Tag = enum(u8) {
-    Err = 0,
-    Ok = 1,
-};
+/// Element type for __AnonStruct_30b56c4e6a5e92f1
+pub const __AnonStruct_30b56c4e6a5e92f1 = if (@sizeOf(usize) == 4) extern struct {
+    name: RocStr,
+    shell: __AnonStruct_b94367f0d9bb2888,
+    /// Recursively decrement Roc-owned fields.
+    pub fn decref(self: @This(), roc_host: *RocHost) void {
+        const value = self;
+        value.name.decref(roc_host);
+        value.shell.decref(roc_host);
+    }
 
-/// Payload union for Try.
-pub const TryType0Payload = extern union {
-        err: RocStr,
-        ok: void,
-};
-
-/// Tag union: Try
-pub const TryType0 = if (@sizeOf(usize) == 4) extern struct {
-    payload: [12]u8 align(4),
-    tag: TryType0Tag,
-    pub fn payload_err(self: *const @This()) RocStr {
-        const ptr: *const RocStr = @ptrCast(@alignCast(&self.payload));
-        return ptr.*;
+    /// Increment Roc-owned fields.
+    pub fn incref(self: @This(), amount: isize) void {
+        const value = self;
+        value.name.incref(amount);
+        value.shell.incref(amount);
     }
 } else extern struct {
-    payload: TryType0Payload,
-    tag: TryType0Tag,
-    pub fn payload_err(self: *const @This()) RocStr {
-        return self.payload.err;
+    name: RocStr,
+    shell: __AnonStruct_b94367f0d9bb2888,
+    /// Recursively decrement Roc-owned fields.
+    pub fn decref(self: @This(), roc_host: *RocHost) void {
+        const value = self;
+        value.name.decref(roc_host);
+        value.shell.decref(roc_host);
+    }
+
+    /// Increment Roc-owned fields.
+    pub fn incref(self: @This(), amount: isize) void {
+        const value = self;
+        value.name.incref(amount);
+        value.shell.incref(amount);
     }
 };
 
 comptime {
     if (@sizeOf(usize) == 8) {
-        if (@sizeOf(TryType0) != 32) @compileError("TryType0 size mismatch");
-        if (@alignOf(TryType0) != 8) @compileError("TryType0 alignment mismatch");
-        if (@offsetOf(TryType0, "tag") != 24) @compileError("TryType0 tag offset mismatch");
+        if (@sizeOf(__AnonStruct_30b56c4e6a5e92f1) != 48) @compileError("__AnonStruct_30b56c4e6a5e92f1 size mismatch");
+        if (@alignOf(__AnonStruct_30b56c4e6a5e92f1) != 8) @compileError("__AnonStruct_30b56c4e6a5e92f1 alignment mismatch");
     }
     if (@sizeOf(usize) == 4) {
-        if (@sizeOf(TryType0) != 16) @compileError("TryType0 size mismatch");
-        if (@alignOf(TryType0) != 4) @compileError("TryType0 alignment mismatch");
-        if (@offsetOf(TryType0, "tag") != 12) @compileError("TryType0 tag offset mismatch");
+        if (@sizeOf(__AnonStruct_30b56c4e6a5e92f1) != 24) @compileError("__AnonStruct_30b56c4e6a5e92f1 size mismatch");
+        if (@alignOf(__AnonStruct_30b56c4e6a5e92f1) != 4) @compileError("__AnonStruct_30b56c4e6a5e92f1 alignment mismatch");
+    }
+}
+
+/// Element type for __AnonStruct_b94367f0d9bb2888
+pub const __AnonStruct_b94367f0d9bb2888 = if (@sizeOf(usize) == 4) extern struct {
+    pkgs: RocList(RocStr),
+    /// Recursively decrement Roc-owned fields.
+    pub fn decref(self: @This(), roc_host: *RocHost) void {
+        const value = self;
+        {
+            const list = value.pkgs;
+            if (list.hasOneRef()) {
+                for (list.allocationItems()) |item| {
+                    item.decref(roc_host);
+                }
+            }
+            list.decref(roc_host);
+        }
+    }
+
+    /// Increment Roc-owned fields.
+    pub fn incref(self: @This(), amount: isize) void {
+        const value = self;
+        value.pkgs.incref(amount);
+    }
+} else extern struct {
+    pkgs: RocList(RocStr),
+    /// Recursively decrement Roc-owned fields.
+    pub fn decref(self: @This(), roc_host: *RocHost) void {
+        const value = self;
+        {
+            const list = value.pkgs;
+            if (list.hasOneRef()) {
+                for (list.allocationItems()) |item| {
+                    item.decref(roc_host);
+                }
+            }
+            list.decref(roc_host);
+        }
+    }
+
+    /// Increment Roc-owned fields.
+    pub fn incref(self: @This(), amount: isize) void {
+        const value = self;
+        value.pkgs.incref(amount);
+    }
+};
+
+comptime {
+    if (@sizeOf(usize) == 8) {
+        if (@sizeOf(__AnonStruct_b94367f0d9bb2888) != 24) @compileError("__AnonStruct_b94367f0d9bb2888 size mismatch");
+        if (@alignOf(__AnonStruct_b94367f0d9bb2888) != 8) @compileError("__AnonStruct_b94367f0d9bb2888 alignment mismatch");
+    }
+    if (@sizeOf(usize) == 4) {
+        if (@sizeOf(__AnonStruct_b94367f0d9bb2888) != 12) @compileError("__AnonStruct_b94367f0d9bb2888 size mismatch");
+        if (@alignOf(__AnonStruct_b94367f0d9bb2888) != 4) @compileError("__AnonStruct_b94367f0d9bb2888 alignment mismatch");
     }
 }
 
 /// Tag discriminant for Try.
-pub const TryType4Tag = enum(u8) {
+pub const HostStderr_lineResultTag = enum(u8) {
     Err = 0,
     Ok = 1,
 };
 
 /// Payload union for Try.
-pub const TryType4Payload = extern union {
-        err: RocStr,
-        ok: RocStr,
+pub const HostStderr_lineResultPayload = extern union {
+    err: RocStr,
+    ok: [0]u8,
 };
 
 /// Tag union: Try
-pub const TryType4 = if (@sizeOf(usize) == 4) extern struct {
+pub const HostStderr_lineResult = if (@sizeOf(usize) == 4) extern struct {
     payload: [12]u8 align(4),
-    tag: TryType4Tag,
+    tag: HostStderr_lineResultTag,
     pub fn payload_err(self: *const @This()) RocStr {
         const ptr: *const RocStr = @ptrCast(@alignCast(&self.payload));
         return ptr.*;
     }
-    pub fn payload_ok(self: *const @This()) RocStr {
-        const ptr: *const RocStr = @ptrCast(@alignCast(&self.payload));
-        return ptr.*;
+    /// Recursively decrement Roc-owned payloads.
+    pub fn decref(self: @This(), roc_host: *RocHost) void {
+        decrefHostStderr_lineResult(self, roc_host);
+    }
+
+    /// Increment Roc-owned payloads.
+    pub fn incref(self: @This(), amount: isize) void {
+        increfHostStderr_lineResult(self, amount);
     }
 } else extern struct {
-    payload: TryType4Payload,
-    tag: TryType4Tag,
+    payload: HostStderr_lineResultPayload,
+    tag: HostStderr_lineResultTag,
     pub fn payload_err(self: *const @This()) RocStr {
         return self.payload.err;
     }
-    pub fn payload_ok(self: *const @This()) RocStr {
-        return self.payload.ok;
+    /// Recursively decrement Roc-owned payloads.
+    pub fn decref(self: @This(), roc_host: *RocHost) void {
+        decrefHostStderr_lineResult(self, roc_host);
+    }
+
+    /// Increment Roc-owned payloads.
+    pub fn incref(self: @This(), amount: isize) void {
+        increfHostStderr_lineResult(self, amount);
     }
 };
 
 comptime {
     if (@sizeOf(usize) == 8) {
-        if (@sizeOf(TryType4) != 32) @compileError("TryType4 size mismatch");
-        if (@alignOf(TryType4) != 8) @compileError("TryType4 alignment mismatch");
-        if (@offsetOf(TryType4, "tag") != 24) @compileError("TryType4 tag offset mismatch");
+        if (@sizeOf(HostStderr_lineResult) != 32) @compileError("HostStderr_lineResult size mismatch");
+        if (@alignOf(HostStderr_lineResult) != 8) @compileError("HostStderr_lineResult alignment mismatch");
+        if (@offsetOf(HostStderr_lineResult, "tag") != 24) @compileError("HostStderr_lineResult tag offset mismatch");
     }
     if (@sizeOf(usize) == 4) {
-        if (@sizeOf(TryType4) != 16) @compileError("TryType4 size mismatch");
-        if (@alignOf(TryType4) != 4) @compileError("TryType4 alignment mismatch");
-        if (@offsetOf(TryType4, "tag") != 12) @compileError("TryType4 tag offset mismatch");
+        if (@sizeOf(HostStderr_lineResult) != 16) @compileError("HostStderr_lineResult size mismatch");
+        if (@alignOf(HostStderr_lineResult) != 4) @compileError("HostStderr_lineResult alignment mismatch");
+        if (@offsetOf(HostStderr_lineResult, "tag") != 12) @compileError("HostStderr_lineResult tag offset mismatch");
     }
 }
 
 /// Tag discriminant for Try.
-pub const TryType6Tag = enum(u8) {
+pub const HostStdout_lineResultTag = enum(u8) {
     Err = 0,
     Ok = 1,
 };
 
 /// Payload union for Try.
-pub const TryType6Payload = extern union {
-        err: RocStr,
-        ok: void,
+pub const HostStdout_lineResultPayload = extern union {
+    err: RocStr,
+    ok: [0]u8,
 };
 
 /// Tag union: Try
-pub const TryType6 = if (@sizeOf(usize) == 4) extern struct {
+pub const HostStdout_lineResult = if (@sizeOf(usize) == 4) extern struct {
     payload: [12]u8 align(4),
-    tag: TryType6Tag,
+    tag: HostStdout_lineResultTag,
     pub fn payload_err(self: *const @This()) RocStr {
         const ptr: *const RocStr = @ptrCast(@alignCast(&self.payload));
         return ptr.*;
     }
+    /// Recursively decrement Roc-owned payloads.
+    pub fn decref(self: @This(), roc_host: *RocHost) void {
+        decrefHostStdout_lineResult(self, roc_host);
+    }
+
+    /// Increment Roc-owned payloads.
+    pub fn incref(self: @This(), amount: isize) void {
+        increfHostStdout_lineResult(self, amount);
+    }
 } else extern struct {
-    payload: TryType6Payload,
-    tag: TryType6Tag,
+    payload: HostStdout_lineResultPayload,
+    tag: HostStdout_lineResultTag,
     pub fn payload_err(self: *const @This()) RocStr {
         return self.payload.err;
     }
-};
-
-comptime {
-    if (@sizeOf(usize) == 8) {
-        if (@sizeOf(TryType6) != 32) @compileError("TryType6 size mismatch");
-        if (@alignOf(TryType6) != 8) @compileError("TryType6 alignment mismatch");
-        if (@offsetOf(TryType6, "tag") != 24) @compileError("TryType6 tag offset mismatch");
+    /// Recursively decrement Roc-owned payloads.
+    pub fn decref(self: @This(), roc_host: *RocHost) void {
+        decrefHostStdout_lineResult(self, roc_host);
     }
-    if (@sizeOf(usize) == 4) {
-        if (@sizeOf(TryType6) != 16) @compileError("TryType6 size mismatch");
-        if (@alignOf(TryType6) != 4) @compileError("TryType6 alignment mismatch");
-        if (@offsetOf(TryType6, "tag") != 12) @compileError("TryType6 tag offset mismatch");
-    }
-}
 
-/// Tag discriminant for Try.
-pub const TryType11Tag = enum(u8) {
-    Err = 0,
-    Ok = 1,
-};
-
-/// Payload union for Try.
-pub const TryType11Payload = extern union {
-        err: i32,
-        ok: void,
-};
-
-/// Tag union: Try
-pub const TryType11 = if (@sizeOf(usize) == 4) extern struct {
-    payload: [4]u8 align(4),
-    tag: TryType11Tag,
-    pub fn payload_err(self: *const @This()) i32 {
-        const ptr: *const i32 = @ptrCast(@alignCast(&self.payload));
-        return ptr.*;
-    }
-} else extern struct {
-    payload: TryType11Payload,
-    tag: TryType11Tag,
-    pub fn payload_err(self: *const @This()) i32 {
-        return self.payload.err;
+    /// Increment Roc-owned payloads.
+    pub fn incref(self: @This(), amount: isize) void {
+        increfHostStdout_lineResult(self, amount);
     }
 };
 
 comptime {
     if (@sizeOf(usize) == 8) {
-        if (@sizeOf(TryType11) != 8) @compileError("TryType11 size mismatch");
-        if (@alignOf(TryType11) != 4) @compileError("TryType11 alignment mismatch");
-        if (@offsetOf(TryType11, "tag") != 4) @compileError("TryType11 tag offset mismatch");
+        if (@sizeOf(HostStdout_lineResult) != 32) @compileError("HostStdout_lineResult size mismatch");
+        if (@alignOf(HostStdout_lineResult) != 8) @compileError("HostStdout_lineResult alignment mismatch");
+        if (@offsetOf(HostStdout_lineResult, "tag") != 24) @compileError("HostStdout_lineResult tag offset mismatch");
     }
     if (@sizeOf(usize) == 4) {
-        if (@sizeOf(TryType11) != 8) @compileError("TryType11 size mismatch");
-        if (@alignOf(TryType11) != 4) @compileError("TryType11 alignment mismatch");
-        if (@offsetOf(TryType11, "tag") != 4) @compileError("TryType11 tag offset mismatch");
+        if (@sizeOf(HostStdout_lineResult) != 16) @compileError("HostStdout_lineResult size mismatch");
+        if (@alignOf(HostStdout_lineResult) != 4) @compileError("HostStdout_lineResult alignment mismatch");
+        if (@offsetOf(HostStdout_lineResult, "tag") != 12) @compileError("HostStdout_lineResult tag offset mismatch");
     }
 }
 
@@ -749,98 +814,47 @@ pub const HostStdout_lineArgs = extern struct {
     arg0: RocStr,
 };
 
-// =============================================================================
 // Generated Refcount Helpers
-// =============================================================================
 
-/// Recursively decrement Roc-owned payloads in TryType0.
-pub fn decrefTryType0(value: TryType0, roc_host: *RocHost) void {
+fn decrefHostStderr_lineResult(value: HostStderr_lineResult, roc_host: *RocHost) void {
     switch (value.tag) {
         .Err => {
-        value.payload_err().decref(roc_host);
+            value.payload_err().decref(roc_host);
         },
         .Ok => {},
     }
 }
 
-/// Increment Roc-owned payloads in TryType0.
-pub fn increfTryType0(value: TryType0, amount: isize) void {
+fn increfHostStderr_lineResult(value: HostStderr_lineResult, amount: isize) void {
     switch (value.tag) {
         .Err => {
-        value.payload_err().incref(amount);
+            value.payload_err().incref(amount);
         },
         .Ok => {},
     }
 }
 
-/// Recursively decrement Roc-owned payloads in TryType4.
-pub fn decrefTryType4(value: TryType4, roc_host: *RocHost) void {
+fn decrefHostStdout_lineResult(value: HostStdout_lineResult, roc_host: *RocHost) void {
     switch (value.tag) {
         .Err => {
-        value.payload_err().decref(roc_host);
-        },
-        .Ok => {
-        value.payload_ok().decref(roc_host);
-        },
-    }
-}
-
-/// Increment Roc-owned payloads in TryType4.
-pub fn increfTryType4(value: TryType4, amount: isize) void {
-    switch (value.tag) {
-        .Err => {
-        value.payload_err().incref(amount);
-        },
-        .Ok => {
-        value.payload_ok().incref(amount);
-        },
-    }
-}
-
-/// Recursively decrement Roc-owned payloads in TryType6.
-pub fn decrefTryType6(value: TryType6, roc_host: *RocHost) void {
-    switch (value.tag) {
-        .Err => {
-        value.payload_err().decref(roc_host);
+            value.payload_err().decref(roc_host);
         },
         .Ok => {},
     }
 }
 
-/// Increment Roc-owned payloads in TryType6.
-pub fn increfTryType6(value: TryType6, amount: isize) void {
+fn increfHostStdout_lineResult(value: HostStdout_lineResult, amount: isize) void {
     switch (value.tag) {
         .Err => {
-        value.payload_err().incref(amount);
+            value.payload_err().incref(amount);
         },
         .Ok => {},
     }
 }
 
-/// Recursively decrement Roc-owned payloads in TryType11.
-pub fn decrefTryType11(value: TryType11, roc_host: *RocHost) void {
-    _ = roc_host;
-    switch (value.tag) {
-        .Err => {},
-        .Ok => {},
-    }
-}
-
-/// Increment Roc-owned payloads in TryType11.
-pub fn increfTryType11(value: TryType11, amount: isize) void {
-    _ = amount;
-    switch (value.tag) {
-        .Err => {},
-        .Ok => {},
-    }
-}
-
-
-// =============================================================================
 // Runtime Symbols
 //
 // The host defines these linker symbols. Compiled Roc code calls them directly.
-// =============================================================================
 
 pub extern fn roc_alloc(length: usize, alignment: usize) callconv(.c) ?*anyopaque;
 pub extern fn roc_dealloc(ptr: *anyopaque, alignment: usize) callconv(.c) void;
@@ -849,25 +863,18 @@ pub extern fn roc_dbg(bytes: [*]const u8, len: usize) callconv(.c) void;
 pub extern fn roc_expect_failed(bytes: [*]const u8, len: usize) callconv(.c) void;
 pub extern fn roc_crashed(bytes: [*]const u8, len: usize) callconv(.c) void;
 
-// =============================================================================
 // Hosted Symbols
 //
 // The platform host must export these symbols with the exact direct C ABI signatures.
 // Refcounted arguments are owned by the hosted function.
-// =============================================================================
 
 /// Hosted symbol for Host.stderr_line!
 /// Roc signature: Str => Try({}, [StderrErr(Str)])
-pub extern fn roc_stderr_line(arg0: RocStr) callconv(.c) TryType0;
-
-/// Hosted symbol for Host.stdin_line!
-/// Roc signature: {} => Try(Str, [StdinErr(Str)])
-pub extern fn roc_stdin_line() callconv(.c) TryType4;
+pub extern fn roc_stderr_line(arg0: RocStr) callconv(.c) HostStderr_lineResult;
 
 /// Hosted symbol for Host.stdout_line!
 /// Roc signature: Str => Try({}, [StdoutErr(Str)])
-pub extern fn roc_stdout_line(arg0: RocStr) callconv(.c) TryType6;
-
+pub extern fn roc_stdout_line(arg0: RocStr) callconv(.c) HostStdout_lineResult;
 
 /// Default memory management functions for Roc platforms.
 ///
@@ -1004,11 +1011,9 @@ pub fn makeRocHost(env: *RocEnv) RocHost {
     };
 }
 
-// =============================================================================
 // Provided Symbols
 //
 // Roc exports these symbols from the app with their natural C ABI signatures.
-// =============================================================================
 
 /// Entrypoint: main_for_host!
 pub extern fn roc_main(arg0: RocList(RocStr)) callconv(.c) i32;

@@ -1,55 +1,33 @@
-# Kai
+# Kai - A friendly frontend for determinate computing
 
-## A friendly frontend for determinate computing
+> WARNING: Hobby project. Not intended for serious or commercial use at this time. Use at your own risk.
 
-> NOTE: This is very much a prototype and work in progress. Expect bugs and do not use for anything other than toy projects at the moment.
+Kai is a CLI for making determinate systems (mainly [Nix]()) easy to use.
 
-`kai` is a prototype proof-of-concept CLI tool for using determinate systems like `nix`. It aims to make using reproducible software in your day-to-day life easy, fun, and powerful.
+The goal is to make determinate systems so easy and powerful to use they become the de-facto choice. Practically, this means adopting Nix under the hood and creating useful abstractions in the shorter term.
 
+Broken down, the goals are:
 
-It is built on an Embedded DSL within the `roc` language that aims to be a generic protocol for determinate computing operations. The idea is to enumerate the most useful subset of operations provided by reproducible software in general, such as dev shells, build targets, rollbacks, garbage collection, etc. such that we may use any [_blueprint_](https://github.com/lukewilliamboswell/roc-blueprint) which uses the command. A blueprint in this case is a mapping between the generic protocol and a given implementation. Right now, there are essentially two implementations of determinate systems: `nix` (and the system `nixOS`) and `guix` (whose OS is called `guix system`). So the idea is that you could write your `kai.roc` generically and have it select which backend to use.
+1. Great UX. The benefits and usage of Kai should be immediate and obvious.
+2. Modularity:
+    a. A great set of default features downstream of determinism: (rollbacks, dev shells, )
+    b. The ability to add/remove subcommands via a command module registry similar to [Caddy]().
+    c. The ability to modify the default set of modules to fit user needs.
+    d. To the degree possible, the ability to replace suboptimal pieces of the underlying system (i.e. encourage a "protocol" or modularity in determinate systems), as opposed to the current monolithic nature of Nix/Guix. See [snix]() for example.
+3. Unlocking new use cases and ergonomics. Encouraging benefits that are overlooked or underutilized in current systems.
 
-More on the design thinking and motivation [here](https://blu.cx/posts/articles/2026-07-13-kai-friendly-frontend/).
+### Design Questions
 
-`kai` manages a `kai.roc` file which uses the EDSL. For now, this is just a sketch of two of many possible future commands:
+Eventually, we want our blueprint protocol to support the following universal things at least:
 
-```roc
-app [config] { kai: platform "./platform/config.roc" }
+1. Shells (ad-hoc or persistent, locked (flakes) or unlocked (shell.nix))
+2. Builds (for deployable machines & other targets)
+3. Deployments (generic, yet extensible)
+4. Rollbacks
+5. Garbage Collection
+6. Package Resolution (?)
+7. etc.
 
-config = [
-    Shell({
-        name: "kai",
-        # `packages` is a Roc header keyword in this compiler, so shell configs use `pkgs`.
-        pkgs: ["cargo"],
-    }),
-    MachineBuild({
-        hostname: "kai-example",
-        system: "x86_64-linux",
-        install: ["git"],
-        ssh_keys: [],
-        state_version: "25.05",
-        image: { format: "qcow2" },
-    }),
-]
-```
+### Looking Ahead
 
-Blueprint choice is outside the Roc file:
-
-```sh
-./zig-out/bin/kai blueprint set nix   # or guix
-./zig-out/bin/kai shell               # defaults to kai.roc
-./zig-out/bin/kai shell examples/shell.roc
-```
-
-Architecture:
-
-1. `src/command_registry.zig` declares protocol commands separately from extra/non-protocol commands.
-2. `src/blueprint.zig` selects exactly one active blueprint from `.kai/blueprint`, legacy `.kai/backend`, legacy `.kai/adapter`, `KAI_BLUEPRINT`, or legacy `KAI_BACKEND_ADAPTER`.
-3. `kai shell [kai.roc]` dispatches protocol command `shell`; on first run or config changes it writes generated blueprint state under `.kai/` and tells the user.
-4. `kai build [kai.roc]` is a CLI alias for protocol command `machine.build`.
-5. The selected implementation must target the active blueprint; otherwise Kai reports a blueprint mismatch or unsupported blueprint.
-6. A blueprint executable is a small Roc program using `kai.Blueprint`; it lowers portable `shell` requests to normalized argv.
-7. `machine.build` currently supports only blueprint `nix`: it writes `.kai/machine/flake.nix`, prints the machine output attr, then runs `nix build path:.kai/machine#packages.<system>.<hostname>-image`.
-
-For config-driven shell commands, Kai generates blueprint state under `.kai/shell/` (`flake.nix` for nix, `manifest.scm` for guix) from the shell package list, then passes that generated target to the blueprint executable. Subsequent runs reuse the generated file unless the rendered content changes. Machine image builds are Nix-specific and follow the kai-zig `nix build path:.kai/machine#...` flow.
-
+Aside from making a great tool for programmers to encourage the use of determinate computing, the hope is to go far beyond that and [dream](https://www.amazon.com/Dream-Machine-M-Mitchell-Waldrop/dp/1732265119) about what computers could be.

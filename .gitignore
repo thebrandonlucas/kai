@@ -1,7 +1,8 @@
+.direnv/
 .zig-cache/
+.kai
+result
+generated-docs
 zig-out/
-.kai/
-.kai-backend
-.kai-adapter
 platform/targets/*/libhost.a
-platform/targets/*/host.lib
+dist/

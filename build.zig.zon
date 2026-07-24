@@ -1,14 +1,15 @@
 .{
-    .name = .kai,
+    .name = .kai_config_platform,
+    // FIXME: Why does semver for new project always do 0.1.0?
     .version = "0.1.0",
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
-    .fingerprint = 0xf34b7ec9e0dffa9f,
+    // FIXME: how to get this?
+    .fingerprint = 0x1443f7b1fab8ac36,
+    // FIXME: paths to _what_? how do i know what needs to be included here?
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "ci",
-        "examples",
         "platform",
         "src",
     },
