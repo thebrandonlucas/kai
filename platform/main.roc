@@ -1,4 +1,4 @@
-platform "kai-config"
+platform "kai"
 	requires {
 		config : {
 			name : Str,
@@ -7,7 +7,7 @@ platform "kai-config"
 	}
 	exposes [Kai]
 	packages {
-		blueprint: "../blueprint/package.roc",
+		blueprint: "blueprint/package.roc",
 	}
 	provides {
 		"roc_main": main_for_host!,
@@ -18,6 +18,9 @@ platform "kai-config"
 	}
 	targets: {
 		inputs_dir: "targets/",
+		x64mac: { inputs: ["libhost.a", app] },
+		arm64mac: { inputs: ["libhost.a", app] },
+		x64musl: { inputs: ["crt1.o", "libhost.a", app, "libc.a"] },
 		x64musl: { inputs: ["crt1.o", "libhost.a", app, "libc.a"] },
 	}
 

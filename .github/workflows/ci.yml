@@ -18,7 +18,7 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -29,5 +29,19 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run CI
+      - name: Run Project CI
         run: nix develop --command zig build ci
+
+      - name: Check Nix formatting
+        run: nix fmt -- --check flake.nix
+
+      - name: Check Nix package
+        run: nix flake check
+
+      - name: Build release outputs
+        run: |
+          nix build \
+            .#platform-bundle \
+            .#release-x86_64-linux \
+            .#release-aarch64-linux \
+            --no-link

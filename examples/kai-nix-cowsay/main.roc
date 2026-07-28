@@ -1,5 +1,5 @@
 app [config] {
-	kai: platform "../../platform/config.roc",
+	kai: platform "../../platform/main.roc",
 }
 
 import kai.Kai
