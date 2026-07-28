@@ -1,8 +1,9 @@
 .direnv/
 .zig-cache/
 .kai
-result
 generated-docs
 zig-out/
 platform/targets/*/libhost.a
 dist/
+result
+result-*

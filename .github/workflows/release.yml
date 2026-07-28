@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release ${{ inputs.version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Require master
+        if: github.ref != 'refs/heads/master'
+        run: |
+          echo "Releases must run from master"
+          exit 1
+
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reject existing release
+        env:
+          GH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          VERSION: ${{inputs.version}}
+
+        run: |
+          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+            echo "Tag v${VERSION} already exists."
+            exit 1
+          fi
+
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+           echo "Release v${VERSION} already exists."
+           exit 1
+          fi
+
+      - name: Build and test release artifacts
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          nix develop --command \
+            ./scripts/build-release.sh "${VERSION}"
+
+      - name: Verify release artifact set
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          test -f "dist/kai-${VERSION}-x86_64-linux.tar.gz"
+          test -f "dist/kai-${VERSION}-aarch64-linux.tar.gz"
+          test -f "dist/SHA256SUMS"
+
+                       bundle_count="$(
+               find dist -maxdepth 1 -name '*.tar.zst' -type f | wc -l
+             )"
+
+             if [ "$bundle_count" -ne 1 ]; then
+               echo "Expected exactly one platform bundle, found $bundle_count"
+               exit 1
+             fi
+
+             (
+               cd dist
+               sha256sum -c SHA256SUMS
+             )
+
+      - name: Create Github release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            dist/*.tar.zst \
+            dist/*.tar.gz \
+            dist/SHA256SUMS \
+            --target "${GITHUB_SHA}" \
+            --title "Kai ${VERSION}" \
+            --generate-notes
