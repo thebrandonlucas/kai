@@ -83,7 +83,7 @@ arm64_archive_store="$(
 x64_cli_archive="$root_dir/dist/kai-${version}-x86_64-linux.tar.gz"
 arm64_cli_archive="$root_dir/dist/kai-${version}-aarch64-linux.tar.gz"
 
-cp "$x64_archive_store" "$cli_archive"
+cp "$x64_archive_store" "$x64_cli_archive"
 cp "$arm64_archive_store" "$arm64_cli_archive"
 
 echo "Checking packaged x86_64 Linux CLI..."

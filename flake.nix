@@ -26,7 +26,7 @@
     let
       inherit (nixpkgs) lib;
 
-      version = "0.1.0";
+      version = "0.0.1";
 
       supportedSystems = [
         "x86_64-linux"
@@ -102,15 +102,15 @@
               "${rocHttpUrl}" \
               "$PWD/${rocHttpName}/main.roc"
 
-            cp cli/cli.roc cli/cli-local.roc 
+            cp cli/main.roc cli/main-local.roc
 
-            substituteInPlace cli/cli-local.roc \
-             --replace-fail \
-             "${basicCliUrl}" \
-             "$PWD/${basicCliName}/main.roc"
+            substituteInPlace cli/main-local.roc \
+              --replace-fail \
+              "${basicCliUrl}" \
+              "$PWD/${basicCliName}/main.roc"
 
             roc build \
-              cli/cli-local.roc \
+              cli/main-local.roc \
               --opt=speed \
               --target=${rocTarget} \
               --output=kai
@@ -309,6 +309,7 @@
               pkgs.gzip
               pkgs.llvmPackages.bintools
               pkgs.shfmt
+              pkgs.shellcheck
               pkgs.curl
               pkgs.file
             ];
