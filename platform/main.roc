@@ -5,7 +5,7 @@ platform "kai"
 			shell : { pkgs : List(Str) },
 		}
 	}
-	exposes [Kai]
+	exposes [Kai, Command]
 	packages {
 		blueprint: "blueprint/package.roc",
 	}
@@ -25,6 +25,7 @@ platform "kai"
 	}
 
 import Kai
+import Command
 import Host
 
 main_for_host! : List(Str) => I32

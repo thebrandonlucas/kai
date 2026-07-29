@@ -181,21 +181,21 @@ pub fn build(b: *std.Build) void {
     );
     test_step.dependOn(check_step);
 
-    const test_kai = b.addSystemCommand(&.{
-        "roc",
-        "test",
+    // Test roc paths recursively
+    const roc_test_files = [_][]const u8{
         "kai.roc",
-    });
-    test_kai.step.dependOn(check_step);
-    test_step.dependOn(&test_kai.step);
-
-    const test_cli = b.addSystemCommand(&.{
-        "roc",
-        "test",
         "cli/main.roc",
-    });
-    test_cli.step.dependOn(check_step);
-    test_step.dependOn(&test_cli.step);
+    };
+
+    for (roc_test_files) |path| {
+        const run_tests = b.addSystemCommand(&.{
+            "roc",
+            "test",
+            path,
+        });
+        run_tests.step.dependOn(check_step);
+        test_step.dependOn(&run_tests.step);
+    }
 
     const ci_step = b.step(
         "ci",

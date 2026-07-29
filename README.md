@@ -79,6 +79,8 @@ kai-<version>-aarch64-linux.tar.gz
 SHA256SUMS
 ```
 
+See [RELEASE.md](./docs/RELEASE.md).
+
 ## Goals
 
 1. Great UX. The benefits and usage of Kai should be immediate and obvious.
