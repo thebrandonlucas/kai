@@ -103,6 +103,13 @@ pub fn build(b: *std.Build) void {
     });
     check_step.dependOn(&sh_fmt.step);
 
+    const check_scripts = b.addSystemCommand(&.{
+        "shellcheck",
+        "scripts/build-release.sh",
+        "scripts/bundle-platform.sh",
+    });
+    check_step.dependOn(&check_scripts.step);
+
     const check_blueprint = b.addSystemCommand(&.{
         "roc", "check", "platform/blueprint/package.roc",
     });
@@ -119,7 +126,7 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&check_kai.step);
 
     const check_cli = b.addSystemCommand(&.{
-        "roc", "check", "cli/cli.roc",
+        "roc", "check", "cli/main.roc",
     });
     check_step.dependOn(&check_cli.step);
 
@@ -185,7 +192,7 @@ pub fn build(b: *std.Build) void {
     const test_cli = b.addSystemCommand(&.{
         "roc",
         "test",
-        "cli/cli.roc",
+        "cli/main.roc",
     });
     test_cli.step.dependOn(check_step);
     test_step.dependOn(&test_cli.step);
@@ -206,7 +213,7 @@ pub fn build(b: *std.Build) void {
     const build_cli = b.addSystemCommand(&.{
         "roc",
         "build",
-        "cli/cli.roc",
+        "cli/main.roc",
         "--opt=dev",
         "--output=zig-out/bin/kai",
     });

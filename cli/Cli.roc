@@ -18,7 +18,7 @@ Cli := [].{
 	}
 
 	version : Str
-	version = "0.1.0"
+	version = "0.0.1"
 
 	usage : Str
 	usage = "Kai - A friendly frontend for determinate computing"

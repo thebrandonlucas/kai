@@ -1,7 +1,6 @@
 .{
     .name = .kai_config_platform,
-    // FIXME: Why does semver for new project always do 0.1.0?
-    .version = "0.1.0",
+    .version = "0.0.1",
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
     // FIXME: how to get this?
