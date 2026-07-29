@@ -49,6 +49,22 @@
         aarch64-darwin = "arm64mac";
       };
 
+      # Roc's macOS linker needs the minimal Darwin sysroot shipped beside its binary.
+      # The pinned overlay currently omits that directory during installation.
+      rocFor =
+        pkgs:
+        let
+          roc = pkgs.rocpkgs.nightly;
+        in
+        if pkgs.stdenv.hostPlatform.isDarwin then
+          roc.overrideAttrs (oldAttrs: {
+            postInstall = (oldAttrs.postInstall or "") + ''
+              cp -R darwin "$out/bin/darwin"
+            '';
+          })
+        else
+          roc;
+
       basicCliName = "FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn";
       basicCliUrl =
         "https://github.com/roc-lang/basic-cli/releases/download/0.21.0-rc4/" + "${basicCliName}.tar.zst";
@@ -59,7 +75,7 @@
       mkKaiBinary =
         pkgs: rocTarget:
         let
-          roc = pkgs.rocpkgs.nightly;
+          roc = rocFor pkgs;
 
           basicCli = pkgs.fetchurl {
             url = basicCliUrl;
@@ -145,7 +161,7 @@
             makeWrapper ${binary}/bin/kai "$out/bin/kai" \
              --prefix PATH : ${
                lib.makeBinPath [
-                 pkgs.rocpkgs.nightly
+                 (rocFor pkgs)
                  pkgs.nix
                ]
              }
@@ -189,7 +205,7 @@
             pkgs.bash
             pkgs.coreutils
             pkgs.findutils
-            pkgs.rocpkgs.nightly
+            (rocFor pkgs)
             pkgs.zig_0_16
           ];
 
@@ -296,7 +312,7 @@
         {
           default = pkgs.mkShell {
             packages = [
-              pkgs.rocpkgs.nightly
+              (rocFor pkgs)
               pkgs.zig_0_16
 
               pkgs.bash
