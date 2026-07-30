@@ -181,21 +181,15 @@ pub fn build(b: *std.Build) void {
     );
     test_step.dependOn(check_step);
 
-    // Test roc paths recursively
-    const roc_test_files = [_][]const u8{
-        "kai.roc",
-        "cli/main.roc",
-    };
-
-    for (roc_test_files) |path| {
-        const run_tests = b.addSystemCommand(&.{
-            "roc",
-            "test",
-            path,
-        });
-        run_tests.step.dependOn(check_step);
-        test_step.dependOn(&run_tests.step);
-    }
+    // Test every subtest under roc via "roc test"
+    // This way we don't have to update build.zig
+    // every time we add a new roc file/test set
+    addDiscoveredTests(
+        b,
+        test_step,
+        check_step,
+        optimize,
+    );
 
     const ci_step = b.step(
         "ci",
@@ -241,4 +235,120 @@ pub fn build(b: *std.Build) void {
         "Build the Kai platform bundle",
     );
     bundle_step.dependOn(&bundle_platform.step);
+}
+
+fn addDiscoveredTests(
+    b: *std.Build,
+    test_step: *std.Build.Step,
+    check_step: *std.Build.Step,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    const io = b.graph.io;
+    var root = std.Io.Dir.cwd().openDir(io, ".", .{ .iterate = true }) catch @panic("failed to open project directory for test discovery");
+    defer root.close(io);
+
+    var walker = root.walkSelectively(b.allocator) catch
+        @panic("failed to initialize test discovery");
+
+    defer walker.deinit();
+
+    const native_target = b.resolveTargetQuery(.{});
+
+    while (walker.next(io) catch @panic("failed while discovering tests")) |entry| {
+        if (entry.kind == .directory) {
+            if (!isIgnoredTestDirectory(entry.basename)) {
+                walker.enter(io, entry) catch
+                    @panic("failed to enter directory during test discovery");
+            }
+            continue;
+        }
+
+        if (entry.kind != .file) continue;
+
+        if (std.mem.endsWith(u8, entry.path, ".zig")) {
+            const path = b.allocator.dupe(u8, entry.path) catch @panic("OOM");
+
+            const tests = b.addTest(.{
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path(path),
+                    .target = native_target,
+                    .optimize = optimize,
+                }),
+            });
+
+            const run_tests = b.addRunArtifact(tests);
+            run_tests.step.dependOn(check_step);
+            test_step.dependOn(&run_tests.step);
+            continue;
+        }
+
+        if (std.mem.endsWith(u8, entry.path, ".roc") and isRocTestRoot(root, io, b.allocator, entry.path)) {
+            const path = b.allocator.dupe(u8, entry.path) catch @panic("OOM");
+
+            const run_tests = b.addSystemCommand(&.{
+                "roc",
+                "test",
+                path,
+            });
+
+            run_tests.step.dependOn(check_step);
+            test_step.dependOn(&run_tests.step);
+        }
+    }
+}
+
+fn isIgnoredTestDirectory(name: []const u8) bool {
+    const ignored = [_][]const u8{
+        ".direnv",
+        ".git",
+        ".zig-cache",
+        "dist",
+        "result",
+        "zig-out",
+    };
+
+    for (ignored) |ignored_name| {
+        if (std.mem.eql(u8, name, ignored_name)) return true;
+    }
+
+    return false;
+}
+
+fn isRocTestRoot(
+    root: std.Io.Dir,
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    path: []const u8,
+) bool {
+    const source = root.readFileAlloc(
+        io,
+        path,
+        allocator,
+        .limited(1024 * 1024),
+    ) catch return false;
+    defer allocator.free(source);
+
+    var lines = std.mem.splitScalar(
+        u8,
+        source,
+        '\n',
+    );
+
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(
+            u8,
+            line,
+            " \t\r",
+        );
+
+        if (trimmed.len == 0 or std.mem.startsWith(u8, trimmed, "#")) {
+            continue;
+        }
+
+        return std.mem.startsWith(u8, trimmed, "app [") or
+            std.mem.startsWith(u8, trimmed, "platform \"") or
+            std.mem.eql(u8, trimmed, "package");
+    }
+
+    return false;
 }
