@@ -1,14 +1,15 @@
-app [config] {
+app [config, module_changes] {
 	kai: platform "../../platform/main.roc",
 }
 
 import kai.Kai
 
-config : Kai.Config
 config = {
 	name: "cowsay shell",
 	shell: {
 		pkgs: ["cowsay"],
 	},
-	commands: [],
 }
+
+module_changes : List(Kai.CommandChange)
+module_changes = []

@@ -1,12 +1,11 @@
-app [config] {
+app [config, module_changes] {
 	kai: platform "./platform/main.roc",
 }
 
 import kai.Kai
 import kai.Command
 
-project_config : List(Kai.CommandChange) -> Kai.Config
-project_config = |commands| {
+config = {
 	name: "Kai developer shell",
 	shell: {
 		pkgs: [
@@ -22,12 +21,11 @@ project_config = |commands| {
 			"shfmt",
 		],
 	},
-	commands,
 }
 
 custom_shell_handler : Command.Handler
 custom_shell_handler = |request| {
-	default_implementation = Kai.default_nix_shell(project_config([]))
+	default_implementation = Kai.default_nix_shell(Kai.config(config))
 	default_handler = default_implementation.handler
 	plan = default_handler(request)?
 
@@ -44,17 +42,13 @@ custom_shell = {
 	handler: custom_shell_handler,
 }
 
-config : Kai.Config
-config = project_config([
+module_changes : List(Kai.CommandChange)
+module_changes = [
 	Kai.CommandChange.Replace(custom_shell),
-])
+]
 
-## TODO: We should try to figure out how to make the base
-## case as dead-simple as it was before. This is only for advanced
-# users who want to add modules and even then might need to be simplified.
-# Certainly I wouldn't expect them to be writing logic tests in here.
 expect {
-	registry = Kai.registry(config)?
+	registry = Kai.registry(Kai.config(config), module_changes)?
 	selected = Command.select(registry, "shell", Command.Backend.Nix)?
 
 	selected.id == "example.shell.custom.nix"

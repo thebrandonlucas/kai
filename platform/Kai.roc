@@ -16,147 +16,141 @@ Kai := [].{
 		Replace(Command.Implementation),
 	]
 
-  BackendPreference := [
-  Automatic,
-  Require(Command.Backend),
-  ]
+	BackendPreference := [
+		Automatic,
+		Require(Command.Backend),
+	]
 
 	Config : {
 		name : Str,
 		shell : {
 			pkgs : List(Str),
 		},
-# FIXME: we call it preference but should it be required?
-    backend_preference: BackendPreference
+		backend_preference : BackendPreference,
 	}
 
-  BackendCandidateSource := [
-  Environment,
-  LocalConfig,
-  ]
+	BackendCandidateSource := [
+		Environment,
+		LocalConfig,
+	]
 
-  BackendCandidate: {
-    source: BackendCandidateSource,
-    name: Str
-  }
+	BackendCandidate : {
+		source : BackendCandidateSource,
+		name : Str,
+	}
 
-  BackendInputProblem := [
-  LocalConfigUnreadable(Str),
-  LocalConfigMalformed(Str),
-  LocalConfigBackendNotString,
-  ]
+	BackendInputProblem := [
+		LocalConfigUnreadable(Str),
+		LocalConfigMalformed(Str),
+		LocalConfigBackendNotString,
+	]
 
-  BackendInput := [
-# e.g. the doesn't have nix on their system
-  Absent,
-  Candidate(BackendCandidate),
-  Invalid(BackendInputProblem),
+	BackendInput := [
+		Absent,
+		Candidate(BackendCandidate),
+		Invalid(BackendInputProblem),
+	]
 
-  ]
+	DispatchRequest : {
+		backend_candidate : BackendInput,
+		command : Str,
+		args : List(Str),
+	}
 
-  DispatchRequest: {
-    backend_candidate: BackendInput,
-    command: Str,
-    args: List(Str),
-  }
+	DispatchResult : {
+		backend : Command.Backend,
+		plan : Command.Plan,
+	}
 
-  DispatchResult: {
-    backend: Command.Backend,
-    plan : Command.Plan,
-    }
+	BackendError := [
+		MissingBackend,
+		UnsupportedBackend(BackendCandidateSource, Str),
+		InvalidBackendInput(BackendInputProblem),
+	]
 
-    BackendError :=[
-    MissingBackend,
-    UnsupportedBackend(BackendCandidateSource, Str),
-    InvalidBackendInput(BackendInputProblem),
-    ]
+	DispatchError := [
+		BackendFailed(BackendError),
+		RegistryFailed(Command.RegistryError),
+		HandlerFailed(Command.Error),
+		InvalidPlan(List(Command.ValidationError)),
+	]
 
-    DispatchError :=[
-    BackendFailed(BackendError),
-    RegistryFailed(Command.RegistryError),
-    HandlerFailed(Command.Error),
-    InvalidPlan(List(Command.ValidationError)),
-    ]
+	config : {
+		name : Str,
+		shell : { pkgs : List(Str) },
+	} -> Config
+	config = |project| {
+		name: project.name,
+		shell: project.shell,
+		backend_preference: BackendPreference.Automatic,
+	}
 
-config : {
-  name : Str,
-  shell : {pkgs: List(Str)},
+	with_backend : Config, Command.Backend -> Config
+	with_backend = |config_value, backend| {
+		name: config_value.name,
+		shell: config_value.shell,
+		backend_preference: BackendPreference.Require(backend),
+	}
 
-} -> Config 
-config = |project | {
-  name: project.name,
-  shell: project.shell,
-  backend_preference: BackendPreference.Automatic,
-}
+	registry : Config,
+	List(CommandChange) -> Try(
+		Command.Registry,
+		Command.RegistryError,
+	)
+	registry = |config_value, changes| {
+		standard = Command.add(
+			Command.empty_registry,
+			default_nix_shell(config_value),
+		)?
 
-with_backend : Config, Command.Backend -> Config 
-with_backend = |config_value, backend| {
-  name: config_value.name,
-  shell: config_value.shell,
-  backend_preference: BackendPreference.Require(backend)
-}
+		apply_command_changes(changes, standard)
+	}
 
-registry : Config,
-List(CommandChange) -> Try(
-Command.Registry,
-Command.RegistryError,
-)
-registry = |config_value, changes| {
-  standard = Command.add(
-  Command.empty_registry,
-  default_nix_shell(config_value),
+	resolve_backend : Config, BackendInput -> Try(Command.Backend, BackendError)
+	resolve_backend = |config_value, input|
+		match config_value.backend_preference {
+			BackendPreference.Require(backend) => Ok(backend)
+			BackendPreference.Automatic =>
+				match input {
+					BackendInput.Absent => Err(BackendError.MissingBackend)
+					BackendInput.Candidate(candidate) =>
+						parse_backend_candidate(candidate)
+					BackendInput.Invalid(problem) =>
+						Err(BackendError.InvalidBackendInput(problem))
+					}
+			}
 
-  )?
+	dispatch : Config,
+	List(CommandChange),
+	DispatchRequest -> Try(
+		DispatchResult,
+		DispatchError,
+	)
+	dispatch = |config_value, changes, request| {
+		backend = resolve_backend(config_value, request.backend_candidate)
+			? |error| DispatchError.BackendFailed(error)
 
-  apply_command_changes(changes, standard)
-}
+		configured_registry = registry(config_value, changes)
+			? |error| DispatchError.RegistryFailed(error)
 
-resolve_backend : Config -> BackendInput -> Try(Command.Backend, BackendError)
-resolve_backend = |config_value, input| 
-match config_value.backend_preference {
-  BackendPreference.Require(backend) => Ok(backend),
-  BackendPreference.Automatic => 
-  match input {
-    BackendInput.Absent => Err(BackendError.MissingBackend)
-    BackendInput.Candidate(candidate) => parse_backend_candidate(candidate)
-    BackendInput.Invalid(problem) => Err(BackendError.InvalidBackendInput(problem))
-  }
-}
+		implementation = Command.select(
+			configured_registry,
+			request.command,
+			backend,
+		) ? |error| DispatchError.RegistryFailed(error)
 
-dispatch : Config
-List(CommandChange),
-DispatchRequest -> Try(
-DispatchResult
-,
-DispatchError,
-)
-dispatch  = |config_value, changes, request| {
-  backend = resolve_backend(config_value, request.backend_candidate)
-    ? |error| DispatchError.BackendFailed(error)
+		handler = implementation.handler
+		plan = handler({
+			project: config_value.name,
+			backend,
+			args: request.args,
+		}) ? |error| DispatchError.HandlerFailed(error)
 
-    configured_registry = registry(config_value, changes)
-    ? |error| DispatchError.RegistryFailed(error)
+		_ = Command.validate_plan(plan)
+			? |errors| DispatchError.InvalidPlan(errors)
 
-    implementation = Command.select(
-    configured_registry,
-    request.command,
-    backend,
-    ) ? |error| DispatchError.RegistryFailed(error)
-
-    handler = implementation.handler 
-    plan = handler({
-      project: config_value.name,
-      backend,
-      args: request.args,
-      }) ? |error| DispatchError.HandlerFailed(error)
-
-      _ = Command.validate_plan(plan)
-      ? |errors| DispatchError.InvalidPlan(errors)
-
-      Ok({backend, plan})
-}
-	
-	
+		Ok({ backend, plan })
+	}
 
 	default_nix_shell : Config -> Command.Implementation
 	default_nix_shell = |config_value| {
@@ -176,7 +170,11 @@ dispatch  = |config_value, changes, request| {
 								contents: source,
 							},
 						],
-						argv: ["nix", "develop", "path:.kai/generated#default"],
+						argv: [
+							"nix",
+							"develop",
+							"path:.kai/generated#default",
+						],
 					})
 				}
 		},
@@ -201,18 +199,20 @@ apply_command_changes = |changes, registry|
 		}
 	}
 
-  parse_backend_candidate = |candidate| 
-  match candidate.name {
-    "nix" => Ok(Command.Backend.Nix)
-    unsupported => Err(
-    Kai.BackendError.UnsupportedBackend(
-    candidate.source,
-    unsupported,
-    ),
-    )
-  }
-
-  
+parse_backend_candidate : Kai.BackendCandidate -> Try(
+	Command.Backend,
+	Kai.BackendError,
+)
+parse_backend_candidate = |candidate|
+	match candidate.name {
+		"nix" => Ok(Command.Backend.Nix)
+		unsupported => Err(
+			Kai.BackendError.UnsupportedBackend(
+				candidate.source,
+				unsupported,
+			),
+		)
+	}
 
 render_source : Kai.Config -> Try(
 	Str,
@@ -221,8 +221,8 @@ render_source : Kai.Config -> Try(
 		NixInvalid(List(Nix.Error)),
 	],
 )
-render_source = |config| {
-	unique_pkgs = unique_strings(config.shell.pkgs, [])
+render_source = |config_value| {
+	unique_pkgs = unique_strings(config_value.shell.pkgs, [])
 
 	requirements = unique_pkgs.map(
 		|pkg|
@@ -230,7 +230,7 @@ render_source = |config| {
 	)
 
 	workspace = Blueprint.workspace({
-		name: config.name,
+		name: config_value.name,
 		target_systems: [Target.X86_64Linux],
 		envs: [
 			Environment.new({ name: "default", requirements }),
@@ -282,112 +282,105 @@ unique_strings = |remaining, seen|
 
 ## -- TESTS --
 
-
-
 test_config : Str, List(Str) -> Kai.Config
 test_config = |name, pkgs|
-	test_config_with_commands(name, pkgs, [])
-
-test_config_with_commands : Str, List(Str), List(Kai.CommandChange) -> Kai.Config
-test_config_with_commands = |name, pkgs, commands| {
-	name,
-	shell: { pkgs: pkgs },
-	commands,
-}
+	Kai.config({
+		name,
+		shell: {
+			pkgs: pkgs,
+		},
+	})
 
 required_nix_config : Str, List(Str) -> Kai.Config
-required_nix_config = |name, pkgs| 
-Kai.with_backend(test_config(name, pkgs), Command.Backend.Nix,)
+required_nix_config = |name, pkgs|
+	Kai.with_backend(
+		test_config(name, pkgs),
+		Command.Backend.Nix,
+	)
 
 backend_candidate : Kai.BackendCandidateSource, Str -> Kai.BackendInput
-backend_candidate = |source, name| 
-  Kai.BackendInput.Candidate({source, name})
+backend_candidate = |source, name|
+	Kai.BackendInput.Candidate({ source, name })
 
-  dispatch_request : Kai.BackendInput, Str, List(Str) -> Kai.DispatchRequest
-  dispatch_request = |candidate, command, args| {
-    backend_candidate: candidate,
-    command,
-    args,
-  }
-
-  planning_handler : Command.Handler
-  planning_handler = |_request| 
-  Ok({
-    files: [{path: "./kai/generated/custom", contents: "custom"}]
-    ,
-    argv: ["custom", "run"]
-
-    })
-
-  failing_handler : Command.Handler 
-  failing_handler = |_request| 
-  Err(Command.Error.PlanningFailed("module rejected project"))
-
-  empty_argv_handler : Command.Handler 
-  empty_argv_handler = |_request| 
-  Ok({files: [], argv: []})
-
-  echo_argv_handler : Command.Handler 
-  echo_argv_handler = |request| 
-  Ok({files: [], argv: request.args})
-
-  shell_implementation : Str, Command.Handler -> Command.Implementation 
-  shell_implementation = |id, handler| {
-    command: "shell",
-    contract: "kai.shell.v1",
-    id,
-    backends: [Command.Backend.Nix],
-    handler,
-
-  }
-
-  doctor_implementation : Str, Command.Handler -> Command.Implementation 
-  doctor_implementation =  {
-    command: "doctor",
-    contract: "kai.doctor.v1",
-    id: "example.doctor.nix",
-    backends: [Command.Backend.Nix],
-    handler: echo_argv_handler,
-
-  }
-
-shell_request : Command.Request 
-shell_request = {
-  project: "shell plan",
-  backend: Command.Backend.Nix,
-  args: [],
+dispatch_request : Kai.BackendInput, Str, List(Str) -> Kai.DispatchRequest
+dispatch_request = |candidate, command, args| {
+	backend_candidate: candidate,
+	command,
+	args,
 }
 
-shell_plan_config : Kai.Config 
+planning_handler : Command.Handler
+planning_handler = |_request|
+	Ok({
+		files: [{ path: ".kai/generated/custom", contents: "custom" }],
+		argv: ["custom", "run"],
+	})
+
+failing_handler : Command.Handler
+failing_handler = |_request|
+	Err(Command.Error.PlanningFailed("module rejected project"))
+
+empty_argv_handler : Command.Handler
+empty_argv_handler = |_request| Ok({ files: [], argv: [] })
+
+echo_args_handler : Command.Handler
+echo_args_handler = |request|
+	Ok({ files: [], argv: request.args })
+
+shell_implementation : Str, Command.Handler -> Command.Implementation
+shell_implementation = |id, handler| {
+	command: "shell",
+	contract: "kai.shell.v1",
+	id,
+	backends: [Command.Backend.Nix],
+	handler,
+}
+
+doctor_implementation : Command.Implementation
+doctor_implementation = {
+	command: "doctor",
+	contract: "kai.doctor.v1",
+	id: "example.doctor.nix",
+	backends: [Command.Backend.Nix],
+	handler: echo_args_handler,
+}
+
+shell_request : Command.Request
+shell_request = {
+	project: "shell plan",
+	backend: Command.Backend.Nix,
+	args: [],
+}
+
+shell_plan_config : Kai.Config
 shell_plan_config = test_config(
-"shell plan",
-# test duplicate handling
-["git", "git", "curl"]
+	"shell plan",
+	["git", "git", "curl"],
 )
 
-automatic_backend_config : Kai.Config 
+automatic_backend_config : Kai.Config
 automatic_backend_config = test_config(
-"backend resolution",
-["git"]
+	"backend resolution",
+	["git"],
 )
 
-required_nix_backend_config : Kai.Config 
+required_nix_backend_config : Kai.Config
 required_nix_backend_config = Kai.with_backend(
-automatic_backend_config,
-Command.Backend.Nix
+	automatic_backend_config,
+	Command.Backend.Nix,
 )
 
-## Kai.config preserves standard project fields and chooses automatic policy.
+# Kai.config preserves standard project fields and chooses automatic policy.
 expect {
-  config_value = test_config("example", ["git", "curl"])
-  fields_preserved = config_value.name == "example"
-    and config_value.shell.pkgs  == ["git", "curl"]
-    preference_is_automatic = match config_value.backend_preference {
-      Kai.BackendPreference.Automatic == Bool.True 
-      _ Bool.False
-    }
+	config_value = test_config("example", ["git", "curl"])
+	fields_preserved = config_value.name == "example"
+		and config_value.shell.pkgs == ["git", "curl"]
+	preference_is_automatic = match config_value.backend_preference {
+		Kai.BackendPreference.Automatic => Bool.True
+		_ => Bool.False
+	}
 
-    fields_preserved and preference_is_automatic
+	fields_preserved and preference_is_automatic
 }
 
 # Kai.with_backend changes only backend policy.

@@ -3,49 +3,49 @@ platform "kai"
 		config : {
 			name : Str,
 			shell : { pkgs : List(Str) },
-			commands : List(
-				[
-					Add(
-						{
-							command : Str,
-							contract : Str,
-							id : Str,
-							backends : List([Nix]),
-							handler : {
-								project : Str,
-								backend : [Nix],
-								args : List(Str),
-							} -> Try(
-								{
-									files : List({ path : Str, contents : Str }),
-									argv : List(Str),
-								},
-								[PlanningFailed(Str)],
-							),
-						},
-					),
-					Replace(
-						{
-							command : Str,
-							contract : Str,
-							id : Str,
-							backends : List([Nix]),
-							handler : {
-								project : Str,
-								backend : [Nix],
-								args : List(Str),
-							} -> Try(
-								{
-									files : List({ path : Str, contents : Str }),
-									argv : List(Str),
-								},
-								[PlanningFailed(Str)],
-							),
-						},
-					),
-				],
-			),
-		}
+		},
+		module_changes : List(
+			[
+				Add(
+					{
+						command : Str,
+						contract : Str,
+						id : Str,
+						backends : List([Nix]),
+						handler : {
+							project : Str,
+							backend : [Nix],
+							args : List(Str),
+						} -> Try(
+							{
+								files : List({ path : Str, contents : Str }),
+								argv : List(Str),
+							},
+							[PlanningFailed(Str)],
+						),
+					},
+				),
+				Replace(
+					{
+						command : Str,
+						contract : Str,
+						id : Str,
+						backends : List([Nix]),
+						handler : {
+							project : Str,
+							backend : [Nix],
+							args : List(Str),
+						} -> Try(
+							{
+								files : List({ path : Str, contents : Str }),
+								argv : List(Str),
+							},
+							[PlanningFailed(Str)],
+						),
+					},
+				),
+			],
+		)
 	}
 	exposes [Kai, Command]
 	packages {
@@ -72,16 +72,12 @@ import Host
 
 main_for_host! : List(Str) => I32
 main_for_host! = |_args|
-	match Kai.render(config) {
-		Ok(source) =>
-			match Host.stdout_line!(source) {
-				Ok({}) => 0
-				Err(_) => 1
-			}
-
-		Err(error) =>
-			{
-				_ = Host.stderr_line!("kai: ${Str.inspect(error)}")
-				1
-			}
+	match Kai.registry(Kai.config(config), module_changes) {
+		Ok(_registry) => 0
+		Err(error) => {
+			_ = Host.stderr_line!(
+				"kai: invalid module composition: ${Str.inspect(error)}",
+			)
+			1
 		}
+	}
