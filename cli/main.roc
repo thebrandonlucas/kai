@@ -25,10 +25,10 @@ refactor = {
 		name: "nix",
 		managed_filename: "flake.nix",
 		shell_command: "develop",
-		shell_command_args: ["path:.kai#default"],
+		shell_command_args: ["path:.kai/generated#default"],
 	},
 	config_filename: "kai.roc",
-	managed_kai_dir: ".kai",
+	managed_kai_dir: ".kai/generated",
 }
 
 print_usage! : {} => Try({}, _)
@@ -43,17 +43,19 @@ main! = |args| {
 	match Cli.parse(display_args) {
 		Cli.Command.Help => print_usage!({})
 		Cli.Command.Shell => {
-			# We run the kai.roc file via the Roc compiler directly.
-			# The platform validates and parses the config,
-			# lowering it into the appropriate backend.
-			output = Cmd.new("roc")
+			evaluator_path = ".kai/cache/kai-config"
+			_ = Cmd.new("scripts/check-kai-composition.sh")
 				.args([
-					refactor.config_filename,
+					".",
+					"kai.shell.default.nix",
+					evaluator_path,
 				])
 				.exec_output!()?
-			# The string output is the resulting backend
-			# dev shell config text. For Nix, this is
-			# the contents of the flake.nix file.
+
+			# Canonical kai.roc is a pure module. The checker stages it
+			# under its module-compatible name and builds the evaluator.
+			output = Cmd.new(evaluator_path)
+				.exec_output!()?
 			source = output.stdout_utf8
 			# Kai creates and manages config in .kai under the hood.
 			# Things like flake.nix/.lock, the selected backend, etc.

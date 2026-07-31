@@ -136,6 +136,9 @@ ROC
   roc test Main.roc
 
   if [[ -n "$build_output" ]]; then
-    roc build Main.roc --output="$build_output"
+    sed \
+      's#"./platform/main.roc"#"./platform/Compat.roc"#' \
+      Main.roc >Evaluator.roc
+    roc build Evaluator.roc --output="$build_output"
   fi
 )
