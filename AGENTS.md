@@ -5,3 +5,4 @@ This is a Roc database. We use [roc-overlay]() to get the latest nightly Zig-bas
 - Dependency culture: vendored
 - Use matklad's how to test philosophy for testing
 - Kai uses Caddy-like modularity
+- After every change, run `zig build ci`.
