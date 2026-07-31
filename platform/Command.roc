@@ -1,6 +1,12 @@
 ## Command - A
 Command := [].{
-	Backend := [Nix]
+	Backend := [Nix].{
+		is_eq : Backend, Backend -> Bool
+		is_eq = |left, right|
+			match (left, right) {
+				(Nix, Nix) => Bool.True
+			}
+	}
 
 	File : {
 		path : Str,
@@ -33,7 +39,18 @@ Command := [].{
 		handler : Handler,
 	}
 
-	ValidationError := [EmptyCommand, EmptyContract, EmptyImplementationId, EmptyPlanArgv, NoBackends]
+	ValidationError := [EmptyCommand, EmptyContract, EmptyImplementationId, EmptyPlanArgv, NoBackends].{
+		is_eq : ValidationError, ValidationError -> Bool
+		is_eq = |left, right|
+			match (left, right) {
+				(EmptyCommand, EmptyCommand) => Bool.True
+				(EmptyContract, EmptyContract) => Bool.True
+				(EmptyImplementationId, EmptyImplementationId) => Bool.True
+				(EmptyPlanArgv, EmptyPlanArgv) => Bool.True
+				(NoBackends, NoBackends) => Bool.True
+				_ => Bool.False
+			}
+	}
 
 	validate_implementation : Implementation -> Try({}, List(ValidationError))
 	validate_implementation = |implementation| {
@@ -176,9 +193,7 @@ Command := [].{
 	}
 
 	validate_replacement_slots :
-		List(Implementation),
-		Implementation,
-		List(Backend) -> Try({}, RegistryError)
+		List(Implementation), Implementation, List(Backend) -> Try({}, RegistryError)
 	validate_replacement_slots = |implementations, replacement, backends|
 		match backends {
 			[] => Ok({})
@@ -216,8 +231,7 @@ Command := [].{
 			}
 
 	remove_replaced_slots :
-		List(Implementation),
-		Implementation -> List(Implementation)
+		List(Implementation), Implementation -> List(Implementation)
 	remove_replaced_slots = |implementations, replacement|
 		match implementations {
 			[] => []
@@ -248,21 +262,21 @@ Command := [].{
 
 	#
 
-	# FIXME: what should a registry item be unique on? should 
-	# commands just be unique on merely the command name or should they 
+	# FIXME: what should a registry item be unique on? should
+	# commands just be unique on merely the command name or should they
 	# be unique on (command, backend) or some other combo?
 
-	# I'm thinking (command, backend) is good b/c you will need custom 
+	# I'm thinking (command, backend) is good b/c you will need custom
 	# implementations per command. for ex. we could have multi different
 	# shell commands:
-	# 
+	#
 	# shell -> ("shell", Nix)
 	# shell -> ("shell", Guix)
 	# shell -> ("shell", Kai-Custom)
 	# shell -> ("shell", [Nix, Snix]) i.e., we replace nix shell behavior with snix shell (which is compatible with nix)
 
 	## if a (command, backend) combo already exists,
-	## error and return that (command, backend) combo so that 
+	## error and return that (command, backend) combo so that
 	## the error can be specific.
 
 	# utility to check if command already exists in registry.
@@ -277,7 +291,7 @@ Command := [].{
 		)
 	}
 
-	## Return the implementation that matches the 
+	## Return the implementation that matches the
 	## (command, backend) provided, if any
 	get_implementation : Registry, Str, Backend -> Try(Implementation, RegistryError)
 	get_implementation = |Registry.(implementations), command, backend| {
@@ -379,17 +393,17 @@ unsupported_shell = implementation(
 
 # TODO
 # custom_backend : Command.Implementation
-# guix = 
-# -- TESTS -- 
+# guix =
+# -- TESTS --
 # TODO: refactor to matklad's "How to test"
 # "Check" function strategy for easier refactors.
 
-# A complete Nix implementation is valid 
+# A complete Nix implementation is valid
 expect Command.validate_implementation(
 	valid_nix_implementation,
 ) == Ok({})
 
-## Command identity is required 
+## Command identity is required
 expect Command.validate_implementation(
 	implementation(
 		"",
@@ -401,7 +415,7 @@ expect Command.validate_implementation(
 	Command.ValidationError.EmptyCommand,
 ])
 
-## Implementation Identity is required 
+## Implementation Identity is required
 expect Command.validate_implementation(
 	implementation(
 		"doctor",
@@ -413,7 +427,7 @@ expect Command.validate_implementation(
 	Command.ValidationError.EmptyImplementationId,
 ])
 
-## A plan must name an executable 
+## A plan must name an executable
 expect Command.validate_plan({
 	files: [],
 	argv: [],
@@ -480,7 +494,7 @@ expect {
 		and selected.contract == "kai.shell.v1"
 }
 
-## A previously unknown command can be added 
+## A previously unknown command can be added
 expect {
 	with_shell = Command.add(
 		Command.empty_registry,
@@ -547,7 +561,7 @@ expect {
 expect {
 	registry = Command.add(
 		Command.empty_registry,
-		# Use a different command than shell 
+		# Use a different command than shell
 		# so replace will fail
 		doctor,
 	)?

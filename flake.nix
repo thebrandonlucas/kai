@@ -7,9 +7,9 @@
     # Intel macOS is no longer supported by nixos-unstable.
     nixpkgs-x86-darwin.url = "github:NixOS/nixpkgs/nixpkgs-26.05-darwin";
 
-    # Keep the Roc compiler compatible with basic-cli 0.21.0-rc4.
+    # Track the overlay's latest Roc nightly.
     roc-overlay = {
-      url = "github:thebrandonlucas/roc-overlay/a9afdcfed9bf90c53e6b4b1443e00676a939e971";
+      url = "github:thebrandonlucas/roc-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.nixpkgs-darwin.follows = "nixpkgs-x86-darwin";
     };
@@ -49,25 +49,11 @@
         aarch64-darwin = "arm64mac";
       };
 
-      # Roc's macOS linker needs the minimal Darwin sysroot shipped beside its binary.
-      # The pinned overlay currently omits that directory during installation.
-      rocFor =
-        pkgs:
-        let
-          roc = pkgs.rocpkgs.nightly;
-        in
-        if pkgs.stdenv.hostPlatform.isDarwin then
-          roc.overrideAttrs (oldAttrs: {
-            postInstall = (oldAttrs.postInstall or "") + ''
-              cp -R darwin "$out/bin/darwin"
-            '';
-          })
-        else
-          roc;
+      rocFor = pkgs: pkgs.rocpkgs.nightly;
 
-      basicCliName = "FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn";
+      basicCliName = "4rAQg8kUYZ3Vksr4qMQHpaFYNiHSn9GgS7gVxghd1XYV";
       basicCliUrl =
-        "https://github.com/roc-lang/basic-cli/releases/download/0.21.0-rc4/" + "${basicCliName}.tar.zst";
+        "https://github.com/roc-lang/basic-cli/releases/download/0.21.0/" + "${basicCliName}.tar.zst";
 
       rocHttpName = "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS";
       rocHttpUrl = "https://github.com/roc-lang/http/releases/download/1.0.0/" + "${rocHttpName}.tar.zst";
@@ -79,7 +65,7 @@
 
           basicCli = pkgs.fetchurl {
             url = basicCliUrl;
-            hash = "sha256-t1xR+m4aYyBsWhhB+KPHWNQIA2Aqq3LPV+wlcDOrzh0=";
+            hash = "sha256-I8IzZGbT7NNtUzhfZJRvyy7U+8wwvjPvB2tLYCMXdQk=";
           };
 
           rocHttp = pkgs.fetchurl {

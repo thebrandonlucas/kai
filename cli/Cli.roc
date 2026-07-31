@@ -1,5 +1,5 @@
 ## Core logic for the Kai CLI.
-## 
+##
 ## This module is pure, side effects are kept separate from
 ## pure functions to make testing easier, following advice
 ## from the [Boundaries](https://www.destroyallsoftware.com/talks/boundaries)
@@ -47,7 +47,7 @@ Cli := [].{
 	expect check(["shell"], Cli.Command.Shell)
 
 	## Additional shell arguments currently do not alter
-	## command selection. 
+	## command selection.
 	## TODO: should we display help instead?
 	expect check(["shell", "extra"], Cli.Command.Shell)
 

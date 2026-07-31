@@ -43,7 +43,7 @@ Config := {
 		})
 	}
 
-	# 
+	#
 
 	# validate the blueprint and bind to backend
 	validate : Config -> Try(Blueprint, [BlueprintInvalid(List(Blueprint.Error))])
@@ -75,7 +75,7 @@ Config := {
 				}
 			},
 		)
-		# FIXME: decouple from Nix, but also third arg is a nix attr path for this requirement 
+		# FIXME: decouple from Nix, but also third arg is a nix attr path for this requirement
 		# Think pythonPackages.python3 for python. for now we assume path == nix name direct
 
 		bindings = unique_requirements.map(
@@ -91,7 +91,7 @@ Config := {
 		)
 
 		# create the blueprint's backend binding
-		# FIXME: variablize this comes from the "environment" ro the .kai 
+		# FIXME: variablize this comes from the "environment" ro the .kai
 		# basically, backend must be managed by the kai cli tool from available
 		# backends on machine
 		# TODO: rename to "binding" as more acc term
@@ -113,11 +113,13 @@ Config := {
 		Str,
 		[BlueprintInvalid(List(Blueprint.Error)), NixInvalid(List(Nix.Error)), ..],
 	)
-	make = |config| {
-		blueprint = validate(config)?
-		source = bind(blueprint)?
-
-		Ok(source)
-
-	}
+	make = |config|
+		match validate(config) {
+			Err(BlueprintInvalid(errors)) => Err(BlueprintInvalid(errors))
+			Ok(blueprint) =>
+				match bind(blueprint) {
+					Err(NixInvalid(errors)) => Err(NixInvalid(errors))
+					Ok(source) => Ok(source)
+				}
+			}
 }

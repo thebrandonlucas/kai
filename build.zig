@@ -83,14 +83,6 @@ pub fn build(b: *std.Build) void {
         "check",
         "Run formatting and static checks",
     );
-    const roc_fmt = b.addSystemCommand(&.{
-        "roc",
-        "fmt",
-        "--check",
-        ".",
-    });
-    check_step.dependOn(&roc_fmt.step);
-
     const zig_fmt = b.addSystemCommand(&.{
         "zig", "fmt", "--check", "build.zig", "src",
     });
@@ -146,13 +138,6 @@ pub fn build(b: *std.Build) void {
     // Not used in CI -- CI only does static checks.
     const fmt_step = b.step("fmt", "Format all source code files.");
 
-    const roc_fmt_write = b.addSystemCommand(&.{
-        "roc",
-        "fmt",
-        ".",
-    });
-    fmt_step.dependOn(&roc_fmt_write.step);
-
     const zig_fmt_write = b.addSystemCommand(&.{
         "zig",
         "fmt",
@@ -181,11 +166,11 @@ pub fn build(b: *std.Build) void {
     );
     test_step.dependOn(check_step);
 
-    // Test every subtest under roc via "roc test"
-    // This way we don't have to update build.zig
-    // every time we add a new roc file/test set
-    addDiscoveredTests(
+    // Format every Roc source and test every discovered Zig source and Roc
+    // root without maintaining file lists in build.zig.
+    addDiscoveredSourceSteps(
         b,
+        fmt_step,
         test_step,
         check_step,
         optimize,
@@ -237,8 +222,9 @@ pub fn build(b: *std.Build) void {
     bundle_step.dependOn(&bundle_platform.step);
 }
 
-fn addDiscoveredTests(
+fn addDiscoveredSourceSteps(
     b: *std.Build,
+    fmt_step: *std.Build.Step,
     test_step: *std.Build.Step,
     check_step: *std.Build.Step,
     optimize: std.builtin.OptimizeMode,
@@ -282,17 +268,34 @@ fn addDiscoveredTests(
             continue;
         }
 
-        if (std.mem.endsWith(u8, entry.path, ".roc") and isRocTestRoot(root, io, b.allocator, entry.path)) {
+        if (std.mem.endsWith(u8, entry.path, ".roc")) {
             const path = b.allocator.dupe(u8, entry.path) catch @panic("OOM");
 
-            const run_tests = b.addSystemCommand(&.{
+            const check_format = b.addSystemCommand(&.{
                 "roc",
-                "test",
+                "fmt",
+                "--check",
                 path,
             });
+            check_step.dependOn(&check_format.step);
 
-            run_tests.step.dependOn(check_step);
-            test_step.dependOn(&run_tests.step);
+            const write_format = b.addSystemCommand(&.{
+                "roc",
+                "fmt",
+                path,
+            });
+            fmt_step.dependOn(&write_format.step);
+
+            if (isRocTestRoot(root, io, b.allocator, entry.path)) {
+                const run_tests = b.addSystemCommand(&.{
+                    "roc",
+                    "test",
+                    path,
+                });
+
+                run_tests.step.dependOn(check_step);
+                test_step.dependOn(&run_tests.step);
+            }
         }
     }
 }
@@ -303,6 +306,7 @@ fn isIgnoredTestDirectory(name: []const u8) bool {
         ".git",
         ".zig-cache",
         "dist",
+        "node_modules",
         "result",
         "zig-out",
     };

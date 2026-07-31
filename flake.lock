@@ -42,17 +42,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1784073071,
-        "narHash": "sha256-tmJuQY9Kr4yFTnA56pdTbyExRfd94NTj7jRBtpSozCc=",
+        "lastModified": 1785421935,
+        "narHash": "sha256-Trlq1nnmggDxLdNcPM/f3nBK0FzyKpqFQ4rrvKdXay0=",
         "owner": "thebrandonlucas",
         "repo": "roc-overlay",
-        "rev": "a9afdcfed9bf90c53e6b4b1443e00676a939e971",
+        "rev": "dd9b0cfda76c024c4a51e7f961f492d4081dee4c",
         "type": "github"
       },
       "original": {
         "owner": "thebrandonlucas",
         "repo": "roc-overlay",
-        "rev": "a9afdcfed9bf90c53e6b4b1443e00676a939e971",
         "type": "github"
       }
     },

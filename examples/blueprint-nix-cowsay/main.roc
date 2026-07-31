@@ -1,4 +1,4 @@
-## Showcase usage of "blueprint" adapted from 
+## Showcase usage of "blueprint" adapted from
 ## [roc-blueprint](https://github.com/lukewilliamboswell/roc-blueprint)
 app [main!] {
 	pf: platform "https://github.com/lukewilliamboswell/roc-platform-template-zig/releases/download/1.0.0/AnZoxzoGPtSGQ15EQh6pBeeaHJ7aizP9MQhK81dES3Uq.tar.zst",
@@ -12,7 +12,7 @@ import blueprint.Target
 import blueprint.Environment
 import blueprint.Nix
 
-# A Requirement is a generic term for 
+# A Requirement is a generic term for
 # a piece of software the shell requires
 # and that the blueprint will validate.
 cowsay : Requirement
@@ -21,7 +21,7 @@ cowsay = Requirement.new({
 	display_name: "Cowsay",
 })
 
-# Create a Draft Blueprint of what the eventual shell 
+# Create a Draft Blueprint of what the eventual shell
 # will look like.
 #
 # Structs used here:
