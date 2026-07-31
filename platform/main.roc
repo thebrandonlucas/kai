@@ -3,6 +3,48 @@ platform "kai"
 		config : {
 			name : Str,
 			shell : { pkgs : List(Str) },
+			commands : List(
+				[
+					Add(
+						{
+							command : Str,
+							contract : Str,
+							id : Str,
+							backends : List([Nix]),
+							handler : {
+								project : Str,
+								backend : [Nix],
+								args : List(Str),
+							} -> Try(
+								{
+									files : List({ path : Str, contents : Str }),
+									argv : List(Str),
+								},
+								[PlanningFailed(Str)],
+							),
+						},
+					),
+					Replace(
+						{
+							command : Str,
+							contract : Str,
+							id : Str,
+							backends : List([Nix]),
+							handler : {
+								project : Str,
+								backend : [Nix],
+								args : List(Str),
+							} -> Try(
+								{
+									files : List({ path : Str, contents : Str }),
+									argv : List(Str),
+								},
+								[PlanningFailed(Str)],
+							),
+						},
+					),
+				],
+			),
 		}
 	}
 	exposes [Kai, Command]

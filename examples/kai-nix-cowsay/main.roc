@@ -10,4 +10,5 @@ config = {
 	shell: {
 		pkgs: ["cowsay"],
 	},
+	commands: [],
 }
