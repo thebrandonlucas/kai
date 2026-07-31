@@ -131,9 +131,18 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&check_blueprint_example.step);
 
     const check_cowsay = b.addSystemCommand(&.{
-        "roc", "check", "examples/kai-nix-cowsay/main.roc",
+        "scripts/check-kai-composition.sh",
+        "examples/kai-nix-cowsay",
+        "kai.shell.default.nix",
     });
     check_step.dependOn(&check_cowsay.step);
+
+    const check_custom_shell = b.addSystemCommand(&.{
+        "scripts/check-kai-composition.sh",
+        "examples/kai-custom-shell",
+        "example.shell.composed.nix",
+    });
+    check_step.dependOn(&check_custom_shell.step);
 
     // Mutating format step. Convenience for devs who don't have
     // editor config for roc, zig, nix, and sh all setup.
@@ -203,11 +212,10 @@ pub fn build(b: *std.Build) void {
     ci_step.dependOn(&build_cli.step);
 
     const build_cowsay = b.addSystemCommand(&.{
-        "roc",
-        "build",
-        "examples/kai-nix-cowsay/main.roc",
-        "--opt=dev",
-        "--output=zig-out/bin/kai-config",
+        "scripts/check-kai-composition.sh",
+        "examples/kai-nix-cowsay",
+        "kai.shell.default.nix",
+        "zig-out/bin/kai-config",
     });
     build_cowsay.step.dependOn(&prepare_outputs.step);
     ci_step.dependOn(&build_cowsay.step);
@@ -307,6 +315,7 @@ fn isIgnoredTestDirectory(name: []const u8) bool {
     const ignored = [_][]const u8{
         ".direnv",
         ".git",
+        ".kai",
         ".zig-cache",
         "dist",
         "node_modules",

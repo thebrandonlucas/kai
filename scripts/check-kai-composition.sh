@@ -28,11 +28,16 @@ case "$project_arg" in
 *) project_path="$caller_dir/$project_arg" ;;
 esac
 
-if [[ ! -f "$project_path/kai.roc" ]]; then
-  printf 'project config does not exist: %s/kai.roc\n' "$project_arg" >&2
+if [[ ! -d "$project_path" ]]; then
+  printf 'project directory does not exist: %s\n' "$project_arg" >&2
   exit 1
 fi
 project_dir="$(cd "$project_path" && pwd -P)"
+
+if [[ ! -f "$project_dir/kai.roc" ]]; then
+  printf 'project config does not exist: %s/kai.roc\n' "$project_dir" >&2
+  exit 1
+fi
 
 build_output=""
 if [[ -n "$build_output_arg" ]]; then
@@ -56,7 +61,34 @@ trap cleanup EXIT
 ln -s "$root_dir/platform" "$workspace/platform"
 cp "$project_dir/kai.roc" "$workspace/KaiProject.roc"
 
-cat >"$workspace/Main.roc" <<ROC
+has_manifest=false
+if [[ -f "$project_dir/kai.modules.roc" ]]; then
+  has_manifest=true
+  cp "$project_dir/kai.modules.roc" "$workspace/KaiModules.roc"
+
+  declare -A staged_basenames=(
+    ["Main.roc"]=1
+    ["KaiProject.roc"]=1
+    ["KaiModules.roc"]=1
+  )
+
+  shopt -s nullglob
+  command_modules=("$project_dir"/commands/*.roc)
+  shopt -u nullglob
+
+  for module_path in "${command_modules[@]}"; do
+    module_basename="$(basename "$module_path")"
+    if [[ -n "${staged_basenames[$module_basename]:-}" ]]; then
+      printf 'duplicate or reserved command module basename: %s\n' \
+        "$module_basename" >&2
+      exit 1
+    fi
+    staged_basenames[$module_basename]=1
+    cp "$module_path" "$workspace/$module_basename"
+  done
+fi
+
+cat >"$workspace/Main.roc" <<'ROC'
 app [config, module_changes] {
 	kai: platform "./platform/main.roc",
 }
@@ -64,14 +96,30 @@ app [config, module_changes] {
 import kai.Kai
 import kai.Command
 import KaiProject
+ROC
+
+if [[ "$has_manifest" == true ]]; then
+  cat >>"$workspace/Main.roc" <<'ROC'
+import KaiModules
+
+config = KaiProject.config
+module_changes = KaiModules.changes(KaiProject.config)
+ROC
+else
+  cat >>"$workspace/Main.roc" <<'ROC'
 
 config = KaiProject.config
 
 module_changes : List(Kai.CommandChange)
 module_changes = []
+ROC
+fi
+
+cat >>"$workspace/Main.roc" <<ROC
 
 expect {
-	registry = Kai.registry(Kai.config(config), module_changes)?
+	normalized_config = Kai.config(config)
+	registry = Kai.registry(normalized_config, module_changes)?
 	selected = Command.select(
 		registry,
 		"shell",
