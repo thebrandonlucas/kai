@@ -1,7 +1,5 @@
-import kai.Kai
-
 KaiProject := [].{
-	project = {
+	config = {
 		name: "Kai developer shell",
 		shell: {
 			pkgs: [
@@ -11,15 +9,10 @@ KaiProject := [].{
 				#
 				#       When we can we'll be able to self-host kai completely!
 				"roc",
-				"shfmt",
 				"zig_0_16",
 				"diffutils",
 				"shfmt",
 			],
 		},
 	}
-
-	config : Kai.Config
-	config = Kai.config(project)
-
 }

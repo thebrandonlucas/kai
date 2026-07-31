@@ -99,6 +99,7 @@ pub fn build(b: *std.Build) void {
         "shellcheck",
         "scripts/build-release.sh",
         "scripts/bundle-platform.sh",
+        "scripts/check-kai-composition.sh",
     });
     check_step.dependOn(&check_scripts.step);
 
@@ -113,7 +114,9 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&check_platform.step);
 
     const check_kai = b.addSystemCommand(&.{
-        "roc", "check", "kai.roc",
+        "scripts/check-kai-composition.sh",
+        ".",
+        "kai.shell.default.nix",
     });
     check_step.dependOn(&check_kai.step);
 

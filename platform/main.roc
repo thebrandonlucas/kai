@@ -71,13 +71,36 @@ import Command
 import Host
 
 main_for_host! : List(Str) => I32
-main_for_host! = |_args|
-	match Kai.registry(Kai.config(config), module_changes) {
-		Ok(_registry) => 0
+main_for_host! = |_args| {
+	configured = Kai.with_backend(
+		Kai.config(config),
+		Command.Backend.Nix,
+	)
+	request : Kai.DispatchRequest
+	request = {
+		backend_candidate: Kai.BackendInput.Absent,
+		command: "shell",
+		args: [],
+	}
+
+	match Kai.dispatch(configured, module_changes, request) {
+		Ok(result) =>
+			match result.plan.files {
+				[first, ..] =>
+					match Host.stdout_line!(first.contents) {
+						Ok({}) => 0
+						Err(_) => 1
+					}
+				[] => {
+					_ = Host.stderr_line!("kai: shell plan produced no files")
+					1
+				}
+			}
 		Err(error) => {
 			_ = Host.stderr_line!(
-				"kai: invalid module composition: ${Str.inspect(error)}",
+				"kai: shell dispatch failed: ${Str.inspect(error)}",
 			)
 			1
 		}
 	}
+}
