@@ -1,6 +1,6 @@
 ## Define functions to be consumed by the app.
 ##
-## 
+##
 import blueprint.Blueprint
 import blueprint.Environment
 import blueprint.Requirement
@@ -26,110 +26,61 @@ Kai := [].{
 		],
 	)
 	render = |config| render_source(config)
+}
 
-  # {
-		# unique_pkgs = unique_strings(config.shell.pkgs, [])
-  #
-		# requirements = unique_pkgs.map(
-		# 	|pkg|
-		# 		Requirement.new({ id: pkg, display_name: pkg }),
-		# )
-  #
-		# workspace = Blueprint.workspace({
-		# 	name: config.name,
-		# 	target_systems: [Target.X86_64Linux],
-		# 	envs: [
-		# 		Environment.new({ name: "default", requirements }),
-		# 	],
-		# })
+render_source : Kai.Config -> Try(
+	Str,
+	[
+		BlueprintInvalid(List(Blueprint.Error)),
+		NixInvalid(List(Nix.Error)),
+	],
+)
+render_source = |config| {
+	unique_pkgs = unique_strings(config.shell.pkgs, [])
 
-		valid = Blueprint.validate(workspace)
-			? |errors| BlueprintInvalid(errors)
+	requirements = unique_pkgs.map(
+		|pkg|
+			Requirement.new({ id: pkg, display_name: pkg }),
+	)
 
-		bindings = requirements.map(
-			|requirement|
-				Nix.bind(
-					requirement,
-					"nixpkgs",
-					Str.split_on(
-						Requirement.id(requirement),
-						".",
-					),
+	workspace = Blueprint.workspace({
+		name: config.name,
+		target_systems: [Target.X86_64Linux],
+		envs: [
+			Environment.new({ name: "default", requirements }),
+		],
+	})
+
+	valid = Blueprint.validate(workspace)
+		? |errors| BlueprintInvalid(errors)
+
+	bindings = requirements.map(
+		|requirement|
+			Nix.bind(
+				requirement,
+				"nixpkgs",
+				Str.split_on(
+					Requirement.id(requirement),
+					".",
 				),
-		)
-
-		nix_config = Nix.config({
-			nixpkgs: Nix.github_input(
-				"nixpkgs",
-				"NixOS",
-				"nixpkgs",
-				"nixos-unstable",
 			),
-			bindings,
-		})
+	)
 
-		source = Nix.render(valid, nix_config)
-			? |errors| NixInvalid(errors)
+	nix_config = Nix.config({
+		nixpkgs: Nix.github_input(
+			"nixpkgs",
+			"NixOS",
+			"nixpkgs",
+			"nixos-unstable",
+		),
+		bindings,
+	})
 
-		Ok(source)
-	}
+	source = Nix.render(valid, nix_config)
+		? |errors| NixInvalid(errors)
 
-  render_source : Kai.Config -> Try(
-  Str,
-  [
-  BlueprintInvalid(List(Blueprint.Error)),
-  NixInvalid(List(Nix.Error)),
-  ],
-  )
-  render_source = |config| {
-    unique_pkgs = unique_strings(config.shell.pkgs, [],)
-
-    requirements = unique_pkgs.map(
-    |pkg| Requirement.new({id: pkg, display_name: pkg,})
-    )
-
-    workspace = Blueprint.workspace({
-      name: config.name,
-      target_systems: [Target.X86_64Linux],
-      envs: [
-      Environment.new({name: "default", requirements}),
-
-      ],
-      })
-
-    valid = Blueprint.validate(workspace)
-      ? |errors| BlueprintInvalid(errors)
-
-      bindings =  requirements.map(
-      |requirement|
-      Nix.bind(
-      requirement,
-      "nixpkgs",
-      Str.split_on(
-      Requirement.id(requirement),
-      ".",
-      )
-      )
-      )
-
-      nix_config = Nix.config({
-        nixpkgs: Nix.github_input(
-        "nixpkgs",
-        "NixOS",
-        "nixpkgs",
-        "nixos-unstable",
-
-        ),
-        bindings,
-
-        })
-
-      source = Nix.render(valid, nix_config)
-      ? |errors| NixInvalid(errors)
-
-      Ok(source)
-  }
-
+	Ok(source)
+}
 
 unique_strings : List(Str), List(Str) -> List(Str)
 unique_strings = |remaining, seen|
@@ -143,9 +94,9 @@ unique_strings = |remaining, seen|
 			}
 		}
 
-## -- TESTS -- 
+## -- TESTS --
 
-## Duplicate package declarations should produce the same 
+## Duplicate package declarations should produce the same
 ## output as their deduplicated form.
 expect {
 	with_duplicates = Kai.render({
@@ -165,7 +116,7 @@ expect {
 	with_duplicates == without_duplicates
 }
 
-## An empty workspace name produces a structured 
+## An empty workspace name produces a structured
 ## Blueprint validation error.
 expect Kai.render({
 	name: "",
@@ -176,7 +127,7 @@ expect Kai.render({
 	]),
 )
 
-## An empty package identity identifies the containing environment 
+## An empty package identity identifies the containing environment
 expect Kai.render({
 	name: "example",
 	shell: {
