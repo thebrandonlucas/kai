@@ -6,7 +6,6 @@ import kai.Kai
 
 config : Kai.Config
 config = {
-	name: "cowsay shell",
 	shell: {
 		pkgs: ["cowsay"],
 	},

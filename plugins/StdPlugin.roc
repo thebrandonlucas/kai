@@ -2,6 +2,9 @@ import pf.OsStr
 import pf.Stdout
 
 import kai.Plugin as PluginApi
+import kai.Command
+import kai.Backend
+import kai.Implementation
 
 StdPlugin := [].{
 
@@ -12,7 +15,9 @@ StdPlugin := [].{
 	plugin : PluginApi.Plugin(OsStr, [StdoutErr(_), ..])
 	plugin = PluginApi.Plugin.{
 		name: "std-plugin",
-		commands: [],
+		commands: [
+			shell,
+		],
 		backends: [],
 		implementations: [],
 		validator: |_| {},

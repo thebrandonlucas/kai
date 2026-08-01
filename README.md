@@ -60,7 +60,7 @@ Other than `nix develop` anytime you want a shell or `direnv allow` once, we hav
 
 There are three ways to build via the flake:
 
-- `zig-out/bin/kai`: development/CI executable
+- `zig-out/ci/*`: development/CI executables discovered from Roc app roots
 - `result/bin/kai`: Nix-wrapped with runtime tools (e.g. `roc` and others) on `PATH`
 - `kai-<version>-<system>.tar.gz`: release archive
 
