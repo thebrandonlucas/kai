@@ -1,13 +1,11 @@
+# Plugins lower typed config into this platform's stable ModuleConfig shape.
 platform "kai"
 	requires {
-		config : {
-			name : Str,
-			shell : { pkgs : List(Str) },
-		}
+		config : _
 	}
 	exposes [Kai]
 	packages {
-		blueprint: "blueprint/package.roc",
+		kai: "../xkai-bin/package.roc",
 	}
 	provides {
 		"roc_main": main_for_host!,
@@ -21,15 +19,21 @@ platform "kai"
 		x64mac: { inputs: ["libhost.a", app] },
 		arm64mac: { inputs: ["libhost.a", app] },
 		x64musl: { inputs: ["crt1.o", "libhost.a", app, "libc.a"] },
-		x64musl: { inputs: ["crt1.o", "libhost.a", app, "libc.a"] },
+		arm64musl: { inputs: ["crt1.o", "libhost.a", app, "libc.a"] },
 	}
 
 import Kai
 import Host
 
 main_for_host! : List(Str) => I32
-main_for_host! = |_args|
-	match Kai.render(config) {
+main_for_host! = |args|
+# NOTE: We do type inference `config: _` above because otherwise
+# we'd have to manually keep the type in sync with
+# Kai.ModuleConfig, but we can't use that type there before its
+# been imported.
+
+# Kai.render call lower down ensures the type is constrained.
+	match Kai.render(config, args) {
 		Ok(source) =>
 			match Host.stdout_line!(source) {
 				Ok({}) => 0

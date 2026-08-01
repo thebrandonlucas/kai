@@ -2,8 +2,6 @@ app [config] {
 	kai: platform "../../platform/main.roc",
 	std: "../../plugins/main.roc",
 }
-# TODO: determine whether a main.roc
-# is still needed
 
 import std.StdPlugin as Std
 

@@ -1,24 +1,28 @@
 app [config] {
 	kai: platform "./platform/main.roc",
+	std: "./plugins/main.roc",
 }
 
-import kai.Kai
+import std.StdPlugin as P
 
-config : Kai.Config
-config = {
-	name: "Kai developer shell",
-	shell: {
+config = [
+	P.shell({
 		pkgs: [
-			# TODO: Unfortunately we are blocked on true parity with
-			#       this project's flake.nix because we can't use
-			#       overlays yet (needed for roc nightly compiler)
+			# TODO:
+			# A major goal is to "self-host" kai.
 			#
-			#       When we can we'll be able to self-host kai completely!
+			# i.e. when possible we will use kai for all the deps
+			# required for kai.
+			# Unfortunately we are blocked on true parity with
+			# this project's flake.nix because we can't use
+			# overlays yet (needed for roc nightly compiler)
+			#
+			# When we can we'll be able to self-host kai completely!
 			"roc",
 			"shfmt",
 			"zig_0_16",
 			"diffutils",
 			"shfmt",
 		],
-	},
-}
+	}),
+]

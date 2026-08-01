@@ -5,6 +5,155 @@ const RocTarget = struct {
     query: std.Target.Query,
 };
 
+const SourceTree = struct {
+    nix_files: []const []const u8,
+    roc_apps: []const []const u8,
+    roc_files: []const []const u8,
+    roc_roots: []const []const u8,
+    shell_files: []const []const u8,
+    zig_files: []const []const u8,
+};
+
+const RocRootKind = enum {
+    app,
+    package,
+    platform,
+};
+
+const excluded_source_dirs = [_][]const u8{
+    ".direnv",
+    ".git",
+    ".kai",
+    ".zig-cache",
+    "dist",
+    "zig-out",
+};
+
+fn isExcludedSourceDir(name: []const u8) bool {
+    for (excluded_source_dirs) |excluded| {
+        if (std.mem.eql(u8, name, excluded)) return true;
+    }
+    return false;
+}
+
+fn rocRootKind(contents: []const u8) ?RocRootKind {
+    var lines = std.mem.splitScalar(u8, contents, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        if (std.mem.startsWith(u8, line, "app ")) return .app;
+        if (std.mem.startsWith(u8, line, "package")) return .package;
+        if (std.mem.startsWith(u8, line, "platform ")) return .platform;
+        return null;
+    }
+    return null;
+}
+
+fn sortPaths(paths: [][]const u8) void {
+    std.mem.sort([]const u8, paths, {}, struct {
+        fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+            return std.mem.order(u8, lhs, rhs) == .lt;
+        }
+    }.lessThan);
+}
+
+fn discoverSources(b: *std.Build) SourceTree {
+    const allocator = b.allocator;
+    const io = b.graph.io;
+
+    var nix_files = std.ArrayList([]const u8).empty;
+    var roc_apps = std.ArrayList([]const u8).empty;
+    var roc_files = std.ArrayList([]const u8).empty;
+    var roc_roots = std.ArrayList([]const u8).empty;
+    var shell_files = std.ArrayList([]const u8).empty;
+    var zig_files = std.ArrayList([]const u8).empty;
+
+    var source_dir = std.Io.Dir.cwd().openDir(
+        io,
+        b.build_root.path orelse ".",
+        .{ .iterate = true, .follow_symlinks = false },
+    ) catch @panic("failed to open source tree");
+    defer source_dir.close(io);
+
+    var walker = source_dir.walk(allocator) catch @panic("failed to scan source tree");
+    defer walker.deinit();
+
+    while (walker.next(io) catch @panic("failed to scan source tree")) |entry| {
+        if (entry.kind == .directory and isExcludedSourceDir(entry.basename)) {
+            walker.leave(io);
+            continue;
+        }
+        if (entry.kind != .file) continue;
+
+        const path = allocator.dupe(u8, entry.path) catch @panic("out of memory");
+        if (std.mem.endsWith(u8, path, ".roc")) {
+            roc_files.append(allocator, path) catch @panic("out of memory");
+
+            const contents = source_dir.readFileAlloc(
+                io,
+                path,
+                allocator,
+                .limited(10 * 1024 * 1024),
+            ) catch @panic("failed to read Roc source");
+            defer allocator.free(contents);
+
+            if (rocRootKind(contents)) |kind| {
+                roc_roots.append(allocator, allocator.dupe(u8, path) catch @panic("out of memory")) catch @panic("out of memory");
+                if (kind == .app) {
+                    roc_apps.append(allocator, allocator.dupe(u8, path) catch @panic("out of memory")) catch @panic("out of memory");
+                }
+            }
+        } else if (std.mem.endsWith(u8, path, ".zig")) {
+            zig_files.append(allocator, path) catch @panic("out of memory");
+        } else if (std.mem.endsWith(u8, path, ".sh")) {
+            shell_files.append(allocator, path) catch @panic("out of memory");
+        } else if (std.mem.endsWith(u8, path, ".nix")) {
+            nix_files.append(allocator, path) catch @panic("out of memory");
+        } else {
+            allocator.free(path);
+        }
+    }
+
+    sortPaths(nix_files.items);
+    sortPaths(roc_apps.items);
+    sortPaths(roc_files.items);
+    sortPaths(roc_roots.items);
+    sortPaths(shell_files.items);
+    sortPaths(zig_files.items);
+
+    return .{
+        .nix_files = nix_files.toOwnedSlice(allocator) catch @panic("out of memory"),
+        .roc_apps = roc_apps.toOwnedSlice(allocator) catch @panic("out of memory"),
+        .roc_files = roc_files.toOwnedSlice(allocator) catch @panic("out of memory"),
+        .roc_roots = roc_roots.toOwnedSlice(allocator) catch @panic("out of memory"),
+        .shell_files = shell_files.toOwnedSlice(allocator) catch @panic("out of memory"),
+        .zig_files = zig_files.toOwnedSlice(allocator) catch @panic("out of memory"),
+    };
+}
+
+fn addFilesCommand(
+    b: *std.Build,
+    prefix: []const []const u8,
+    files: []const []const u8,
+    suffix: []const []const u8,
+) *std.Build.Step.Run {
+    var args = std.ArrayList([]const u8).empty;
+    args.appendSlice(b.allocator, prefix) catch @panic("out of memory");
+    args.appendSlice(b.allocator, files) catch @panic("out of memory");
+    args.appendSlice(b.allocator, suffix) catch @panic("out of memory");
+    return b.addSystemCommand(args.items);
+}
+
+fn artifactName(b: *std.Build, source_path: []const u8) []const u8 {
+    const extension_len = ".roc".len;
+    const stem = source_path[0 .. source_path.len - extension_len];
+    const name = b.allocator.alloc(u8, stem.len) catch @panic("out of memory");
+    for (stem, name) |char, *output| {
+        output.* = if (std.ascii.isAlphanumeric(char)) char else '-';
+    }
+    return name;
+}
+
 const roc_targets = [_]RocTarget{
     .{
         .name = "x64musl",
@@ -41,6 +190,7 @@ const roc_targets = [_]RocTarget{
 pub fn build(b: *std.Build) void {
     // e.g. ReleaseSafe, ReleaseFast, ReleaseSmall, Debug
     const optimize = b.standardOptimizeOption(.{});
+    const sources = discoverSources(b);
 
     const hosts_step = b.step(
         "hosts",
@@ -83,62 +233,50 @@ pub fn build(b: *std.Build) void {
         "check",
         "Run formatting and static checks",
     );
-    const roc_fmt = b.addSystemCommand(&.{
-        "roc",
-        "fmt",
-        "--check",
-        ".",
-    });
+    const roc_fmt = addFilesCommand(
+        b,
+        &.{ "roc", "fmt", "--check" },
+        sources.roc_files,
+        &.{},
+    );
     check_step.dependOn(&roc_fmt.step);
 
-    const zig_fmt = b.addSystemCommand(&.{
-        "zig", "fmt", "--check", "build.zig", "src",
-    });
+    const zig_fmt = addFilesCommand(
+        b,
+        &.{ "zig", "fmt", "--check" },
+        sources.zig_files,
+        &.{},
+    );
     check_step.dependOn(&zig_fmt.step);
 
-    const sh_fmt = b.addSystemCommand(&.{
-        "shfmt",
-        "-d",
-        "scripts",
-    });
+    const sh_fmt = addFilesCommand(
+        b,
+        &.{ "shfmt", "-d" },
+        sources.shell_files,
+        &.{},
+    );
     check_step.dependOn(&sh_fmt.step);
 
-    const check_scripts = b.addSystemCommand(&.{
-        "shellcheck",
-        "scripts/build-release.sh",
-        "scripts/bundle-platform.sh",
-    });
+    const check_scripts = addFilesCommand(
+        b,
+        &.{"shellcheck"},
+        sources.shell_files,
+        &.{},
+    );
     check_step.dependOn(&check_scripts.step);
 
-    const check_blueprint = b.addSystemCommand(&.{
-        "roc", "check", "platform/blueprint/package.roc",
-    });
-    check_step.dependOn(&check_blueprint.step);
+    const nix_fmt = addFilesCommand(
+        b,
+        &.{ "nix", "fmt" },
+        sources.nix_files,
+        &.{ "--", "--check" },
+    );
+    check_step.dependOn(&nix_fmt.step);
 
-    const check_platform = b.addSystemCommand(&.{
-        "roc", "check", "platform/main.roc",
-    });
-    check_step.dependOn(&check_platform.step);
-
-    const check_kai = b.addSystemCommand(&.{
-        "roc", "check", "kai.roc",
-    });
-    check_step.dependOn(&check_kai.step);
-
-    const check_cli = b.addSystemCommand(&.{
-        "roc", "check", "cli/main.roc",
-    });
-    check_step.dependOn(&check_cli.step);
-
-    const check_blueprint_example = b.addSystemCommand(&.{
-        "roc", "check", "examples/blueprint-nix-cowsay/main.roc",
-    });
-    check_step.dependOn(&check_blueprint_example.step);
-
-    const check_cowsay = b.addSystemCommand(&.{
-        "roc", "check", "examples/kai-nix-cowsay/main.roc",
-    });
-    check_step.dependOn(&check_cowsay.step);
+    for (sources.roc_roots) |root| {
+        const check_roc = b.addSystemCommand(&.{ "roc", "check", root });
+        check_step.dependOn(&check_roc.step);
+    }
 
     // Mutating format step. Convenience for devs who don't have
     // editor config for roc, zig, nix, and sh all setup.
@@ -146,33 +284,36 @@ pub fn build(b: *std.Build) void {
     // Not used in CI -- CI only does static checks.
     const fmt_step = b.step("fmt", "Format all source code files.");
 
-    const roc_fmt_write = b.addSystemCommand(&.{
-        "roc",
-        "fmt",
-        ".",
-    });
+    const roc_fmt_write = addFilesCommand(
+        b,
+        &.{ "roc", "fmt" },
+        sources.roc_files,
+        &.{},
+    );
     fmt_step.dependOn(&roc_fmt_write.step);
 
-    const zig_fmt_write = b.addSystemCommand(&.{
-        "zig",
-        "fmt",
-        "build.zig",
-        "src",
-    });
+    const zig_fmt_write = addFilesCommand(
+        b,
+        &.{ "zig", "fmt" },
+        sources.zig_files,
+        &.{},
+    );
     fmt_step.dependOn(&zig_fmt_write.step);
 
-    const sh_fmt_write = b.addSystemCommand(&.{
-        "shfmt",
-        "-w",
-        "scripts",
-    });
+    const sh_fmt_write = addFilesCommand(
+        b,
+        &.{ "shfmt", "-w" },
+        sources.shell_files,
+        &.{},
+    );
     fmt_step.dependOn(&sh_fmt_write.step);
 
-    const nix_fmt_write = b.addSystemCommand(&.{
-        "nix",
-        "fmt",
-        "flake.nix",
-    });
+    const nix_fmt_write = addFilesCommand(
+        b,
+        &.{ "nix", "fmt" },
+        sources.nix_files,
+        &.{},
+    );
     fmt_step.dependOn(&nix_fmt_write.step);
 
     const test_step = b.step(
@@ -181,21 +322,11 @@ pub fn build(b: *std.Build) void {
     );
     test_step.dependOn(check_step);
 
-    const test_kai = b.addSystemCommand(&.{
-        "roc",
-        "test",
-        "kai.roc",
-    });
-    test_kai.step.dependOn(check_step);
-    test_step.dependOn(&test_kai.step);
-
-    const test_cli = b.addSystemCommand(&.{
-        "roc",
-        "test",
-        "cli/main.roc",
-    });
-    test_cli.step.dependOn(check_step);
-    test_step.dependOn(&test_cli.step);
+    for (sources.roc_apps) |app| {
+        const test_app = b.addSystemCommand(&.{ "roc", "test", app });
+        test_app.step.dependOn(check_step);
+        test_step.dependOn(&test_app.step);
+    }
 
     const ci_step = b.step(
         "ci",
@@ -205,30 +336,43 @@ pub fn build(b: *std.Build) void {
 
     // Avoid shell redirection or mkdir inside a script.
     const prepare_outputs = b.addSystemCommand(&.{
-        "mkdir", "-p", "zig-out/bin", "zig-out/tests",
+        "mkdir", "-p", "zig-out/ci", "zig-out/tests",
     });
     prepare_outputs.step.dependOn(test_step);
     prepare_outputs.step.dependOn(hosts_step);
 
-    const build_cli = b.addSystemCommand(&.{
-        "roc",
-        "build",
-        "cli/main.roc",
-        "--opt=dev",
-        "--output=zig-out/bin/kai",
-    });
-    build_cli.step.dependOn(&prepare_outputs.step);
-    ci_step.dependOn(&build_cli.step);
+    for (sources.roc_apps) |app| {
+        const output_path = b.fmt(
+            "zig-out/ci/{s}-{x}",
+            .{ artifactName(b, app), std.hash.Wyhash.hash(0, app) },
+        );
+        const output = b.fmt("--output={s}", .{output_path});
+        const build_app = b.addSystemCommand(&.{
+            "roc",
+            "build",
+            app,
+            "--opt=dev",
+            output,
+        });
+        build_app.step.dependOn(&prepare_outputs.step);
+        ci_step.dependOn(&build_app.step);
 
-    const build_cowsay = b.addSystemCommand(&.{
-        "roc",
-        "build",
-        "examples/kai-nix-cowsay/main.roc",
-        "--opt=dev",
-        "--output=zig-out/bin/kai-config",
-    });
-    build_cowsay.step.dependOn(&prepare_outputs.step);
-    ci_step.dependOn(&build_cowsay.step);
+        if (std.mem.eql(u8, app, "xkai-bin/main.roc")) {
+            const test_portability = b.addSystemCommand(&.{
+                "scripts/test-xkai-portability.sh",
+                output_path,
+            });
+            test_portability.step.dependOn(&build_app.step);
+            ci_step.dependOn(&test_portability.step);
+
+            const test_projects = b.addSystemCommand(&.{
+                "scripts/test-xkai-projects.sh",
+                output_path,
+            });
+            test_projects.step.dependOn(&build_app.step);
+            ci_step.dependOn(&test_projects.step);
+        }
+    }
 
     const bundle_platform = b.addSystemCommand(&.{
         "scripts/bundle-platform.sh",
