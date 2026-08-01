@@ -52,15 +52,17 @@ main! = |args| {
 				plugin_source,
 			)?
 
+			# TODO: this only builds the std_plugin kai, need to variablize it
 			cli_source = Str.join_with(
 				[
 					"app [main!] {",
 					"\tpf: platform \"https://github.com/roc-lang/basic-cli/releases/download/0.21.0-rc4/FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn.tar.zst\",",
+					"\tstd_plugin: \"../std_plugin/main.roc",
 					"}",
 					"",
-					"import Plugin",
+					"import std_plugin.StdPlugin",
 					"",
-					"main! = |plugin_args| Plugin.run!(plugin_args)",
+					"main! = |args| StdPlugin.run!(args)",
 				],
 				"\n",
 			)
