@@ -118,26 +118,47 @@ Plugin(arg, run_error) := {
 	name : Str,
 	commands : List(Command),
 	backends : List(Backend),
-	implementations : List(Implementation),
+	implementations : List(Implementation(run_error)),
 	validator : {} -> {},
 	run! : List(arg) => Try({}, run_error),
 }.{
-	Optional(a) : [None, Some(a)]
-
 	Command := {
 		name : Str,
-		backends : Optional(List(Backend)),
+		backends : List(Backend),
 		argv : List(Str),
 	}
 
+	# TODO: should we type the possible backends instead of 
+	# just a named str?
+	# also shouldn't this be a list?
+	# why did we choose this named str? so that it can be freeform?
+
 	Backend := {
 		name : Str,
-		commands : List(Command),
 	}
 
-	Implementation := {
+	Implementation(handler_error) :: {
 		command : Command,
 		backend : Backend,
-		handler : {} => {},
+		handler! : {} => Try({}, handler_error),
+	}.{
+		# constructor
+		new :
+			Command,
+			Backend,
+			({} => Try({}, handler_error)) -> Implementation(handler_error)
+		new = |command, backend, handler!| Implementation.{
+			command,
+			backend,
+			handler!,
+		}
+
+		run! : Implementation(handler_error) => Try({}, handler_error)
+		run! = |implementation|
+			match implementation {
+				# FIXME: does this say Perform handler, 
+				# which takes in nothing, and and performs side effects?
+				{ handler!, .. } => handler!({})
+			}
 	}
 }

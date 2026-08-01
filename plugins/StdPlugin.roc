@@ -1,16 +1,11 @@
+import pf.Cmd
 import pf.OsStr
+import pf.Path
 import pf.Stdout
 
 import kai.Plugin as PluginApi
-import kai.Command
-import kai.Backend
-import kai.Implementation
 
 StdPlugin := [].{
-
-	run! = |_args| {
-		Stdout.line!("running std plugin")
-	}
 
 	# FIXME: help me think through if this contract is correct
 	# Basically i need a way to 
@@ -26,20 +21,25 @@ StdPlugin := [].{
 	#   all: maybe I can make a constrained list of allowed side effects for 
 	#   certain commands?) )
 
-	backends = [Backend.Nix, Backend.Guix]
+	nix : PluginApi.Backend
+	nix = PluginApi.Backend.{
+		name: "nix",
+	}
 
-	shell : Command
-	shell = Command.{
+	backends = [nix]
+
+	shell : PluginApi.Command
+	shell = PluginApi.Command.{
 		name: "shell",
 		backends,
 		argv: [],
 	}
 
-	nix_impl : Implementation
-	nix_impl = Implementation.{
-		command: shell,
-		backend: nix,
-		handler: {
+	nix_shell_impl : PluginApi.Implementation(_)
+	nix_shell_impl = PluginApi.Implementation.new(
+		shell,
+		nix,
+		|_| {
 			# TODO: this will be managed eventually in
 			# either kai.roc or in .kai, but for now we
 			# localize everything that isn't generic to
@@ -92,17 +92,30 @@ StdPlugin := [].{
 				].concat(refactor.backend.shell_command_args),
 			)
 		},
-	}
+	)
 
-	plugin : PluginApi.Plugin(OsStr, [StdoutErr(_), ..])
+	# Keep command and backend registries explicit. Implementations map each
+	# supported command/backend pair to executable behavior.
+	plugin : PluginApi.Plugin(OsStr, _)
 	plugin = PluginApi.Plugin.{
 		name: "std-plugin",
 		commands: [
 			shell,
 		],
-		backends: [],
-		implementations: [],
+		backends,
+		implementations: [nix_shell_impl],
+		# FIXME: Is a validator needed, and what is its role?
 		validator: |_| {},
 		run!,
 	}
+
+	run! = |args| {
+		display_args = args.drop_first(1).map(OsStr.display)
+		match display_args {
+			["shell", ..] => nix_shell_impl.run!()
+			[] => Stdout.line!("usage: kai shell")
+			[unknown, ..] => Stdout.line!("Unknown command ${unknown}")
+		}
+	}
+
 }
