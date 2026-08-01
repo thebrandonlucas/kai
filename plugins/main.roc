@@ -1,1 +1,5 @@
-package [StdPlugin] { kai: "../xkai-bin/package.roc" }
+package
+	[StdPlugin]
+	{
+		kai: "../xkai-bin/package.roc",
+	}

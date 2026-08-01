@@ -45,10 +45,10 @@ main! = |args| {
 
 			# TODO: make plugin source a flag that you can
 			# pass in, with a sensible default
-			plugin_source = Path.read_utf8!(Path.utf8("plugins/std.kai.roc"))?
+			plugin_source = Path.read_utf8!(Path.utf8("plugins/StdPlugin.roc"))?
 			Path.write_utf8!(
 				# TODO: allow multiple plugins
-				Path.join(generated_dir, "Plugin.roc"),
+				Path.join(generated_dir, "StdPlugin.roc"),
 				plugin_source,
 			)?
 
@@ -57,10 +57,10 @@ main! = |args| {
 				[
 					"app [main!] {",
 					"\tpf: platform \"https://github.com/roc-lang/basic-cli/releases/download/0.21.0-rc4/FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn.tar.zst\",",
-					"\tstd_plugin: \"../std_plugin/main.roc",
+					"\tkai: \"../xkai-bin/package.roc\"",
 					"}",
 					"",
-					"import std_plugin.StdPlugin",
+					"import StdPlugin",
 					"",
 					"main! = |args| StdPlugin.run!(args)",
 				],

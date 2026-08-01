@@ -9,7 +9,7 @@ StdPlugin := [].{
 		Stdout.line!("running std plugin")
 	}
 
-	plugin : PluginApi.Plugin(Str, [])
+	plugin : PluginApi.Plugin([StdoutErr(IOErr), ..])
 	plugin = PluginApi.Plugin.{
 		name: "std-plugin",
 		commands: [],
