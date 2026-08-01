@@ -8,20 +8,19 @@ Kai := [].{
 
 	render : Config -> Try(
 		Str,
-		[],
+		[InvalidConfig],
 	)
 	render = |config| {
-		match validate(config) {
-			Ok(_valid) => "sample str response"
-			Err => []
-		}
-		# generically turn it into the backend string of choice
-		# for nix, this is a flake.nix 
-		# for guix, this is a ..?
+		_valid = validate(config)?
+
+		# Generically turn it into the backend string of choice.
+		# For Nix, this is a flake.nix.
+		# For Guix, this is a future backend format.
+		Ok("im a flake")
 	}
 
-	# TODO: second param of Config will be ValidationError
-	validate : Config -> Try(Config, _)
+	# TODO: add specific validation errors as validation rules are introduced.
+	validate : Config -> Try(Config, [InvalidConfig])
 	validate = |config|
 		Ok(config)
 }
