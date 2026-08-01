@@ -114,6 +114,30 @@
 # this Command and this Backend, this Impl does 
 # what it's supposed to
 
+Plugin(arg, run_error) := {
+	name : Str,
+	commands : List(Command),
+	backends : List(Backend),
+	implementations : List(Implementation),
+	validator : {} -> {},
+	run! : List(arg) => Try({}, run_error),
+}.{
+	Optional(a) : [None, Some(a)]
 
+	Command := {
+		name : Str,
+		backends : Optional(List(Backend)),
+		argv : List(Str),
+	}
 
+	Backend := {
+		name : Str,
+		commands : List(Command),
+	}
 
+	Implementation := {
+		command : Command,
+		backend : Backend,
+		handler : {} => {},
+	}
+}
