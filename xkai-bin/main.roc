@@ -2,6 +2,13 @@ app [main!] {
 	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.21.0-rc4/FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn.tar.zst",
 }
 
+# I don't think platform code needs to supply side-effectful code?
+# since all it's doing is defining the interface Command/Backend/Impl
+# which we verify as valid (or at least, there's no internal logic issue)
+# then our cli runs it? and if our CLI runs and finds that those commands
+# or the backend doesn't exist, it throws a runtime error (might be worth
+# investigating whether this is a necessary error?)
+
 import pf.OsStr
 import pf.Stdout
 import pf.Path
