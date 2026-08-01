@@ -104,3 +104,6 @@ Eventually, we want our blueprint protocol to support the following universal th
 ### Looking Ahead
 
 Aside from making a great tool for programmers to encourage the use of determinate computing, the hope is to go far beyond that and [dream](https://www.amazon.com/Dream-Machine-M-Mitchell-Waldrop/dp/1732265119) about what computers could be. I believe determinate computing is in its nascent form, and the true realization of its potential could have monumental and lasting effects as a new, better way to use computers.
+
+### Attribution 
+Huge thank you to Luke Boswell for inspiring the initial portable typed configuration idea with [roc-blueprint]() and his enthusiastic evangelism of this idea.
