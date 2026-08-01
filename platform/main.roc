@@ -2,7 +2,9 @@ platform "kai"
 	requires {
 		config : {
 			name : Str,
-			shell : { pkgs : List(Str) },
+			shell : {
+				pkgs : List(Str),
+			},
 		}
 	}
 	exposes []

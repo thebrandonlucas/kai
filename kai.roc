@@ -3,7 +3,6 @@ app [config] {
 }
 
 config = {
-	name: "Kai developer shell",
 	shell: {
 		pkgs: [
 			# TODO: Unfortunately we are blocked on true parity with

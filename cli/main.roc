@@ -46,6 +46,10 @@ main! = |args| {
 			# We run the kai.roc file via the Roc compiler directly.
 			# The platform validates and parses the config,
 			# lowering it into the appropriate backend.
+			# 
+			# Around here is where we will eventually include 
+			# more effectful logic responsible for doing things 
+			# like
 			output = Cmd.new("roc")
 				.args([
 					refactor.config_filename,
