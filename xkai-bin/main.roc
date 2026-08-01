@@ -9,6 +9,10 @@ app [main!] {
 # or the backend doesn't exist, it throws a runtime error (might be worth
 # investigating whether this is a necessary error?)
 
+# xkai must be responsible for this validation
+# and then the cli must be responsible for the
+# peripheral error handling
+
 import pf.OsStr
 import pf.Stdout
 import pf.Path
@@ -27,48 +31,6 @@ main! = |args| {
 	display_args = args.drop_first(1).map(OsStr.display)
 	match Cli.parse(display_args) {
 		Cli.Command.Help => print_usage!({})
-		# Cli.Command.Shell => {
-		# 	# We run the kai.roc file via the Roc compiler directly.
-		# 	# The platform validates and parses the config,
-		# 	# lowering it into the appropriate backend.
-		# 	#
-		# 	# Around here is where we will eventually include
-		# 	# more effectful logic responsible for doing things
-		# 	# like
-		# 	output = Cmd.new("roc")
-		# 		.args([
-		# 			refactor.config_filename,
-		# 		])
-		# 		.exec_output!()?
-		# 	# The string output is the resulting backend
-		# 	# dev shell config text. For Nix, this is
-		# 	# the contents of the flake.nix file.
-		# 	source = output.stdout_utf8
-		# 	# Kai creates and manages config in .kai under the hood.
-		# 	# Things like flake.nix/.lock, the selected backend, etc.
-		# 	# are written here.
-		# 	managed_kai_dir = Path.utf8(refactor.managed_kai_dir)
-		# 	if !Path.exists!(managed_kai_dir)? {
-		# 		Path.create_dir!(managed_kai_dir)?
-		# 	}
-		# 	managed_file = Path.join(
-		# 		managed_kai_dir,
-		# 		refactor.backend.managed_filename,
-		# 	)
-		# 	Path.write_utf8!(managed_file, source)?
-		# 	Stdout.line!(
-		# 		"wrote: ${refactor.backend.managed_filename}",
-		# 	)?
-		# 	Cmd.exec!(
-		# 		refactor.backend.name,
-		# 		[
-		# 			refactor.backend.shell_command,
-		# 		].concat(refactor.backend.shell_command_args),
-		# 	)
-		#
-		# }
-		#
-		# Cli.Command.Version => Stdout.line!("kai version ${Cli.version}")
 		Cli.Command.Build => {
 			# TODO: Look into how Caddy does per-repo vs. full
 			# config. Should probably have a top-level one for
@@ -83,7 +45,7 @@ main! = |args| {
 
 			# TODO: make plugin source a flag that you can
 			# pass in, with a sensible default
-			plugin_source = Path.read_utf8!(Path.utf8("plugins/kai.module.roc"))?
+			plugin_source = Path.read_utf8!(Path.utf8("plugins/std.kai.roc"))?
 			Path.write_utf8!(
 				# TODO: allow multiple plugins
 				Path.join(generated_dir, "Plugin.roc"),
