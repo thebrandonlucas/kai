@@ -5,10 +5,8 @@ platform "kai"
 			shell : { pkgs : List(Str) },
 		}
 	}
-	exposes [Kai]
-	packages {
-		blueprint: "blueprint/package.roc",
-	}
+	exposes []
+	packages {}
 	provides {
 		"roc_main": main_for_host!,
 	}

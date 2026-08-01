@@ -1,5 +1,8 @@
-## Core logic for the Kai CLI.
-## 
+## Pure types and logic for the Kai CLI
+
+## Right now this just supplies types and parsing for
+## cli/main.roc
+##
 ## This module is pure, side effects are kept separate from
 ## pure functions to make testing easier, following advice
 ## from the [Boundaries](https://www.destroyallsoftware.com/talks/boundaries)
@@ -12,7 +15,8 @@ Cli := [].{
 				(Help, Help) => Bool.True
 				(Shell, Shell) => Bool.True
 				(Version, Version) => Bool.True
-				(Unknown(left_name), Unknown(right_name)) => left_name == right_name
+				(Unknown(left_name), Unknown(right_name))
+					=> left_name == right_name
 				_ => Bool.False
 			}
 	}
@@ -47,7 +51,7 @@ Cli := [].{
 	expect check(["shell"], Cli.Command.Shell)
 
 	## Additional shell arguments currently do not alter
-	## command selection. 
+	## command selection.
 	## TODO: should we display help instead?
 	expect check(["shell", "extra"], Cli.Command.Shell)
 
