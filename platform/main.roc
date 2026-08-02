@@ -1,3 +1,11 @@
+# platform exposes what's available in the config 
+# but this is only out of the box, i.e. this is the 
+# standard plugin config? So far in plugins/xkai, we've 
+# only made the cli extensible via plugins 
+# but we haven't made the platform itself extensible.
+#
+# How does caddy handle this? do they make Caddyfile extensible?
+
 platform "kai"
 	requires {
 		config : {
