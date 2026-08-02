@@ -1,12 +1,10 @@
 app [config] {
 	kai: platform "../../platform/main.roc",
+	std: "../../plugins/main.roc",
 }
 
-import kai.Kai
+import std.StdConfig
 
-config : Kai.Config
-config = {
-	shell: {
-		pkgs: ["cowsay"],
-	},
-}
+config = [
+	StdConfig.shell({ pkgs: ["cowsay"] }),
+]

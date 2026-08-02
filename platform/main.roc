@@ -1,20 +1,9 @@
-# platform exposes what's available in the config 
-# but this is only out of the box, i.e. this is the 
-# standard plugin config? So far in plugins/xkai, we've 
-# only made the cli extensible via plugins 
-# but we haven't made the platform itself extensible.
-#
-# How does caddy handle this? do they make Caddyfile extensible?
-
+# Plugins lower typed config into this platform's stable ModuleConfig shape.
 platform "kai"
 	requires {
-		config : {
-			shell : {
-				pkgs : List(Str),
-			},
-		}
+		config : _
 	}
-	exposes []
+	exposes [Kai]
 	packages {}
 	provides {
 		"roc_main": main_for_host!,
@@ -36,6 +25,12 @@ import Host
 
 main_for_host! : List(Str) => I32
 main_for_host! = |_args|
+# NOTE: We do type inference `config: _` above because otherwise
+# we'd have to manually keep the type in sync with
+# Kai.ModuleConfig, but we can't use that type there before its
+# been imported.
+
+# Kai.render call lower down ensures the type is constrained.
 	match Kai.render(config) {
 		Ok(source) =>
 			match Host.stdout_line!(source) {
