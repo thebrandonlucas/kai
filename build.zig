@@ -328,6 +328,12 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&test_app.step);
     }
 
+    const nix_derivation_poc_test = b.addSystemCommand(&.{
+        "scripts/test-nix-derivation-poc.sh",
+    });
+    nix_derivation_poc_test.step.dependOn(check_step);
+    test_step.dependOn(&nix_derivation_poc_test.step);
+
     const ci_step = b.step(
         "ci",
         "Run tests and build representative applications",
