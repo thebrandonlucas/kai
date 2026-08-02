@@ -5,30 +5,13 @@ import pf.Stdout
 
 import kai.Plugin as PluginApi
 
-# Generic effect boundary for pure plugin plans.
+# Generic effect boundary for plans produced by kai.roc.
 Executor := [].{
-	run! : PluginApi.Plugin, List(OsStr) => Try({}, _)
-	run! = |plugin, args| {
-		display_args = args.drop_first(1).map(OsStr.display)
-
-		match display_args {
-			[] => {
-				# Dump all concat'd command names as a naive placeholder help
-				command_names = plugin.commands.map(|command| command.name)
-				Stdout.line!("usage: kai ${Str.join_with(command_names, "|")}")
-			}
-			[command_name, ..] =>
-				match PluginApi.find_implementation(plugin, command_name) {
-					Err(_) => Stdout.line!("Unknown command ${command_name}")
-					Ok(implementation) => Executor.run_implementation!(implementation)
-				}
-			}
-	}
-
-	run_implementation! : PluginApi.Implementation => Try({}, _)
-	run_implementation! = |implementation| {
+	run! : List(OsStr) => Try({}, _)
+	run! = |args| {
+		config_args = [OsStr.utf8("kai.roc")].concat(args.drop_first(1))
 		output = Cmd.new(OsStr.utf8("roc"))
-			.args([OsStr.utf8(implementation.config_program)])
+			.args(config_args)
 			.exec_output!()?
 
 		plan : PluginApi.Plan

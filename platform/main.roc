@@ -26,14 +26,14 @@ import Kai
 import Host
 
 main_for_host! : List(Str) => I32
-main_for_host! = |_args|
+main_for_host! = |args|
 # NOTE: We do type inference `config: _` above because otherwise
 # we'd have to manually keep the type in sync with
 # Kai.ModuleConfig, but we can't use that type there before its
 # been imported.
 
 # Kai.render call lower down ensures the type is constrained.
-	match Kai.render(config) {
+	match Kai.render(config, args) {
 		Ok(source) =>
 			match Host.stdout_line!(source) {
 				Ok({}) => 0

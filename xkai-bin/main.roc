@@ -43,21 +43,12 @@ main! = |args| {
 
 			# TODO: errors must be much more informative
 
-			# TODO: make plugin source a flag that you can
-			# pass in, with a sensible default
-			plugin_source = Path.read_utf8!(Path.utf8("plugins/StdPlugin.roc"))?
-			Path.write_utf8!(
-				# TODO: allow multiple plugins
-				Path.join(generated_dir, "StdPlugin.roc"),
-				plugin_source,
-			)?
 			executor_source = Path.read_utf8!(Path.utf8("xkai-bin/Executor.roc"))?
 			Path.write_utf8!(
 				Path.join(generated_dir, "Executor.roc"),
 				executor_source,
 			)?
 
-			# TODO: this only builds the std_plugin kai, need to variablize it
 			cli_source = Str.join_with(
 				[
 					"app [main!] {",
@@ -66,9 +57,8 @@ main! = |args| {
 					"}",
 					"",
 					"import Executor",
-					"import StdPlugin",
 					"",
-					"main! = |args| Executor.run!(StdPlugin.plugin, args)",
+					"main! = |args| Executor.run!(args)",
 				],
 				"\n",
 			)

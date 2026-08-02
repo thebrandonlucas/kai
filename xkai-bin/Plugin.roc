@@ -32,7 +32,6 @@ Plugin := {
 		actions : List(ActionTemplate),
 		backend : Backend,
 		command : Command,
-		config_program : Str,
 	}
 
 	Plan := {

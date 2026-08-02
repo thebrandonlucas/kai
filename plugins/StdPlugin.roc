@@ -1,7 +1,7 @@
 import kai.Plugin as PluginApi
 
-# The standard plugin is pure. Its descriptors are shared by kai.roc and the
-# generated CLI; only the generic executor performs their actions.
+# The standard plugin is pure. kai.roc imports its typed configuration
+# constructor; only the generic executor performs the resulting actions.
 StdPlugin := [].{
 	ShellConfig : { pkgs : List(Str) }
 
@@ -28,7 +28,6 @@ StdPlugin := [].{
 		],
 		backend: nix,
 		command: shell_command,
-		config_program: "kai.roc",
 	}
 
 	# Lower typed shell configuration into the platform's shared ModuleConfig
@@ -37,14 +36,6 @@ StdPlugin := [].{
 	shell = |shell_config| {
 		implementation: nix_shell,
 		rendered_config: StdPlugin.render_nix(shell_config.pkgs),
-	}
-
-	plugin : PluginApi.Plugin
-	plugin = PluginApi.Plugin.{
-		backends,
-		commands: [shell_command],
-		implementations: [nix_shell],
-		name: "std-plugin",
 	}
 
 	render_nix : List(Str) -> Str
