@@ -1,13 +1,12 @@
 app [config] {
 	kai: platform "./platform/main.roc",
+	std: "./plugins/main.roc",
 }
 
-import kai.Kai
+import std.StdPlugin
 
-config : Kai.Config
-config = {
-	name: "Kai developer shell",
-	shell: {
+config = [
+	StdPlugin.shell({
 		pkgs: [
 			# TODO: Unfortunately we are blocked on true parity with
 			#       this project's flake.nix because we can't use
@@ -20,5 +19,5 @@ config = {
 			"diffutils",
 			"shfmt",
 		],
-	},
-}
+	}),
+]
