@@ -1,15 +1,17 @@
+import kai.Plugin as PluginApi
+
 # Stable configuration shared by every plugin.
 Kai := [].{
 	ModuleConfig : {
-		backend : Str,
-		command : Str,
-		source : Str,
+		implementation : PluginApi.Implementation,
+		rendered_config : Str,
 	}
 
 	render : List(ModuleConfig) -> Try(Str, [NoModulesConfigured])
 	render = |modules|
 		match modules {
 			[] => Err(NoModulesConfigured)
-			[first, ..] => Ok(first.source)
-		}
+			[first, ..] =>
+				Ok(Json.to_str(PluginApi.lower(first.implementation, first.rendered_config)))
+			}
 }

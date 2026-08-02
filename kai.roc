@@ -3,10 +3,10 @@ app [config] {
 	std: "./plugins/main.roc",
 }
 
-import std.StdConfig
+import std.StdPlugin
 
 config = [
-	StdConfig.shell({
+	StdPlugin.shell({
 		pkgs: [
 			# TODO: Unfortunately we are blocked on true parity with
 			#       this project's flake.nix because we can't use

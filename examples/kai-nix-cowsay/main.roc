@@ -3,8 +3,10 @@ app [config] {
 	std: "../../plugins/main.roc",
 }
 
-import std.StdConfig
+import std.StdPlugin as Std
 
 config = [
-	StdConfig.shell({ pkgs: ["cowsay"] }),
+	Std.shell({
+		pkgs: ["cowsay"],
+	}),
 ]

@@ -4,7 +4,9 @@ platform "kai"
 		config : _
 	}
 	exposes [Kai]
-	packages {}
+	packages {
+		kai: "../xkai-bin/package.roc",
+	}
 	provides {
 		"roc_main": main_for_host!,
 	}

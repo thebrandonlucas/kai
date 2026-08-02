@@ -51,6 +51,11 @@ main! = |args| {
 				Path.join(generated_dir, "StdPlugin.roc"),
 				plugin_source,
 			)?
+			executor_source = Path.read_utf8!(Path.utf8("xkai-bin/Executor.roc"))?
+			Path.write_utf8!(
+				Path.join(generated_dir, "Executor.roc"),
+				executor_source,
+			)?
 
 			# TODO: this only builds the std_plugin kai, need to variablize it
 			cli_source = Str.join_with(
@@ -60,9 +65,10 @@ main! = |args| {
 					"\tkai: \"../xkai-bin/package.roc\"",
 					"}",
 					"",
+					"import Executor",
 					"import StdPlugin",
 					"",
-					"main! = |args| StdPlugin.run!(args)",
+					"main! = |args| Executor.run!(StdPlugin.plugin, args)",
 				],
 				"\n",
 			)

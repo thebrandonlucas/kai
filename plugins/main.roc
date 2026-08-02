@@ -1,5 +1,5 @@
 package
-	[StdConfig, StdPlugin]
+	[StdPlugin]
 	{
 		kai: "../xkai-bin/package.roc",
 	}
