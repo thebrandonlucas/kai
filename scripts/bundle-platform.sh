@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 ###############
-# Builds a bundle containing the kai config platform,
+# Builds a self-contained Kai platform bundle,
 # ready for consumption and distribution by Roc apps.
-# #############
+###############
 set -euo pipefail
-shopt -s nullglob
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 platform_dir="$root_dir/platform"
+api_dir="$root_dir/xkai-bin"
 output_dir="$root_dir/dist"
 
-mkdir -p "$output_dir"
-rm -f "$output_dir"/*.tar.zst
+platform_files=(
+  main.roc
+  Host.roc
+  Kai.roc
+  LICENSE
+)
 
-cd "$platform_dir"
+api_files=(
+  package.roc
+  Plugin.roc
+)
 
 required_native_files=(
   targets/x64musl/crt1.o
@@ -26,33 +33,32 @@ required_native_files=(
   targets/arm64mac/libhost.a
 )
 
-for file in "${required_native_files[@]}"; do
-  if [[ ! -f "$file" ]]; then
+for file in "${platform_files[@]}"; do
+  if [[ ! -f "$platform_dir/$file" ]]; then
     echo "error: required platform input is missing: $file" >&2
     exit 1
   fi
 done
 
-[[ -f main.roc ]] || {
-  echo "error: platform/main.roc does not exist" >&2
-  exit 1
-}
-
-roc_files=(main.roc)
-
-for file in *.roc blueprint/*.roc; do
-  [[ "$file" == main.roc ]] || roc_files+=("$file")
+for file in "${api_files[@]}"; do
+  if [[ ! -f "$api_dir/$file" ]]; then
+    echo "error: required API input is missing: xkai-bin/$file" >&2
+    exit 1
+  fi
 done
 
-native_files=(
-  targets/*/*.o
-  targets/*/*.a
-  targets/*/*.lib
-)
+for file in "${required_native_files[@]}"; do
+  if [[ ! -f "$platform_dir/$file" ]]; then
+    echo "error: required platform input is missing: $file" >&2
+    exit 1
+  fi
+done
 
-license_files=(
-  LICENSE
-  blueprint/LICENSE
+mapfile -t native_files < <(
+  cd "$platform_dir"
+  find targets -type f \
+    \( -name '*.o' -o -name '*.a' -o -name '*.lib' \) \
+    -print | LC_ALL=C sort
 )
 
 if ((${#native_files[@]} == 0)); then
@@ -60,14 +66,59 @@ if ((${#native_files[@]} == 0)); then
   exit 1
 fi
 
-echo "Bundling platform files:"
-printf ' %s\n' \
-  "${roc_files[@]}" \
-  "${native_files[@]}" \
-  "${license_files[@]}"
+# Roc's bundler requires the staging and output directories to share a root.
+stage_dir="$(mktemp -d -p "$root_dir" .platform-bundle.XXXXXX)"
+cleanup() {
+  rm -rf "$stage_dir"
+}
+trap cleanup EXIT
 
-roc bundle \
-  "${roc_files[@]}" \
-  "${native_files[@]}" \
-  "${license_files[@]}" \
-  --output-dir "$output_dir"
+for file in "${platform_files[@]}"; do
+  cp "$platform_dir/$file" "$stage_dir/$file"
+done
+
+for file in "${api_files[@]}"; do
+  cp "$api_dir/$file" "$stage_dir/$file"
+done
+
+for file in "${native_files[@]}"; do
+  mkdir -p "$stage_dir/$(dirname "$file")"
+  cp "$platform_dir/$file" "$stage_dir/$file"
+done
+
+if ! grep -Fq 'kai: "../xkai-bin/package.roc"' "$stage_dir/main.roc"; then
+  echo "error: platform/main.roc does not contain the expected API package path" >&2
+  exit 1
+fi
+
+sed -i \
+  's#kai: "../xkai-bin/package\.roc"#kai: "./package.roc"#' \
+  "$stage_dir/main.roc"
+
+if ! grep -Fq 'kai: "./package.roc"' "$stage_dir/main.roc"; then
+  echo "error: failed to rewrite the staged API package path" >&2
+  exit 1
+fi
+
+bundle_files=(
+  main.roc
+  Host.roc
+  Kai.roc
+  package.roc
+  Plugin.roc
+  "${native_files[@]}"
+  LICENSE
+)
+
+echo "Bundling platform files:"
+printf ' %s\n' "${bundle_files[@]}"
+
+mkdir -p "$output_dir"
+rm -f "$output_dir"/*.tar.zst
+
+(
+  cd "$stage_dir"
+  roc bundle \
+    "${bundle_files[@]}" \
+    --output-dir "$output_dir"
+)

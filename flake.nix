@@ -26,7 +26,7 @@
     let
       inherit (nixpkgs) lib;
 
-      version = "0.0.1";
+      version = builtins.readFile ./xkai-bin/VERSION;
 
       supportedSystems = [
         "x86_64-linux"
@@ -72,8 +72,14 @@
       rocHttpName = "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS";
       rocHttpUrl = "https://github.com/roc-lang/http/releases/download/1.0.0/" + "${rocHttpName}.tar.zst";
 
-      mkKaiBinary =
+      mkRocBinary =
         pkgs: rocTarget:
+        {
+          pname,
+          source,
+          localSource,
+          binaryName,
+        }:
         let
           roc = rocFor pkgs;
 
@@ -89,7 +95,7 @@
 
         in
         pkgs.stdenvNoCC.mkDerivation {
-          pname = "kai-${rocTarget}";
+          pname = "${pname}-${rocTarget}";
           inherit version;
 
           src = self;
@@ -118,20 +124,20 @@
               "${rocHttpUrl}" \
               "$PWD/${rocHttpName}/main.roc"
 
-            cp cli/main.roc cli/main-local.roc
+            cp ${source} ${localSource}
 
-            substituteInPlace cli/main-local.roc \
+            substituteInPlace ${localSource} \
               --replace-fail \
               "${basicCliUrl}" \
               "$PWD/${basicCliName}/main.roc"
 
             roc build \
-              cli/main-local.roc \
+              ${localSource} \
               --opt=speed \
               --target=${rocTarget} \
-              --output=kai
+              --output=${binaryName}
 
-            llvm-strip kai
+            llvm-strip ${binaryName}
 
             runHook postBuild
           '';
@@ -140,32 +146,68 @@
 
             runHook preInstall
 
-            install -Dm755 kai "$out/bin/kai"
+            install -Dm755 ${binaryName} "$out/bin/${binaryName}"
 
             runHook postInstall
           '';
 
         };
 
-      mkKaiPackage =
-        pkgs: binary:
-        pkgs.runCommand "kai-${version}"
+      mkKaiBinary =
+        pkgs: rocTarget:
+        mkRocBinary pkgs rocTarget {
+          pname = "kai";
+          source = "xkai-bin/generated-cli.roc";
+          localSource = "xkai-bin/generated-cli-local.roc";
+          binaryName = "kai";
+        };
+
+      mkXkaiBinary =
+        pkgs: rocTarget:
+        mkRocBinary pkgs rocTarget {
+          pname = "xkai";
+          source = "xkai-bin/main.roc";
+          localSource = "xkai-bin/main-local.roc";
+          binaryName = "xkai";
+        };
+
+      mkWrappedPackage =
+        pkgs:
+        {
+          pname,
+          binary,
+          runtimeInputs,
+        }:
+        pkgs.runCommand "${pname}-${version}"
           {
             nativeBuildInputs = [ pkgs.makeWrapper ];
-
           }
           ''
 
             mkdir -p "$out/bin"
 
-            makeWrapper ${binary}/bin/kai "$out/bin/kai" \
-             --prefix PATH : ${
-               lib.makeBinPath [
-                 (rocFor pkgs)
-                 pkgs.nix
-               ]
-             }
+            makeWrapper ${binary}/bin/${pname} "$out/bin/${pname}" \
+              --prefix PATH : ${lib.makeBinPath runtimeInputs}
           '';
+
+      mkKaiPackage =
+        pkgs: binary:
+        mkWrappedPackage pkgs {
+          pname = "kai";
+          inherit binary;
+          runtimeInputs = [
+            (rocFor pkgs)
+            pkgs.nix
+          ];
+        };
+
+      mkXkaiPackage =
+        pkgs: binary:
+        mkWrappedPackage pkgs {
+          pname = "xkai";
+          inherit binary;
+          runtimeInputs = [ (rocFor pkgs) ];
+        };
 
       mkReleaseArchive =
         pkgs: binary: targetSystem:
@@ -242,11 +284,13 @@
         let
           pkgs = pkgsFor system;
 
-          nativeBinary = mkKaiBinary pkgs rocTargetFor.${system};
-          kai = mkKaiPackage pkgs nativeBinary;
+          nativeKaiBinary = mkKaiBinary pkgs rocTargetFor.${system};
+          nativeXkaiBinary = mkXkaiBinary pkgs rocTargetFor.${system};
+          kai = mkKaiPackage pkgs nativeKaiBinary;
+          xkai = mkXkaiPackage pkgs nativeXkaiBinary;
 
           common = {
-            inherit kai;
+            inherit kai xkai;
             default = kai;
             platform-bundle = mkPlatformBundle pkgs;
           };
@@ -275,14 +319,19 @@
         system:
         let
           kai = self.packages.${system}.kai;
-          app = {
+          xkai = self.packages.${system}.xkai;
+          kaiApp = {
             type = "app";
             program = "${kai}/bin/kai";
           };
         in
         {
-          kai = app;
-          default = app;
+          kai = kaiApp;
+          default = kaiApp;
+          xkai = {
+            type = "app";
+            program = "${xkai}/bin/xkai";
+          };
         }
       );
 
@@ -291,12 +340,19 @@
         let
           pkgs = pkgsFor system;
           kai = self.packages.${system}.kai;
+          xkai = self.packages.${system}.xkai;
         in
         {
           package = kai;
+          xkai-package = xkai;
 
           version = pkgs.runCommand "kai-version-check" { } ''
             test "$(${kai}/bin/kai version)" = "kai version ${version}"
+            touch "$out"
+          '';
+
+          xkai-version = pkgs.runCommand "xkai-version-check" { } ''
+            test "$(${xkai}/bin/xkai version)" = "xkai version ${version}"
             touch "$out"
           '';
         }

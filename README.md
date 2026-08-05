@@ -1,10 +1,12 @@
 # Kai - A friendly frontend for determinate computing
 
-> WARNING: Hobby project. Not intended for serious or commercial use at this time. Use at your own risk.
+> WARNING: Hobby project. Use at your own risk!
 
-Kai is a CLI for making determinate systems (mainly [Nix]()) easy to use.
+Kai is a CLI that makes using reproducible systems easy, friendly, and fun.
 
-The goal is to make determinate systems so easy and powerful to use they become the de-facto choice. Practically, this means adopting Nix under the hood and creating useful abstractions in the shorter term.
+There are basically two complete reproducible systems today: [Nix](https://determinate.systems/) and [Guix](https://guix.gnu.org/). They are hard to use. Kai builds on top of them with the goal of making them easy, extensible, customizable, and powerful.
+
+The goal is to make using these so easy and powerful that they become the de-facto choice for computer use in all its forms: from desktops to servers to fridges and toasters. Practically, this means adopting Nix under the hood and creating useful abstractions on top in the short term.
 
 ### Installation
 
@@ -18,6 +20,8 @@ When Kai becomes self-hosted, that will change to just be `kai` :)
 
 ### Run without installing
 
+One immediate benefit of a determinate system is you can do things like this!
+
 ```sh
 nix run github:thebrandonlucas/kai -- version
 ```
@@ -28,10 +32,24 @@ nix run github:thebrandonlucas/kai -- version
 git clone https://github.com/thebrandonlucas/kai.git
 cd kai 
 nix build .#kai 
-./result/bin/kai version
+./result/bin/kai help
 ```
 
-## Platform support 
+## Design
+
+> Simple things should be simple, complex things should be possible
+
+- [Alan Kay](https://www.quora.com/What-is-the-story-behind-Alan-Kay-s-adage-Simple-things-should-be-simple-complex-things-should-be-possible)
+
+The design is heavily inspired by [`caddy`](https://caddyserver.com/). `caddy`'s [architecture](https://caddyserver.com/docs/architecture) allows users to write plugins to extend behavior, but the core library comes with everything most users would want, and the default behavior ships with features that beat out any other web server I've used.
+
+It is a masterclass in tool design.
+
+Thus Kai uses a similar architecture. It has a binary, `kai`, which comes with a set of commands for a given `DeterminateBackend` (`nix` or `guix`), and a simple config file, `kai.roc`, which specifies behavior.
+
+You may extend `kai` via the `xkai` binary by building a `Plugin`, similar to `caddy`'s `xcaddy`. This allows you to change the default behavior of commands provided in the standard plugin, or add new commands entirely!
+
+## Platform support
 
 I've only tested this on `x86_64-linux` so far, feel free to open an issue if it doesn't build on your system. In theory, it should work on arm64, x64, across Linux and MacOS.
 
@@ -60,7 +78,7 @@ Other than `nix develop` anytime you want a shell or `direnv allow` once, we hav
 
 There are three ways to build via the flake:
 
-- `zig-out/bin/kai`: development/CI executable
+- `zig-out/ci/*`: development/CI executables discovered from Roc app roots
 - `result/bin/kai`: Nix-wrapped with runtime tools (e.g. `roc` and others) on `PATH`
 - `kai-<version>-<system>.tar.gz`: release archive
 
@@ -101,6 +119,13 @@ Eventually, we want our blueprint protocol to support the following universal th
 6. Package Resolution (?)
 7. More TBD.
 
+### Contributing
+
+If you would like to contribute, I would love for you to open an issue!
+
 ### Looking Ahead
 
 Aside from making a great tool for programmers to encourage the use of determinate computing, the hope is to go far beyond that and [dream](https://www.amazon.com/Dream-Machine-M-Mitchell-Waldrop/dp/1732265119) about what computers could be. I believe determinate computing is in its nascent form, and the true realization of its potential could have monumental and lasting effects as a new, better way to use computers.
+
+### Attribution 
+Huge thank you to Luke Boswell for inspiring the initial portable typed configuration idea with [roc-blueprint](https://github.com/lukewilliamboswell/roc-blueprint) and his enthusiastic evangelism of this idea.
