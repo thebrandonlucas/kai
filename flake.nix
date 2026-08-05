@@ -371,6 +371,7 @@
               (rocFor pkgs)
               pkgs.zig_0_16
 
+              pkgs.actionlint
               pkgs.bash
               pkgs.coreutils
               pkgs.diffutils
