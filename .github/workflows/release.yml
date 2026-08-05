@@ -58,7 +58,21 @@ jobs:
             exit 1
           fi
 
+          RELEASE_NAME="Kai $VERSION"
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]] &&
+            [[ "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" == "tag" ]]; then
+            TAG_NAME="$(
+              git for-each-ref \
+                --format='%(contents:subject)' \
+                "refs/tags/$GITHUB_REF_NAME"
+            )"
+            if [[ -n "$TAG_NAME" ]]; then
+              RELEASE_NAME="$TAG_NAME"
+            fi
+          fi
+
           echo "VERSION=$VERSION" >>"$GITHUB_ENV"
+          echo "RELEASE_NAME=$RELEASE_NAME" >>"$GITHUB_ENV"
 
       - name: Install Nix
         uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
@@ -114,7 +128,7 @@ jobs:
 
           gh release create "v${VERSION}" \
             --target "${GITHUB_SHA}" \
-            --title "Kai ${VERSION}" \
+            --title "${RELEASE_NAME}" \
             --generate-notes \
             --draft
           release_created=true
