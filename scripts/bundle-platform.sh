@@ -10,6 +10,7 @@ platform_dir="$root_dir/platform"
 api_dir="$root_dir/xkai-bin"
 output_dir="$root_dir/dist"
 
+# generic platform
 platform_files=(
   main.roc
   Host.roc
@@ -17,11 +18,13 @@ platform_files=(
   LICENSE
 )
 
+# xkai core library plugin
 api_files=(
   package.roc
   Plugin.roc
 )
 
+# supported machines: x64 and arm linux and mac
 required_native_files=(
   targets/x64musl/crt1.o
   targets/x64musl/libc.a
@@ -32,6 +35,8 @@ required_native_files=(
   targets/x64mac/libhost.a
   targets/arm64mac/libhost.a
 )
+
+# Ensure expected files present
 
 for file in "${platform_files[@]}"; do
   if [[ ! -f "$platform_dir/$file" ]]; then
