@@ -6,13 +6,24 @@ version_file="$root_dir/xkai-bin/VERSION"
 manifest_file="$root_dir/build.zig.zon"
 semver_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 
-if (($# != 1)); then
-  echo "usage: $0 X.Y.Z" >&2
+if (($# != 2)); then
+  echo "usage: $0 NAME X.Y.Z" >&2
   exit 1
 fi
 
-version="$1"
+release_name="$1"
+version="$2"
 tag="v$version"
+
+if [[ ! "$release_name" =~ [^[:space:]] ]]; then
+  echo "error: release name must not be empty" >&2
+  exit 1
+fi
+
+if [[ "$release_name" == *$'\n'* || "$release_name" == *$'\r'* ]]; then
+  echo "error: release name must fit on one line" >&2
+  exit 1
+fi
 
 if [[ ! "$version" =~ $semver_pattern ]]; then
   echo "error: version must be a semantic version in X.Y.Z form" >&2
@@ -119,7 +130,7 @@ else
   echo "Using the already prepared, unreleased version $version."
 fi
 
-echo "Building and checking release $version..."
+echo "Building and checking $release_name ($version)..."
 nix develop --command ./scripts/build-release.sh
 
 status="$(git status --porcelain --untracked-files=all)"
@@ -147,7 +158,7 @@ if [[ "$version_changed" == true ]]; then
   release_committed=true
 fi
 
-git tag --annotate "$tag" --message "Kai $version"
+git tag --annotate "$tag" --message "$release_name"
 tag_created=true
 
 echo "Pushing master and $tag..."
@@ -157,4 +168,4 @@ push_started=false
 
 release_committed=false
 tag_created=false
-echo "Release $tag pushed; GitHub Actions will publish the artifacts."
+echo "Release $release_name ($tag) pushed; GitHub Actions will publish the artifacts."
