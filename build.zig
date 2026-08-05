@@ -265,6 +265,9 @@ pub fn build(b: *std.Build) void {
     );
     check_step.dependOn(&check_scripts.step);
 
+    const check_actions = b.addSystemCommand(&.{"actionlint"});
+    check_step.dependOn(&check_actions.step);
+
     const nix_fmt = addFilesCommand(
         b,
         &.{ "nix", "fmt" },
