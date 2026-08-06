@@ -1,15 +1,14 @@
-# Generically execute side-effects as defined by the plugin 
-# Currently, only writing (e.g. flake.nix) or running commands 
-# (e.g. "nix shell")
-
-# This keeps plugin models & testing pure and effect-free
+# Generically execute side-effects as defined by the plugin.
+# This keeps plugin models & testing pure and effect-free.
 
 import pf.Cmd
+import pf.Env
 import pf.OsStr
 import pf.Path
 import pf.Stdout
 
 import kai.Plugin as PluginApi
+import std.StdPlugin
 
 import "VERSION" as canonical_version : Str
 
@@ -18,24 +17,21 @@ Executor := [].{
 	version = canonical_version
 
 	run! : List(OsStr) => Try({}, _)
-	run! = |args|
-		match args.drop_first(1).map(OsStr.display) {
+	run! = |args| {
+		display_args = args.drop_first(1).map(OsStr.display)
+		match display_args {
 			["version"] => {
 				Stdout.line!("kai version ${Executor.version}")?
 				Ok({})
 			}
 			_ => {
-				config_args = [OsStr.utf8("kai.roc")].concat(args.drop_first(1))
-				output = Cmd.new(OsStr.utf8("roc"))
-					.args(config_args)
-					.exec_output!()?
-
-				plan : PluginApi.Plan
-				plan = Json.parse(output.stdout_utf8) ? |err| InvalidPlan(err)
-
+				source = Path.read_utf8!(Path.utf8("config.kai"))?
+				host = Env.platform!()
+				plan = StdPlugin.plan(source, display_args, host.os, host.arch)?
 				Executor.execute!(plan)
 			}
 		}
+	}
 
 	execute! : PluginApi.Plan => Try({}, _)
 	execute! = |plan| {

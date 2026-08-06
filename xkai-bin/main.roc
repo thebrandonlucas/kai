@@ -10,9 +10,10 @@ import pf.Cmd
 import Cli
 
 import "Executor.roc" as executor_source : Str
-import "generated-cli.roc" as generated_cli_source : Str
+import "generated-portable-cli.txt" as generated_cli_source : Str
 import "package.roc" as package_source : Str
 import "Plugin.roc" as plugin_source : Str
+import "../plugins/StdPlugin.roc" as std_plugin_source : Str
 import "VERSION" as version_source : Str
 
 print_usage! : {} => Try({}, _)
@@ -48,6 +49,14 @@ main! = |args| {
 			Path.write_utf8!(Path.join(generated_dir, "package.roc"), package_source)?
 			Path.write_utf8!(Path.join(generated_dir, "Plugin.roc"), plugin_source)?
 			Path.write_utf8!(Path.join(generated_dir, "VERSION"), version_source)?
+
+			std_dir = Path.join(generated_dir, "std")
+			Path.create_all!(std_dir)?
+			Path.write_utf8!(
+				Path.join(std_dir, "main.roc"),
+				"package [StdPlugin] { kai: \"../package.roc\" }\n",
+			)?
+			Path.write_utf8!(Path.join(std_dir, "StdPlugin.roc"), std_plugin_source)?
 
 			Path.write_utf8!(Path.join(generated_dir, "cli.roc"), generated_cli_source)?
 			# TODO: generalize output
