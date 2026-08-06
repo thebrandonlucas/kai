@@ -133,7 +133,7 @@
 
             roc build \
               ${localSource} \
-              --opt=speed \
+              --opt=size \
               --target=${rocTarget} \
               --output=${binaryName}
 
@@ -203,7 +203,10 @@
         mkWrappedPackage pkgs {
           pname = "xkai";
           inherit binary;
-          runtimeInputs = [ (rocFor pkgs) ];
+          runtimeInputs = [
+            (rocFor pkgs)
+            pkgs.llvmPackages.bintools
+          ];
         };
 
       mkReleaseArchive =
