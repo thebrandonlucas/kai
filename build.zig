@@ -1,10 +1,5 @@
 const std = @import("std");
 
-const RocTarget = struct {
-    name: []const u8,
-    query: std.Target.Query,
-};
-
 const SourceTree = struct {
     nix_files: []const []const u8,
     roc_apps: []const []const u8,
@@ -17,7 +12,6 @@ const SourceTree = struct {
 const RocRootKind = enum {
     app,
     package,
-    platform,
 };
 
 const excluded_source_dirs = [_][]const u8{
@@ -43,7 +37,6 @@ fn rocRootKind(contents: []const u8) ?RocRootKind {
         if (line.len == 0 or line[0] == '#') continue;
         if (std.mem.startsWith(u8, line, "app ")) return .app;
         if (std.mem.startsWith(u8, line, "package")) return .package;
-        if (std.mem.startsWith(u8, line, "platform ")) return .platform;
         return null;
     }
     return null;
@@ -154,79 +147,8 @@ fn artifactName(b: *std.Build, source_path: []const u8) []const u8 {
     return name;
 }
 
-const roc_targets = [_]RocTarget{
-    .{
-        .name = "x64musl",
-        .query = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .linux,
-            .abi = .musl,
-        },
-    },
-    .{
-        .name = "arm64musl",
-        .query = .{
-            .cpu_arch = .aarch64,
-            .os_tag = .linux,
-            .abi = .musl,
-        },
-    },
-    .{
-        .name = "x64mac",
-        .query = .{
-            .cpu_arch = .x86_64,
-            .os_tag = .macos,
-        },
-    },
-    .{
-        .name = "arm64mac",
-        .query = .{
-            .cpu_arch = .aarch64,
-            .os_tag = .macos,
-        },
-    },
-};
-
 pub fn build(b: *std.Build) void {
-    // e.g. ReleaseSafe, ReleaseFast, ReleaseSmall, Debug
-    const optimize = b.standardOptimizeOption(.{});
     const sources = discoverSources(b);
-
-    const hosts_step = b.step(
-        "hosts",
-        "Build the Roc host libraries for all supported targets.",
-    );
-    for (roc_targets) |roc_target| {
-        const target = b.resolveTargetQuery(roc_target.query);
-
-        const host_lib = b.addLibrary(.{
-            .name = b.fmt("host-{s}", .{roc_target.name}),
-            .linkage = .static,
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/host.zig"),
-                .target = target,
-                .optimize = optimize,
-                .strip = optimize != .Debug,
-                .pic = true,
-            }),
-        });
-
-        host_lib.bundle_compiler_rt = true;
-
-        const copy_host = b.addUpdateSourceFiles();
-        copy_host.addCopyFileToSource(
-            host_lib.getEmittedBin(),
-            b.fmt(
-                "platform/targets/{s}/libhost.a",
-                .{roc_target.name},
-            ),
-        );
-
-        copy_host.step.dependOn(&host_lib.step);
-        hosts_step.dependOn(&copy_host.step);
-    }
-
-    b.getInstallStep().dependOn(hosts_step);
 
     // All static checks (roc, zig, sh)
     const check_step = b.step(
@@ -342,7 +264,6 @@ pub fn build(b: *std.Build) void {
         "mkdir", "-p", "zig-out/ci", "zig-out/tests",
     });
     prepare_outputs.step.dependOn(test_step);
-    prepare_outputs.step.dependOn(hosts_step);
 
     for (sources.roc_apps) |app| {
         const output_path = b.fmt(
@@ -376,16 +297,4 @@ pub fn build(b: *std.Build) void {
             ci_step.dependOn(&test_projects.step);
         }
     }
-
-    const bundle_platform = b.addSystemCommand(&.{
-        "scripts/bundle-platform.sh",
-    });
-    // Ensure the release host library exists before bundling
-    bundle_platform.step.dependOn(hosts_step);
-
-    const bundle_step = b.step(
-        "bundle",
-        "Build the Kai platform bundle",
-    );
-    bundle_step.dependOn(&bundle_platform.step);
 }

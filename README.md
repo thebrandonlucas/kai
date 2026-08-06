@@ -45,9 +45,25 @@ The design is heavily inspired by [`caddy`](https://caddyserver.com/). `caddy`'s
 
 It is a masterclass in tool design.
 
-Thus Kai uses a similar architecture. It has a binary, `kai`, which comes with a set of commands for a given `DeterminateBackend` (`nix` or `guix`), and a simple config file, `kai.roc`, which specifies behavior.
+Thus Kai uses a similar architecture. The stock `kai` binary includes `StdPlugin`, which reads `config.kai` and provides the default commands and Nix backend. For example:
 
-You may extend `kai` via the `xkai` binary by building a `Plugin`, similar to `caddy`'s `xcaddy`. This allows you to change the default behavior of commands provided in the standard plugin, or add new commands entirely!
+```kai
+on linux {
+  shell {
+    pkgs: ["cowsay", "fortune"]
+  }
+}
+```
+
+`StdPlugin` and custom plugins implement the same contract: each exports a plugin module that turns the configuration source, command arguments, and host platform into a pure action plan. The shared executor performs that plan's file writes and backend commands.
+
+`xkai` is the plugin builder, similar to `xcaddy`. Pass it custom Roc plugin modules to add commands or override standard behavior:
+
+```sh
+xkai build path/to/CustomPlugin.roc
+```
+
+For the build only, `xkai` writes its embedded API, executor, standard plugin, and supplied custom plugins to a temporary directory and invokes Roc. `basic-cli` is the compile-time Roc platform for both stock and customized binaries. The result is a portable `kai` binary with that registry compiled in; the temporary build inputs are removed. At runtime, `kai` reads `config.kai`. The `.kai/` directory contains backend output such as `.kai/flake.nix`, never Roc source or plugin build inputs.
 
 ## Platform support
 
@@ -68,30 +84,28 @@ Other than `nix develop` anytime you want a shell or `direnv allow` once, we hav
    | Run tests | `zig build test` |
    | Run complete source CI locally | `zig build ci` |
    | Check the native Nix package | `nix flake check` |
-   | Build the native Nix package | `nix build .#kai` |
+   | Build the native Kai package | `nix build .#kai` |
+   | Build the native xkai package | `nix build .#xkai` |
    | Run Kai through Nix | `nix run . -- version` |
-   | Build all platform host libraries | `zig build hosts -Doptimize=ReleaseSafe` |
-   | Build the platform bundle | `nix build .#platform-bundle` |
+   | Run xkai through Nix | `nix run .#xkai -- version` |
 
 
 ## Build Artifacts
 
-There are three ways to build via the flake:
+Build outputs include:
 
 - `zig-out/ci/*`: development/CI executables discovered from Roc app roots
-- `result/bin/kai`: Nix-wrapped with runtime tools (e.g. `roc` and others) on `PATH`
-- `kai-<version>-<system>.tar.gz`: release archive
+- `result/bin/kai`: stock Kai, Nix-wrapped with `nix` on `PATH`
+- `result/bin/xkai`: the plugin builder, Nix-wrapped with Roc on `PATH`
+- `kai-<version>-<system>.tar.gz`: portable Kai CLI release archive
 
-The release archive contains the raw executable, but careful! Kai currently doesn't bundle the `nix` or `roc` runtime dependencies. In the future I hope to build these in.
+The stock `kai` executable does not require Roc at runtime. Release archives contain the raw portable executable, so `nix` must already be available to use the standard shell backend. `xkai` requires Roc because it compiles the selected plugins into a new executable.
 
 ## Releases
 
-Linux releases have:
+Linux releases contain only the portable Kai CLI archives and their checksums:
 
-```sh
-# kai platform bundle
-<HASH>.tar.zst
-# cli's
+```text
 kai-<version>-x86_64-linux.tar.gz
 kai-<version>-aarch64-linux.tar.gz
 SHA256SUMS

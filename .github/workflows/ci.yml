@@ -41,7 +41,6 @@ jobs:
       - name: Build release outputs
         run: |
           nix build \
-            .#platform-bundle \
             .#release-x86_64-linux \
             .#release-aarch64-linux \
             --no-link

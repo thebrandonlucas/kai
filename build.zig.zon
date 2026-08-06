@@ -1,16 +1,18 @@
 .{
-    .name = .kai_config_platform,
+    .name = .kai,
     // Required package metadata; release versions come from xkai-bin/VERSION.
     .version = "0.0.2",
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
-    // FIXME: how to get this?
-    .fingerprint = 0x1443f7b1fab8ac36,
-    // FIXME: paths to _what_? how do i know what needs to be included here?
+    .fingerprint = 0xf34b7ec9d56015fc,
     .paths = .{
+        ".github",
         "build.zig",
         "build.zig.zon",
-        "platform",
-        "src",
+        "examples",
+        "flake.nix",
+        "plugins",
+        "scripts",
+        "xkai-bin",
     },
 }

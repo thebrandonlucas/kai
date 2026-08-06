@@ -157,8 +157,8 @@
         pkgs: rocTarget:
         mkRocBinary pkgs rocTarget {
           pname = "kai";
-          source = "xkai-bin/generated-cli.roc";
-          localSource = "xkai-bin/generated-cli-local.roc";
+          source = "xkai-bin/stock-cli.roc";
+          localSource = "xkai-bin/stock-cli-local.roc";
           binaryName = "kai";
         };
 
@@ -195,10 +195,7 @@
         mkWrappedPackage pkgs {
           pname = "kai";
           inherit binary;
-          runtimeInputs = [
-            (rocFor pkgs)
-            pkgs.nix
-          ];
+          runtimeInputs = [ pkgs.nix ];
         };
 
       mkXkaiPackage =
@@ -235,50 +232,6 @@
               kai
           '';
 
-      mkPlatformBundle =
-        pkgs:
-        pkgs.stdenvNoCC.mkDerivation {
-          pname = "kai-platform";
-          inherit version;
-
-          src = self;
-
-          nativeBuildInputs = [
-            pkgs.bash
-            pkgs.coreutils
-            pkgs.findutils
-            (rocFor pkgs)
-            pkgs.zig_0_16
-          ];
-
-          dontConfigure = true;
-
-          postPatch = ''
-            patchShebangs scripts/bundle-platform.sh
-          '';
-
-          buildPhase = ''
-
-            runHook preBuild 
-
-            export HOME="$TMPDIR"
-
-            zig build bundle -Doptimize=ReleaseSafe
-
-            runHook postBuild
-          '';
-
-          installPhase = ''
-            runHook preInstall 
-
-            mkdir -p "$out"
-
-            cp dist/*tar.zst "$out/"
-
-            runHook postInstall
-          '';
-        };
-
       packagesFor =
         system:
         let
@@ -292,7 +245,6 @@
           common = {
             inherit kai xkai;
             default = kai;
-            platform-bundle = mkPlatformBundle pkgs;
           };
 
           releaseArchives =

@@ -3,7 +3,7 @@
 Run the deployment entrypoint from a clean `master` branch:
 
 ```sh
-./scripts/release.sh X.Y.Z
+./scripts/release.sh "Kai X.Y.Z" X.Y.Z
 ```
 
 `xkai-bin/VERSION` is the canonical version source for Roc, Nix, release artifacts, and release automation. Zig requires a literal version in `build.zig.zon`; the release script keeps that mirror synchronized automatically.
@@ -25,10 +25,9 @@ To run the same release build and checks without committing, tagging, or pushing
 ./scripts/build-release.sh
 ```
 
-Artifacts are written to `dist/`:
+Artifacts are written to `dist/`. Checksums cover only the two portable CLI archives:
 
 ```text
-dist/<PLATFORM_HASH>.tar.zst
 dist/kai-X.Y.Z-x86_64-linux.tar.gz
 dist/kai-X.Y.Z-aarch64-linux.tar.gz
 dist/SHA256SUMS
