@@ -102,8 +102,9 @@ build_stage! = |stage, plugin_paths| {
 	Path.write_utf8!(app_path, app_source)?
 	Cmd.exec!(
 		OsStr.utf8("roc"),
-		["build", Path.display(app_path), "--output=kai"].map(OsStr.utf8),
+		["build", Path.display(app_path), "--opt=size", "--output=kai"].map(OsStr.utf8),
 	)?
+	Cmd.exec!(OsStr.utf8("llvm-strip"), [OsStr.utf8("kai")])?
 	Ok({})
 }
 
