@@ -6,6 +6,7 @@
 - As you work, keep track of Roc-specific quirks, errors, and design/implementation recommendations you find in `docs/roc-isms/`. We are using the Roc compiler and as such expect many breaking changes. Keep track bugs by prefixing files with `BUG-*.md` e.g. `BUG-001.md`. Give a clear description of the issue and steps/exact commands to reproduce. For design or implementation bad practices, quirks, or suggestions, put those in `IMPROVEMENT-*.md`. We ignore these files via a `.gitignore`.
 - [Preserve merge commits](https://gist.github.com/mitchellh/319019b1b8aac9110fcfb1862e0c97fb)
 - Sometimes I will write comments in a file and ask you to address them. You should just respond to the questions and not overwrite the comments/modify the file when I do this.
+- When asked to implement a brainstormed feature, favor terseness over verbosity. Assume I will have to read and understand the code and therefore the smallest change to implement desired behavior while following rules is preferred.
 
 
 ## Issue and PR Guidelines
