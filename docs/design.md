@@ -15,6 +15,7 @@ When called by the `kai` CLI, this `config.kai` file produces backend runtime ou
     - "What could go wrong? What's wrong? Which question would we rather ask? The former, because code, like steel, is less expensive to change while it's hot. A problem solved in production is many times more expensive than a problem solved in implementation, or a problem solved in design"
     - "We know that what we ship is solid. We may lack crucial features, but what we have meets our design goals. This is the only way to make steady incremental progress, knowing that the progress we have made is indeed progress."
 - From [Boundaries](https://www.destroyallsoftware.com/talks/boundaries): separate the pure data from side-effects. This makes programs much more predictable and testable. Example from `kai`: `Plugin`s are written as pure data describing which effects to perform, so that we can test the expected results, then an executor actually writes files or calls external commands like `nix`. But the validation happens inside.
+- Style: This repo aspires to the rules set out in [clig.dev](https://clig.dev/)
 
 ## Tests
 - Rules from matklad's [How to Test](https://matklad.github.io/2021/05/31/how-to-test.html) (Thank you [matklad](https://matklad.github.io/)!):
