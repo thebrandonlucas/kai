@@ -8,7 +8,6 @@ import pf.Path
 import pf.Stdout
 
 import kai.Plugin as PluginApi
-import std.StdPlugin
 
 import "VERSION" as canonical_version : Str
 
@@ -16,8 +15,8 @@ Executor := [].{
 	version : Str
 	version = canonical_version
 
-	run! : List(OsStr) => Try({}, _)
-	run! = |args| {
+	run! : List(OsStr), List(PluginApi.Plugin) => Try({}, _)
+	run! = |args, registry| {
 		display_args = args.drop_first(1).map(OsStr.display)
 		match display_args {
 			["version"] => {
@@ -27,15 +26,30 @@ Executor := [].{
 			_ => {
 				source = Path.read_utf8!(Path.utf8("config.kai"))?
 				host = Env.platform!()
-				plan = StdPlugin.plan(source, display_args, host.os, host.arch)?
-				Executor.execute!(plan)
+				match Executor.dispatch(registry, source, display_args, host.os, host.arch) {
+					Ok(selected_plan) => Executor.execute!(selected_plan)
+					Err(InvalidConfig) => Err(InvalidConfig)
+					Err(UnknownCommand) => Err(UnknownCommand)
+					Err(UnsupportedPlatform) => Err(UnsupportedPlatform)
+				}
 			}
 		}
 	}
 
+	dispatch : List(PluginApi.Plugin), Str, List(Str), PluginApi.HostOs, PluginApi.HostArch -> Try(PluginApi.Plan, PluginApi.Error)
+	dispatch = |registry, source, args, os, arch|
+		match registry {
+			[] => Err(UnknownCommand)
+			[first, .. as rest] =>
+				match PluginApi.run(first, source, args, os, arch) {
+					Err(UnknownCommand) => Executor.dispatch(rest, source, args, os, arch)
+					result => result
+				}
+			}
+
 	execute! : PluginApi.Plan => Try({}, _)
-	execute! = |plan| {
-		for action in plan.actions {
+	execute! = |execution_plan| {
+		for action in execution_plan.actions {
 			Executor.execute_action!(action)?
 		}
 		Ok({})

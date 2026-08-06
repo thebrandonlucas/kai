@@ -1,11 +1,23 @@
-# Pure plugin model shared by configuration apps, plugins, and the CLI.
-Plugin := {
-	backends : List(Backend),
-	commands : List(Command),
-	implementations : List(Implementation),
-	name : Str,
-}.{
-	# Side effects to be performed by the plugin
+# Pure plugin model shared by plugins and the CLI.
+Plugin := [
+	Module(
+		{
+			name : Str,
+			plan : Str, List(Str), HostOs, HostArch -> Try(Plan, Error),
+		},
+	),
+].{
+	Error : [InvalidConfig, UnknownCommand, UnsupportedPlatform]
+	HostOs : [LINUX, MACOS, WINDOWS, OTHER(Str)]
+	HostArch : [X86, X64, ARM, AARCH64, OTHER(Str)]
+
+	run : Plugin, Str, List(Str), HostOs, HostArch -> Try(Plan, Error)
+	run = |plugin, source, args, os, arch|
+		match plugin {
+			Module({ plan, name: _ }) => plan(source, args, os, arch)
+		}
+
+	# Side effects to be performed by a plugin.
 	Action := [
 		Exec({ args : List(Str), command : Str }),
 		WriteUtf8({ content : Str, path : Str }),
@@ -39,8 +51,6 @@ Plugin := {
 		backend : Backend,
 		command : Command,
 		# Optional program required for this implementation to work.
-		# For example, a Nix shell requires the `nix` program, while an
-		# implementation that only writes a file has no program requirement.
 		requirement : [None, Program(Str)],
 	}
 
@@ -51,29 +61,7 @@ Plugin := {
 		parser_for : _
 	}
 
-	find_implementation : Plugin, Str -> Try(Implementation, [UnknownCommand(Str)])
-	find_implementation = |plugin, command_name|
-	# FIXME: does this assume there's only one impl
-	# What if for example a plugin has two backends (nix,guix)
-	# for one command name?
-		Plugin.find_in(plugin.implementations, command_name)
-
-	find_in : List(Implementation), Str -> Try(Implementation, [UnknownCommand(Str)])
-	find_in = |implementations, command_name|
-		match implementations {
-			[] => Err(UnknownCommand(command_name))
-			[first, .. as rest] =>
-				if first.command.name == command_name {
-					Ok(first)
-				} else {
-					Plugin.find_in(rest, command_name)
-				}
-			}
-
-	# By actions we mean "effects" that are run
-	# external to the program by e.g. nix or writing files
-	# At this moment we only have command execution or
-	# file writing.
+	# Lower pure action templates into a runtime plan.
 	lower : Implementation, Str -> Plan
 	lower = |implementation, rendered_config| {
 		actions = implementation.actions.map(

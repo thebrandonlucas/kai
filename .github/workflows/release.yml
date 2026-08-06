@@ -97,12 +97,9 @@ jobs:
           test -f "dist/kai-${VERSION}-aarch64-linux.tar.gz"
           test -f "dist/SHA256SUMS"
 
-          bundle_count="$(
-            find dist -maxdepth 1 -name '*.tar.zst' -type f | wc -l
-          )"
-
-          if [[ "$bundle_count" -ne 1 ]]; then
-            echo "Expected exactly one platform bundle, found $bundle_count."
+          artifact_count="$(find dist -maxdepth 1 -type f | wc -l)"
+          if [[ "$artifact_count" -ne 3 ]]; then
+            echo "Expected two CLI archives and SHA256SUMS, found $artifact_count files."
             exit 1
           fi
 
@@ -134,7 +131,6 @@ jobs:
           release_created=true
 
           gh release upload "v${VERSION}" \
-            dist/*.tar.zst \
             dist/*.tar.gz \
             dist/SHA256SUMS
 

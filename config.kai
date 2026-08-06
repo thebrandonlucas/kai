@@ -30,20 +30,8 @@
 #   }
 # }
 
-on linux {
-  shell {
-    pkgs: ["cowsay", "fortune"]
-  }
-}
-
-on macos {
-  shell {
-    pkgs: ["pokemonsay", "fortune"]
-  }
-}
-
-shell nix {
-# explicit pinning
+shell {
+  pkgs: ["cowsay", "fortune"]
 }
 
 

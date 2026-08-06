@@ -3,7 +3,6 @@
 .kai
 generated-docs
 zig-out/
-platform/targets/*/libhost.a
 dist/
 result
 result-*

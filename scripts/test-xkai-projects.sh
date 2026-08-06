@@ -3,67 +3,56 @@ set -euo pipefail
 
 repo_root=$(pwd -P)
 xkai="$repo_root/$1"
+plugin="$repo_root/examples/custom-plugin/CustomPlugin.roc"
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
 
-mkdir "$work_dir/source"
-cp -R \
-  "$repo_root/examples" \
-  "$repo_root/platform" \
-  "$repo_root/plugins" \
-  "$repo_root/xkai-bin" \
-  "$work_dir/source/"
-cp "$repo_root/kai.roc" "$work_dir/source/kai.roc"
-cp "$xkai" "$work_dir/xkai"
-
-mkdir "$work_dir/bin"
-printf '%s\n' \
-  '#!/usr/bin/env bash' \
-  'set -euo pipefail' \
-  '{' \
-  "  printf \"%s\" \"\${0##*/}\"" \
-  "  printf \" %s\" \"\$@\"" \
-  '  printf "\n"' \
-  "} >>\"\${KAI_BACKEND_LOG:?}\"" \
-  >"$work_dir/bin/backend"
-chmod +x "$work_dir/bin/backend"
-ln -s backend "$work_dir/bin/guix"
-ln -s backend "$work_dir/bin/nix"
+mkdir "$work_dir/bin" "$work_dir/tmp"
+cat >"$work_dir/bin/nix" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${KAI_BACKEND_LOG:?}"
+EOF
+chmod +x "$work_dir/bin/nix"
+cp "$repo_root/examples/custom-plugin/config.kai" "$work_dir/config.kai"
+cat >>"$work_dir/config.kai" <<'EOF'
+on linux {
+  shell {
+    pkgs: ["roc"]
+  }
+}
+on macos {
+  shell {
+    pkgs: ["roc"]
+  }
+}
+EOF
 
 export KAI_BACKEND_LOG="$work_dir/backend.log"
 export PATH="$work_dir/bin:$PATH"
+export TMPDIR="$work_dir/tmp"
 
-run_kai() {
-  local project_dir=$1
-  local command=$2
+cd "$work_dir"
+cat >InvalidPlugin.roc <<'EOF'
+plugin = 1 + "invalid"
+EOF
+if "$xkai" build "$work_dir/InvalidPlugin.roc" >build-error.log 2>&1; then
+  echo 'expected invalid plugin build to fail' >&2
+  exit 1
+fi
+test ! -e kai
+test -z "$(find "$TMPDIR" -maxdepth 1 -name 'xkai-*' -print -quit)"
 
-  (
-    cd "$work_dir/source/$project_dir"
-    "$work_dir/xkai" build
-    ./kai "$command"
-  )
-}
+"$xkai" build "$plugin"
 
-: >"$KAI_BACKEND_LOG"
-run_kai . shell
-grep -Fxq 'nix develop path:.kai#default' "$KAI_BACKEND_LOG"
-grep -Fq 'nixpkgs."legacyPackages"."x86_64-linux"."roc"' \
-  "$work_dir/source/.kai/flake.nix"
+test -x kai
+test ! -e .kai
+test -z "$(find "$TMPDIR" -maxdepth 1 -name 'xkai-*' -print -quit)"
 
-: >"$KAI_BACKEND_LOG"
-run_kai examples/external-plugin external-write
+./kai custom-write
+test "$(<custom-plugin-output.txt)" = 'custom plugin worked'
 test ! -s "$KAI_BACKEND_LOG"
-test "$(<"$work_dir/source/examples/external-plugin/external-plugin-output.txt")" = \
-  'external plugin worked'
 
-: >"$KAI_BACKEND_LOG"
-run_kai examples/kai-nix-cowsay shell
-grep -Fxq 'nix develop path:.kai#default' "$KAI_BACKEND_LOG"
-grep -Fq 'nixpkgs."legacyPackages"."x86_64-linux"."cowsay"' \
-  "$work_dir/source/examples/kai-nix-cowsay/.kai/flake.nix"
-
-: >"$KAI_BACKEND_LOG"
-run_kai examples/guix-shell shell
-grep -Fxq 'guix shell --manifest=.kai/manifest.scm' "$KAI_BACKEND_LOG"
-grep -Fxq '(specifications->manifest (list "hello"))' \
-  "$work_dir/source/examples/guix-shell/.kai/manifest.scm"
+./kai shell
+grep -Fxq 'develop path:.kai#default' "$KAI_BACKEND_LOG"
+grep -Fq '."roc"' .kai/flake.nix
+test "$(find .kai -type f | wc -l)" -eq 1
