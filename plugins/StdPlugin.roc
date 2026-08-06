@@ -8,6 +8,16 @@ import kai.Plugin as PluginApi
 StdPlugin := [].{
 	ShellConfig : { pkgs : List(Str) }
 
+	# our new plugin defines whether this is a decision passed
+	# onto the user or not
+	# i.e. must the user specify it? and is it optional if they don't
+	# i.e. fallback?
+
+	# every plugin must now specify:
+	# - keywords
+	# - what subkeywords the keywords contain
+	# - primitive types of the keywords/subkeywords
+	# - 
 	nix : PluginApi.Backend
 	nix = PluginApi.Backend.{ name: "nix" }
 
