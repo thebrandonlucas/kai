@@ -30,19 +30,9 @@
 #   }
 # }
 
-on linux {
-  shell {
-    pkgs: ["cowsay", "fortune"]
-  }
+shell {
+  pkgs: ["cowsay", "fortune"]
 }
-
-on mac {
-  shell {
-    pkgs: ["pokemonsay", "fortune"]
-  }
-}
-
-
 
 #build {
 # ?

@@ -59,23 +59,38 @@ StdPlugin := [].{
 			)
 			.keep_if(|line| !line.is_empty())
 
-		StdPlugin.find_shell(lines, "on ${section} {")
+		match StdPlugin.find_shell(lines, "on ${section} {") {
+			Ok(shell_config) => Ok(shell_config)
+			Err(InvalidConfig) => StdPlugin.find_default_shell(lines)
+		}
 	}
 
 	find_shell : List(Str), Str -> Try(ShellConfig, [InvalidConfig])
 	find_shell = |lines, section_line|
 		match lines {
 			[] => Err(InvalidConfig)
-			[first, "shell {", pkgs_line, ..] if first == section_line and pkgs_line.starts_with("pkgs:") => {
-				decoded : Try(ParsedShellConfig, Json.ParseErr)
-				decoded = Json.parse("{\"pkgs\":${pkgs_line.drop_prefix("pkgs:").trim()}}")
-				match decoded {
-					Ok({ pkgs }) => Ok({ pkgs: pkgs })
-					Err(_) => Err(InvalidConfig)
-				}
-			}
+			[first, "shell {", pkgs_line, ..] if first == section_line and pkgs_line.starts_with("pkgs:") =>
+				StdPlugin.parse_pkgs(pkgs_line)
 			[_, .. as rest] => StdPlugin.find_shell(rest, section_line)
 		}
+
+	find_default_shell : List(Str) -> Try(ShellConfig, [InvalidConfig])
+	find_default_shell = |lines|
+		match lines {
+			[] => Err(InvalidConfig)
+			["shell {", pkgs_line, ..] if pkgs_line.starts_with("pkgs:") => StdPlugin.parse_pkgs(pkgs_line)
+			[_, .. as rest] => StdPlugin.find_default_shell(rest)
+		}
+
+	parse_pkgs : Str -> Try(ShellConfig, [InvalidConfig])
+	parse_pkgs = |pkgs_line| {
+		decoded : Try(ParsedShellConfig, Json.ParseErr)
+		decoded = Json.parse("{\"pkgs\":${pkgs_line.drop_prefix("pkgs:").trim()}}")
+		match decoded {
+			Ok({ pkgs }) => Ok({ pkgs: pkgs })
+			Err(_) => Err(InvalidConfig)
+		}
+	}
 
 	nix : PluginApi.Backend
 	nix = PluginApi.Backend.{ name: "nix" }
@@ -142,6 +157,18 @@ expect {
 	match result {
 		Ok({ actions: [WriteUtf8({ content, path: _ }), Exec(_)] }) =>
 			content.contains("devShells.\"aarch64-darwin\"") and content.contains(".\"pokemonsay\"")
+		_ => Bool.False
+	}
+}
+
+expect {
+	simple_config = "shell {\n\tpkgs: [\"cowsay\", \"fortune\"]\n}"
+	result = StdPlugin.plan(simple_config, ["shell"], LINUX, X64)
+	match result {
+		Ok({ actions: [WriteUtf8({ content, path: _ }), Exec(_)] }) =>
+			content.contains("devShells.\"x86_64-linux\"") and
+				content.contains(".\"cowsay\"") and
+					content.contains(".\"fortune\"")
 		_ => Bool.False
 	}
 }
