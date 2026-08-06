@@ -1,43 +1,11 @@
-# behind the scenes decisions:
-# - which DeterminateBackend? (nix)
-# - which arch? (x86_64linux)
-# we can have kai cli encode these and at runtime
-# check if these exist and throw an error if not
+on linux {
+     shell {
+       pkgs: ["cowsay", "fortune"]
+     }
+   }
 
-# or we can optionally encode them at compile time
-#
-# ex. decision logic from nix like "if system == linux ... else ...":
-# linux {
-#   shell {
-#     pkgs: ["cowsay", "fortune"]
-#   }
-# }
-#
-# macos {
-#   shell {
-#     pkgs: ["pokemonsay", "fortune"]
-#   }
-# }
-#
-# or perhaps:
-#
-# shell {
-#   linux {
-#     pkgs: ["cowsay", "fortune"]
-#   }
-#  macos {
-#     pkgs: ["pokemonsay", "fortune"]
-#   }
-# }
-
-shell {
-  pkgs: ["cowsay", "fortune"]
-}
-
-#build {
-# ?
-#}
-
-#deploy {
-  # ?
-#}
+   on macos {
+     shell {
+       pkgs: ["cowsay", "fortune"]
+     }
+   }
