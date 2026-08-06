@@ -47,10 +47,10 @@ shell nix {
 }
 
 
-build {
+#build {
 # ?
-}
+#}
 
-deploy {
+#deploy {
   # ?
-}
+#}
