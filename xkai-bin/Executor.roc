@@ -26,7 +26,14 @@ Executor := [].{
 			_ => {
 				source = Path.read_utf8!(Path.utf8("config.kai"))?
 				host = Env.platform!()
-				match Executor.dispatch(registry, source, display_args, host.os, host.arch) {
+				host_os : PluginApi.HostOs
+				host_os = match host.os {
+					LINUX => LINUX
+					MACOS => MACOS
+					OTHER(name) => OTHER(name)
+					_ => OTHER("unsupported")
+				}
+				match Executor.dispatch(registry, source, display_args, host_os, host.arch) {
 					Ok(selected_plan) => Executor.execute!(selected_plan)
 					Err(InvalidConfig) => Err(InvalidConfig)
 					Err(UnknownCommand) => Err(UnknownCommand)

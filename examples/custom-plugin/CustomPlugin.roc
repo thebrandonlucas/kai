@@ -2,7 +2,59 @@ import kai.Plugin as PluginApi
 
 CustomPlugin := [].{
 	plugin : PluginApi.Plugin
-	plugin = PluginApi.Plugin.Module({ name: "custom", plan: CustomPlugin.plan })
+	plugin = PluginApi.Plugin.Module({ definition, plan: CustomPlugin.plan })
+
+	local : PluginApi.Backend
+	local = PluginApi.Backend.{
+		determinate_system: PluginApi.DeterminateSystem.{
+			default_package_source: "local",
+			driver: NoDriver,
+			kind: Custom,
+		},
+		fallback: NoFallback,
+		name: "local",
+		required_packages: [],
+	}
+
+	custom_write : PluginApi.Command
+	custom_write = PluginApi.Command.{
+		argument_policy: NoArguments,
+		default_backend: local.name,
+		name: "custom-write",
+		source: RequiredSource("custom"),
+	}
+
+	implementation : PluginApi.Implementation
+	implementation = PluginApi.Implementation.{
+		actions: [WriteConfigUtf8({ output: "message", path: "custom-plugin-output.txt" })],
+		backend: local.name,
+		command: custom_write.name,
+		renderer: CustomPlugin.render,
+	}
+
+	definition : PluginApi.Definition
+	definition = PluginApi.Definition.{
+		backends: [local],
+		commands: [custom_write],
+		implementations: [implementation],
+		name: "custom",
+	}
+
+	render : PluginApi.Renderer
+	render = |context|
+		match context.source {
+			NoSource => Err({ byte_offset: None, message: "custom configuration is required" })
+			SelectedSource({ body, location: _ }) =>
+				match CustomPlugin.parse_message(body.split_on("\n")) {
+					Err(_) => Err({ byte_offset: None, message: "invalid custom configuration" })
+					Ok(message) => Ok(
+						PluginApi.RenderResult.{
+							outputs: [{ name: "message", text: message }],
+							requested_packages: [],
+						},
+					)
+				}
+			}
 
 	plan : Str, List(Str), PluginApi.HostOs, PluginApi.HostArch -> Try(PluginApi.Plan, PluginApi.Error)
 	plan = |source, args, _os, _arch|
