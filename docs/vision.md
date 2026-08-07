@@ -2,4 +2,3 @@
 
 - See [Prototyping a friendlier frontend for determinate computing](https://blu.cx/posts/articles/2026-07-13-kai-friendly-frontend/), [Kai Devlog #1: Boundaries](https://blu.cx/posts/blog/2026-07-28-kai-devlog-1-boundaries/), and [Stack Programs Like Legos with Nix!](https://blu.cx/posts/blog/2025-11-21-nix-programs-as-legos/) to understand the purpose of the project and goals.
 - Ease of use and maximizing utility, via intuitive UX and great error handling to solve `nix` pain points is THE primary motivation for this tool
-
