@@ -20,8 +20,10 @@ are ordered; later plans may assume earlier contracts.
 
 ## Decisions made by the roadmap
 
-- A command declares a required or optional named `config.kai` source block
-  and a default backend. The source name may differ from the CLI command name.
+- `Kaifile` is the canonical project manifest. The `.kai` extension remains
+  available for possible additional Kai source files.
+- A command declares a required or optional named `Kaifile` source block and a
+  default backend. The source name may differ from the CLI command name.
 - `kai <command>` selects the default backend. In
   `kai <command> [<known-backend>] [-- <command-args>...]`, a known backend
   selects one explicitly and `--` removes backend/argument ambiguity. A bare
@@ -51,17 +53,18 @@ are ordered; later plans may assume earlier contracts.
 3. [Custom plugin source trees](03-xkai-plugin-trees.md)
 4. [`xkai build` registry validation](04-registry-validation.md)
 5. [Universal config scanner and diagnostics](05-config-diagnostics.md)
-6. [Generic registry dispatch](06-generic-dispatch.md)
-7. [Migrate the standard plugin to registry dispatch](06b-standard-registry.md)
-8. [Remove the callback plugin contract](07-registry-only.md)
-9. [Guix shell backend](08-guix-shell.md)
-10. [Runtime preflight core](09-runtime-requirements.md)
-11. [Nix and Guix provenance probes](09b-system-provenance.md)
-12. [Requirement fallback actions](10-requirement-fallback.md)
-13. [Package-resolution core](11-package-resolution.md)
-14. [Nix and Guix package probes](11b-package-backends.md)
-15. [Pure package-name ranking](12-package-suggestions.md)
-16. [Suggestion integration and final documentation](12b-suggestion-integration.md)
+6. [Adopt `Kaifile` as the project manifest](05b-kaifile.md)
+7. [Generic registry dispatch](06-generic-dispatch.md)
+8. [Migrate the standard plugin to registry dispatch](06b-standard-registry.md)
+9. [Remove the callback plugin contract](07-registry-only.md)
+10. [Guix shell backend](08-guix-shell.md)
+11. [Runtime preflight core](09-runtime-requirements.md)
+12. [Nix and Guix provenance probes](09b-system-provenance.md)
+13. [Requirement fallback actions](10-requirement-fallback.md)
+14. [Package-resolution core](11-package-resolution.md)
+15. [Nix and Guix package probes](11b-package-backends.md)
+16. [Pure package-name ranking](12-package-suggestions.md)
+17. [Suggestion integration and final documentation](12b-suggestion-integration.md)
 
 ## Completion criteria
 
