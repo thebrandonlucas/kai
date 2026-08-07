@@ -1,5 +1,10 @@
 import kai.Plugin as PluginApi
 
+# TODO: the stdplugin itself should be modular and 
+# have each command pluggable/reusable by other modules?
+# Or should each plugin itself just be one command which 
+# we compile together at the end?
+
 # The standard plugin is pure. It shares the same planning contract as custom
 # plugins; only the generic executor performs the resulting actions.
 # TODO: it's explicitly limited to nix for now. This might be long-term
