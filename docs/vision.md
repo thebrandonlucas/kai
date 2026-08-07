@@ -1,5 +1,5 @@
 - Kai is a Domain-Specific Language to ease the use of determinate computers, targeting primarily Nix but also Guix. It aims to be a friendlier frontend for both, architected such that components can be progressively improved over time. We use [roc-overlay](https://github.com/thebrandonlucas/roc-overlay) to get the latest nightly Zig-based compiler that is compatible with our primary dependency, [`basic-cli`](https://github.com/roc-lang/basic-cli)
 
 - See [Prototyping a friendlier frontend for determinate computing](https://blu.cx/posts/articles/2026-07-13-kai-friendly-frontend/), [Kai Devlog #1: Boundaries](https://blu.cx/posts/blog/2026-07-28-kai-devlog-1-boundaries/), and [Stack Programs Like Legos with Nix!](https://blu.cx/posts/blog/2025-11-21-nix-programs-as-legos/) to understand the purpose of the project and goals.
-
+- Ease of use and maximizing utility, via intuitive UX and great error handling to solve `nix` pain points is THE primary motivation for this tool
 

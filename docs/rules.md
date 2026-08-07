@@ -7,6 +7,7 @@
 - [Preserve merge commits](https://gist.github.com/mitchellh/319019b1b8aac9110fcfb1862e0c97fb)
 - Sometimes I will write comments in a file and ask you to address them. You should just respond to the questions and not overwrite the comments/modify the file when I do this.
 - When asked to implement a brainstormed feature, favor terseness over verbosity. Assume I will have to read and understand the code and therefore the smallest change to implement desired behavior while following rules is preferred.
+- You are strictly forbidden from workarounds, or modifying tests with the purpose of getting them to merely work with the current output of a function. Tests may only be written to test new features or fix boundary assumptions in the data if function assumptions change significantly, or as explicitly instructed by the developer.
 
 
 ## Issue and PR Guidelines
