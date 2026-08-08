@@ -1,4 +1,6 @@
 # Pure plugin model shared by plugins and the CLI.
+import Body
+
 Plugin := [
 	Module(
 		{
@@ -51,6 +53,7 @@ Plugin := [
 
 	Command := {
 		argument_policy : ArgumentPolicy,
+		body : Body.Shape,
 		default_backend : Str,
 		name : Str,
 		source : SourceRequirement,
@@ -60,7 +63,7 @@ Plugin := [
 
 	DeterminateSystem := {
 		default_package_source : Str,
-	driver : [NoDriver, Program(Str)],
+		driver : [NoDriver, Program(Str)],
 		kind : DeterminateSystemKind,
 	}
 
@@ -101,15 +104,16 @@ Plugin := [
 
 	RenderContext := {
 		args : List(Str),
+		config : Body.Configuration,
 		host_arch : HostArch,
 		host_os : HostOs,
 		source : [NoSource, SelectedSource(LocatedSource)],
 	}
 
-  # Text that will get written to disk.
-# "name" is what our plugin would name 
-# the output internally, e.g. "flake", 
-# the text is the actual text inside flake.nix
+	# Text that will get written to disk.
+	# "name" is what our plugin would name
+	# the output internally, e.g. "flake",
+	# the text is the actual text inside flake.nix
 	RenderedOutput := {
 		name : Str,
 		text : Str,
@@ -151,25 +155,25 @@ Plugin := [
 	# Lower pure action templates into a runtime plan.
 	lower : Implementation, RenderResult -> Try(Plan, RendererDiagnostic)
 	lower = |implementation, rendered| {
-		actions = Plugin.lower_actions(implementation.actions, rendered.outputs,)?
+		actions = Plugin.lower_actions(
+			implementation.actions,
+			rendered.outputs,
+		)?
 		Ok(Plugin.Plan.{ actions })
 	}
 
 	lower_actions :
-  List(ActionTemplate),
-	List(RenderedOutput) ->
-  Try(
-		List(Action),
-		RendererDiagnostic
-	)
+		List(ActionTemplate),
+		List(RenderedOutput) ->
+			Try(List(Action), RendererDiagnostic)
 	lower_actions = |templates, outputs|
 		match templates {
 			[] => Ok([])
 			[first, .. as rest] => {
-    # At present there are two actions, Exec 
-    # and WriteConfigUtf8 (write a file).
-    # For WriteConfigUtf8, we have a list of rendered
-    output files
+				# At present there are two actions, Exec
+				# and WriteConfigUtf8 (write a file).
+				# For WriteConfigUtf8, we have a list of rendered
+				# output files
 				action = match first {
 					Exec(exec) => Ok(Exec(exec))
 

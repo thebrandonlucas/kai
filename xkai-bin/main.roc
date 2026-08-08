@@ -11,6 +11,7 @@ import pf.Stdout
 
 import Cli
 
+import "Body.roc" as body_source : Str
 import "Executor.roc" as executor_source : Str
 import "package.roc" as package_source : Str
 import "Plugin.roc" as plugin_source : Str
@@ -29,6 +30,7 @@ print_usage! = |_| {
 
 build_stage! : Path, List(Str) => Try({}, _)
 build_stage! = |stage, plugin_paths| {
+	Path.write_utf8!(Path.join(stage, "Body.roc"), body_source)?
 	Path.write_utf8!(Path.join(stage, "Executor.roc"), executor_source)?
 	Path.write_utf8!(Path.join(stage, "package.roc"), package_source)?
 	Path.write_utf8!(Path.join(stage, "Plugin.roc"), plugin_source)?
