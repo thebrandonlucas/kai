@@ -1,0 +1,11 @@
+on linux {
+     shell {
+       pkgs: ["cowsay", "fortune"]
+     }
+   }
+
+   on macos {
+     shell {
+       pkgs: ["cowsay", "fortune"]
+     }
+   }

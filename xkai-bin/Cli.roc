@@ -2,12 +2,12 @@
 import "VERSION" as canonical_version : Str
 
 Cli := [].{
-	Command := [Help, Build, Version, Unknown(Str)].{
+	Command := [Help, Build(List(Str)), Version, Unknown(Str)].{
 		is_eq : Command, Command -> Bool
 		is_eq = |left, right|
 			match (left, right) {
 				(Help, Help) => Bool.True
-				(Build, Build) => Bool.True
+				(Build(left_plugins), Build(right_plugins)) => left_plugins == right_plugins
 				(Version, Version) => Bool.True
 				(Unknown(left_name), Unknown(right_name))
 					=> left_name == right_name
@@ -19,7 +19,7 @@ Cli := [].{
 	version = canonical_version
 
 	usage : Str
-	usage = "xkai - build plugins for kai"
+	usage = "Usage: xkai build [Plugin.roc ...]"
 
 	parse : List(Str) -> Command
 	parse = |args|
@@ -27,7 +27,7 @@ Cli := [].{
 			[] => Help
 			[first, ..] =>
 				match first {
-					"build" => Build
+					"build" => Build(args.drop_first(1))
 					"help" => Help
 					"version" => Version
 					unknown => Unknown(unknown)

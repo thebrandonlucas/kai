@@ -4,8 +4,8 @@ shell nix {
     pkgs: ["cowsay", "fortune"]
 }
 ```
-When called by the `kai` CLI, this `config.kai` file will create a `.kai` and a `flake.nix`, then call `nix shell <flake>` to enter that shell. Kai allows a very simplified representation and the `kai` CLI supplies assumed defaults where `nix` is more explicit.
-- Kai uses Caddy-like [modularity](https://caddyserver.com/docs/architecture). Aspires to Unix philosophy. For three purposes: 1. Users can swap out implementations of commands 2. Users can swap out/use different determinate backends (nix, guix, etc.) 3. Users can add new commands via plugin system. We do this by having a binary `xkai` wherein you can write plugins which compile to a specific `kai` binary with the specific features you added.
+When called by the `kai` CLI, this `config.kai` file produces backend runtime output such as `.kai/flake.nix`, then calls `nix develop` to enter that shell. `.kai` contains backend output only; plugin source and compiler inputs do not persist there. Kai supplies assumed defaults where Nix is more explicit.
+- Kai uses Caddy-like [modularity](https://caddyserver.com/docs/architecture) and aspires to Unix philosophy. The standard plugin and custom plugins share one contract: they turn configuration source, command arguments, and host information into pure action plans consumed by the same executor. This allows users to swap command implementations or determinate backends and add commands. `xkai` materializes embedded and custom plugin inputs in a temporary build directory, invokes Roc, and produces a portable `kai` binary with the selected registry compiled in.
 - [Work in small steps to stay motivated](https://mitchellh.com/writing/building-large-technical-projects). Avoid big changes where possible.
 - If the programmer tells you to implement a concept, do the minimal amount of work to prove the concept while still following the rules and design philosophy (for example, you may still add a simple test or two).
 - Aspirational dependency culture: vendored, like Roc or Ghostty.
@@ -15,6 +15,7 @@ When called by the `kai` CLI, this `config.kai` file will create a `.kai` and a 
     - "What could go wrong? What's wrong? Which question would we rather ask? The former, because code, like steel, is less expensive to change while it's hot. A problem solved in production is many times more expensive than a problem solved in implementation, or a problem solved in design"
     - "We know that what we ship is solid. We may lack crucial features, but what we have meets our design goals. This is the only way to make steady incremental progress, knowing that the progress we have made is indeed progress."
 - From [Boundaries](https://www.destroyallsoftware.com/talks/boundaries): separate the pure data from side-effects. This makes programs much more predictable and testable. Example from `kai`: `Plugin`s are written as pure data describing which effects to perform, so that we can test the expected results, then an executor actually writes files or calls external commands like `nix`. But the validation happens inside.
+- Style: This repo aspires to the rules set out in [clig.dev](https://clig.dev/)
 
 ## Tests
 - Rules from matklad's [How to Test](https://matklad.github.io/2021/05/31/how-to-test.html) (Thank you [matklad](https://matklad.github.io/)!):

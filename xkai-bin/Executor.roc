@@ -1,10 +1,8 @@
-# Generically execute side-effects as defined by the plugin 
-# Currently, only writing (e.g. flake.nix) or running commands 
-# (e.g. "nix shell")
-
-# This keeps plugin models & testing pure and effect-free
+# Generically execute side-effects as defined by the plugin.
+# This keeps plugin models & testing pure and effect-free.
 
 import pf.Cmd
+import pf.Env
 import pf.OsStr
 import pf.Path
 import pf.Stdout
@@ -17,29 +15,41 @@ Executor := [].{
 	version : Str
 	version = canonical_version
 
-	run! : List(OsStr) => Try({}, _)
-	run! = |args|
-		match args.drop_first(1).map(OsStr.display) {
+	run! : List(OsStr), List(PluginApi.Plugin) => Try({}, _)
+	run! = |args, registry| {
+		display_args = args.drop_first(1).map(OsStr.display)
+		match display_args {
 			["version"] => {
 				Stdout.line!("kai version ${Executor.version}")?
 				Ok({})
 			}
 			_ => {
-				config_args = [OsStr.utf8("kai.roc")].concat(args.drop_first(1))
-				output = Cmd.new(OsStr.utf8("roc"))
-					.args(config_args)
-					.exec_output!()?
-
-				plan : PluginApi.Plan
-				plan = Json.parse(output.stdout_utf8) ? |err| InvalidPlan(err)
-
-				Executor.execute!(plan)
+				source = Path.read_utf8!(Path.utf8("config.kai"))?
+				host = Env.platform!()
+				match Executor.dispatch(registry, source, display_args, host.os, host.arch) {
+					Ok(selected_plan) => Executor.execute!(selected_plan)
+					Err(InvalidConfig) => Err(InvalidConfig)
+					Err(UnknownCommand) => Err(UnknownCommand)
+					Err(UnsupportedPlatform) => Err(UnsupportedPlatform)
+				}
 			}
 		}
+	}
+
+	dispatch : List(PluginApi.Plugin), Str, List(Str), PluginApi.HostOs, PluginApi.HostArch -> Try(PluginApi.Plan, PluginApi.Error)
+	dispatch = |registry, source, args, os, arch|
+		match registry {
+			[] => Err(UnknownCommand)
+			[first, .. as rest] =>
+				match PluginApi.run(first, source, args, os, arch) {
+					Err(UnknownCommand) => Executor.dispatch(rest, source, args, os, arch)
+					result => result
+				}
+			}
 
 	execute! : PluginApi.Plan => Try({}, _)
-	execute! = |plan| {
-		for action in plan.actions {
+	execute! = |execution_plan| {
+		for action in execution_plan.actions {
 			Executor.execute_action!(action)?
 		}
 		Ok({})
