@@ -2,7 +2,7 @@
 
 **Commit:** `feat: validate plugin registries at build time`  
 **Budget:** 300–500 changed code/test lines  
-**Depends on:** plans 01 and 03
+**Depends on:** plans 01, 01b, and 03
 
 ## Goal
 
@@ -17,7 +17,8 @@ Reject structurally invalid plugins before producing the final `kai` binary.
    - every implementation references an existing command and backend;
    - every command and backend is used by at least one implementation;
    - every command's default backend exists and implements that command;
-   - non-empty plugin, command, backend, package, and program names.
+   - unique, syntactically valid field names within each command body shape;
+   - non-empty plugin, command, backend, field, package, and program names.
 2. Keep duplicate command names across plugins legal. Registry order defines
    override precedence.
 3. Generate a small validator app from the staged plugin imports. Build and run
@@ -45,8 +46,8 @@ Reject structurally invalid plugins before producing the final `kai` binary.
 
 ## Acceptance criteria
 
-- All incomplete, duplicate, unknown-reference, and dangling registries fail in
-  `xkai build`, not at first `kai` use.
+- All incomplete, duplicate, invalid-shape, unknown-reference, and dangling
+  registries fail in `xkai build`, not at first `kai` use.
 - Diagnostics identify every invalid plugin and name.
 - Valid standard, single-file, and modular custom plugins still build.
 - Validation performs no plugin side effects.

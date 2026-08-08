@@ -1,1 +1,1 @@
-package [Plugin] {}
+package [Body, Plugin] {}

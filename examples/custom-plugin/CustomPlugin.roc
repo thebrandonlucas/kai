@@ -1,3 +1,4 @@
+import kai.Body
 import kai.Plugin as PluginApi
 
 CustomPlugin := [].{
@@ -16,9 +17,13 @@ CustomPlugin := [].{
 		required_packages: [],
 	}
 
+	custom_body : Body.Shape
+	custom_body = Body.object([Body.required("message", String)])
+
 	custom_write : PluginApi.Command
 	custom_write = PluginApi.Command.{
 		argument_policy: NoArguments,
+		body: custom_body,
 		default_backend: local.name,
 		name: "custom-write",
 		source: RequiredSource("custom"),
@@ -44,9 +49,9 @@ CustomPlugin := [].{
 	render = |context|
 		match context.source {
 			NoSource => Err({ byte_offset: None, message: "custom configuration is required" })
-			SelectedSource({ body, location: _ }) =>
-				match CustomPlugin.parse_message(body.split_on("\n")) {
-					Err(_) => Err({ byte_offset: None, message: "invalid custom configuration" })
+			SelectedSource({ body: _, location: _ }) =>
+				match Body.get_string(context.config, "message") {
+					Err(_) => Err({ byte_offset: None, message: "validated custom configuration is missing 'message'" })
 					Ok(message) => Ok(
 						PluginApi.RenderResult.{
 							outputs: [{ name: "message", text: message }],

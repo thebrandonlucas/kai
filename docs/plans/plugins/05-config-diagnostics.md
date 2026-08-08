@@ -6,8 +6,9 @@
 
 ## Goal
 
-Parse universal `config.kai` structure once, retain source spans, and leave
-command-specific block bodies to plugin renderers.
+Parse universal `config.kai` structure once and retain source spans while
+leaving command-specific block bodies opaque for the separate declarative body
+parser.
 
 ## Changes
 
@@ -25,7 +26,8 @@ command-specific block bodies to plugin renderers.
 5. Detect duplicate applicable command/backend blocks instead of silently
    choosing the first.
 6. Keep bodies opaque. A `pkgs` key, for example, is not interpreted by the
-   core scanner.
+   core scanner. The shape-driven parser from plan 01b runs only after dispatch
+   selects a command and one of its located bodies.
 7. Add data-driven tests to the app root introduced in plan 04 for valid
    current configs, explicit backends, comments/braces inside strings, fallback
    selection, duplicates, and exact representative line/column failures.
@@ -50,8 +52,9 @@ command-specific block bodies to plugin renderers.
 
 ## Not included
 
-- Command ownership, required source enforcement, or renderer invocation.
-- Plugin-specific key/type diagnostics.
+- Command ownership, required source enforcement, body-shape validation, or
+  renderer invocation.
+- Plugin-specific semantic diagnostics after structural body validation.
 
 ## Risks
 

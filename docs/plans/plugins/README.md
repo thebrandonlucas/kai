@@ -28,9 +28,11 @@ are ordered; later plans may assume earlier contracts.
   `kai <command> [<known-backend>] [-- <command-args>...]`, a known backend
   selects one explicitly and `--` removes backend/argument ambiguity. A bare
   `<source> {}` block configures the default backend.
-- Core parsing owns universal syntax (`on`, host names, command/backend block
-  headers, braces, comments, and source locations). Implementation renderers
-  own block contents.
+- Core scanning owns universal syntax (`on`, host names, command/backend block
+  headers, braces, comments, and source locations) while keeping block bodies
+  opaque. After selection, a separate pure parser validates a body against the
+  command's declarative shape. Renderers receive both validated generic
+  configuration and located raw source for semantic diagnostics.
 - Renderers return named text outputs and package requests. Action templates
   refer to output names, preserving the pure-data/effect boundary while
   allowing more than one generated file.
@@ -49,6 +51,7 @@ are ordered; later plans may assume earlier contracts.
 ## Plans
 
 1. [Registry contract](01-registry-contract.md)
+   - [Plan 01b: Declarative plugin body shapes](01b-declarative-body-shapes.md)
 2. [Standard plugin module split](02-standard-plugin-modules.md)
 3. [Custom plugin source trees](03-xkai-plugin-trees.md)
 4. [`xkai build` registry validation](04-registry-validation.md)
@@ -70,7 +73,8 @@ are ordered; later plans may assume earlier contracts.
 
 After plan 12b:
 
-- plugins are registries of commands, backends, and implementations;
+- plugins are registries of commands, declarative body shapes, backends, and
+  implementations;
 - plugin source may be one file or a `Plugin.roc` tree with component modules;
 - `xkai build` rejects empty, inconsistent, duplicate, or dangling registries;
 - `kai` reports core and plugin configuration failures with source context;

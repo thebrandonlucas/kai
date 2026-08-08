@@ -3,12 +3,14 @@ app [main!] {
 	kai: "./package.roc",
 }
 
+import kai.Body
 import kai.Plugin as PluginApi
 
 Fixtures := [].{
 	context : PluginApi.RenderContext
 	context = PluginApi.RenderContext.{
 		args: [],
+		config: Body.empty,
 		host_arch: X64,
 		host_os: LINUX,
 		source: NoSource,
@@ -60,6 +62,7 @@ Fixtures := [].{
 	command : PluginApi.Command
 	command = PluginApi.Command.{
 		argument_policy: AllowArguments,
+		body: Body.object([]),
 		default_backend: nix.name,
 		name: "example",
 		source: OptionalSource("example-config"),
@@ -105,6 +108,16 @@ Fixtures := [].{
 		command: command.name,
 		renderer: Fixtures.multiple_renderer,
 	}
+
+	body_shape : Body.Shape
+	body_shape = Body.object([
+		Body.required("pkgs", StringList),
+		Body.optional("description", String),
+	])
+
+	has_diagnostic : Str, U64, Body.DiagnosticKind -> Bool
+	has_diagnostic = |source, byte_offset, kind|
+		Body.parse(body_shape, source) == Err({ byte_offset, kind })
 }
 
 main! = |_| Ok({})
@@ -133,3 +146,76 @@ expect PluginApi.lower(Fixtures.missing_write, Fixtures.multiple_result) == Err(
 	byte_offset: None,
 	message: "plugin renderer did not return named output 'missing'",
 })
+
+expect {
+	source = " # before\n pkgs: [\n  \"cowsay\", # package\n  \"fortune\"\n ]\n description: \"# kept\" # after\n"
+	match Body.parse(Fixtures.body_shape, source) {
+		Err(_) => Bool.False
+		Ok(config) =>
+			Body.get_strings(config, "pkgs") == Ok(["cowsay", "fortune"]) and
+				Body.get_string(config, "description") == Ok("# kept")
+		}
+}
+
+expect {
+	config = Body.parse(Fixtures.body_shape, "pkgs: []")?
+	Body.get_strings(config, "pkgs") == Ok([]) and
+		Body.maybe_string(config, "description") == Ok(None) and
+			Body.get_string(config, "description") == Err(MissingField("description")) and
+				Body.get_string(config, "pkgs") == Err(WrongType({ expected: String, field: "pkgs" }))
+}
+
+expect Fixtures.has_diagnostic(
+	"pkgs: []\n  pkgs: []",
+	11,
+	DuplicateField("pkgs"),
+)
+
+expect Fixtures.has_diagnostic(
+	"# ☃\nextra: \"x\"",
+	6,
+	UnknownField("extra"),
+)
+
+expect Fixtures.has_diagnostic(
+	"pkgs: \"not a list\"",
+	6,
+	WrongType({ expected: StringList, field: "pkgs" }),
+)
+
+expect Fixtures.has_diagnostic(
+	"pkgs: [\"ok\", 3]",
+	13,
+	WrongListItem("pkgs"),
+)
+
+expect Fixtures.has_diagnostic(
+	"pkgs: []\ndescription: \"\\q\"",
+	22,
+	InvalidString("invalid string"),
+)
+
+expect Fixtures.has_diagnostic(
+	"pkgs: [",
+	7,
+	InvalidSyntax("unterminated list in field 'pkgs'"),
+)
+
+expect Fixtures.has_diagnostic(
+	"pkgs: [\"one\" \"two\"]",
+	13,
+	InvalidSyntax("expected ',' or ']' in field 'pkgs'"),
+)
+
+expect Fixtures.has_diagnostic(
+	"pkgs []",
+	5,
+	InvalidSyntax("expected ':' after field 'pkgs'"),
+)
+
+expect Fixtures.has_diagnostic("", 0, MissingField("pkgs"))
+
+expect {
+	config = Body.parse(Fixtures.body_shape, "pkgs: []\ndescription: \"line\\nnext\"")?
+	Body.get_string(config, "description") == Ok("line\nnext")
+}

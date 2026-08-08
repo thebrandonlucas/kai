@@ -2,7 +2,7 @@
 
 **Commit:** `feat: dispatch modular plugin registries`  
 **Budget:** 350–500 changed code/test lines  
-**Depends on:** plans 01, 03, 04, and 05
+**Depends on:** plans 01, 01b, 03, 04, and 05
 
 ## Goal
 
@@ -19,13 +19,17 @@ config selection, pure rendering, lowering, and execution.
    - find the matching implementation;
    - select host-scoped config with unscoped fallback;
    - enforce `RequiredSource` versus `OptionalSource`;
-   - invoke the implementation renderer and lower named outputs into a plan.
+   - parse a selected body's opaque text against the command's declared shape;
+   - pass both validated generic configuration and the located raw body to the
+     implementation renderer, then lower named outputs into a plan.
 2. Select configuration by the command's declared source name, not necessarily
    its CLI name, and treat bare `<source> {}` as source for the default backend.
 3. Reject an unknown token in the backend position with an expected-backend-or-
    `--` diagnostic instead of treating it accidentally as an implementation.
-4. Translate renderer-relative locations to `config.kai` line/column. If a
-   renderer returns only a generic plugin failure, identify the plugin and
+4. Translate body-parser and renderer-relative byte offsets to `config.kai`
+   line/column. Structural field/type failures come from the shared body
+   parser; renderers retain the raw located source for semantic diagnostics.
+   If a renderer returns only a generic plugin failure, identify the plugin and
    command and state that the plugin failed to diagnose its config.
 5. Render concise diagnostics in `Executor.roc` while retaining structured
    error data internally.
@@ -50,7 +54,8 @@ config selection, pure rendering, lowering, and execution.
 - The modular fixture executes through generic dispatch with default and
   explicit backend selection.
 - Existing callback-based `kai shell` remains unchanged in this transition.
-- Missing required source and malformed config fail before any action.
+- Missing required source and malformed universal or command-body config fail
+  before any action.
 - Optional-source renderers can run with no block.
 - Plugin registry order and custom-before-standard precedence remain intact.
 - Core and plugin errors identify source position and owner.

@@ -2,7 +2,7 @@
 
 **Commit:** `refactor: split standard plugin components`  
 **Budget:** 250–450 changed code/test lines  
-**Depends on:** plan 01
+**Depends on:** plans 01 and 01b
 
 ## Goal
 
@@ -14,8 +14,8 @@ runtime path.
 1. Add:
    - `plugins/commands/Shell.roc` for shell command metadata;
    - `plugins/backends/Nix.roc` for the Nix determinate backend;
-   - `plugins/implementations/ShellNix.roc` for shell parsing, target mapping,
-     Nix rendering, and action templates.
+   - `plugins/implementations/ShellNix.roc` for validated shell configuration
+     access, target mapping, Nix rendering, and action templates.
 2. Reduce `plugins/StdPlugin.roc` to assembly of the three component lists plus
    a small temporary callback adapter that delegates to `ShellNix`.
 3. Update `plugins/main.roc` so all standard modules are available in the Roc
@@ -23,7 +23,8 @@ runtime path.
 4. Embed and stage each standard module in `xkai-bin/main.roc`; standard plugin
    source must remain a compile-time input and must never appear in `.kai`.
 5. Add data-driven pure tests to `xkai-bin/plugin-tests.roc` around shell
-   parsing/rendering:
+   configuration access and rendering (body-shape parsing remains covered by
+   plan 01b):
    - zero packages is valid;
    - one and two packages render correctly;
    - all four supported OS/architecture targets choose the correct Nix system;
@@ -43,7 +44,7 @@ runtime path.
 
 ## Acceptance criteria
 
-- `StdPlugin.roc` contains registry assembly, not shell parsing or Nix output
+- `StdPlugin.roc` contains registry assembly, not body parsing or Nix output
   construction.
 - `kai shell` still writes `.kai/flake.nix` and runs
   `nix develop path:.kai#default`.

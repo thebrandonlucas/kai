@@ -13,8 +13,9 @@ removing custom callback compatibility.
 
 1. Replace the standard plugin's temporary callback adapter with its registry
    definition.
-2. Move any remaining shell source parsing into `ShellNix.roc`'s renderer and
-   return body-relative `RendererDiagnostic` values.
+2. Make `ShellNix.roc` consume the validated `pkgs` string list from its
+   `RenderContext`. Retain the located raw body only for semantic failures that
+   need body-relative `RendererDiagnostic` values.
 3. Route `kai shell` through core source selection, required-source checks,
    renderer invocation, named-output lowering, and the common executor.
 4. Preserve Nix as the default backend and support explicit
@@ -35,7 +36,8 @@ removing custom callback compatibility.
 
 - `kai shell` and `kai shell nix` produce the current `.kai/flake.nix` and Nix
   invocation.
-- Standard config selection and diagnostics use the core scanner.
+- Standard config selection uses the universal scanner, body structure uses the
+  command's declarative shape, and semantic failures use renderer diagnostics.
 - A parse/render/lowering failure executes no action.
 - The standard plugin contains no whole-plugin plan callback.
 - The existing callback custom plugin still builds and runs.

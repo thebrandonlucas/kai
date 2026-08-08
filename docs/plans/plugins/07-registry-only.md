@@ -15,8 +15,8 @@ migration path that bypasses structural and config validation.
    - `custom-write` command with required source name `custom`, preserving the
      existing `config.kai` block;
    - a driverless custom/local backend with no required external packages;
-   - an implementation renderer that parses `message:` and returns a named
-     output;
+   - the declarative `message` string field from plan 01b and an implementation
+     renderer that accesses its validated value and returns a named output;
    - the existing write action template.
 2. Migrate the modular plugin fixture to run through generic dispatch and add an
    integration assertion for its output.

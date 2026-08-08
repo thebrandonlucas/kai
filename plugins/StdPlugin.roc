@@ -1,10 +1,8 @@
+import kai.Body
 import kai.Plugin as PluginApi
 
 StdPlugin := [].{
 	ShellConfig : { pkgs : List(Str) }
-	ParsedShellConfig := { pkgs : List(Str) }.{
-		parser_for : _
-	}
 	Target : { section : Str, system : Str }
 
 	plugin : PluginApi.Plugin
@@ -31,11 +29,19 @@ StdPlugin := [].{
 			["shell"] => {
 				target = StdPlugin.target(os, arch)?
 				config = StdPlugin.parse(source, target.section)?
-				rendered = StdPlugin.render_result(config.pkgs, target.system)
-				match PluginApi.lower(nix_shell, rendered) {
-					Ok(lowered) => Ok(lowered)
-					Err(_) => Err(InvalidConfig)
+				context = PluginApi.RenderContext.{
+					args: [],
+					config,
+					host_arch: arch,
+					host_os: os,
+					source: SelectedSource({
+						body: source,
+						location: { byte_offset: 0, column: 1, line: 1 },
+					}),
 				}
+				rendered = StdPlugin.registry_renderer(context) ? |_| InvalidConfig
+				lowered = PluginApi.lower(nix_shell, rendered) ? |_| InvalidConfig
+				Ok(lowered)
 			}
 			_ => Err(UnknownCommand)
 		}
@@ -56,7 +62,7 @@ StdPlugin := [].{
 			_ => Err(UnsupportedPlatform)
 		}
 
-	parse : Str, Str -> Try(ShellConfig, [InvalidConfig])
+	parse : Str, Str -> Try(Body.Configuration, [InvalidConfig])
 	parse = |source, section| {
 		lines = source
 			.split_on("\n")
@@ -77,32 +83,27 @@ StdPlugin := [].{
 		}
 	}
 
-	find_shell : List(Str), Str -> Try(ShellConfig, [InvalidConfig])
+	find_shell : List(Str), Str -> Try(Body.Configuration, [InvalidConfig])
 	find_shell = |lines, section_line|
 		match lines {
 			[] => Err(InvalidConfig)
-			[first, "shell {", pkgs_line, ..] if first == section_line
-				and pkgs_line.starts_with("pkgs:") =>
-				StdPlugin.parse_pkgs(pkgs_line)
+			[first, "shell {", body_line, ..] if first == section_line =>
+				StdPlugin.parse_body(body_line)
 			[_, .. as rest] => StdPlugin.find_shell(rest, section_line)
 		}
 
-	find_default_shell : List(Str) -> Try(ShellConfig, [InvalidConfig])
+	find_default_shell : List(Str) -> Try(Body.Configuration, [InvalidConfig])
 	find_default_shell = |lines|
 		match lines {
 			[] => Err(InvalidConfig)
-			["shell {", pkgs_line, ..] if pkgs_line.starts_with("pkgs:") => StdPlugin.parse_pkgs(pkgs_line)
+			["shell {", body_line, ..] => StdPlugin.parse_body(body_line)
 			[_, .. as rest] => StdPlugin.find_default_shell(rest)
 		}
 
-	parse_pkgs : Str -> Try(ShellConfig, [InvalidConfig])
-	parse_pkgs = |pkgs_line| {
-		decoded : Try(ParsedShellConfig, Json.ParseErr)
-		decoded = Json.parse("{\"pkgs\":${pkgs_line.drop_prefix("pkgs:").trim()}}")
-		match decoded {
-			Ok({ pkgs }) => Ok({ pkgs: pkgs })
-			Err(_) => Err(InvalidConfig)
-		}
+	parse_body : Str -> Try(Body.Configuration, [InvalidConfig])
+	parse_body = |body| {
+		config = Body.parse(StdPlugin.shell_body, body) ? |_| InvalidConfig
+		Ok(config)
 	}
 
 	nix : PluginApi.Backend
@@ -119,9 +120,13 @@ StdPlugin := [].{
 
 	backends = [nix]
 
+	shell_body : Body.Shape
+	shell_body = Body.object([Body.required("pkgs", StringList)])
+
 	shell_command : PluginApi.Command
 	shell_command = PluginApi.Command.{
 		argument_policy: NoArguments,
+		body: shell_body,
 		default_backend: nix.name,
 		name: "shell",
 		source: RequiredSource("shell"),
@@ -153,13 +158,13 @@ StdPlugin := [].{
 	registry_renderer = |context|
 		match context.source {
 			NoSource => Err({ byte_offset: None, message: "shell configuration is required" })
-			SelectedSource({ body, location: _ }) =>
+			SelectedSource({ body: _, location: _ }) =>
 				match StdPlugin.target(context.host_os, context.host_arch) {
 					Err(_) => Err({ byte_offset: None, message: "unsupported shell platform" })
 					Ok(selected_target) =>
-						match StdPlugin.parse("shell {\n${body}\n}", selected_target.section) {
-							Err(_) => Err({ byte_offset: None, message: "invalid shell configuration" })
-							Ok(config) => Ok(StdPlugin.render_result(config.pkgs, selected_target.system))
+						match Body.get_strings(context.config, "pkgs") {
+							Err(_) => Err({ byte_offset: None, message: "validated shell configuration is missing 'pkgs'" })
+							Ok(pkgs) => Ok(StdPlugin.render_result(pkgs, selected_target.system))
 						}
 					}
 			}
@@ -228,7 +233,10 @@ expect {
 	}
 }
 
-expect StdPlugin.parse(config, "linux") == Ok({ pkgs: ["cowsay"] })
+expect {
+	parsed = StdPlugin.parse(config, "linux")?
+	Body.get_strings(parsed, "pkgs") == Ok(["cowsay"])
+}
 
 expect StdPlugin.plan(config, ["build"], LINUX, X64) == Err(UnknownCommand)
 
