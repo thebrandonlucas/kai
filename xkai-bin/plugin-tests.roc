@@ -1,10 +1,16 @@
 app [main!] {
 	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.21.0-rc4/FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn.tar.zst",
+	commands: "../plugins/commands/main.roc",
+	implementations: "../plugins/implementations/main.roc",
 	kai: "./package.roc",
+	std: "../plugins/main.roc",
 }
 
 import kai.Body
 import kai.Plugin as PluginApi
+import commands.Shell as ShellCommand
+import implementations.ShellNix
+import std.StdPlugin
 
 Fixtures := [].{
 	context : PluginApi.RenderContext
@@ -118,9 +124,124 @@ Fixtures := [].{
 	has_diagnostic : Str, U64, Body.DiagnosticKind -> Bool
 	has_diagnostic = |source, byte_offset, kind|
 		Body.parse(body_shape, source) == Err({ byte_offset, kind })
+
+	RenderCase : {
+		arch : PluginApi.HostArch,
+		os : PluginApi.HostOs,
+		pkgs : List(Str),
+		source : Str,
+		system : Str,
+	}
+
+	standard_context : Body.Configuration, Str, PluginApi.HostOs, PluginApi.HostArch -> PluginApi.RenderContext
+	standard_context = |config, source, os, arch|
+		PluginApi.RenderContext.{
+			args: [],
+			config,
+			host_arch: arch,
+			host_os: os,
+			source: SelectedSource({
+				body: source,
+				location: { byte_offset: 0, column: 1, line: 1 },
+			}),
+		}
+
+	render_standard : Str, PluginApi.HostOs, PluginApi.HostArch -> Try(PluginApi.RenderResult, Str)
+	render_standard = |source, os, arch| {
+		config = Body.parse(ShellCommand.body, source) ? |_| "invalid shell body"
+		rendered = ShellNix.renderer(Fixtures.standard_context(config, source, os, arch)) ? |diagnostic| diagnostic.message
+		Ok(rendered)
+	}
+
+	packages_rendered : Str, Str, List(Str) -> Bool
+	packages_rendered = |text, system, pkgs|
+		match pkgs {
+			[] => Bool.True
+			[first, .. as rest] => {
+				expected = "              nixpkgs.\"legacyPackages\".\"${system}\".\"${first}\""
+				match text.find_first(expected) {
+					Err(NotFound) => Bool.False
+					Ok({ after, before: _ }) => Fixtures.packages_rendered(after, system, rest)
+				}
+			}
+		}
+
+	render_cases : List(RenderCase) -> Bool
+	render_cases = |cases|
+		match cases {
+			[] => Bool.True
+			[first, .. as rest] =>
+				match Fixtures.render_standard(first.source, first.os, first.arch) {
+					Err(_) => Bool.False
+					Ok({ outputs, requested_packages }) =>
+						match outputs {
+							[{ name, text }] =>
+								name == "flake" and
+									requested_packages == first.pkgs and
+										text.contains("devShells.\"${first.system}\"") and
+											(
+												if first.pkgs.is_empty() {
+													!text.contains("              nixpkgs.\"legacyPackages\"")
+												} else {
+													Bool.True
+												},
+											) and
+												Fixtures.packages_rendered(text, first.system, first.pkgs) and
+													Fixtures.render_cases(rest)
+							_ => Bool.False
+						}
+					}
+			}
+
+	plan_contains : Str, PluginApi.HostOs, PluginApi.HostArch, Str -> Bool
+	plan_contains = |source, os, arch, expected|
+		match StdPlugin.plan(source, ["shell"], os, arch) {
+			Ok({ actions: [WriteUtf8({ content, path: _ }), Exec(_)] }) => content.contains(expected)
+			_ => Bool.False
+		}
 }
 
 main! = |_| Ok({})
+
+expect {
+	Fixtures.render_cases([
+		{ arch: X64, os: LINUX, pkgs: [], source: "pkgs: []", system: "x86_64-linux" },
+		{ arch: AARCH64, os: LINUX, pkgs: ["cowsay"], source: "pkgs: [\"cowsay\"]", system: "aarch64-linux" },
+		{ arch: X64, os: MACOS, pkgs: ["cowsay", "fortune"], source: "pkgs: [\"cowsay\", \"fortune\"]", system: "x86_64-darwin" },
+		{ arch: AARCH64, os: MACOS, pkgs: ["fortune"], source: "pkgs: [\"fortune\"]", system: "aarch64-darwin" },
+	])
+}
+
+expect {
+	Body.parse(ShellCommand.body, "pkgs: \"cowsay\"") == Err({
+		byte_offset: 6,
+		kind: WrongType({ expected: StringList, field: "pkgs" }),
+	}) and Body.parse(ShellCommand.body, "") == Err({ byte_offset: 0, kind: MissingField("pkgs") })
+}
+
+expect {
+	definition = StdPlugin.definition
+	definition.name == "std" and
+		definition.commands.len() == 1 and
+			definition.backends.len() == 1 and
+				definition.implementations.len() == 1
+}
+
+expect ShellNix.renderer(Fixtures.standard_context(Body.empty, "pkgs: []", LINUX, X64)) == Err({
+	byte_offset: None,
+	message: "validated shell configuration is missing 'pkgs'",
+})
+
+expect Fixtures.render_standard("pkgs: [\"\"]", LINUX, X64) == Err("shell package names must not be empty")
+
+expect Fixtures.render_standard("pkgs: []", OTHER("unsupported"), X64) == Err("unsupported shell platform")
+
+expect Fixtures.plan_contains("shell {\n  pkgs: [\"cowsay\"]\n}", LINUX, X64, ".\"cowsay\"")
+
+expect {
+	source = "on linux {\n  shell {\n    pkgs: [\"cowsay\"]\n  }\n}\non macos {\n  shell {\n    pkgs: [\"fortune\"]\n  }\n}"
+	Fixtures.plan_contains(source, MACOS, AARCH64, ".\"fortune\"")
+}
 
 expect {
 	plugin = PluginApi.Plugin.Registry({ definition: Fixtures.definition })
