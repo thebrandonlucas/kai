@@ -21,6 +21,7 @@ Plugin := [
 			Registry({ definition: _ }) => Err(UnknownCommand)
 		}
 
+	# A definition consists of 
 	definition : Plugin -> Definition
 	definition = |plugin|
 		match plugin {
@@ -138,6 +139,8 @@ Plugin := [
 		renderer : Renderer,
 	}
 
+	# A definition is the single source of truth
+	# for everything a plugin requires.
 	Definition := {
 		backends : List(Backend),
 		commands : List(Command),

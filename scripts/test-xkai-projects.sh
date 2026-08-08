@@ -83,12 +83,27 @@ test -z "$(find . -maxdepth 1 -name '.xkai-output-*' -print -quit)"
 test -z "$(find "$TMPDIR" -maxdepth 1 -name 'xkai-*' -print -quit)"
 rm kai
 
+cp -R "$modular" unknown-command
+sed -i 's/command: Write.command.name/command: "missing-command"/' unknown-command/implementations/WriteLocal.roc
+expect_build_failure unknown-command/Plugin.roc
+grep -Fq "plugin 'modular': implementation 'missing-command/local' references unknown command 'missing-command'" build-error.log
+grep -Fq "plugin 'modular': command 'modular-write' has no implementation" build-error.log
+grep -Fq "plugin 'modular': command 'modular-write' default backend 'local' does not implement the command" build-error.log
+
+cp -R "$modular" dangling-backend
+cp dangling-backend/backends/Local.roc dangling-backend/backends/Unused.roc
+sed -i 's/Local :=/Unused :=/; s/name: "local"/name: "unused"/' dangling-backend/backends/Unused.roc
+sed -i 's/import backends.Local/import backends.Local\nimport backends.Unused/; s/backends: \[Local.backend\]/backends: [Local.backend, Unused.backend]/' dangling-backend/Plugin.roc
+expect_build_failure dangling-backend/Plugin.roc
+grep -Fq "plugin 'modular': backend 'unused' has no implementation" build-error.log
+
 "$xkai" build "$plugin"
 
 test -x kai
 test ! -e .kai
 test -z "$(find . -maxdepth 1 -name '.xkai-output-*' -print -quit)"
 test -z "$(find "$TMPDIR" -maxdepth 1 -name 'xkai-*' -print -quit)"
+test ! -e custom-plugin-output.txt
 
 ./kai custom-write
 test "$(<custom-plugin-output.txt)" = 'custom plugin worked'

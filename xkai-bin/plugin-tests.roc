@@ -8,6 +8,7 @@ app [main!] {
 
 import kai.Body
 import kai.Plugin as PluginApi
+import kai.Registry
 import commands.Shell as ShellCommand
 import implementations.ShellNix
 import std.StdPlugin
@@ -201,7 +202,185 @@ Fixtures := [].{
 		}
 }
 
+Validation := [].{
+	field : Str -> Body.Field
+	field = |name| Body.required(name, String)
+
+	command : Str, Str, List(Body.Field) -> PluginApi.Command
+	command = |name, default_backend, fields|
+		PluginApi.Command.{
+			argument_policy: NoArguments,
+			body: Body.object(fields),
+			default_backend,
+			name,
+			source: OptionalSource("validation"),
+		}
+
+	backend :
+		Str,
+		[NoDriver, Program(Str)],
+		List(PluginApi.Package) ->
+			PluginApi.Backend
+	backend = |name, driver, required_packages|
+		PluginApi.Backend.{
+			determinate_system: PluginApi.DeterminateSystem.{
+				default_package_source: "packages",
+				driver,
+				kind: Custom,
+			},
+			fallback: NoFallback,
+			name,
+			required_packages,
+		}
+
+	implementation : Str, Str -> PluginApi.Implementation
+	implementation = |command_name, backend_name|
+		PluginApi.Implementation.{
+			actions: [],
+			backend: backend_name,
+			command: command_name,
+			renderer: Fixtures.empty_renderer,
+		}
+
+	plugin :
+		Str,
+		List(PluginApi.Command),
+		List(PluginApi.Backend),
+		List(PluginApi.Implementation) ->
+			PluginApi.Plugin
+	plugin = |name, commands, backends, implementations|
+		PluginApi.Plugin.Registry({
+			definition: PluginApi.Definition.{
+				backends,
+				commands,
+				implementations,
+				name,
+			},
+		})
+
+	valid : Str -> PluginApi.Plugin
+	valid = |name|
+		Validation.plugin(
+			name,
+			[Validation.command("run", "one", [Validation.field("field_1")])],
+			[
+				Validation.backend(
+					"one",
+					Program("driver"),
+					[
+						PluginApi.Package.{
+							name: "pkg",
+							program: "program",
+						},
+					],
+				),
+			],
+			[Validation.implementation("run", "one")],
+		)
+
+	has_diagnostic : List(Str), Str -> Bool
+	has_diagnostic = |diagnostics, expected|
+		match diagnostics {
+			[] => Bool.False
+			[first, .. as rest] => first.contains(expected) or
+				Validation.has_diagnostic(rest, expected)
+		}
+
+	all_cases_pass : List(
+		{
+			expected : Str,
+			plugin : PluginApi.Plugin,
+		},
+	) -> Bool
+	all_cases_pass = |cases|
+		match cases {
+			[] => Bool.True
+			[first, .. as rest] => {
+				diagnostics = Registry.validate([first.plugin])
+				Validation.has_diagnostic(diagnostics, first.expected) and
+					Validation.all_cases_pass(rest)
+			}
+		}
+}
+
 main! = |_| Ok({})
+
+expect {
+	good_command = Validation.command("run", "one", [Validation.field("field")])
+	good_backend = Validation.backend("one", Program("driver"), [])
+	good_implementation = Validation.implementation("run", "one")
+	Validation.all_cases_pass([
+		{ expected: "plugin name must not be empty", plugin: Validation.plugin("", [good_command], [good_backend], [good_implementation]) },
+		{ expected: "at least one command", plugin: Validation.plugin("case", [], [good_backend], [good_implementation]) },
+		{ expected: "at least one backend", plugin: Validation.plugin("case", [good_command], [], [good_implementation]) },
+		{ expected: "at least one implementation", plugin: Validation.plugin("case", [good_command], [good_backend], []) },
+		{ expected: "command name must not be empty", plugin: Validation.plugin("case", [Validation.command("", "one", [])], [good_backend], [Validation.implementation("", "one")]) },
+		{ expected: "backend name must not be empty", plugin: Validation.plugin("case", [Validation.command("run", "", [])], [Validation.backend("", NoDriver, [])], [Validation.implementation("run", "")]) },
+		{ expected: "field name must not be empty", plugin: Validation.plugin("case", [Validation.command("run", "one", [Validation.field("")])], [good_backend], [good_implementation]) },
+		{ expected: "package name must not be empty", plugin: Validation.plugin("case", [good_command], [Validation.backend("one", NoDriver, [PluginApi.Package.{ name: "", program: "program" }])], [good_implementation]) },
+		{ expected: "program name must not be empty", plugin: Validation.plugin("case", [good_command], [Validation.backend("one", NoDriver, [PluginApi.Package.{ name: "pkg", program: "" }])], [good_implementation]) },
+		{ expected: "driver name must not be empty", plugin: Validation.plugin("case", [good_command], [Validation.backend("one", Program(""), [])], [good_implementation]) },
+		{ expected: "duplicate command 'run'", plugin: Validation.plugin("case", [good_command, good_command], [good_backend], [good_implementation]) },
+		{ expected: "duplicate backend 'one'", plugin: Validation.plugin("case", [good_command], [good_backend, good_backend], [good_implementation]) },
+		{ expected: "duplicate implementation 'run/one'", plugin: Validation.plugin("case", [good_command], [good_backend], [good_implementation, good_implementation]) },
+		{ expected: "unknown command 'missing'", plugin: Validation.plugin("case", [good_command], [good_backend], [Validation.implementation("missing", "one")]) },
+		{ expected: "unknown backend 'missing'", plugin: Validation.plugin("case", [good_command], [good_backend], [Validation.implementation("run", "missing")]) },
+		{ expected: "command 'unused' has no implementation", plugin: Validation.plugin("case", [good_command, Validation.command("unused", "one", [])], [good_backend], [good_implementation]) },
+		{ expected: "backend 'unused' has no implementation", plugin: Validation.plugin("case", [good_command], [good_backend, Validation.backend("unused", NoDriver, [])], [good_implementation]) },
+		{ expected: "default backend 'missing' does not exist", plugin: Validation.plugin("case", [Validation.command("run", "missing", [])], [good_backend], [good_implementation]) },
+		{ expected: "does not implement the command", plugin: Validation.plugin("case", [good_command], [good_backend, Validation.backend("two", NoDriver, [])], [Validation.implementation("run", "two")]) },
+		{ expected: "duplicate field 'field'", plugin: Validation.plugin("case", [Validation.command("run", "one", [Validation.field("field"), Validation.field("field")])], [good_backend], [good_implementation]) },
+		{ expected: "must match [A-Za-z_]", plugin: Validation.plugin("case", [Validation.command("run", "one", [Validation.field("9field")])], [good_backend], [good_implementation]) },
+		{ expected: "must match [A-Za-z_]", plugin: Validation.plugin("case", [Validation.command("run", "one", [Validation.field("field☃")])], [good_backend], [good_implementation]) },
+	])
+}
+
+expect {
+	plugin = Validation.plugin(
+		"case",
+		[Validation.command("run", "one", [Validation.field("")])],
+		[Validation.backend("one", NoDriver, [])],
+		[Validation.implementation("run", "one")],
+	)
+	Registry.validate([plugin]) == [
+		"plugin 'case': command 'run' field name must not be empty",
+	]
+}
+
+expect {
+	plugin = Validation.plugin(
+		"case",
+		[Validation.command("run", "one", []), Validation.command("run", "one", [])],
+		[Validation.backend("one", NoDriver, [])],
+		[],
+	)
+	Registry.validate([plugin]) == [
+		"plugin 'case': must define at least one implementation",
+		"plugin 'case': duplicate command 'run'",
+		"plugin 'case': command 'run' has no implementation",
+		"plugin 'case': backend 'one' has no implementation",
+		"plugin 'case': command 'run' default backend 'one' does not implement the command",
+	]
+}
+
+expect {
+	plugin = Validation.plugin(
+		"multi",
+		[Validation.command("run", "one", [])],
+		[Validation.backend("one", NoDriver, []), Validation.backend("two", NoDriver, [])],
+		[Validation.implementation("run", "one"), Validation.implementation("run", "two")],
+	)
+	Registry.validate([plugin]) == []
+}
+
+expect Registry.validate([Validation.valid("first"), Validation.valid("second")]) == []
+
+expect {
+	diagnostics = Registry.validate([Validation.plugin("", [], [], []), Validation.plugin("second", [], [], [])])
+	diagnostics.len() == 7 and
+		diagnostics.map(|message| message.starts_with("plugin #1:")).keep_if(|prefixed| prefixed).len() == 4 and
+			diagnostics.map(|message| message.starts_with("plugin 'second':")).keep_if(|prefixed| prefixed).len() == 3
+}
 
 expect {
 	Fixtures.render_cases([
@@ -216,7 +395,8 @@ expect {
 	Body.parse(ShellCommand.body, "pkgs: \"cowsay\"") == Err({
 		byte_offset: 6,
 		kind: WrongType({ expected: StringList, field: "pkgs" }),
-	}) and Body.parse(ShellCommand.body, "") == Err({ byte_offset: 0, kind: MissingField("pkgs") })
+	}) and
+		Body.parse(ShellCommand.body, "") == Err({ byte_offset: 0, kind: MissingField("pkgs") })
 }
 
 expect {

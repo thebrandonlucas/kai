@@ -1,4 +1,8 @@
-# Pure parsing and validation for declarative plugin block bodies.
+# A pure representation of the Kaifile config which
+# is used to help outsource both parsing, validation, and
+# diagnostic logic from the Plugins themselves so plugin 
+# writers aren't expected to do all that from scratch, but 
+# only define high-level behaviors
 Body := [].{
 	ValueShape : [String, StringList]
 	Presence : [Optional, Required]
@@ -9,10 +13,15 @@ Body := [].{
 	}
 	Shape : [Object(List(Field))]
 
-	Value : [StringValue(Str), StringListValue(List(Str))]
+	Value : [
+		StringValue(Str),
+		StringListValue(List(Str)),
+	]
 	Entry := { name : Str, value : Value }
 	Configuration : [Config(List(Entry))]
 
+	# What kind of error did we run into 
+	# while parsing?
 	DiagnosticKind : [
 		DuplicateField(Str),
 		InvalidSyntax(Str),

@@ -16,12 +16,14 @@ import "Body.roc" as body_source : Str
 import "Executor.roc" as executor_source : Str
 import "package.roc" as package_source : Str
 import "Plugin.roc" as plugin_source : Str
+import "Registry.roc" as registry_source : Str
 import "../plugins/StdPlugin.roc" as std_plugin_source : Str
 import "../plugins/backends/Nix.roc" as nix_backend_source : Str
 import "../plugins/commands/Shell.roc" as shell_command_source : Str
 import "../plugins/implementations/ShellNix.roc" as shell_nix_source : Str
 import "VERSION" as version_source : Str
 
+# FIXME: assuming this shouldn't be hardcoded?
 platform_name = "FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn"
 
 platform_url = "https://github.com/roc-lang/basic-cli/releases/download/0.21.0-rc4/${platform_name}.tar.zst"
@@ -362,6 +364,7 @@ build_stage! = |stage, output_path, plugin_trees| {
 	Path.write_utf8!(Path.join(stage, "Executor.roc"), executor_source)?
 	Path.write_utf8!(Path.join(stage, "package.roc"), package_source)?
 	Path.write_utf8!(Path.join(stage, "Plugin.roc"), plugin_source)?
+	Path.write_utf8!(Path.join(stage, "Registry.roc"), registry_source)?
 	Path.write_utf8!(Path.join(stage, "VERSION"), version_source)?
 
 	std_dir = Path.join(stage, "std")
@@ -404,15 +407,55 @@ build_stage! = |stage, output_path, plugin_trees| {
 	dependencies = plugins.map(|plugin| "\tcustom${U64.to_str(plugin.index)}: \"./custom${U64.to_str(plugin.index)}/main.roc\",")
 	import_lines = plugins.map(|plugin| "import custom${U64.to_str(plugin.index)}.${plugin.tree.top.module_name} as Custom${U64.to_str(plugin.index)}")
 	entries = plugins.map(|plugin| "\tCustom${U64.to_str(plugin.index)}.plugin,")
+	app_header = [
+		"app [main!] {",
+		"\tpf: platform \"${platform_url}\",",
+		"\tkai: \"./package.roc\",",
+		"\tstd: \"./std/main.roc\",",
+	].concat(dependencies).concat(["}"])
+	registry_lines = ["", "registry = ["].concat(entries).concat(["\tStdPlugin.plugin,", "]"])
+
+	validator_source = Str.join_with(
+		app_header.concat([
+			"",
+			"import pf.OsStr",
+			"import pf.Stderr",
+			"import kai.Registry",
+			"import std.StdPlugin",
+		]).concat(import_lines).concat(registry_lines).concat([
+			"",
+			"print_errors! = |errors|",
+			"\tmatch errors {",
+			"\t\t[] => Ok({})",
+			"\t\t[first, .. as rest] => {",
+			"\t\t\tStderr.line!(first) ? |_| Exit(1)",
+			"\t\t\tprint_errors!(rest)",
+			"\t\t}",
+			"\t}",
+			"",
+			"main! = |args|",
+			"\tif args.drop_first(1).map(OsStr.display) == [\"--validate\"] {",
+			"\t\terrors = Registry.validate(registry)",
+			"\t\tif errors.is_empty() {",
+			"\t\t\tOk({})",
+			"\t\t} else {",
+			"\t\t\tprint_errors!(errors)?",
+			"\t\t\tErr(Exit(1))",
+			"\t\t}",
+			"\t} else {",
+			"\t\tOk({})",
+			"\t}",
+		]),
+		"\n",
+	)
+	validator_path = Path.join(stage, "validator.roc")
+	validator_output = Path.join(stage, "registry-validator")
+	Path.write_utf8!(validator_path, validator_source)?
+	Cmd.exec!(OsStr.utf8("roc"), [OsStr.utf8("build"), Path.to_os_str(validator_path), OsStr.utf8("--opt=dev"), output_arg(validator_output)])?
+	Cmd.exec!(Path.to_os_str(validator_output), [OsStr.utf8("--validate")])?
+
 	app_source = Str.join_with(
-		[
-			"app [main!] {",
-			"\tpf: platform \"${platform_url}\",",
-			"\tkai: \"./package.roc\",",
-			"\tstd: \"./std/main.roc\",",
-		].concat(dependencies).concat(["}", "", "import Executor", "import std.StdPlugin"]).concat(import_lines).concat(
-			["", "registry = ["].concat(entries).concat(["\tStdPlugin.plugin,", "]", "", "main! = |args| Executor.run!(args, registry)"]),
-		),
+		app_header.concat(["", "import Executor", "import std.StdPlugin"]).concat(import_lines).concat(registry_lines).concat(["", "main! = |args| Executor.run!(args, registry)"]),
 		"\n",
 	)
 	app_path = Path.join(stage, "main.roc")

@@ -1,1 +1,1 @@
-package [Body, Plugin] {}
+package [Body, Plugin, Registry] {}
