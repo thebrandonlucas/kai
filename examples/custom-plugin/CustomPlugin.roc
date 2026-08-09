@@ -2,17 +2,19 @@
 #
 # ```Kaifile
 #   custom {
-#      message: "..."
+#      message: "Hello from CustomPlugin!"
 #   }
 # ```
+#
+# Building with `xkai build` and then running with
+# `./kai custom-plugin` should create a file called
+# "custom-plugin-output.txt" with the message "Hello from CustomPlugin!"
+
 import kai.Body
 import kai.Plugin as PluginApi
 
 CustomPlugin := [].{
 	plugin : PluginApi.Plugin
-	# FIX: is module the "legacy" thing now according to the plans and we're 
-	# just keeping it around for backward compat while we build the new Registry
-	# system?
 	plugin = PluginApi.Plugin.Module({
 		definition,
 		plan: CustomPlugin.plan,
@@ -21,24 +23,15 @@ CustomPlugin := [].{
 	local : PluginApi.Backend
 	local = PluginApi.Backend.{
 		determinate_system: PluginApi.DeterminateSystem.{
-			# FIX: assuming "local" is what we're calling our 
-			# determinate package manager nix or guix equivalent
 			default_package_source: "local",
-			# FIX: assuming Driver means "which program drives this?"
-			# is this supposed to be the actual "nix" cli tool (if the system were nix?)
 			driver: NoDriver,
 			kind: Custom,
 		},
-		# FIX: fallback describes what behavior to do if 
 		fallback: NoFallback,
 		name: "local",
 		required_packages: [],
 	}
 
-	# FIX body describes the "body of the config within the curly block"
-	# but what does Shape mean?
-	# I supposed Body.object is just a typed array of requirements and definitions
-	# for anything in the body of the config 
 	custom_body : Body.Shape
 	custom_body = Body.object([
 		Body.required(
@@ -53,7 +46,6 @@ CustomPlugin := [].{
 		body: custom_body,
 		default_backend: local.name,
 		name: "custom-write",
-		# FIX what is RequiredSource
 		config_block: RequiredConfigBlock("custom"),
 	}
 
@@ -78,13 +70,13 @@ CustomPlugin := [].{
 		name: "custom",
 	}
 
-	# FIX this fn seems to be typed improperly? it takes in a value
-	# and returns a value but that's not represented in the type def?
-	# do all plugin's need a renderer?
 	render : PluginApi.Renderer
 	render = |context|
 		match context.config_block {
-			NoConfigBlock => Err({ byte_offset: None, message: "custom configuration is required" })
+			NoConfigBlock => Err({
+				byte_offset: None,
+				message: "custom configuration is required",
+			})
 			SelectedConfigBlock({ body: _, location: _ }) =>
 				match Body.get_string(context.config, "message") {
 					Err(_) => Err({
@@ -100,7 +92,6 @@ CustomPlugin := [].{
 				}
 			}
 
-	# FIX do all plugins need a plan?
 	plan :
 		Str,
 		List(Str),

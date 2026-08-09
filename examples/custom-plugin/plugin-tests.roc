@@ -10,7 +10,6 @@ import CustomPlugin
 
 main! = |_| Ok({})
 
-# 
 # Parsed input: message: "rendered from validated config"
 # Ignored raw config block: message: ["not the renderer input"]
 # Expected output text: "rendered from validated config"
@@ -25,11 +24,15 @@ expect {
 		config,
 		host_arch: X64,
 		host_os: LINUX,
-		# FIX: what is SelectedSource and where is that def coming from?
+		# FIX: what is SelectedConfigBlock and where is that def coming from?
 		config_block: SelectedConfigBlock({
 			body: "message: [\"not the renderer input\"]",
 			# FIX: whats byte_offset?
-			location: { byte_offset: 0, column: 1, line: 1 },
+			location: {
+				byte_offset: 0,
+				column: 1,
+				line: 1,
+			},
 		}),
 	}
 	# FIX: what is .render do?
@@ -50,7 +53,17 @@ expect {
 # Input: message: [] -> WrongType(String, "message")
 expect {
 	match Body.parse(CustomPlugin.custom_body, "message: []") {
-		Err({ byte_offset: _, kind: WrongType({ expected: String, field: "message" }) }) => Bool.True
+		Err(
+			{
+				byte_offset: _,
+				kind: WrongType(
+					{
+						expected: String,
+						field: "message",
+					},
+				),
+			},
+		) => Bool.True
 		_ => Bool.False
 	}
 }
