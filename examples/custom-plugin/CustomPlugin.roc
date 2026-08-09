@@ -4,7 +4,8 @@ import kai.Plugin as PluginApi
 CustomPlugin := [].{
 	plugin : PluginApi.Plugin
 	# FIX: is module the "legacy" thing now according to the plans and we're 
-	# just keeping it around for 
+	# just keeping it around for backward compat while we build the new Registry
+	# system?
 	plugin = PluginApi.Plugin.Module({
 		definition,
 		plan: CustomPlugin.plan,
@@ -13,17 +14,31 @@ CustomPlugin := [].{
 	local : PluginApi.Backend
 	local = PluginApi.Backend.{
 		determinate_system: PluginApi.DeterminateSystem.{
+			# FIX: assuming "local" is what we're calling our 
+			# determinate package manager nix or guix equivalent
 			default_package_source: "local",
+			# FIX: assuming Driver means "which program drives this?"
+			# is this supposed to be the actual "nix" cli tool (if the system were nix?)
 			driver: NoDriver,
 			kind: Custom,
 		},
+		# FIX: fallback describes what behavior to do if 
 		fallback: NoFallback,
 		name: "local",
 		required_packages: [],
 	}
 
+	# FIX body describes the "body of the config within the curly block"
+	# but what does Shape mean?
+	# I supposed Body.object is just a typed array of requirements and definitions
+	# for anything in the body of the config 
 	custom_body : Body.Shape
-	custom_body = Body.object([Body.required("message", String)])
+	custom_body = Body.object([
+		Body.required(
+			"message",
+			String,
+		),
+	])
 
 	custom_write : PluginApi.Command
 	custom_write = PluginApi.Command.{
@@ -31,12 +46,18 @@ CustomPlugin := [].{
 		body: custom_body,
 		default_backend: local.name,
 		name: "custom-write",
+		# FIX what is RequiredSource
 		source: RequiredSource("custom"),
 	}
 
 	implementation : PluginApi.Implementation
 	implementation = PluginApi.Implementation.{
-		actions: [WriteConfigUtf8({ output: "message", path: "custom-plugin-output.txt" })],
+		actions: [
+			WriteConfigUtf8({
+				output: "message",
+				path: "custom-plugin-output.txt",
+			}),
+		],
 		backend: local.name,
 		command: custom_write.name,
 		renderer: CustomPlugin.render,
@@ -50,13 +71,19 @@ CustomPlugin := [].{
 		name: "custom",
 	}
 
+	# FIX this fn seems to be typed improperly? it takes in a value
+	# and returns a value but that's not represented in the type def?
+	# do all plugin's need a renderer?
 	render : PluginApi.Renderer
 	render = |context|
 		match context.source {
 			NoSource => Err({ byte_offset: None, message: "custom configuration is required" })
 			SelectedSource({ body: _, location: _ }) =>
 				match Body.get_string(context.config, "message") {
-					Err(_) => Err({ byte_offset: None, message: "validated custom configuration is missing 'message'" })
+					Err(_) => Err({
+						byte_offset: None,
+						message: "validated custom configuration is missing 'message'",
+					})
 					Ok(message) => Ok(
 						PluginApi.RenderResult.{
 							outputs: [{ name: "message", text: message }],
@@ -66,7 +93,16 @@ CustomPlugin := [].{
 				}
 			}
 
-	plan : Str, List(Str), PluginApi.HostOs, PluginApi.HostArch -> Try(PluginApi.Plan, PluginApi.Error)
+	# FIX do all plugins need a plan?
+	plan :
+		Str,
+		List(Str),
+		PluginApi.HostOs,
+		PluginApi.HostArch ->
+			Try(
+				PluginApi.Plan,
+				PluginApi.Error,
+			)
 	plan = |source, args, _os, _arch|
 		match args {
 			["custom-write"] => {
@@ -80,6 +116,7 @@ CustomPlugin := [].{
 			_ => Err(UnknownCommand)
 		}
 
+	# Parses the message part of the body in the custom plugin
 	parse_message : List(Str) -> Try(Str, [InvalidConfig])
 	parse_message = |lines|
 		match lines {
