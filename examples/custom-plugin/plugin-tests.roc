@@ -10,26 +10,44 @@ import CustomPlugin
 
 main! = |_| Ok({})
 
+# 
+# Parsed input: message: "rendered from validated config"
+# Ignored raw source: message: ["not the renderer input"]
+# Expected output text: "rendered from validated config"
 expect {
-	config = Body.parse(CustomPlugin.custom_body, "message: \"rendered from validated config\"")?
+	config = Body.parse(
+		CustomPlugin.custom_body,
+		"message: \"rendered from validated config\"",
+	)?
+	# FIX: what is rendercontext?
 	context = PluginApi.RenderContext.{
 		args: [],
 		config,
 		host_arch: X64,
 		host_os: LINUX,
+		# FIX: what is SelectedSource and where is that def coming from?
 		source: SelectedSource({
 			body: "message: [\"not the renderer input\"]",
+			# FIX: whats byte_offset?
 			location: { byte_offset: 0, column: 1, line: 1 },
 		}),
 	}
+	# FIX: what is .render do?
 	CustomPlugin.render(context) == Ok(
+		# FIX: what is renderresult?
 		PluginApi.RenderResult.{
-			outputs: [{ name: "message", text: "rendered from validated config" }],
+			outputs: [
+				{
+					name: "message",
+					text: "rendered from validated config",
+				},
+			],
 			requested_packages: [],
 		},
 	)
 }
 
+# Input: message: [] -> WrongType(String, "message")
 expect {
 	match Body.parse(CustomPlugin.custom_body, "message: []") {
 		Err({ byte_offset: _, kind: WrongType({ expected: String, field: "message" }) }) => Bool.True

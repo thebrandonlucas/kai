@@ -302,11 +302,13 @@
           xkai-package = xkai;
 
           version = pkgs.runCommand "kai-version-check" { } ''
+            # Expected output: "kai version ${version}"
             test "$(${kai}/bin/kai version)" = "kai version ${version}"
             touch "$out"
           '';
 
           xkai-version = pkgs.runCommand "xkai-version-check" { } ''
+            # Expected output: "xkai version ${version}"
             test "$(${xkai}/bin/xkai version)" = "xkai version ${version}"
             touch "$out"
           '';

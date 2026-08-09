@@ -171,6 +171,13 @@ main! = |args| {
 
 ## -- TESTS --
 
+# Inputs -> expected commands:
+# [] -> Help
+# ["build"] -> Build([])
+# ["build", "Example.roc"] -> Build(["Example.roc"])
+# ["help"] -> Help
+# ["version"] -> Version
+# ["socrates"] -> Unknown("socrates")
 expect Cli.check([], Cli.Command.Help)
 expect Cli.check(["build"], Cli.Command.Build([]))
 expect Cli.check(["build", "Example.roc"], Cli.Command.Build(["Example.roc"]))

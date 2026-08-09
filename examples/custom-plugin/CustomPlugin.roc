@@ -3,7 +3,12 @@ import kai.Plugin as PluginApi
 
 CustomPlugin := [].{
 	plugin : PluginApi.Plugin
-	plugin = PluginApi.Plugin.Module({ definition, plan: CustomPlugin.plan })
+	# FIX: is module the "legacy" thing now according to the plans and we're 
+	# just keeping it around for 
+	plugin = PluginApi.Plugin.Module({
+		definition,
+		plan: CustomPlugin.plan,
+	})
 
 	local : PluginApi.Backend
 	local = PluginApi.Backend.{
@@ -95,4 +100,15 @@ CustomPlugin := [].{
 		}
 }
 
-expect CustomPlugin.parse_message(["custom {", "message: \"custom plugin worked\"", "}"]) == Ok("custom plugin worked")
+# parse_message extracts message field from config.kai string
+#
+# Input:
+# custom {
+#   message: "custom plugin worked"
+# }
+# Expected output: "custom plugin worked"
+expect CustomPlugin.parse_message([
+	"custom {",
+	"message: \"custom plugin worked\"",
+	"}",
+]) == Ok("custom plugin worked")
