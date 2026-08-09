@@ -15,18 +15,18 @@ ShellNix := [].{
 		PluginApi.HostOs,
 		PluginApi.HostArch ->
 			Try(PluginApi.Plan, PluginApi.Error)
-	plan = |source, os, arch| {
+	plan = |config_text, os, arch| {
 		target = ShellNix.target(os, arch)?
-		config = ShellNix.parse(source, target.section)?
+		config = ShellNix.parse(config_text, target.section)?
 		context = PluginApi.RenderContext.{
 			args: [],
 			config,
-			host_arch: arch,
-			host_os: os,
-			source: SelectedSource({
-				body: source,
+			config_block: SelectedConfigBlock({
+				body: config_text,
 				location: { byte_offset: 0, column: 1, line: 1 },
 			}),
+			host_arch: arch,
+			host_os: os,
 		}
 		# rendering gets the rendered output (e.g. flake.nix str to write)
 		rendered = ShellNix.renderer(context) ? |_| InvalidConfig
@@ -48,8 +48,8 @@ ShellNix := [].{
 		}
 
 	parse : Str, Str -> Try(Body.Configuration, [InvalidConfig])
-	parse = |source, section| {
-		lines = source
+	parse = |config_text, section| {
+		lines = config_text
 			.split_on("\n")
 			.map(
 				|line|
@@ -105,9 +105,9 @@ ShellNix := [].{
 
 	renderer : PluginApi.Renderer
 	renderer = |context|
-		match context.source {
-			NoSource => Err({ byte_offset: None, message: "shell configuration is required" })
-			SelectedSource({ body: _, location: _ }) =>
+		match context.config_block {
+			NoConfigBlock => Err({ byte_offset: None, message: "shell configuration is required" })
+			SelectedConfigBlock({ body: _, location: _ }) =>
 				match ShellNix.target(context.host_os, context.host_arch) {
 					Err(_) => Err({ byte_offset: None, message: "unsupported shell platform" })
 					Ok(selected_target) =>

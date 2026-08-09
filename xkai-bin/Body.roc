@@ -42,11 +42,11 @@ Body := [].{
 	empty = Config([])
 
 	parse : Shape, Str -> Try(Configuration, Diagnostic)
-	parse = |shape, source| {
+	parse = |shape, body_text| {
 		fields = match shape {
 			Object(object_fields) => object_fields
 		}
-		bytes = source.to_utf8()
+		bytes = body_text.to_utf8()
 		parsed = Body.parse_fields(bytes, Body.skip_trivia(bytes, 0), fields, [])?
 		Body.require_fields(fields, parsed.entries, bytes.len())?
 		Ok(Config(parsed.entries))

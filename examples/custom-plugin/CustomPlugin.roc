@@ -1,3 +1,10 @@
+# A simple demo plugin. It's `config.kai` looks like:
+#
+# ```Kaifile
+#   custom {
+#      message: "..."
+#   }
+# ```
 import kai.Body
 import kai.Plugin as PluginApi
 
@@ -47,7 +54,7 @@ CustomPlugin := [].{
 		default_backend: local.name,
 		name: "custom-write",
 		# FIX what is RequiredSource
-		source: RequiredSource("custom"),
+		config_block: RequiredConfigBlock("custom"),
 	}
 
 	implementation : PluginApi.Implementation
@@ -76,9 +83,9 @@ CustomPlugin := [].{
 	# do all plugin's need a renderer?
 	render : PluginApi.Renderer
 	render = |context|
-		match context.source {
-			NoSource => Err({ byte_offset: None, message: "custom configuration is required" })
-			SelectedSource({ body: _, location: _ }) =>
+		match context.config_block {
+			NoConfigBlock => Err({ byte_offset: None, message: "custom configuration is required" })
+			SelectedConfigBlock({ body: _, location: _ }) =>
 				match Body.get_string(context.config, "message") {
 					Err(_) => Err({
 						byte_offset: None,
@@ -103,10 +110,10 @@ CustomPlugin := [].{
 				PluginApi.Plan,
 				PluginApi.Error,
 			)
-	plan = |source, args, _os, _arch|
+	plan = |config_text, args, _os, _arch|
 		match args {
 			["custom-write"] => {
-				message = CustomPlugin.parse_message(source.split_on("\n"))?
+				message = CustomPlugin.parse_message(config_text.split_on("\n"))?
 				Ok(
 					PluginApi.Plan.{
 						actions: [WriteUtf8({ content: message, path: "custom-plugin-output.txt" })],

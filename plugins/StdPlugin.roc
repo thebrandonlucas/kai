@@ -19,9 +19,9 @@ StdPlugin := [].{
 				PluginApi.Plan,
 				PluginApi.Error,
 			)
-	plan = |source, args, os, arch|
+	plan = |config_text, args, os, arch|
 		match args {
-			["shell"] => ShellNix.plan(source, os, arch)
+			["shell"] => ShellNix.plan(config_text, os, arch)
 			_ => Err(UnknownCommand)
 		}
 

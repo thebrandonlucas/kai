@@ -12,7 +12,7 @@ main! = |_| Ok({})
 
 # 
 # Parsed input: message: "rendered from validated config"
-# Ignored raw source: message: ["not the renderer input"]
+# Ignored raw config block: message: ["not the renderer input"]
 # Expected output text: "rendered from validated config"
 expect {
 	config = Body.parse(
@@ -26,7 +26,7 @@ expect {
 		host_arch: X64,
 		host_os: LINUX,
 		# FIX: what is SelectedSource and where is that def coming from?
-		source: SelectedSource({
+		config_block: SelectedConfigBlock({
 			body: "message: [\"not the renderer input\"]",
 			# FIX: whats byte_offset?
 			location: { byte_offset: 0, column: 1, line: 1 },
