@@ -67,6 +67,7 @@ cp "$arm64_archive_store" "$arm64_cli_archive"
 echo "Checking packaged x86_64 Linux CLI..."
 mkdir "$work_dir/x64-cli-test"
 tar -xzf "$x64_cli_archive" -C "$work_dir/x64-cli-test"
+# Expected output: "kai version $version"
 if [[ "$("$work_dir/x64-cli-test/kai" version)" != "kai version $version" ]]; then
   echo "error: packaged x86_64 CLI is missing or not executable" >&2
   exit 1
@@ -79,6 +80,7 @@ if [[ ! -x "$work_dir/arm64-cli-test/kai" ]]; then
   echo "error: packaged aarch64 CLI is missing or not executable" >&2
   exit 1
 fi
+# Expected file description to contain: "ARM aarch64"
 if ! file "$work_dir/arm64-cli-test/kai" | grep -F 'ARM aarch64' >/dev/null; then
   echo "error: packaged aarch64 CLI has the wrong architecture" >&2
   exit 1

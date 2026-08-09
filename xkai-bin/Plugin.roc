@@ -1,5 +1,5 @@
 # Pure plugin model shared by plugins and the CLI.
-import Body
+import parser.Body
 
 Plugin := [
 	Module(
@@ -15,9 +15,9 @@ Plugin := [
 	HostArch : [X86, X64, ARM, AARCH64, OTHER(Str)]
 
 	run : Plugin, Str, List(Str), HostOs, HostArch -> Try(Plan, Error)
-	run = |plugin, source, args, os, arch|
+	run = |plugin, config_text, args, os, arch|
 		match plugin {
-			Module({ definition: _, plan }) => plan(source, args, os, arch)
+			Module({ definition: _, plan }) => plan(config_text, args, os, arch)
 			Registry({ definition: _ }) => Err(UnknownCommand)
 		}
 
@@ -49,14 +49,14 @@ Plugin := [
 
 	ArgumentPolicy : [AllowArguments, NoArguments]
 
-	SourceRequirement : [OptionalSource(Str), RequiredSource(Str)]
+	ConfigBlockRequirement : [OptionalConfigBlock(Str), RequiredConfigBlock(Str)]
 
 	Command := {
 		argument_policy : ArgumentPolicy,
 		body : Body.Shape,
+		config_block : ConfigBlockRequirement,
 		default_backend : Str,
 		name : Str,
-		source : SourceRequirement,
 	}
 
 	DeterminateSystemKind : [Custom, Guix, Nix]
@@ -90,14 +90,13 @@ Plugin := [
 		required_packages : List(Package),
 	}
 
-	# "source" references the Kaifile to parse.
 	SourceLocation := {
 		byte_offset : U64,
 		column : U64,
 		line : U64,
 	}
 
-	LocatedSource := {
+	LocatedConfigBlock := {
 		body : Str,
 		location : SourceLocation,
 	}
@@ -105,9 +104,9 @@ Plugin := [
 	RenderContext := {
 		args : List(Str),
 		config : Body.Configuration,
+		config_block : [NoConfigBlock, SelectedConfigBlock(LocatedConfigBlock)],
 		host_arch : HostArch,
 		host_os : HostOs,
-		source : [NoSource, SelectedSource(LocatedSource)],
 	}
 
 	# Text that will get written to disk.
@@ -152,7 +151,7 @@ Plugin := [
 		parser_for : _
 	}
 
-	# Lower pure action templates into a runtime plan.
+	# Convert pure action templates into a runtime plan.
 	lower : Implementation, RenderResult -> Try(Plan, RendererDiagnostic)
 	lower = |implementation, rendered| {
 		actions = Plugin.lower_actions(

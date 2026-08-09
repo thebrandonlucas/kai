@@ -1,4 +1,4 @@
-import kai.Body
+import parser.Body
 import kai.Plugin as PluginApi
 
 Shell := [].{
@@ -9,8 +9,8 @@ Shell := [].{
 	command = PluginApi.Command.{
 		argument_policy: NoArguments,
 		body,
+		config_block: RequiredConfigBlock("shell"),
 		default_backend: "nix",
 		name: "shell",
-		source: RequiredSource("shell"),
 	}
 }

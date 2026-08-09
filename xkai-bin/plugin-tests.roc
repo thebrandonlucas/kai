@@ -3,10 +3,11 @@ app [main!] {
 	commands: "../plugins/commands/main.roc",
 	implementations: "../plugins/implementations/main.roc",
 	kai: "./package.roc",
+	parser: "./parser/main.roc",
 	std: "../plugins/main.roc",
 }
 
-import kai.Body
+import parser.Body
 import kai.Plugin as PluginApi
 import commands.Shell as ShellCommand
 import implementations.ShellNix
@@ -17,9 +18,9 @@ Fixtures := [].{
 	context = PluginApi.RenderContext.{
 		args: [],
 		config: Body.empty,
+		config_block: NoConfigBlock,
 		host_arch: X64,
 		host_os: LINUX,
-		source: NoSource,
 	}
 
 	empty_result = PluginApi.RenderResult.{ outputs: [], requested_packages: [] }
@@ -69,9 +70,9 @@ Fixtures := [].{
 	command = PluginApi.Command.{
 		argument_policy: AllowArguments,
 		body: Body.object([]),
+		config_block: OptionalConfigBlock("example-config"),
 		default_backend: nix.name,
 		name: "example",
-		source: OptionalSource("example-config"),
 	}
 
 	implementation : Str, PluginApi.Renderer -> PluginApi.Implementation
@@ -122,34 +123,34 @@ Fixtures := [].{
 	])
 
 	has_diagnostic : Str, U64, Body.DiagnosticKind -> Bool
-	has_diagnostic = |source, byte_offset, kind|
-		Body.parse(body_shape, source) == Err({ byte_offset, kind })
+	has_diagnostic = |body_text, byte_offset, kind|
+		Body.parse(body_shape, body_text) == Err({ byte_offset, kind })
 
 	RenderCase : {
 		arch : PluginApi.HostArch,
+		body_text : Str,
 		os : PluginApi.HostOs,
 		pkgs : List(Str),
-		source : Str,
 		system : Str,
 	}
 
 	standard_context : Body.Configuration, Str, PluginApi.HostOs, PluginApi.HostArch -> PluginApi.RenderContext
-	standard_context = |config, source, os, arch|
+	standard_context = |config, body_text, os, arch|
 		PluginApi.RenderContext.{
 			args: [],
 			config,
-			host_arch: arch,
-			host_os: os,
-			source: SelectedSource({
-				body: source,
+			config_block: SelectedConfigBlock({
+				body: body_text,
 				location: { byte_offset: 0, column: 1, line: 1 },
 			}),
+			host_arch: arch,
+			host_os: os,
 		}
 
 	render_standard : Str, PluginApi.HostOs, PluginApi.HostArch -> Try(PluginApi.RenderResult, Str)
-	render_standard = |source, os, arch| {
-		config = Body.parse(ShellCommand.body, source) ? |_| "invalid shell body"
-		rendered = ShellNix.renderer(Fixtures.standard_context(config, source, os, arch)) ? |diagnostic| diagnostic.message
+	render_standard = |body_text, os, arch| {
+		config = Body.parse(ShellCommand.body, body_text) ? |_| "invalid shell body"
+		rendered = ShellNix.renderer(Fixtures.standard_context(config, body_text, os, arch)) ? |diagnostic| diagnostic.message
 		Ok(rendered)
 	}
 
@@ -171,7 +172,7 @@ Fixtures := [].{
 		match cases {
 			[] => Bool.True
 			[first, .. as rest] =>
-				match Fixtures.render_standard(first.source, first.os, first.arch) {
+				match Fixtures.render_standard(first.body_text, first.os, first.arch) {
 					Err(_) => Bool.False
 					Ok({ outputs, requested_packages }) =>
 						match outputs {
@@ -194,8 +195,8 @@ Fixtures := [].{
 			}
 
 	plan_contains : Str, PluginApi.HostOs, PluginApi.HostArch, Str -> Bool
-	plan_contains = |source, os, arch, expected|
-		match StdPlugin.plan(source, ["shell"], os, arch) {
+	plan_contains = |config_text, os, arch, expected|
+		match StdPlugin.plan(config_text, ["shell"], os, arch) {
 			Ok({ actions: [WriteUtf8({ content, path: _ }), Exec(_)] }) => content.contains(expected)
 			_ => Bool.False
 		}
@@ -203,15 +204,22 @@ Fixtures := [].{
 
 main! = |_| Ok({})
 
+# Inputs -> expected generated target and packages:
+# pkgs: [] on Linux/x64 -> x86_64-linux with no packages
+# pkgs: ["cowsay"] on Linux/Arm64 -> aarch64-linux with cowsay
+# pkgs: ["cowsay", "fortune"] on macOS/x64 -> x86_64-darwin with cowsay and fortune
+# pkgs: ["fortune"] on macOS/Arm64 -> aarch64-darwin with fortune
 expect {
 	Fixtures.render_cases([
-		{ arch: X64, os: LINUX, pkgs: [], source: "pkgs: []", system: "x86_64-linux" },
-		{ arch: AARCH64, os: LINUX, pkgs: ["cowsay"], source: "pkgs: [\"cowsay\"]", system: "aarch64-linux" },
-		{ arch: X64, os: MACOS, pkgs: ["cowsay", "fortune"], source: "pkgs: [\"cowsay\", \"fortune\"]", system: "x86_64-darwin" },
-		{ arch: AARCH64, os: MACOS, pkgs: ["fortune"], source: "pkgs: [\"fortune\"]", system: "aarch64-darwin" },
+		{ arch: X64, body_text: "pkgs: []", os: LINUX, pkgs: [], system: "x86_64-linux" },
+		{ arch: AARCH64, body_text: "pkgs: [\"cowsay\"]", os: LINUX, pkgs: ["cowsay"], system: "aarch64-linux" },
+		{ arch: X64, body_text: "pkgs: [\"cowsay\", \"fortune\"]", os: MACOS, pkgs: ["cowsay", "fortune"], system: "x86_64-darwin" },
+		{ arch: AARCH64, body_text: "pkgs: [\"fortune\"]", os: MACOS, pkgs: ["fortune"], system: "aarch64-darwin" },
 	])
 }
 
+# Input: pkgs: "cowsay" -> WrongType(StringList, "pkgs") at byte 6
+# Input: <empty> -> MissingField("pkgs") at byte 0
 expect {
 	Body.parse(ShellCommand.body, "pkgs: \"cowsay\"") == Err({
 		byte_offset: 6,
@@ -219,6 +227,7 @@ expect {
 	}) and Body.parse(ShellCommand.body, "") == Err({ byte_offset: 0, kind: MissingField("pkgs") })
 }
 
+# Expected definition: name "std" with one command, backend, and implementation
 expect {
 	definition = StdPlugin.definition
 	definition.name == "std" and
@@ -227,22 +236,33 @@ expect {
 				definition.implementations.len() == 1
 }
 
+# Input: empty validated config -> error "validated shell configuration is missing 'pkgs'"
 expect ShellNix.renderer(Fixtures.standard_context(Body.empty, "pkgs: []", LINUX, X64)) == Err({
 	byte_offset: None,
 	message: "validated shell configuration is missing 'pkgs'",
 })
 
+# Input: pkgs: [""] -> error "shell package names must not be empty"
 expect Fixtures.render_standard("pkgs: [\"\"]", LINUX, X64) == Err("shell package names must not be empty")
 
+# Input: pkgs: [] on unsupported OS -> error "unsupported shell platform"
 expect Fixtures.render_standard("pkgs: []", OTHER("unsupported"), X64) == Err("unsupported shell platform")
 
+# Input:
+# shell {
+#   pkgs: ["cowsay"]
+# }
+# Expected generated flake to contain: ."cowsay"
 expect Fixtures.plan_contains("shell {\n  pkgs: [\"cowsay\"]\n}", LINUX, X64, ".\"cowsay\"")
 
+# Input selects pkgs: ["fortune"] from the macOS shell block.
+# Expected generated flake to contain: ."fortune"
 expect {
-	source = "on linux {\n  shell {\n    pkgs: [\"cowsay\"]\n  }\n}\non macos {\n  shell {\n    pkgs: [\"fortune\"]\n  }\n}"
-	Fixtures.plan_contains(source, MACOS, AARCH64, ".\"fortune\"")
+	config_text = "on linux {\n  shell {\n    pkgs: [\"cowsay\"]\n  }\n}\non macos {\n  shell {\n    pkgs: [\"fortune\"]\n  }\n}"
+	Fixtures.plan_contains(config_text, MACOS, AARCH64, ".\"fortune\"")
 }
 
+# Expected definition: name "minimal" with one command, four backends, and four implementations
 expect {
 	plugin = PluginApi.Plugin.Registry({ definition: Fixtures.definition })
 	definition = PluginApi.definition(plugin)
@@ -252,6 +272,8 @@ expect {
 				definition.implementations.len() == 4
 }
 
+# Inputs: outputs first="one" and second="two"
+# Expected writes: first.txt="one" and second.txt="two"
 expect PluginApi.lower(Fixtures.multiple_writes, Fixtures.multiple_result) == Ok(
 	PluginApi.Plan.{
 		actions: [
@@ -263,14 +285,17 @@ expect PluginApi.lower(Fixtures.multiple_writes, Fixtures.multiple_result) == Ok
 
 expect Fixtures.empty_renderer(Fixtures.context) == Ok(Fixtures.empty_result)
 
+# Input requests missing output "missing" -> error "plugin renderer did not return named output 'missing'"
 expect PluginApi.lower(Fixtures.missing_write, Fixtures.multiple_result) == Err({
 	byte_offset: None,
 	message: "plugin renderer did not return named output 'missing'",
 })
 
+# Input contains comments around pkgs ["cowsay", "fortune"] and description "# kept".
+# Expected output: pkgs ["cowsay", "fortune"] and description "# kept"
 expect {
-	source = " # before\n pkgs: [\n  \"cowsay\", # package\n  \"fortune\"\n ]\n description: \"# kept\" # after\n"
-	match Body.parse(Fixtures.body_shape, source) {
+	body_text = " # before\n pkgs: [\n  \"cowsay\", # package\n  \"fortune\"\n ]\n description: \"# kept\" # after\n"
+	match Body.parse(Fixtures.body_shape, body_text) {
 		Err(_) => Bool.False
 		Ok(config) =>
 			Body.get_strings(config, "pkgs") == Ok(["cowsay", "fortune"]) and
@@ -278,6 +303,9 @@ expect {
 		}
 }
 
+# Input: pkgs: [] with no description
+# Expected output: empty pkgs, optional description None, required access MissingField,
+# and reading pkgs as String returns WrongType
 expect {
 	config = Body.parse(Fixtures.body_shape, "pkgs: []")?
 	Body.get_strings(config, "pkgs") == Ok([]) and
@@ -286,56 +314,75 @@ expect {
 				Body.get_string(config, "pkgs") == Err(WrongType({ expected: String, field: "pkgs" }))
 }
 
+# Input:
+# pkgs: []
+# pkgs: []
+# Expected: DuplicateField("pkgs") at byte 11
 expect Fixtures.has_diagnostic(
 	"pkgs: []\n  pkgs: []",
 	11,
 	DuplicateField("pkgs"),
 )
 
+# Input:
+# # ☃
+# extra: "x"
+# Expected: UnknownField("extra") at byte 6
 expect Fixtures.has_diagnostic(
 	"# ☃\nextra: \"x\"",
 	6,
 	UnknownField("extra"),
 )
 
+# Input: pkgs: "not a list" -> WrongType(StringList, "pkgs") at byte 6
 expect Fixtures.has_diagnostic(
 	"pkgs: \"not a list\"",
 	6,
 	WrongType({ expected: StringList, field: "pkgs" }),
 )
 
+# Input: pkgs: ["ok", 3] -> WrongListItem("pkgs") at byte 13
 expect Fixtures.has_diagnostic(
 	"pkgs: [\"ok\", 3]",
 	13,
 	WrongListItem("pkgs"),
 )
 
+# Input: description: "\q" -> InvalidString("invalid string") at byte 22
 expect Fixtures.has_diagnostic(
 	"pkgs: []\ndescription: \"\\q\"",
 	22,
 	InvalidString("invalid string"),
 )
 
+# Input: pkgs: [ -> InvalidSyntax("unterminated list in field 'pkgs'") at byte 7
 expect Fixtures.has_diagnostic(
 	"pkgs: [",
 	7,
 	InvalidSyntax("unterminated list in field 'pkgs'"),
 )
 
+# Input: pkgs: ["one" "two"] -> InvalidSyntax("expected ',' or ']'") at byte 13
 expect Fixtures.has_diagnostic(
 	"pkgs: [\"one\" \"two\"]",
 	13,
 	InvalidSyntax("expected ',' or ']' in field 'pkgs'"),
 )
 
+# Input: pkgs [] -> InvalidSyntax("expected ':' after field 'pkgs'") at byte 5
 expect Fixtures.has_diagnostic(
 	"pkgs []",
 	5,
 	InvalidSyntax("expected ':' after field 'pkgs'"),
 )
 
+# Input: <empty> -> MissingField("pkgs") at byte 0
 expect Fixtures.has_diagnostic("", 0, MissingField("pkgs"))
 
+# Input: description contains the escaped newline in "line\nnext".
+# Expected output:
+# line
+# next
 expect {
 	config = Body.parse(Fixtures.body_shape, "pkgs: []\ndescription: \"line\\nnext\"")?
 	Body.get_string(config, "description") == Ok("line\nnext")

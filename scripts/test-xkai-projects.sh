@@ -49,10 +49,13 @@ test ! -e .kai
 test -z "$(find "$TMPDIR" -maxdepth 1 -name 'xkai-*' -print -quit)"
 
 ./kai custom-write
+# Input custom message -> expected file contents: "custom plugin worked"
 test "$(<custom-plugin-output.txt)" = 'custom plugin worked'
 test ! -s "$KAI_BACKEND_LOG"
 
 ./kai shell
+# Expected backend command: "develop path:.kai#default"
 grep -Fxq 'develop path:.kai#default' "$KAI_BACKEND_LOG"
+# Input package "roc" -> expected generated flake fragment: ."roc"
 grep -Fq '."roc"' .kai/flake.nix
 test "$(find .kai -type f | wc -l)" -eq 1
