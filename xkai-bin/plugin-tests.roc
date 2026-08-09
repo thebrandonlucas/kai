@@ -3,10 +3,11 @@ app [main!] {
 	commands: "../plugins/commands/main.roc",
 	implementations: "../plugins/implementations/main.roc",
 	kai: "./package.roc",
+	parser: "./parser/main.roc",
 	std: "../plugins/main.roc",
 }
 
-import kai.Body
+import parser.Body
 import kai.Plugin as PluginApi
 import commands.Shell as ShellCommand
 import implementations.ShellNix

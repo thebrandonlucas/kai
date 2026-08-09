@@ -10,7 +10,7 @@
 # `./kai custom-plugin` should create a file called
 # "custom-plugin-output.txt" with the message "Hello from CustomPlugin!"
 
-import kai.Body
+import parser.Body
 import kai.Plugin as PluginApi
 
 CustomPlugin := [].{

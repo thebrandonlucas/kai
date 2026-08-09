@@ -2,6 +2,8 @@
 # FIXME : everywhere a byte is used give a comment saying what human readable
 # that byte corresponds to. Also for every fn and control flow give a comment
 # showing an example of a scenario where that logic is applicable for CustomPlugin
+import Bytes
+
 Body := [].{
 	# FIX do all values have this shape?
 	ValueShape : [String, StringList]
@@ -136,19 +138,19 @@ Body := [].{
 				})
 			} else {
 				# The first CustomPlugin `message` proceeds to its separator and value.
-				colon = Body.skip_trivia(bytes, name_result.rest)
+				colon_index = Body.skip_trivia(bytes, name_result.rest)
 				# FIX why 58? is this parsing everything after the colon?
 				# i.e. the "value" in key/value pair?
-				# UTF-8/ASCII byte 58 is `:`, the field-name/value separator.
-				if Body.byte_at(bytes, colon) != 58 {
+				# CustomPlugin requires `:` between the field name and its value.
+				if Body.byte_at(bytes, colon_index) != Bytes.colon {
 					# `message "Hello"` fails where CustomPlugin expects `:`.
 					Err({
-						byte_offset: colon,
+						byte_offset: colon_index,
 						kind: InvalidSyntax("expected ':' after field '${name}'"),
 					})
 				} else {
 					# `message: "Hello"` skips `:` and parses the value, then any next field.
-					value_start = Body.skip_trivia(bytes, colon + 1)
+					value_start = Body.skip_trivia(bytes, colon_index + 1)
 					parsed_value = Body.parse_value(bytes, value_start, field)?
 					Body.parse_fields(
 						bytes,
@@ -177,8 +179,8 @@ Body := [].{
 			# CustomPlugin declares `message` as a String, so it takes this branch.
 			String =>
 			# FIX what does this byte mean?
-			# UTF-8/ASCII byte 34 is `"`, which must open a string.
-				if Body.byte_at(bytes, index) != 34 {
+			# CustomPlugin string values must open with `"`.
+				if Body.byte_at(bytes, index) != Bytes.double_quote {
 					# `message: 1` gives CustomPlugin a non-string value.
 					Err({
 						byte_offset: index,
@@ -195,8 +197,8 @@ Body := [].{
 			# A CustomPlugin field declared StringList, such as `tags`, takes this branch.
 			StringList =>
 			# FIX this one?
-			# UTF-8/ASCII byte 91 is `[`, which must open a list.
-				if Body.byte_at(bytes, index) != 91 {
+			# CustomPlugin string-list values must open with `[`.
+				if Body.byte_at(bytes, index) != Bytes.open_square_bracket {
 					# A hypothetical `tags: "demo"` is not a list of strings.
 					Err({
 						byte_offset: index,
@@ -230,25 +232,25 @@ Body := [].{
 		# A hypothetical CustomPlugin `tags: [` ends before the list is complete.
 		if start >= bytes.len() {
 			Err({ byte_offset: start, kind: InvalidSyntax("unterminated list in field '${field_name}'") })
-			# UTF-8/ASCII byte 93 is `]`; `tags: []` is allowed before any item.
-		} else if byte == 93 and allow_end {
+			# `tags: []` closes with `]` before any item, which is allowed.
+		} else if byte == Bytes.close_square_bracket and allow_end {
 			Ok({ rest: start + 1, values })
-			# Byte 93 is `]`; `tags: ["demo",]` wrongly ends after a comma.
-		} else if byte == 93 {
+			# `tags: ["demo",]` wrongly closes with `]` after a comma.
+		} else if byte == Bytes.close_square_bracket {
 			Err({ byte_offset: start, kind: InvalidSyntax("expected a string after ',' in field '${field_name}'") })
-			# Byte 34 is `"`; `tags: [1]` has an item not opened as a string.
-		} else if byte != 34 {
+			# `tags: [1]` has an item not opened with `"` as a string.
+		} else if byte != Bytes.double_quote {
 			Err({ byte_offset: start, kind: WrongListItem(field_name) })
 		} else {
 			# `tags: ["demo"...]` parses the current quoted item.
 			parsed = Body.parse_string(bytes, start)?
 			next = Body.skip_trivia(bytes, parsed.rest)
 			next_byte = Body.byte_at(bytes, next)
-			# UTF-8/ASCII byte 44 is `,`; another CustomPlugin tag follows it.
-			if next_byte == 44 {
+			# Another CustomPlugin tag follows the `,` separator.
+			if next_byte == Bytes.comma {
 				Body.parse_string_list(bytes, next + 1, field_name, values.append(parsed.value), Bool.False)
-				# Byte 93 is `]`; this closes CustomPlugin's completed tag list.
-			} else if next_byte == 93 {
+				# `]` closes CustomPlugin's completed tag list.
+			} else if next_byte == Bytes.close_square_bracket {
 				Ok({ rest: next + 1, values: values.append(parsed.value) })
 			} else {
 				# `tags: ["demo" "local"]` has neither `,` nor `]` after an item.
@@ -284,11 +286,11 @@ Body := [].{
 			# The byte after an escape in `message: "line\nnext"` is string data.
 			if escaped {
 				Body.find_string_end(bytes, index + 1, Bool.False)
-				# UTF-8/ASCII byte 92 is `\`; it escapes the following string byte.
-			} else if byte == 92 {
+				# `\` escapes the following byte in CustomPlugin's string.
+			} else if byte == Bytes.backslash {
 				Body.find_string_end(bytes, index + 1, Bool.True)
-				# UTF-8/ASCII byte 34 is `"`; it closes CustomPlugin's string.
-			} else if byte == 34 {
+				# `"` closes CustomPlugin's string.
+			} else if byte == Bytes.double_quote {
 				Ok(index)
 			} else {
 				# Ordinary bytes in CustomPlugin's message are skipped while finding its end.
@@ -334,8 +336,8 @@ Body := [].{
 			# Spaces before `message` are ignored.
 			if Body.is_whitespace(byte) {
 				Body.skip_trivia(bytes, index + 1)
-				# UTF-8/ASCII byte 35 is `#`; `# custom note` starts a comment.
-			} else if byte == 35 {
+				# `# custom note` starts a comment.
+			} else if byte == Bytes.hash {
 				Body.skip_trivia(bytes, Body.skip_comment(bytes, index + 1))
 			} else {
 				# The `m` in CustomPlugin's `message` is significant, so parsing resumes here.
@@ -346,8 +348,8 @@ Body := [].{
 	# CustomPlugin uses this to skip from `# custom note` to its line ending.
 	skip_comment : List(U8), U64 -> U64
 	skip_comment = |bytes, index|
-	# UTF-8/ASCII byte 10 is LF/newline; it or end-of-body terminates the comment.
-		if index >= bytes.len() or Body.byte_at(bytes, index) == 10 {
+	# A line feed or end-of-body terminates the CustomPlugin comment.
+		if index >= bytes.len() or Body.byte_at(bytes, index) == Bytes.line_feed {
 			index
 		} else {
 			# Bytes inside CustomPlugin's comment are skipped until LF or end-of-body.
@@ -355,24 +357,29 @@ Body := [].{
 		}
 
 	# CustomPlugin uses this to recognize formatting around `message: "Hello"`.
-	# Bytes 32, 9, 10, and 13 are space, horizontal tab, LF/newline, and carriage return.
 	is_whitespace : U8 -> Bool
-	is_whitespace = |byte| byte == 32 or byte == 9 or byte == 10 or byte == 13
+	is_whitespace = |byte|
+		byte == Bytes.space or
+			byte == Bytes.horizontal_tab or
+				byte == Bytes.line_feed or
+					byte == Bytes.carriage_return
 
 	# CustomPlugin uses this to accept the first `m` in its `message` field name.
-	# Byte ranges 65-90 and 97-122 are `A`-`Z` and `a`-`z`; byte 95 is `_`.
 	is_name_start : U8 -> Bool
-	is_name_start = |byte| (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or byte == 95
+	is_name_start = |byte|
+		(byte >= Bytes.uppercase_a and byte <= Bytes.uppercase_z) or
+			(byte >= Bytes.lowercase_a and byte <= Bytes.lowercase_z) or
+				byte == Bytes.underscore
 
 	# CustomPlugin uses this to accept later letters or digits in a field name.
-	# Byte range 48-57 is `0`-`9`, allowed after the first name byte.
 	is_name_continue : U8 -> Bool
-	is_name_continue = |byte| Body.is_name_start(byte) or (byte >= 48 and byte <= 57)
+	is_name_continue = |byte|
+		Body.is_name_start(byte) or
+			(byte >= Bytes.digit_zero and byte <= Bytes.digit_nine)
 
 	# CustomPlugin's parser uses this for safe lookups even at the end of its body.
-	# Byte 0 is NUL, used only as the sentinel for an out-of-range lookup.
 	byte_at : List(U8), U64 -> U8
-	byte_at = |bytes, index| bytes.get(index) ?? 0
+	byte_at = |bytes, index| bytes.get(index) ?? Bytes.nul
 
 	# CustomPlugin uses this to match parsed `message` against its declared field.
 	find_field : List(Field), Str -> Try(Field, [NotFound])

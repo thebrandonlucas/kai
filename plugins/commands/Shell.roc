@@ -1,4 +1,4 @@
-import kai.Body
+import parser.Body
 import kai.Plugin as PluginApi
 
 Shell := [].{

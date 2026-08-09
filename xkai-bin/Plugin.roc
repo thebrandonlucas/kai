@@ -1,5 +1,5 @@
 # Pure plugin model shared by plugins and the CLI.
-import Body
+import parser.Body
 
 Plugin := [
 	Module(
@@ -151,7 +151,7 @@ Plugin := [
 		parser_for : _
 	}
 
-	# Lower pure action templates into a runtime plan.
+	# Convert pure action templates into a runtime plan.
 	lower : Implementation, RenderResult -> Try(Plan, RendererDiagnostic)
 	lower = |implementation, rendered| {
 		actions = Plugin.lower_actions(

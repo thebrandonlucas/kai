@@ -1,4 +1,4 @@
-import kai.Body
+import parser.Body
 import kai.Plugin as PluginApi
 import backends.Nix as NixBackend
 import commands.Shell as ShellCommand
