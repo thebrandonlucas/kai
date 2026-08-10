@@ -309,7 +309,7 @@ Fixtures := [].{
 
 	plan_contains : Str, PluginApi.HostOs, PluginApi.HostArch, Str -> Bool
 	plan_contains = |config_text, os, arch, expected|
-		match StdPlugin.plan(config_text, ["shell"], os, arch) {
+		match PluginApi.plan_registry([StdPlugin.plugin_definition], config_text, ["shell"], os, arch) {
 			Ok(
 				{
 					actions: [WriteUtf8({ content, path: _ }), Exec(_)],
@@ -388,6 +388,61 @@ expect {
 	config_text = "on macos { shell { pkgs: [\"cowsay\"] } }\non linux { other { ignored } }\nshell { pkgs: [\"fortune\"] }"
 	Fixtures.plan_contains(config_text, LINUX, X64, ".\"fortune\"")
 }
+
+# Explicit backend selection uses the backend-qualified command block.
+expect {
+	match PluginApi.select_config(
+		"fixture guix {value: \"selected\"}",
+		Fixtures.registry_command,
+		ExplicitBackend(Fixtures.guix),
+		LINUX,
+		X64,
+	) {
+		Ok(Selected({ body, location: _ })) => body == "value: \"selected\""
+		_ => Bool.False
+	}
+}
+
+# Duplicate applicable blocks report the second block's body location.
+expect PluginApi.select_config(
+	"fixture {value: \"one\"}\nfixture {value: \"two\"}",
+	Fixtures.registry_command,
+	DefaultBackend(Fixtures.nix),
+	LINUX,
+	X64,
+) == Err({
+	location: At({ byte_offset: 32, column: 10, line: 2 }),
+	message: "duplicate command configuration",
+})
+
+# Nested selector failures retain their absolute source location.
+expect PluginApi.select_config(
+	"on linux {\n  \"oops\"\n}",
+	Fixtures.registry_command,
+	DefaultBackend(Fixtures.nix),
+	LINUX,
+	X64,
+) == Err({
+	location: At({ byte_offset: 13, column: 3, line: 2 }),
+	message: "invalid host configuration",
+})
+
+# Nested body failures retain their absolute source location and registry owner.
+expect PluginApi.plan_registry(
+	[StdPlugin.plugin_definition],
+	"on linux {\n  shell {\n    pkgs: \"cowsay\"\n  }\n}",
+	["shell"],
+	LINUX,
+	X64,
+) == Err(
+	PlanningFailed({
+		backend: "nix",
+		command: "shell",
+		location: At({ byte_offset: 31, column: 11, line: 3 }),
+		message: "field 'pkgs' must be a list of strings",
+		plugin: "std",
+	}),
+)
 
 # Expected definition: name "minimal" with one command, four backends, and four implementations
 expect {

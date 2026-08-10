@@ -1,93 +1,20 @@
 import parser.Body
-import parser.Config
 import kai.Plugin as PluginApi
 import backends.Nix as NixBackend
 import commands.Shell as ShellCommand
 
 ShellNix := [].{
-	Target : { section : Str, system : Str }
-
-	# A Plan transforms a generic command/backend combo
-	# into a specific set of instructions for the final
-	# kai binary to perform (including instructions for
-	# side-effects)
-	plan :
-		Str,
-		Str,
-		PluginApi.HostOs,
-		PluginApi.HostArch ->
-			Try(PluginApi.Plan, PluginApi.Error)
-	plan = |plugin_name, config_text, os, arch| {
-		target = ShellNix.target(os, arch)?
-		config = ShellNix.parse(config_text, target.section)?
-		context = PluginApi.RenderContext.{
-			args: [],
-			config,
-			config_block: SelectedConfigBlock({
-				body: config_text,
-				location: { byte_offset: 0, column: 1, line: 1 },
-			}),
-			host_arch: arch,
-			host_os: os,
-		}
-		# rendering gets the rendered output (e.g. flake.nix str to write)
-		rendered = ShellNix.renderer(context) ? |_| InvalidConfig
-		# lowering turns it into a specific plan: it matches the high-level
-		# implementation instructions with the rendered content and
-		# provides side-effect instructions
-		lowered = PluginApi.lower(
-			ShellNix.implementation,
-			rendered,
-			plugin_name,
-			NixBackend.backend,
-		) ? |_| InvalidConfig
-		Ok(lowered)
-	}
+	Target : { system : Str }
 
 	target : PluginApi.HostOs, PluginApi.HostArch -> Try(Target, [UnsupportedPlatform])
 	target = |os, arch|
 		match (os, arch) {
-			(LINUX, X64) => Ok({ section: "linux", system: "x86_64-linux" })
-			(LINUX, AARCH64) => Ok({ section: "linux", system: "aarch64-linux" })
-			(MACOS, X64) => Ok({ section: "macos", system: "x86_64-darwin" })
-			(MACOS, AARCH64) => Ok({ section: "macos", system: "aarch64-darwin" })
+			(LINUX, X64) => Ok({ system: "x86_64-linux" })
+			(LINUX, AARCH64) => Ok({ system: "aarch64-linux" })
+			(MACOS, X64) => Ok({ system: "x86_64-darwin" })
+			(MACOS, AARCH64) => Ok({ system: "aarch64-darwin" })
 			_ => Err(UnsupportedPlatform)
 		}
-
-	parse : Str, Str -> Try(Body.Configuration, [InvalidConfig])
-	parse = |config_text, section| {
-		blocks = Config.scan(config_text) ? |_| InvalidConfig
-		selection = ShellNix.select_shell(blocks, section)?
-		match selection {
-			Missing => Err(InvalidConfig)
-			Selected(block) => {
-				config = Body.parse(ShellCommand.body, block.body) ? |_| InvalidConfig
-				Ok(config)
-			}
-		}
-	}
-
-	select_shell : List(Config.Block), Str -> Try(Config.Selection, [InvalidConfig])
-	select_shell = |blocks, section| {
-		host_selection = Config.select_exact(blocks, ["on", section]) ? |_| InvalidConfig
-		match host_selection {
-			Missing => {
-				fallback = Config.select_exact(blocks, ["shell"]) ? |_| InvalidConfig
-				Ok(fallback)
-			}
-			Selected(host) => {
-				nested = Config.scan(host.body) ? |_| InvalidConfig
-				nested_selection = Config.select_exact(nested, ["shell"]) ? |_| InvalidConfig
-				match nested_selection {
-					Missing => {
-						fallback = Config.select_exact(blocks, ["shell"]) ? |_| InvalidConfig
-						Ok(fallback)
-					}
-					Selected(shell) => Ok(Selected(shell))
-				}
-			}
-		}
-	}
 
 	implementation : PluginApi.Implementation
 	implementation = PluginApi.Implementation.{

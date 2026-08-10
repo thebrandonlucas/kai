@@ -1,5 +1,6 @@
 # Pure plugin model shared by plugins and the CLI.
 import parser.Body
+import parser.Config
 
 Plugin := [
 	Module(
@@ -125,6 +126,94 @@ Plugin := [
 		location : [At(SourceLocation), None],
 		message : Str,
 		plugin : Str,
+	}
+
+	# Select the current host's command/backend block, falling back to an
+	# unscoped block when the host section does not contain one.
+	select_config : ConfigSelector
+	select_config = |config_text, command, backend_choice, os, _| {
+		block_name = match command.config_block {
+			OptionalConfigBlock(name) => name
+			RequiredConfigBlock(name) => name
+		}
+		block_header = match backend_choice {
+			DefaultBackend(_) => [block_name]
+			ExplicitBackend(backend) => [block_name, backend.name]
+		}
+		blocks = Config.scan(config_text) ? |diagnostic| {
+			location: At(Plugin.source_location(diagnostic.location)),
+			message: "invalid plugin configuration",
+		}
+		host_section = match os {
+			LINUX => HostSection("linux")
+			MACOS => HostSection("macos")
+			_ => NoHostSection
+		}
+		match host_section {
+			NoHostSection => Plugin.select_top_level(blocks, block_header)
+			HostSection(section) => {
+				host_selection = Config.select_exact(blocks, ["on", section]) ? |selection_error|
+					Plugin.top_level_duplicate(selection_error, "duplicate host configuration")
+				match host_selection {
+					Missing => Plugin.select_top_level(blocks, block_header)
+					Selected(host) =>
+						match Plugin.select_nested(host, block_header)? {
+							Missing => Plugin.select_top_level(blocks, block_header)
+							Selected(block) => Ok(Selected(block))
+						}
+					}
+			}
+		}
+	}
+
+	select_top_level : List(Config.Block), List(Str) -> Try(ConfigSelection, SelectorDiagnostic)
+	select_top_level = |blocks, header| {
+		selection = Config.select_exact(blocks, header) ? |selection_error|
+			Plugin.top_level_duplicate(selection_error, "duplicate command configuration")
+		match selection {
+			Missing => Ok(Missing)
+			Selected(block) => Ok(Selected({ body: block.body, location: Plugin.source_location(block.location) }))
+		}
+	}
+
+	select_nested : Config.Block, List(Str) -> Try(ConfigSelection, SelectorDiagnostic)
+	select_nested = |host, header| {
+		blocks = Config.scan(host.body) ? |diagnostic| {
+			location: At(Plugin.nested_location(host, diagnostic.location)),
+			message: "invalid host configuration",
+		}
+		selection = Config.select_exact(blocks, header) ? |selection_error| {
+			location = match selection_error {
+				DuplicateHeader({ first: _, header: _, second }) => At(Plugin.nested_location(host, second))
+			}
+			{ location, message: "duplicate command configuration" }
+		}
+		match selection {
+			Missing => Ok(Missing)
+			Selected(block) => Ok(Selected({ body: block.body, location: Plugin.nested_location(host, block.location) }))
+		}
+	}
+
+	top_level_duplicate : Config.SelectionError, Str -> SelectorDiagnostic
+	top_level_duplicate = |selection_error, message| {
+		location = match selection_error {
+			DuplicateHeader({ first: _, header: _, second }) => At(Plugin.source_location(second))
+		}
+		{ location, message }
+	}
+
+	nested_location : Config.Block, Config.Location -> SourceLocation
+	nested_location = |host, location|
+		Plugin.translate_location(
+			{ body: host.body, location: Plugin.source_location(host.location) },
+			location.byte_offset,
+		)
+
+	source_location : Config.Location -> SourceLocation
+	source_location = |location| {
+		byte_offset: location.byte_offset,
+		column: location.column,
+		line: location.line,
 	}
 
 	RenderContext := {
