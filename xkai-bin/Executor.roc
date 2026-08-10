@@ -36,6 +36,7 @@ Executor := [].{
 				match Executor.dispatch(registry, config_text, display_args, host_os, host.arch) {
 					Ok(selected_plan) => Executor.execute!(selected_plan)
 					Err(InvalidConfig) => Err(InvalidConfig)
+					Err(PlanningFailed(diagnostic)) => Err(PlanningFailed(diagnostic))
 					Err(UnknownCommand) => Err(UnknownCommand)
 					Err(UnsupportedPlatform) => Err(UnsupportedPlatform)
 				}

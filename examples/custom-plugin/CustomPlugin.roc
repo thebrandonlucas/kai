@@ -108,6 +108,10 @@ CustomPlugin := [].{
 				Ok(
 					PluginApi.Plan.{
 						actions: [WriteUtf8({ content: message, path: "custom-plugin-output.txt" })],
+						backend: local,
+						command: custom_write.name,
+						plugin: definition.name,
+						requested_packages: [],
 					},
 				)
 			}

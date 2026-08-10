@@ -13,10 +13,11 @@ ShellNix := [].{
 	# side-effects)
 	plan :
 		Str,
+		Str,
 		PluginApi.HostOs,
 		PluginApi.HostArch ->
 			Try(PluginApi.Plan, PluginApi.Error)
-	plan = |config_text, os, arch| {
+	plan = |plugin_name, config_text, os, arch| {
 		target = ShellNix.target(os, arch)?
 		config = ShellNix.parse(config_text, target.section)?
 		context = PluginApi.RenderContext.{
@@ -34,7 +35,12 @@ ShellNix := [].{
 		# lowering turns it into a specific plan: it matches the high-level
 		# implementation instructions with the rendered content and
 		# provides side-effect instructions
-		lowered = PluginApi.lower(ShellNix.implementation, rendered) ? |_| InvalidConfig
+		lowered = PluginApi.lower(
+			ShellNix.implementation,
+			rendered,
+			plugin_name,
+			NixBackend.backend,
+		) ? |_| InvalidConfig
 		Ok(lowered)
 	}
 

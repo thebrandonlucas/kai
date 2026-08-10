@@ -21,7 +21,7 @@ StdPlugin := [].{
 			)
 	plan = |config_text, args, os, arch|
 		match args {
-			["shell"] => ShellNix.plan(config_text, os, arch)
+			["shell"] => ShellNix.plan(definition.name, config_text, os, arch)
 			_ => Err(UnknownCommand)
 		}
 
