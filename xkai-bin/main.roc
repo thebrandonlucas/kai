@@ -34,6 +34,55 @@ print_usage! = |_| {
 	Ok({})
 }
 
+plugin_parent : Str, Str -> Path
+plugin_parent = |plugin_path, filename| {
+	prefix = plugin_path.drop_suffix(filename)
+	parent = if prefix == "/" {
+		prefix
+	} else {
+		prefix.drop_suffix("/")
+	}
+	if parent.is_empty() Path.utf8(".") else Path.utf8(parent)
+}
+
+roc_files! : List(Path) => Try(List({ filename : Str, path : Path }), _)
+roc_files! = |paths|
+	match paths {
+		[] => Ok([])
+		[first, .. as rest] => {
+			remaining = roc_files!(rest)?
+			filename = (Path.filename(first) ?? first).display()
+			if Path.is_file!(first)? and filename.ends_with(".roc") and filename != "main.roc" {
+				Ok([{ filename, path: first }].concat(remaining))
+			} else {
+				Ok(remaining)
+			}
+		}
+	}
+
+stage_component! : Path, Path, Str, Str => Try({}, _)
+stage_component! = |source_root, package_root, name, dependencies| {
+	source_dir = Path.join(source_root, name)
+	paths = if Path.is_dir!(source_dir)? Path.list!(source_dir)? else []
+	files = roc_files!(paths)?
+
+	target_dir = Path.join(package_root, name)
+	Path.create_dir!(target_dir)?
+	for file in files {
+		Path.write_utf8!(
+			Path.join(target_dir, file.filename),
+			Path.read_utf8!(file.path)?,
+		)?
+	}
+
+	modules = files.map(|file| file.filename.drop_suffix(".roc"))
+	Path.write_utf8!(
+		Path.join(target_dir, "main.roc"),
+		"package [${Str.join_with(modules, ", ")}] { ${dependencies} }\n",
+	)?
+	Ok({})
+}
+
 build_stage! : Path, List(Str) => Try({}, _)
 build_stage! = |stage, plugin_paths| {
 	Path.write_utf8!(Path.join(stage, "Executor.roc"), executor_source)?
@@ -89,11 +138,31 @@ build_stage! = |stage, plugin_paths| {
 		Path.create_dir!(package_dir)?
 		Path.write_utf8!(
 			Path.join(package_dir, "main.roc"),
-			"package [${module_name}] { kai: \"../package.roc\", parser: \"../parser/main.roc\" }\n",
+			"package [${module_name}] { backends: \"./backends/main.roc\", commands: \"./commands/main.roc\", implementations: \"./implementations/main.roc\", kai: \"../package.roc\", parser: \"../parser/main.roc\" }\n",
 		)?
 		Path.write_utf8!(
 			Path.join(package_dir, filename),
 			Path.read_utf8!(Path.utf8(plugin.path))?,
+		)?
+
+		source_root = plugin_parent(plugin.path, filename)
+		stage_component!(
+			source_root,
+			package_dir,
+			"commands",
+			"kai: \"../../package.roc\", parser: \"../../parser/main.roc\"",
+		)?
+		stage_component!(
+			source_root,
+			package_dir,
+			"backends",
+			"kai: \"../../package.roc\"",
+		)?
+		stage_component!(
+			source_root,
+			package_dir,
+			"implementations",
+			"backends: \"../backends/main.roc\", commands: \"../commands/main.roc\", kai: \"../../package.roc\", parser: \"../../parser/main.roc\"",
 		)?
 	}
 
@@ -193,3 +262,6 @@ expect Cli.check(["build", "Example.roc"], Cli.Command.Build(["Example.roc"]))
 expect Cli.check(["help"], Cli.Command.Help)
 expect Cli.check(["version"], Cli.Command.Version)
 expect Cli.check(["socrates"], Cli.Command.Unknown("socrates"))
+expect Path.is_eq(plugin_parent("Plugin.roc", "Plugin.roc"), Path.utf8("."))
+expect Path.is_eq(plugin_parent("/Plugin.roc", "Plugin.roc"), Path.utf8("/"))
+expect Path.is_eq(plugin_parent("plugins/Plugin.roc", "Plugin.roc"), Path.utf8("plugins"))

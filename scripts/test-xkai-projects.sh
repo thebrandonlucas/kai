@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root=$(pwd -P)
 xkai="$repo_root/$1"
 plugin="$repo_root/examples/custom-plugin/CustomPlugin.roc"
+split_plugin="$repo_root/examples/split-plugin/Plugin.roc"
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
 
@@ -42,7 +43,7 @@ fi
 test ! -e kai
 test -z "$(find "$TMPDIR" -maxdepth 1 -name 'xkai-*' -print -quit)"
 
-"$xkai" build "$plugin"
+"$xkai" build "$plugin" "$split_plugin"
 
 test -x kai
 test ! -e .kai
