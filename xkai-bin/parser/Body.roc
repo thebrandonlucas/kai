@@ -1,25 +1,40 @@
-# Pure parsing and validation for declarative plugin block bodies.
-# FIXME : everywhere a byte is used give a comment saying what human readable
-# that byte corresponds to. Also for every fn and control flow give a comment
-# showing an example of a scenario where that logic is applicable for CustomPlugin
+# Represents the body of a config block, and all the parsing
+# operations that can be performed on it. For example, a
+# block for a StdPlugin Kaifile would be the contents of 
+# `shell` e.g.:
+#
+# ```Kaifile
+#  shell {
+#   pkgs: ["cowsay", "fortune"]
+# }
+# ```
+#
+# We'll use this shell example to explain code below
 import Bytes
 
 Body := [].{
-	# FIX do all values have this shape?
+	# For now, we only have String or StringList
+	# to represent our values.
+	# 
+	# ex: `["cowsay", ...]` is a StringList.
 	ValueShape : [String, StringList]
-	# FIX look for example of not reuqired
+	# Whether a Field is required or not.
+	# In `shell`, `pkgs` is required.
 	Presence : [Optional, Required]
+	# ex: `pkgs` in `pkgs: ["cowsay", ...]`
 	Field := {
 		name : Str,
 		presence : Presence,
 		value : ValueShape,
 	}
+	# Overall shape of the config Body is a list of fields.
 	Shape : [Object(List(Field))]
 
 	Value : [StringValue(Str), StringListValue(List(Str))]
 	Entry := { name : Str, value : Value }
 	Configuration : [Config(List(Entry))]
 
+	# The various errors our config writer may encode.
 	DiagnosticKind : [
 		DuplicateField(Str),
 		InvalidSyntax(Str),
@@ -27,12 +42,6 @@ Body := [].{
 		MissingField(Str),
 		UnknownField(Str),
 		WrongListItem(Str),
-		# FIX I seem to only be getting "InvalidConfig" no matter
-		# how I structure the config.kai file for CustomPlugin
-		# and no pointers to the error. is this intended?
-		# will this be fixed in future plan? For example if i put
-		# message: 1 (which is the wrong type for message), it doesn't throw
-		# WrongType as I may expect?
 		WrongType(
 			{
 				expected : ValueShape,
@@ -40,13 +49,14 @@ Body := [].{
 			},
 		),
 	]
-	# We want to be able to tell the user what they did wrong
-	# (kind) and point to the exact location of the error (byte_offset)
+	# We want to be able to tell the user what they did wrong (kind)
+	# and point to the exact location of the error (byte_offset).
 	Diagnostic := {
 		byte_offset : U64,
 		kind : DiagnosticKind,
 	}
 
+	# FIX why is this separate from the other error?
 	AccessError : [
 		MissingField(Str),
 		WrongType(
@@ -57,43 +67,40 @@ Body := [].{
 		),
 	]
 
-	# CustomPlugin uses this to declare the object body containing `message`.
+	# Declare which fields the Body has.
 	object : List(Field) -> Shape
 	object = |fields| Object(fields)
 
-	# CustomPlugin uses this to require `message: "..."`.
+	# Mark a field as required
+	#
+	# ex: Body.required("pkgs", StringList)
 	required : Str, ValueShape -> Field
 	required = |name, value| { name, presence: Required, value }
 
-	# A CustomPlugin `description` field could use this when omission is valid.
+	# Mark a field as optional
 	optional : Str, ValueShape -> Field
 	optional = |name, value| { name, presence: Optional, value }
 
-	# A CustomPlugin command with no body fields can start with this configuration.
+	# Some commands in the future may have no Body fields.
 	empty : Configuration
 	empty = Config([])
 
 	# Take the read-in config.kai string data, validate
-	# it against the desired Shape, and read it into Roc values
-	# CustomPlugin uses this to turn `message: "Hello"` into validated configuration.
+	# it against the desired Shape, and read it into Roc values.
+	#
+	# ex: `pkgs: ["cowsay", ..]` -> validated roc data.
 	parse : Shape, Str -> Try(Configuration, Diagnostic)
 	parse = |shape, body_text| {
 		fields = match shape {
-			# FIX what does this do?
-			# CustomPlugin's Object shape yields its required `message` field definition.
 			Object(object_fields) => object_fields
 		}
 		bytes = body_text.to_utf8()
-		# FIX does this read them into roc values?
 		parsed = Body.parse_fields(
 			bytes,
-			# CustomPlugin starts parsing at body-relative byte offset zero.
 			Body.skip_trivia(bytes, 0),
 			fields,
 			[],
 		)?
-		# FIX does this just validate that required fields are
-		# present?
 		Body.require_fields(
 			fields,
 			parsed.entries,
@@ -102,7 +109,7 @@ Body := [].{
 		Ok(Config(parsed.entries))
 	}
 
-	# CustomPlugin uses this to parse each `name: value` field until its body ends.
+	# Parse each `name: value` field until its body ends.
 	parse_fields :
 		List(U8),
 		U64,
@@ -113,43 +120,34 @@ Body := [].{
 				Diagnostic,
 			)
 	parse_fields = |bytes, index, fields, entries| {
-		# FIX Skip metadata?
 		start = Body.skip_trivia(bytes, index)
-		# If CustomPlugin's body ends after `message: "Hello"`, return that entry.
+		# If body ends after e.g. `pkgs: [..]`, return that entry.
 		if start >= bytes.len() {
 			Ok({ entries, rest: start })
 		} else {
-			# If CustomPlugin has more body text, parse its next field.
-			# FIX I believe here we're finding the first name
-			# in the config.kai text? (i.e. key for the key/values)
-			# would key/value be more apt for these var names?
+			# else, parse its next field.
+			# throwing if given field name unknown.
 			name_result = Body.parse_name(bytes, start)?
 			name = name_result.name
-			# `extra: "x"` fails because CustomPlugin declares no `extra` field.
 			field = Body.find_field(fields, name) ? |_| {
 				byte_offset: start,
 				kind: UnknownField(name),
 			}
-			# A second `message` in CustomPlugin is a duplicate.
+			# Check for duplicates
 			if Body.has_entry(entries, name) {
 				Err({
 					byte_offset: start,
 					kind: DuplicateField(name),
 				})
 			} else {
-				# The first CustomPlugin `message` proceeds to its separator and value.
+				# Check for expected colon syntax. If good, parse value.
 				colon_index = Body.skip_trivia(bytes, name_result.rest)
-				# FIX why 58? is this parsing everything after the colon?
-				# i.e. the "value" in key/value pair?
-				# CustomPlugin requires `:` between the field name and its value.
 				if Body.byte_at(bytes, colon_index) != Bytes.colon {
-					# `message "Hello"` fails where CustomPlugin expects `:`.
 					Err({
 						byte_offset: colon_index,
 						kind: InvalidSyntax("expected ':' after field '${name}'"),
 					})
 				} else {
-					# `message: "Hello"` skips `:` and parses the value, then any next field.
 					value_start = Body.skip_trivia(bytes, colon_index + 1)
 					parsed_value = Body.parse_value(bytes, value_start, field)?
 					Body.parse_fields(
@@ -163,25 +161,23 @@ Body := [].{
 		}
 	}
 
-	# CustomPlugin uses this to parse a field according to its declared value shape.
+	# Parse a field according to its declared value shape.
 	parse_value :
 		List(U8),
 		U64,
-		Field -> Try(
-			{
-				rest : U64,
-				value : Value,
-			},
-			Diagnostic,
-		)
+		Field ->
+			Try(
+				{
+					rest : U64,
+					value : Value,
+				},
+				Diagnostic,
+			)
 	parse_value = |bytes, index, field|
 		match field.value {
-			# CustomPlugin declares `message` as a String, so it takes this branch.
 			String =>
-			# FIX what does this byte mean?
-			# CustomPlugin string values must open with `"`.
+			# Strings must begin with double quotes
 				if Body.byte_at(bytes, index) != Bytes.double_quote {
-					# `message: 1` gives CustomPlugin a non-string value.
 					Err({
 						byte_offset: index,
 						kind: WrongType({
@@ -190,16 +186,12 @@ Body := [].{
 						}),
 					})
 				} else {
-					# `message: "Hello"` decodes into StringValue("Hello").
 					parsed = Body.parse_string(bytes, index)?
 					Ok({ rest: parsed.rest, value: StringValue(parsed.value) })
 				}
-			# A CustomPlugin field declared StringList, such as `tags`, takes this branch.
 			StringList =>
-			# FIX this one?
-			# CustomPlugin string-list values must open with `[`.
+			# String-list values must open with `[`.
 				if Body.byte_at(bytes, index) != Bytes.open_square_bracket {
-					# A hypothetical `tags: "demo"` is not a list of strings.
 					Err({
 						byte_offset: index,
 						kind: WrongType({
@@ -208,8 +200,6 @@ Body := [].{
 						}),
 					})
 				} else {
-					# A hypothetical `tags: ["demo"]` parses the items after `[`.
-					# FIX what is this parsing?
 					parsed = Body.parse_string_list(
 						bytes,
 						index + 1,
@@ -224,25 +214,40 @@ Body := [].{
 				}
 			}
 
-	# A CustomPlugin StringList field uses this to parse `tags: ["demo", "local"]`.
-	parse_string_list : List(U8), U64, Str, List(Str), Bool -> Try({ rest : U64, values : List(Str) }, Diagnostic)
+	# StringList field uses this to parse e.g. `pkgs: ["cowsay", ..]`.
+	parse_string_list :
+		List(U8),
+		U64,
+		Str,
+		List(Str),
+		Bool ->
+			Try(
+				{ rest : U64, values : List(Str) },
+				Diagnostic,
+			)
 	parse_string_list = |bytes, index, field_name, values, allow_end| {
 		start = Body.skip_trivia(bytes, index)
 		byte = Body.byte_at(bytes, start)
-		# A hypothetical CustomPlugin `tags: [` ends before the list is complete.
+		# If a list e.g. `pkgs: [` ends before being completed.
 		if start >= bytes.len() {
-			Err({ byte_offset: start, kind: InvalidSyntax("unterminated list in field '${field_name}'") })
-			# `tags: []` closes with `]` before any item, which is allowed.
+			Err({
+				byte_offset: start,
+				kind: InvalidSyntax("unterminated list in field '${field_name}'"),
+			})
+			# `pkgs: []` closes with `]` before any item, which is allowed.
 		} else if byte == Bytes.close_square_bracket and allow_end {
 			Ok({ rest: start + 1, values })
-			# `tags: ["demo",]` wrongly closes with `]` after a comma.
+			# `pkgs: ["cowsay",]` wrongly closes with `]` after a comma.
 		} else if byte == Bytes.close_square_bracket {
-			Err({ byte_offset: start, kind: InvalidSyntax("expected a string after ',' in field '${field_name}'") })
-			# `tags: [1]` has an item not opened with `"` as a string.
+			Err({
+				byte_offset: start,
+				kind: InvalidSyntax("expected a string after ',' in field '${field_name}'"),
+			})
+			# `pkgs: [1]` has an item not opened with `"` as a string.
 		} else if byte != Bytes.double_quote {
 			Err({ byte_offset: start, kind: WrongListItem(field_name) })
 		} else {
-			# `tags: ["demo"...]` parses the current quoted item.
+			# `pkgs: ["cowsay"..]` parses the current quoted item.
 			parsed = Body.parse_string(bytes, start)?
 			next = Body.skip_trivia(bytes, parsed.rest)
 			next_byte = Body.byte_at(bytes, next)
