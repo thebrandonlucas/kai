@@ -251,20 +251,20 @@ Body := [].{
 			parsed = Body.parse_string(bytes, start)?
 			next = Body.skip_trivia(bytes, parsed.rest)
 			next_byte = Body.byte_at(bytes, next)
-			# Another CustomPlugin tag follows the `,` separator.
+			# Another package follows the `,` separator.
 			if next_byte == Bytes.comma {
 				Body.parse_string_list(bytes, next + 1, field_name, values.append(parsed.value), Bool.False)
-				# `]` closes CustomPlugin's completed tag list.
+				# `]` closes the completed `pkgs` list.
 			} else if next_byte == Bytes.close_square_bracket {
 				Ok({ rest: next + 1, values: values.append(parsed.value) })
 			} else {
-				# `tags: ["demo" "local"]` has neither `,` nor `]` after an item.
+				# `pkgs: ["cowsay" "fortune"]` has neither `,` nor `]` after an item.
 				Err({ byte_offset: next, kind: InvalidSyntax("expected ',' or ']' in field '${field_name}'") })
 			}
 		}
 	}
 
-	# CustomPlugin uses this to JSON-decode the quoted text in `message: "Hello"`.
+	# Decode a quoted package name such as `"cowsay"`.
 	parse_string : List(U8), U64 -> Try({ rest : U64, value : Str }, Diagnostic)
 	parse_string = |bytes, start| {
 		end = Body.find_string_end(bytes, start + 1, Bool.False)?
@@ -272,96 +272,96 @@ Body := [].{
 		decoded : Try(Str, Json.ParseErr)
 		decoded = Json.parse(raw)
 		match decoded {
-			# CustomPlugin's `message: "Hello"` becomes the Roc string `Hello`.
+			# `"cowsay"` becomes the Roc string `cowsay`.
 			Ok(value) => Ok({ rest: end + 1, value })
-			# CustomPlugin's `message: "\q"` has an invalid JSON escape.
+			# `pkgs: ["\q"]` has an invalid JSON escape.
 			Err(_) => Err({ byte_offset: start, kind: InvalidString("invalid string") })
 		}
 	}
 
-	# CustomPlugin uses this to locate the closing quote of its `message` string.
+	# Locate the closing quote of a package name such as `"cowsay"`.
 	find_string_end : List(U8), U64, Bool -> Try(U64, Diagnostic)
 	find_string_end = |bytes, index, escaped|
-	# `message: "Hello` reaches the end without a closing quote.
+	# `pkgs: ["cowsay` reaches the end without a closing quote.
 		if index >= bytes.len() {
 			Err({ byte_offset: index, kind: InvalidString("unterminated string") })
 		} else {
-			# `message: "Hello"` still has a byte to inspect.
+			# `pkgs: ["cowsay"]` still has a byte to inspect.
 			byte = Body.byte_at(bytes, index)
-			# The byte after an escape in `message: "line\nnext"` is string data.
+			# The byte after an escape in `pkgs: ["cow\"say"]` is string data.
 			if escaped {
 				Body.find_string_end(bytes, index + 1, Bool.False)
-				# `\` escapes the following byte in CustomPlugin's string.
+				# `\` escapes the following byte in the package string.
 			} else if byte == Bytes.backslash {
 				Body.find_string_end(bytes, index + 1, Bool.True)
-				# `"` closes CustomPlugin's string.
+				# `"` closes the package string.
 			} else if byte == Bytes.double_quote {
 				Ok(index)
 			} else {
-				# Ordinary bytes in CustomPlugin's message are skipped while finding its end.
+				# Ordinary bytes in `cowsay` are skipped while finding the string's end.
 				Body.find_string_end(bytes, index + 1, Bool.False)
 			}
 		}
 
-	# CustomPlugin uses this to read the field name `message` before its colon.
+	# Read the field name `pkgs` before its colon.
 	parse_name : List(U8), U64 -> Try({ name : Str, rest : U64 }, Diagnostic)
 	parse_name = |bytes, start| {
 		first = Body.byte_at(bytes, start)
-		# `1message: "Hello"` cannot start a CustomPlugin field name with a digit.
+		# `1pkgs: []` cannot start a field name with a digit.
 		if !Body.is_name_start(first) {
 			Err({ byte_offset: start, kind: InvalidSyntax("expected a field name") })
 		} else {
-			# `message: "Hello"` collects `message` and stops before `:`.
+			# `pkgs: ["cowsay"]` collects `pkgs` and stops before `:`.
 			end = Body.find_name_end(bytes, start + 1)
 			name = Str.from_utf8(bytes.sublist({ start, len: end - start })) ?? ""
 			Ok({ name, rest: end })
 		}
 	}
 
-	# CustomPlugin uses this to find where a field name such as `message` ends.
+	# Find where a field name such as `pkgs` ends.
 	find_name_end : List(U8), U64 -> U64
 	find_name_end = |bytes, index|
-	# Each remaining letter in CustomPlugin's `message` advances the end.
+	# Each remaining letter in `pkgs` advances the end.
 		if index < bytes.len() and Body.is_name_continue(Body.byte_at(bytes, index)) {
 			Body.find_name_end(bytes, index + 1)
 		} else {
-			# The `:` after CustomPlugin's `message` marks the name's end.
+			# The `:` after `pkgs` marks the name's end.
 			index
 		}
 
-	# CustomPlugin uses this to ignore spaces, newlines, and `#` comments around fields.
+	# Ignore spaces, newlines, and `#` comments around shell fields.
 	skip_trivia : List(U8), U64 -> U64
 	skip_trivia = |bytes, index|
-	# Trivia after CustomPlugin's last field may run to the end of the body.
+	# Trivia after the `pkgs` field may run to the end of the body.
 		if index >= bytes.len() {
 			index
 		} else {
-			# Otherwise inspect the next byte after or between CustomPlugin fields.
+			# Otherwise inspect the next byte before or after `pkgs`.
 			byte = Body.byte_at(bytes, index)
-			# Spaces before `message` are ignored.
+			# Spaces before `pkgs` are ignored.
 			if Body.is_whitespace(byte) {
 				Body.skip_trivia(bytes, index + 1)
-				# `# custom note` starts a comment.
+				# `# package note` starts a comment.
 			} else if byte == Bytes.hash {
 				Body.skip_trivia(bytes, Body.skip_comment(bytes, index + 1))
 			} else {
-				# The `m` in CustomPlugin's `message` is significant, so parsing resumes here.
+				# The `p` in `pkgs` is significant, so parsing resumes here.
 				index
 			}
 		}
 
-	# CustomPlugin uses this to skip from `# custom note` to its line ending.
+	# Skip from `# package note` to its line ending.
 	skip_comment : List(U8), U64 -> U64
 	skip_comment = |bytes, index|
-	# A line feed or end-of-body terminates the CustomPlugin comment.
+	# A line feed or end-of-body terminates the shell comment.
 		if index >= bytes.len() or Body.byte_at(bytes, index) == Bytes.line_feed {
 			index
 		} else {
-			# Bytes inside CustomPlugin's comment are skipped until LF or end-of-body.
+			# Bytes inside the shell comment are skipped until LF or end-of-body.
 			Body.skip_comment(bytes, index + 1)
 		}
 
-	# CustomPlugin uses this to recognize formatting around `message: "Hello"`.
+	# Recognize formatting around `pkgs: ["cowsay", "fortune"]`.
 	is_whitespace : U8 -> Bool
 	is_whitespace = |byte|
 		byte == Bytes.space or
@@ -369,159 +369,159 @@ Body := [].{
 				byte == Bytes.line_feed or
 					byte == Bytes.carriage_return
 
-	# CustomPlugin uses this to accept the first `m` in its `message` field name.
+	# Accept the first `p` in the `pkgs` field name.
 	is_name_start : U8 -> Bool
 	is_name_start = |byte|
 		(byte >= Bytes.uppercase_a and byte <= Bytes.uppercase_z) or
 			(byte >= Bytes.lowercase_a and byte <= Bytes.lowercase_z) or
 				byte == Bytes.underscore
 
-	# CustomPlugin uses this to accept later letters or digits in a field name.
+	# Accept the remaining letters in `pkgs` or digits in another valid field name.
 	is_name_continue : U8 -> Bool
 	is_name_continue = |byte|
 		Body.is_name_start(byte) or
 			(byte >= Bytes.digit_zero and byte <= Bytes.digit_nine)
 
-	# CustomPlugin's parser uses this for safe lookups even at the end of its body.
+	# Safely inspect the shell body even at its end.
 	byte_at : List(U8), U64 -> U8
 	byte_at = |bytes, index| bytes.get(index) ?? Bytes.nul
 
-	# CustomPlugin uses this to match parsed `message` against its declared field.
+	# Match parsed `pkgs` against the shell body's declared field.
 	find_field : List(Field), Str -> Try(Field, [NotFound])
 	find_field = |fields, name|
 		match fields {
-			# `extra` reaches the end because CustomPlugin only declares `message`.
+			# `extra` reaches the end because the shell body only declares `pkgs`.
 			[] => Err(NotFound)
-			# A nonempty CustomPlugin schema compares its next declaration with the name.
+			# A nonempty shell schema compares its next declaration with the name.
 			[first, .. as rest] =>
-			# The parsed name `message` matches CustomPlugin's required field.
+			# The parsed name `pkgs` matches the shell's required field.
 				if first.name == name {
 					Ok(first)
 				} else {
-					# A later hypothetical CustomPlugin field may match after `message` does not.
+					# An unknown name continues past `pkgs` and eventually returns NotFound.
 					Body.find_field(rest, name)
 				}
 			}
 
-	# CustomPlugin uses this to detect whether `message` was already parsed.
+	# Detect whether `pkgs` was already parsed.
 	has_entry : List(Entry), Str -> Bool
 	has_entry = |entries, name|
 		match entries {
-			# Before parsing CustomPlugin's first field, no `message` entry exists.
+			# Before parsing the shell's first field, no `pkgs` entry exists.
 			[] => Bool.False
-			# After parsing, compare `message` or search any later entries.
+			# After parsing, compare `pkgs` or search any later entries.
 			[first, .. as rest] => first.name == name or Body.has_entry(rest, name)
 		}
 
-	# CustomPlugin uses this to ensure its required `message` entry was provided.
+	# Ensure the shell's required `pkgs` entry was provided.
 	require_fields : List(Field), List(Entry), U64 -> Try({}, Diagnostic)
 	require_fields = |fields, entries, end|
 		match fields {
-			# Once every CustomPlugin field was checked, validation succeeds.
+			# Once every shell field was checked, validation succeeds.
 			[] => Ok({})
-			# A remaining CustomPlugin field is checked for required presence.
+			# A remaining shell field is checked for required presence.
 			[first, .. as rest] =>
-			# An empty CustomPlugin body is missing required `message`.
+			# An empty shell body is missing required `pkgs`.
 				if first.presence == Required and !Body.has_entry(entries, first.name) {
 					Err({ byte_offset: end, kind: MissingField(first.name) })
 				} else {
-					# A present `message`, or an omitted optional field, allows checking the rest.
+					# A present `pkgs`, or an omitted optional field, allows checking the rest.
 					Body.require_fields(rest, entries, end)
 				}
 			}
 
-	# CustomPlugin's renderer uses this to locate `message` in validated entries.
+	# Locate `pkgs` in the shell's validated entries.
 	find_entry : List(Entry), Str -> Try(Value, AccessError)
 	find_entry = |entries, name|
 		match entries {
-			# A malformed renderer context with no `message` reports it missing.
+			# A malformed shell configuration with no `pkgs` reports it missing.
 			[] => Err(MissingField(name))
-			# A nonempty CustomPlugin configuration compares the next entry.
+			# A nonempty shell configuration compares the next entry.
 			[first, .. as rest] =>
-			# The `message` entry returns its validated value.
+			# The `pkgs` entry returns its validated value.
 				if first.name == name {
 					Ok(first.value)
 				} else {
-					# A renderer searching for a later CustomPlugin field continues through entries.
+					# A lookup for another shell field continues through the entries.
 					Body.find_entry(rest, name)
 				}
 			}
 
-	# CustomPlugin's renderer uses this to read its validated `message` string.
+	# Read a validated String field, such as an optional shell `description`.
 	get_string : Configuration, Str -> Try(Str, AccessError)
 	get_string = |Config(entries), name|
 		match Body.find_entry(entries, name)? {
-			# CustomPlugin's declared `message` returns its string text.
+			# `description: "development shell"` returns its text.
 			StringValue(value) => Ok(value)
-			# Asking for a hypothetical CustomPlugin `tags` list as a string is an error.
+			# Asking for the shell's `pkgs` list as a string is an error.
 			StringListValue(_) => Err(WrongType({ expected: String, field: name }))
 		}
 
-	# A CustomPlugin StringList field such as `tags` could use this accessor.
+	# Read the shell's validated `pkgs` StringList.
 	get_strings : Configuration, Str -> Try(List(Str), AccessError)
 	get_strings = |Config(entries), name|
 		match Body.find_entry(entries, name)? {
-			# A validated `tags: ["demo"]` returns its list.
+			# `pkgs: ["cowsay"]` returns its list.
 			StringListValue(values) => Ok(values)
-			# Asking for CustomPlugin's `message` as a list is an error.
+			# Asking for a shell `description` string as a list is an error.
 			StringValue(_) => Err(WrongType({ expected: StringList, field: name }))
 		}
 
-	# An optional CustomPlugin string field such as `description` could use this.
+	# An optional shell String field such as `description` could use this.
 	maybe_string : Configuration, Str -> Try([None, Some(Str)], AccessError)
 	maybe_string = |Config(entries), name|
 		match Body.find_entry(entries, name) {
-			# An omitted optional CustomPlugin `description` returns None.
+			# An omitted optional shell `description` returns None.
 			Err(MissingField(_)) => Ok(None)
 			# Any lookup type error for `description` is preserved.
 			Err(WrongType(problem)) => Err(WrongType(problem))
-			# `description: "demo"` returns Some("demo").
+			# `description: "development shell"` returns Some("development shell").
 			Ok(StringValue(value)) => Ok(Some(value))
 			# A list stored under `description` cannot be read as an optional string.
 			Ok(StringListValue(_)) => Err(WrongType({ expected: String, field: name }))
 		}
 
-	# An optional CustomPlugin StringList field such as `tags` could use this.
+	# The shell's `pkgs` StringList can be read through an optional accessor.
 	maybe_strings : Configuration, Str -> Try([None, Some(List(Str))], AccessError)
 	maybe_strings = |Config(entries), name|
 		match Body.find_entry(entries, name) {
-			# An omitted optional CustomPlugin `tags` returns None.
+			# No `pkgs` entry returns None; required-field validation normally prevents this.
 			Err(MissingField(_)) => Ok(None)
-			# Any lookup type error for `tags` is preserved.
+			# Any lookup type error for `pkgs` is preserved.
 			Err(WrongType(problem)) => Err(WrongType(problem))
-			# `tags: ["demo"]` returns Some(["demo"]).
+			# `pkgs: ["cowsay"]` returns Some(["cowsay"]).
 			Ok(StringListValue(values)) => Ok(Some(values))
-			# A string stored under `tags` cannot be read as an optional list.
+			# A string stored under `pkgs` cannot be read as an optional list.
 			Ok(StringValue(_)) => Err(WrongType({ expected: StringList, field: name }))
 		}
 
-	# CustomPlugin can use this to turn a body diagnostic into user-facing text.
+	# Turn a shell body diagnostic into user-facing text.
 	describe : Diagnostic -> Str
 	describe = |diagnostic|
 		match diagnostic.kind {
-			# Two CustomPlugin `message` fields become `duplicate field 'message'`.
+			# Two `pkgs` fields become `duplicate field 'pkgs'`.
 			DuplicateField(name) => "duplicate field '${name}'"
-			# A missing colon in CustomPlugin keeps its specific syntax message.
+			# A missing colon after `pkgs` keeps its specific syntax message.
 			InvalidSyntax(message) => message
-			# An invalid escape in CustomPlugin keeps its string error message.
+			# An invalid escape in a package name keeps its string error message.
 			InvalidString(message) => message
-			# An empty CustomPlugin body reports `missing required field 'message'`.
+			# An empty shell body reports `missing required field 'pkgs'`.
 			MissingField(name) => "missing required field '${name}'"
-			# CustomPlugin's undeclared `extra` reports `unknown field 'extra'`.
+			# The shell's undeclared `extra` field reports `unknown field 'extra'`.
 			UnknownField(name) => "unknown field '${name}'"
-			# A non-string hypothetical CustomPlugin tag reports string-only items.
+			# `pkgs: [1]` reports that package items must be strings.
 			WrongListItem(field) => "items in field '${field}' must be strings"
-			# `message: 1` reports that CustomPlugin's `message` must be a string.
+			# `pkgs: "cowsay"` reports that `pkgs` must be a list of strings.
 			WrongType({ expected, field }) => "field '${field}' must be ${Body.shape_name(expected)}"
 		}
 
-	# CustomPlugin diagnostics use this to name an expected value shape.
+	# Shell diagnostics use this to name an expected value shape.
 	shape_name : ValueShape -> Str
 	shape_name = |shape|
 		match shape {
-			# CustomPlugin's `message` expectation is described as `a string`.
+			# An optional shell `description` expectation is described as `a string`.
 			String => "a string"
-			# A hypothetical CustomPlugin `tags` expectation is `a list of strings`.
+			# The shell's `pkgs` expectation is described as `a list of strings`.
 			StringList => "a list of strings"
 		}
 }
