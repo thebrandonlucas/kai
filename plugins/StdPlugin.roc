@@ -4,11 +4,8 @@ import commands.Shell as ShellCommand
 import implementations.ShellNix
 
 StdPlugin := [].{
-	plugin : PluginApi.Plugin
-	plugin = PluginApi.Plugin.Registry(plugin_definition)
-
-	plugin_definition : PluginApi.RegistryDefinition
-	plugin_definition = {
+	plugin : PluginApi.RegistryDefinition
+	plugin = {
 		definition,
 		select_config: PluginApi.select_config,
 	}

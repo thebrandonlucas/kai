@@ -4,8 +4,8 @@ import commands.SplitCommand
 import implementations.SplitLocal
 
 Plugin := [].{
-	plugin : PluginApi.Plugin
-	plugin = PluginApi.Plugin.Registry({
+	plugin : PluginApi.RegistryDefinition
+	plugin = {
 		definition: PluginApi.Definition.{
 			backends: [Local.backend],
 			commands: [SplitCommand.command],
@@ -13,5 +13,5 @@ Plugin := [].{
 			name: "split",
 		},
 		select_config: |_, _, _, _, _| Ok(Missing),
-	})
+	}
 }

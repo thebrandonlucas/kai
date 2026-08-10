@@ -15,11 +15,11 @@ import parser.Config
 import kai.Plugin as PluginApi
 
 CustomPlugin := [].{
-	plugin : PluginApi.Plugin
-	plugin = PluginApi.Plugin.Registry({
+	plugin : PluginApi.RegistryDefinition
+	plugin = {
 		definition,
 		select_config: CustomPlugin.select_config,
-	})
+	}
 
 	local : PluginApi.Backend
 	local = PluginApi.Backend.{

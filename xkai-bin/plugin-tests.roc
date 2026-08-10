@@ -309,7 +309,7 @@ Fixtures := [].{
 
 	plan_contains : Str, PluginApi.HostOs, PluginApi.HostArch, Str -> Bool
 	plan_contains = |config_text, os, arch, expected|
-		match PluginApi.plan_registry([StdPlugin.plugin_definition], config_text, ["shell"], os, arch) {
+		match PluginApi.plan_registry([StdPlugin.plugin], config_text, ["shell"], os, arch) {
 			Ok(
 				{
 					actions: [WriteUtf8({ content, path: _ }), Exec(_)],
@@ -429,7 +429,7 @@ expect PluginApi.select_config(
 
 # Nested body failures retain their absolute source location and registry owner.
 expect PluginApi.plan_registry(
-	[StdPlugin.plugin_definition],
+	[StdPlugin.plugin],
 	"on linux {\n  shell {\n    pkgs: \"cowsay\"\n  }\n}",
 	["shell"],
 	LINUX,
@@ -446,8 +446,9 @@ expect PluginApi.plan_registry(
 
 # Expected definition: name "minimal" with one command, four backends, and four implementations
 expect {
-	plugin = PluginApi.Plugin.Registry({ definition: Fixtures.definition, select_config: Fixtures.select_missing })
-	definition = PluginApi.definition(plugin)
+	plugin : PluginApi.RegistryDefinition
+	plugin = { definition: Fixtures.definition, select_config: Fixtures.select_missing }
+	definition = plugin.definition
 	definition.name == "minimal" and
 		definition.commands.len() == 1 and
 			definition.backends.len() == 4 and

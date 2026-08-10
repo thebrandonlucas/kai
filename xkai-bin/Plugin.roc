@@ -2,32 +2,10 @@
 import parser.Body
 import parser.Config
 
-Plugin := [
-	Module(
-		{
-			definition : Definition,
-			plan : Str, List(Str), HostOs, HostArch -> Try(Plan, Error),
-		},
-	),
-	Registry(RegistryDefinition),
-].{
-	Error : [InvalidConfig, PlanningFailed(PlanningDiagnostic), UnknownCommand, UnsupportedPlatform]
+Plugin := [].{
+	Error : [PlanningFailed(PlanningDiagnostic), UnknownCommand]
 	HostOs : [LINUX, MACOS, OTHER(Str)]
 	HostArch : [X86, X64, ARM, AARCH64, OTHER(Str)]
-
-	run : Plugin, Str, List(Str), HostOs, HostArch -> Try(Plan, Error)
-	run = |plugin, config_text, args, os, arch|
-		match plugin {
-			Module({ definition: _, plan }) => plan(config_text, args, os, arch)
-			Registry(registry_definition) => Plugin.plan_registry([registry_definition], config_text, args, os, arch)
-		}
-
-	definition : Plugin -> Definition
-	definition = |plugin|
-		match plugin {
-			Module({ definition, plan: _ }) => definition
-			Registry({ definition, select_config: _ }) => definition
-		}
 
 	# Side effects to be performed by a plugin.
 	Action := [

@@ -15,7 +15,7 @@ Executor := [].{
 	version : Str
 	version = canonical_version
 
-	run! : List(OsStr), List(PluginApi.Plugin) => Try({}, _)
+	run! : List(OsStr), List(PluginApi.RegistryDefinition) => Try({}, _)
 	run! = |args, registry| {
 		display_args = args.drop_first(1).map(OsStr.display)
 		match display_args {
@@ -33,27 +33,14 @@ Executor := [].{
 					OTHER(name) => OTHER(name)
 					_ => OTHER("unsupported")
 				}
-				match Executor.dispatch(registry, config_text, display_args, host_os, host.arch) {
+				match PluginApi.plan_registry(registry, config_text, display_args, host_os, host.arch) {
 					Ok(selected_plan) => Executor.execute!(selected_plan)
-					Err(InvalidConfig) => Err(InvalidConfig)
 					Err(PlanningFailed(diagnostic)) => Err(PlanningFailed(diagnostic))
 					Err(UnknownCommand) => Err(UnknownCommand)
-					Err(UnsupportedPlatform) => Err(UnsupportedPlatform)
 				}
 			}
 		}
 	}
-
-	dispatch : List(PluginApi.Plugin), Str, List(Str), PluginApi.HostOs, PluginApi.HostArch -> Try(PluginApi.Plan, PluginApi.Error)
-	dispatch = |registry, config_text, args, os, arch|
-		match registry {
-			[] => Err(UnknownCommand)
-			[first, .. as rest] =>
-				match PluginApi.run(first, config_text, args, os, arch) {
-					Err(UnknownCommand) => Executor.dispatch(rest, config_text, args, os, arch)
-					result => result
-				}
-			}
 
 	execute! : PluginApi.Plan => Try({}, _)
 	execute! = |execution_plan| {

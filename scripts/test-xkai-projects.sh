@@ -33,11 +33,24 @@ export PATH="$work_dir/bin:$PATH"
 export TMPDIR="$work_dir/tmp"
 
 cd "$work_dir"
-cat >InvalidPlugin.roc <<'EOF'
-plugin = 1 + "invalid"
+cat >CallbackPlugin.roc <<'EOF'
+import kai.Plugin as PluginApi
+
+CallbackPlugin := [].{
+  plugin : PluginApi.Plugin
+  plugin = PluginApi.Plugin.Module({
+    definition: PluginApi.Definition.{
+      backends: [],
+      commands: [],
+      implementations: [],
+      name: "callback",
+    },
+    plan: |_, _, _, _| Err(UnknownCommand),
+  })
+}
 EOF
-if "$xkai" build "$work_dir/InvalidPlugin.roc" >build-error.log 2>&1; then
-  echo 'expected invalid plugin build to fail' >&2
+if "$xkai" build "$work_dir/CallbackPlugin.roc" >build-error.log 2>&1; then
+  echo 'expected callback plugin build to fail' >&2
   exit 1
 fi
 test ! -e kai
