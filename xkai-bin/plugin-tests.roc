@@ -8,6 +8,7 @@ app [main!] {
 }
 
 import parser.Body
+import parser.Config
 import kai.Plugin as PluginApi
 import commands.Shell as ShellCommand
 import implementations.ShellNix
@@ -262,6 +263,12 @@ expect {
 	Fixtures.plan_contains(config_text, MACOS, AARCH64, ".\"fortune\"")
 }
 
+# A host block without a shell ignores a wrong-host shell and falls back top-level.
+expect {
+	config_text = "on macos { shell { pkgs: [\"cowsay\"] } }\non linux { other { ignored } }\nshell { pkgs: [\"fortune\"] }"
+	Fixtures.plan_contains(config_text, LINUX, X64, ".\"fortune\"")
+}
+
 # Expected definition: name "minimal" with one command, four backends, and four implementations
 expect {
 	plugin = PluginApi.Plugin.Registry({ definition: Fixtures.definition })
@@ -386,4 +393,80 @@ expect Fixtures.has_diagnostic("", 0, MissingField("pkgs"))
 expect {
 	config = Body.parse(Fixtures.body_shape, "pkgs: []\ndescription: \"line\\nnext\"")?
 	Body.get_string(config, "description") == Ok("line\nnext")
+}
+
+# Exact ordered headers select no block, one block, or reject duplicates.
+#
+# input:
+# ```Kaifile
+#    alpha beta { first }
+#    beta alpha { reordered }
+#    alpha { selected }
+# ```
+expect {
+	blocks = Config.scan(
+		"alpha beta { first }\nbeta alpha { reordered }\nalpha { selected }",
+	)?
+	Config.select_exact(blocks, ["missing"]) == Ok(Missing) and
+		Config.select_exact(blocks, ["alpha"]) == Ok(Selected(blocks.get(2)?)) and
+			Config.select_exact(blocks, ["alpha", "beta"]) == Ok(Selected(blocks.get(0)?))
+}
+
+# input:
+# ```Kaifile
+#   target { first }
+#   target { second }
+# ```
+expect {
+	blocks = Config.scan("target { first }\ntarget { second }")?
+	Config.select_exact(blocks, ["target"]) == Err(
+		DuplicateHeader({
+			first: { byte_offset: 8, column: 9, line: 1 },
+			header: ["target"],
+			second: { byte_offset: 25, column: 9, line: 2 },
+		}),
+	)
+}
+
+# Host clauses remain generic top-level blocks for plugins to interpret later.
+expect {
+	source = "on linux {\n  shell {\n    pkgs: [\"cowsay\"]\n  }\n}\non macos {\n  shell {\n    pkgs: [\"fortune\"]\n  }\n}"
+	match Config.scan(source) {
+		Ok([linux, macos]) =>
+			linux.header == ["on", "linux"] and
+				linux.body == "\n  shell {\n    pkgs: [\"cowsay\"]\n  }\n" and
+					linux.location == { byte_offset: 10, column: 11, line: 1 } and
+						Config.scan(linux.body) == Ok([
+							{
+								body: "\n    pkgs: [\"cowsay\"]\n  ",
+								header: ["shell"],
+								location: { byte_offset: 10, column: 10, line: 2 },
+							},
+						]) and
+							macos.header == ["on", "macos"] and
+								macos.body == "\n  shell {\n    pkgs: [\"fortune\"]\n  }\n"
+		_ => Bool.False
+	}
+}
+
+# Preserve generic header words and an opaque nested body while ignoring
+# structural characters in strings and comments.
+expect {
+	source = "# ☃\ndev-shell nix-unstable ☃ {\n  text: \"# } { \\\"\"\n  nested { value }\n  # }\n}\n"
+	match Config.scan(source) {
+		Ok([block]) =>
+			block.header == ["dev-shell", "nix-unstable", "☃"] and
+				block.location == { byte_offset: 34, column: 29, line: 2 } and
+					block.body == "\n  text: \"# } { \\\"\"\n  nested { value }\n  # }\n"
+		_ => Bool.False
+	}
+}
+
+# Universal structural failures retain concise byte source locations.
+expect {
+	Config.scan("{") == Err({ kind: EmptyHeader, location: { byte_offset: 0, column: 1, line: 1 } }) and
+		Config.scan("}") == Err({ kind: ExtraClosingBrace, location: { byte_offset: 0, column: 1, line: 1 } }) and
+			Config.scan("shell") == Err({ kind: MalformedHeader, location: { byte_offset: 5, column: 6, line: 1 } }) and
+				Config.scan("shell {") == Err({ kind: MissingClosingBrace, location: { byte_offset: 7, column: 8, line: 1 } }) and
+					Config.scan("shell {\n \"oops }") == Err({ kind: UnterminatedString, location: { byte_offset: 9, column: 2, line: 2 } })
 }

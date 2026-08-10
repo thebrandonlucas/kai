@@ -15,6 +15,7 @@ import "Executor.roc" as executor_source : Str
 import "package.roc" as package_source : Str
 import "parser/Body.roc" as body_source : Str
 import "parser/Bytes.roc" as bytes_source : Str
+import "parser/Config.roc" as config_source : Str
 import "parser/main.roc" as parser_package_source : Str
 import "Plugin.roc" as plugin_source : Str
 import "../plugins/StdPlugin.roc" as std_plugin_source : Str
@@ -44,6 +45,7 @@ build_stage! = |stage, plugin_paths| {
 	Path.create_dir!(parser_dir)?
 	Path.write_utf8!(Path.join(parser_dir, "Body.roc"), body_source)?
 	Path.write_utf8!(Path.join(parser_dir, "Bytes.roc"), bytes_source)?
+	Path.write_utf8!(Path.join(parser_dir, "Config.roc"), config_source)?
 	Path.write_utf8!(Path.join(parser_dir, "main.roc"), parser_package_source)?
 
 	std_dir = Path.join(stage, "std")
