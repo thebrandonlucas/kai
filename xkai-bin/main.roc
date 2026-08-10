@@ -83,8 +83,8 @@ stage_component! = |source_root, package_root, name, dependencies| {
 	Ok({})
 }
 
-build_stage! : Path, List(Str) => Try({}, _)
-build_stage! = |stage, plugin_paths| {
+build_stage! : Path, List(Str), Str, Path => Try({}, _)
+build_stage! = |stage, plugin_paths, output_name, output_path| {
 	Path.write_utf8!(Path.join(stage, "Executor.roc"), executor_source)?
 	Path.write_utf8!(Path.join(stage, "package.roc"), package_source)?
 	Path.write_utf8!(Path.join(stage, "Plugin.roc"), plugin_source)?
@@ -209,9 +209,10 @@ build_stage! = |stage, plugin_paths| {
 	Path.write_utf8!(app_path, app_source)?
 	Cmd.exec!(
 		OsStr.utf8("roc"),
-		["build", Path.display(app_path), "--opt=size", "--output=kai"].map(OsStr.utf8),
+		["build", Path.display(app_path), "--opt=size", "--output=${output_name}"].map(OsStr.utf8),
 	)?
-	Cmd.exec!(OsStr.utf8("llvm-strip"), [OsStr.utf8("kai")])?
+	Cmd.exec!(OsStr.utf8("llvm-strip"), [Path.to_os_str(output_path)])?
+	Cmd.exec!(Path.to_os_str(output_path), [OsStr.utf8("--xkai-validate-registry")])?
 	Ok({})
 }
 
@@ -219,15 +220,37 @@ build! : List(Str) => Try({}, _)
 build! = |plugin_paths| {
 	seed = Random.seed_u64!()?
 	stage = Path.join(Env.temp_dir!(), "xkai-${U64.to_str(seed)}")
-	Path.create_dir!(stage)?
+	cwd = Env.cwd!()?
+	output_name = ".xkai-kai-${U64.to_str(seed)}"
+	output_path = Path.join(cwd, output_name)
+	published_path = Path.join(cwd, "kai")
 
-	match build_stage!(stage, plugin_paths) {
-		Ok({}) => Path.delete_all!(stage)
-		Err(err) => {
-			Path.delete_all!(stage) ?? {}
-			Err(err)
+	match Path.create_dir!(stage) {
+		Err(err) => Err(err)
+		Ok({}) =>
+			match build_stage!(stage, plugin_paths, output_name, output_path) {
+				Err(err) => {
+					Path.delete_all!(stage) ?? {}
+					Path.delete!(output_path) ?? {}
+					Err(err)
+				}
+				Ok({}) =>
+					match Path.delete_all!(stage) {
+						Err(err) => {
+							Path.delete!(output_path) ?? {}
+							Err(err)
+						}
+						Ok({}) =>
+							match Path.rename!(output_path, published_path) {
+								Ok({}) => Ok({})
+								Err(err) => {
+									Path.delete!(output_path) ?? {}
+									Err(err)
+								}
+							}
+						}
+				}
 		}
-	}
 }
 
 main! : List(OsStr) => Try({}, _)

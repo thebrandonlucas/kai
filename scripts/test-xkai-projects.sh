@@ -55,12 +55,42 @@ if "$xkai" build "$work_dir/CallbackPlugin.roc" >build-error.log 2>&1; then
 fi
 test ! -e kai
 test -z "$(find "$TMPDIR" -maxdepth 1 -name 'xkai-*' -print -quit)"
+test -z "$(find . -maxdepth 1 -name '.xkai-kai-*' -print -quit)"
+
+cat >InvalidRegistry.roc <<'EOF'
+import kai.Plugin as PluginApi
+
+InvalidRegistry := [].{
+  plugin : PluginApi.RegistryDefinition
+  plugin = {
+    definition: PluginApi.Definition.{
+      backends: [],
+      commands: [],
+      implementations: [],
+      name: "invalid",
+    },
+    select_config: |_, _, _, _, _| Ok(Missing),
+  }
+}
+EOF
+printf 'existing output\n' >kai
+if "$xkai" build "$work_dir/InvalidRegistry.roc" >validation-error.log 2>&1; then
+  echo 'expected invalid registry validation to fail' >&2
+  exit 1
+fi
+grep -Fq 'must define at least one command' validation-error.log
+test "$(<kai)" = 'existing output'
+rm kai
+test ! -e kai
+test -z "$(find "$TMPDIR" -maxdepth 1 -name 'xkai-*' -print -quit)"
+test -z "$(find . -maxdepth 1 -name '.xkai-kai-*' -print -quit)"
 
 "$xkai" build "$plugin" "$split_plugin"
 
 test -x kai
 test ! -e .kai
 test -z "$(find "$TMPDIR" -maxdepth 1 -name 'xkai-*' -print -quit)"
+test -z "$(find . -maxdepth 1 -name '.xkai-kai-*' -print -quit)"
 
 ./kai custom-write
 # Input custom message -> expected file contents: "custom plugin worked"

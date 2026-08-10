@@ -19,6 +19,11 @@ Executor := [].{
 	run! = |args, registry| {
 		display_args = args.drop_first(1).map(OsStr.display)
 		match display_args {
+			["--xkai-validate-registry"] =>
+				match PluginApi.validate_registry(registry) {
+					Ok({}) => Ok({})
+					Err(diagnostic) => Err(InvalidRegistry(diagnostic))
+				}
 			["version"] => {
 				Stdout.line!("kai version ${Executor.version}")?
 				Ok({})
