@@ -24,9 +24,16 @@ Executor := [].{
 				Ok({})
 			}
 			_ => {
-				source = Path.read_utf8!(Path.utf8("config.kai"))?
+				config_text = Path.read_utf8!(Path.utf8("config.kai"))?
 				host = Env.platform!()
-				match Executor.dispatch(registry, source, display_args, host.os, host.arch) {
+				host_os : PluginApi.HostOs
+				host_os = match host.os {
+					LINUX => LINUX
+					MACOS => MACOS
+					OTHER(name) => OTHER(name)
+					_ => OTHER("unsupported")
+				}
+				match Executor.dispatch(registry, config_text, display_args, host_os, host.arch) {
 					Ok(selected_plan) => Executor.execute!(selected_plan)
 					Err(InvalidConfig) => Err(InvalidConfig)
 					Err(UnknownCommand) => Err(UnknownCommand)
@@ -37,12 +44,12 @@ Executor := [].{
 	}
 
 	dispatch : List(PluginApi.Plugin), Str, List(Str), PluginApi.HostOs, PluginApi.HostArch -> Try(PluginApi.Plan, PluginApi.Error)
-	dispatch = |registry, source, args, os, arch|
+	dispatch = |registry, config_text, args, os, arch|
 		match registry {
 			[] => Err(UnknownCommand)
 			[first, .. as rest] =>
-				match PluginApi.run(first, source, args, os, arch) {
-					Err(UnknownCommand) => Executor.dispatch(rest, source, args, os, arch)
+				match PluginApi.run(first, config_text, args, os, arch) {
+					Err(UnknownCommand) => Executor.dispatch(rest, config_text, args, os, arch)
 					result => result
 				}
 			}

@@ -13,8 +13,14 @@ import Cli
 
 import "Executor.roc" as executor_source : Str
 import "package.roc" as package_source : Str
+import "parser/Body.roc" as body_source : Str
+import "parser/Bytes.roc" as bytes_source : Str
+import "parser/main.roc" as parser_package_source : Str
 import "Plugin.roc" as plugin_source : Str
 import "../plugins/StdPlugin.roc" as std_plugin_source : Str
+import "../plugins/backends/Nix.roc" as nix_backend_source : Str
+import "../plugins/commands/Shell.roc" as shell_command_source : Str
+import "../plugins/implementations/ShellNix.roc" as shell_nix_source : Str
 import "VERSION" as version_source : Str
 
 platform_name = "FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn"
@@ -34,13 +40,43 @@ build_stage! = |stage, plugin_paths| {
 	Path.write_utf8!(Path.join(stage, "Plugin.roc"), plugin_source)?
 	Path.write_utf8!(Path.join(stage, "VERSION"), version_source)?
 
+	parser_dir = Path.join(stage, "parser")
+	Path.create_dir!(parser_dir)?
+	Path.write_utf8!(Path.join(parser_dir, "Body.roc"), body_source)?
+	Path.write_utf8!(Path.join(parser_dir, "Bytes.roc"), bytes_source)?
+	Path.write_utf8!(Path.join(parser_dir, "main.roc"), parser_package_source)?
+
 	std_dir = Path.join(stage, "std")
 	Path.create_dir!(std_dir)?
 	Path.write_utf8!(
 		Path.join(std_dir, "main.roc"),
-		"package [StdPlugin] { kai: \"../package.roc\" }\n",
+		"package [StdPlugin] { backends: \"./backends/main.roc\", commands: \"./commands/main.roc\", implementations: \"./implementations/main.roc\", kai: \"../package.roc\" }\n",
 	)?
 	Path.write_utf8!(Path.join(std_dir, "StdPlugin.roc"), std_plugin_source)?
+
+	backends_dir = Path.join(std_dir, "backends")
+	Path.create_dir!(backends_dir)?
+	Path.write_utf8!(
+		Path.join(backends_dir, "main.roc"),
+		"package [Nix] { kai: \"../../package.roc\" }\n",
+	)?
+	Path.write_utf8!(Path.join(backends_dir, "Nix.roc"), nix_backend_source)?
+
+	commands_dir = Path.join(std_dir, "commands")
+	Path.create_dir!(commands_dir)?
+	Path.write_utf8!(
+		Path.join(commands_dir, "main.roc"),
+		"package [Shell] { kai: \"../../package.roc\", parser: \"../../parser/main.roc\" }\n",
+	)?
+	Path.write_utf8!(Path.join(commands_dir, "Shell.roc"), shell_command_source)?
+
+	implementations_dir = Path.join(std_dir, "implementations")
+	Path.create_dir!(implementations_dir)?
+	Path.write_utf8!(
+		Path.join(implementations_dir, "main.roc"),
+		"package [ShellNix] { backends: \"../backends/main.roc\", commands: \"../commands/main.roc\", kai: \"../../package.roc\", parser: \"../../parser/main.roc\" }\n",
+	)?
+	Path.write_utf8!(Path.join(implementations_dir, "ShellNix.roc"), shell_nix_source)?
 
 	plugins = plugin_paths.map_with_index(|path, index| { index, path })
 	for plugin in plugins {
@@ -51,7 +87,7 @@ build_stage! = |stage, plugin_paths| {
 		Path.create_dir!(package_dir)?
 		Path.write_utf8!(
 			Path.join(package_dir, "main.roc"),
-			"package [${module_name}] { kai: \"../package.roc\" }\n",
+			"package [${module_name}] { kai: \"../package.roc\", parser: \"../parser/main.roc\" }\n",
 		)?
 		Path.write_utf8!(
 			Path.join(package_dir, filename),
@@ -142,6 +178,13 @@ main! = |args| {
 
 ## -- TESTS --
 
+# Inputs -> expected commands:
+# [] -> Help
+# ["build"] -> Build([])
+# ["build", "Example.roc"] -> Build(["Example.roc"])
+# ["help"] -> Help
+# ["version"] -> Version
+# ["socrates"] -> Unknown("socrates")
 expect Cli.check([], Cli.Command.Help)
 expect Cli.check(["build"], Cli.Command.Build([]))
 expect Cli.check(["build", "Example.roc"], Cli.Command.Build(["Example.roc"]))

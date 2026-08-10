@@ -43,6 +43,8 @@ test -f xkai
 test "$(find . -maxdepth 1 -type f | wc -l)" -eq 3
 
 ./kai shell
+# Expected backend command: "develop path:.kai#default"
 grep -Fxq 'develop path:.kai#default' "$KAI_BACKEND_LOG"
+# Input package "cowsay" -> expected generated flake fragment: ."cowsay"
 grep -Fq '."cowsay"' .kai/flake.nix
 test "$(find .kai -type f | wc -l)" -eq 1

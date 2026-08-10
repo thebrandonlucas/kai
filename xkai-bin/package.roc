@@ -1,1 +1,1 @@
-package [Plugin] {}
+package [Plugin] { parser: "./parser/main.roc" }
