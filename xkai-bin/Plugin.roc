@@ -18,7 +18,7 @@ Plugin := [
 	run = |plugin, config_text, args, os, arch|
 		match plugin {
 			Module({ definition: _, plan }) => plan(config_text, args, os, arch)
-			Registry({ definition: _, select_config: _ }) => Err(UnknownCommand)
+			Registry(registry_definition) => Plugin.plan_registry([registry_definition], config_text, args, os, arch)
 		}
 
 	definition : Plugin -> Definition

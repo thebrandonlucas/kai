@@ -54,9 +54,27 @@ test -z "$(find "$TMPDIR" -maxdepth 1 -name 'xkai-*' -print -quit)"
 test "$(<custom-plugin-output.txt)" = 'custom plugin worked'
 test ! -s "$KAI_BACKEND_LOG"
 
+./kai split-command
+# Expected split registry output: "split plugin worked"
+test "$(<split-plugin-output.txt)" = 'split plugin worked'
+test ! -s "$KAI_BACKEND_LOG"
+
 ./kai shell
 # Expected backend command: "develop path:.kai#default"
 grep -Fxq 'develop path:.kai#default' "$KAI_BACKEND_LOG"
 # Input package "roc" -> expected generated flake fragment: ."roc"
 grep -Fq '."roc"' .kai/flake.nix
 test "$(find .kai -type f | wc -l)" -eq 1
+
+rm custom-plugin-output.txt
+cat >config.kai <<'EOF'
+custom {
+  message: []
+}
+EOF
+if ./kai custom-write >invalid-config.log 2>&1; then
+  echo 'expected invalid custom config to fail' >&2
+  exit 1
+fi
+grep -Fq "field 'message' must be a string" invalid-config.log
+test ! -e custom-plugin-output.txt
