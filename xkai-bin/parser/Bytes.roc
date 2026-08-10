@@ -1,4 +1,8 @@
-# UTF-8 byte values for the ASCII syntax recognized by the body parser.
+# A place to hold all UTF-8 byte values for characters the Body
+# and Config parsers need to recognize. We do this because Roc
+# can't yet do direct character comparisons.
+#
+# e.g. `if current_byte == '"'`
 Bytes := [].{
 	# `"` opens and closes string values.
 	double_quote : U8
@@ -7,6 +11,14 @@ Bytes := [].{
 	# `:` separates field names from values.
 	colon : U8
 	colon = 58
+
+	# `{` opens a config block.
+	open_curly_brace : U8
+	open_curly_brace = 123
+
+	# `}` closes a config block.
+	close_curly_brace : U8
+	close_curly_brace = 125
 
 	# `[` opens a string-list value.
 	open_square_bracket : U8

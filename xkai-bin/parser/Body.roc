@@ -1,40 +1,41 @@
-# Represents the body of a config block, and all the parsing
-# operations that can be performed on it. For example, a
-# block for a StdPlugin Kaifile would be the contents of 
-# `shell` e.g.:
+# Parse and validate the generic fields inside a config block against a shape
+# declared by its plugin. Comments use the StdPlugin `shell` body as a running
+# example:
 #
-# ```Kaifile
-#  shell {
-#   pkgs: ["cowsay", "fortune"]
+# ```kai
+# shell {
+#     pkgs: ["cowsay", "fortune"]
 # }
 # ```
-#
-# We'll use this shell example to explain code below
 import Bytes
 
 Body := [].{
-	# For now, we only have String or StringList
-	# to represent our values.
-	# 
-	# ex: `["cowsay", ...]` is a StringList.
+	# -- Public configuration model -----------------------------------------
+
+	# Fields currently support string or string-list values. For example,
+	# `["cowsay", ...]` in the StdPlugin `pkgs` field is a StringList.
 	ValueShape : [String, StringList]
-	# Whether a Field is required or not.
-	# In `shell`, `pkgs` is required.
+	# Whether a declared field must be present. For example, StdPlugin requires
+	# `pkgs` in its `shell` body.
 	Presence : [Optional, Required]
-	# ex: `pkgs` in `pkgs: ["cowsay", ...]`
+	# A field declaration. For example, `pkgs` names the field in
+	# `pkgs: ["cowsay", ...]`.
 	Field := {
 		name : Str,
 		presence : Presence,
 		value : ValueShape,
 	}
-	# Overall shape of the config Body is a list of fields.
+	# The declared shape of a body, currently an object containing fields.
 	Shape : [Object(List(Field))]
 
+	# Values and entries produced after parsing and validation.
 	Value : [StringValue(Str), StringListValue(List(Str))]
 	Entry := { name : Str, value : Value }
 	Configuration : [Config(List(Entry))]
 
-	# The various errors our config writer may encode.
+	# -- Parse diagnostics ---------------------------------------------------
+
+	# Failures found while parsing or validating source text.
 	DiagnosticKind : [
 		DuplicateField(Str),
 		InvalidSyntax(Str),
@@ -56,7 +57,9 @@ Body := [].{
 		kind : DiagnosticKind,
 	}
 
-	# FIX why is this separate from the other error?
+	# Access errors are separate from parse diagnostics because access happens
+	# after validation, against Roc values with no source position. Parse
+	# diagnostics retain the source byte offset needed to point at invalid text.
 	AccessError : [
 		MissingField(Str),
 		WrongType(
@@ -67,7 +70,9 @@ Body := [].{
 		),
 	]
 
-	# Declare which fields the Body has.
+	# -- Shape construction --------------------------------------------------
+
+	# Declare which fields a body has.
 	object : List(Field) -> Shape
 	object = |fields| Object(fields)
 
@@ -81,14 +86,15 @@ Body := [].{
 	optional : Str, ValueShape -> Field
 	optional = |name, value| { name, presence: Optional, value }
 
-	# Some commands in the future may have no Body fields.
+	# Represent a validated body with no entries. For example, a plugin command
+	# whose body declares no fields can use this value.
 	empty : Configuration
 	empty = Config([])
 
-	# Take the read-in config.kai string data, validate
-	# it against the desired Shape, and read it into Roc values.
-	#
-	# ex: `pkgs: ["cowsay", ..]` -> validated roc data.
+	# -- Field parsing and validation ---------------------------------------
+
+	# Parse body text into Roc values and validate it against the declared
+	# Shape. For example, `pkgs: ["cowsay", ..]` becomes validated entries.
 	parse : Shape, Str -> Try(Configuration, Diagnostic)
 	parse = |shape, body_text| {
 		fields = match shape {
@@ -109,7 +115,7 @@ Body := [].{
 		Ok(Config(parsed.entries))
 	}
 
-	# Parse each `name: value` field until its body ends.
+	# Parse each generic `name: value` field until the body ends.
 	parse_fields :
 		List(U8),
 		U64,
@@ -121,12 +127,12 @@ Body := [].{
 			)
 	parse_fields = |bytes, index, fields, entries| {
 		start = Body.skip_trivia(bytes, index)
-		# If body ends after e.g. `pkgs: [..]`, return that entry.
+		# If the body ends after a field, return all entries parsed so far. For
+		# example, this happens after StdPlugin's `pkgs: [..]`.
 		if start >= bytes.len() {
 			Ok({ entries, rest: start })
 		} else {
-			# else, parse its next field.
-			# throwing if given field name unknown.
+			# Otherwise parse the next field, failing if its name was not declared.
 			name_result = Body.parse_name(bytes, start)?
 			name = name_result.name
 			field = Body.find_field(fields, name) ? |_| {
@@ -214,7 +220,8 @@ Body := [].{
 				}
 			}
 
-	# StringList field uses this to parse e.g. `pkgs: ["cowsay", ..]`.
+	# Parse a generic StringList field. StdPlugin uses this for
+	# `pkgs: ["cowsay", ..]`.
 	parse_string_list :
 		List(U8),
 		U64,
@@ -228,43 +235,48 @@ Body := [].{
 	parse_string_list = |bytes, index, field_name, values, allow_end| {
 		start = Body.skip_trivia(bytes, index)
 		byte = Body.byte_at(bytes, start)
-		# If a list e.g. `pkgs: [` ends before being completed.
+		# A list that reaches the body end before `]` is unterminated. For
+		# example, `pkgs: [` fails here.
 		if start >= bytes.len() {
 			Err({
 				byte_offset: start,
 				kind: InvalidSyntax("unterminated list in field '${field_name}'"),
 			})
-			# `pkgs: []` closes with `]` before any item, which is allowed.
+			# An empty list may close before any item; for example, `pkgs: []`.
 		} else if byte == Bytes.close_square_bracket and allow_end {
 			Ok({ rest: start + 1, values })
-			# `pkgs: ["cowsay",]` wrongly closes with `]` after a comma.
+			# A list cannot close directly after a comma; for example,
+			# `pkgs: ["cowsay",]`.
 		} else if byte == Bytes.close_square_bracket {
 			Err({
 				byte_offset: start,
 				kind: InvalidSyntax("expected a string after ',' in field '${field_name}'"),
 			})
-			# `pkgs: [1]` has an item not opened with `"` as a string.
+			# Every item must open with `"`; for example, `pkgs: [1]` fails.
 		} else if byte != Bytes.double_quote {
 			Err({ byte_offset: start, kind: WrongListItem(field_name) })
 		} else {
-			# `pkgs: ["cowsay"..]` parses the current quoted item.
+			# Parse the current quoted item; in `pkgs: ["cowsay"..]`, this is
+			# `"cowsay"`.
 			parsed = Body.parse_string(bytes, start)?
 			next = Body.skip_trivia(bytes, parsed.rest)
 			next_byte = Body.byte_at(bytes, next)
-			# Another package follows the `,` separator.
+			# A comma introduces another string item; in `pkgs`, another package.
 			if next_byte == Bytes.comma {
 				Body.parse_string_list(bytes, next + 1, field_name, values.append(parsed.value), Bool.False)
-				# `]` closes the completed `pkgs` list.
+				# `]` closes the completed list, such as StdPlugin's `pkgs` list.
 			} else if next_byte == Bytes.close_square_bracket {
 				Ok({ rest: next + 1, values: values.append(parsed.value) })
 			} else {
-				# `pkgs: ["cowsay" "fortune"]` has neither `,` nor `]` after an item.
+				# An item must be followed by `,` or `]`; for example,
+				# `pkgs: ["cowsay" "fortune"]` fails.
 				Err({ byte_offset: next, kind: InvalidSyntax("expected ',' or ']' in field '${field_name}'") })
 			}
 		}
 	}
 
-	# Decode a quoted package name such as `"cowsay"`.
+	# Decode any quoted string value. For example, a `pkgs` item `"cowsay"`
+	# becomes the Roc string `cowsay`.
 	parse_string : List(U8), U64 -> Try({ rest : U64, value : Str }, Diagnostic)
 	parse_string = |bytes, start| {
 		end = Body.find_string_end(bytes, start + 1, Bool.False)?
@@ -272,96 +284,106 @@ Body := [].{
 		decoded : Try(Str, Json.ParseErr)
 		decoded = Json.parse(raw)
 		match decoded {
-			# `"cowsay"` becomes the Roc string `cowsay`.
+			# A valid JSON string is returned decoded; for example, `"cowsay"`
+			# becomes `cowsay`.
 			Ok(value) => Ok({ rest: end + 1, value })
-			# `pkgs: ["\q"]` has an invalid JSON escape.
+			# Invalid JSON escapes fail; for example, `pkgs: ["\q"]`.
 			Err(_) => Err({ byte_offset: start, kind: InvalidString("invalid string") })
 		}
 	}
 
-	# Locate the closing quote of a package name such as `"cowsay"`.
+	# -- Lexical helpers -----------------------------------------------------
+
+	# Locate a string's closing quote. For example, find the end of the
+	# `"cowsay"` item in StdPlugin's `pkgs` list.
 	find_string_end : List(U8), U64, Bool -> Try(U64, Diagnostic)
 	find_string_end = |bytes, index, escaped|
-	# `pkgs: ["cowsay` reaches the end without a closing quote.
+	# Reaching the body end without a closing quote is invalid; for example,
+	# `pkgs: ["cowsay`.
 		if index >= bytes.len() {
 			Err({ byte_offset: index, kind: InvalidString("unterminated string") })
 		} else {
-			# `pkgs: ["cowsay"]` still has a byte to inspect.
+			# Otherwise inspect the next string byte, such as a byte in `"cowsay"`.
 			byte = Body.byte_at(bytes, index)
-			# The byte after an escape in `pkgs: ["cow\"say"]` is string data.
+			# The byte after an escape is string data; for example, the quote in
+			# `pkgs: ["cow\"say"]` does not end the string.
 			if escaped {
 				Body.find_string_end(bytes, index + 1, Bool.False)
-				# `\` escapes the following byte in the package string.
+				# `\` escapes the following string byte, including in a package name.
 			} else if byte == Bytes.backslash {
 				Body.find_string_end(bytes, index + 1, Bool.True)
-				# `"` closes the package string.
+				# An unescaped `"` closes the string, such as a package string.
 			} else if byte == Bytes.double_quote {
 				Ok(index)
 			} else {
-				# Ordinary bytes in `cowsay` are skipped while finding the string's end.
+				# Ordinary string bytes are skipped; for example, each byte in `cowsay`.
 				Body.find_string_end(bytes, index + 1, Bool.False)
 			}
 		}
 
-	# Read the field name `pkgs` before its colon.
+	# Read a field name before its colon. For example, read `pkgs`.
 	parse_name : List(U8), U64 -> Try({ name : Str, rest : U64 }, Diagnostic)
 	parse_name = |bytes, start| {
 		first = Body.byte_at(bytes, start)
-		# `1pkgs: []` cannot start a field name with a digit.
+		# A field name cannot start with a digit; for example, `1pkgs: []`.
 		if !Body.is_name_start(first) {
 			Err({ byte_offset: start, kind: InvalidSyntax("expected a field name") })
 		} else {
-			# `pkgs: ["cowsay"]` collects `pkgs` and stops before `:`.
+			# Collect through the name and stop before `:`; for example, at the end
+			# of `pkgs` in `pkgs: ["cowsay"]`.
 			end = Body.find_name_end(bytes, start + 1)
 			name = Str.from_utf8(bytes.sublist({ start, len: end - start })) ?? ""
 			Ok({ name, rest: end })
 		}
 	}
 
-	# Find where a field name such as `pkgs` ends.
+	# Find the end of any field name, such as `pkgs`.
 	find_name_end : List(U8), U64 -> U64
 	find_name_end = |bytes, index|
-	# Each remaining letter in `pkgs` advances the end.
+	# Each valid continuation byte advances the end; letters advance through
+	# the example name `pkgs`.
 		if index < bytes.len() and Body.is_name_continue(Body.byte_at(bytes, index)) {
 			Body.find_name_end(bytes, index + 1)
 		} else {
-			# The `:` after `pkgs` marks the name's end.
+			# A non-name byte marks the end; for example, the `:` after `pkgs`.
 			index
 		}
 
-	# Ignore spaces, newlines, and `#` comments around shell fields.
+	# Ignore spaces, newlines, and `#` comments around any body field. The
+	# StdPlugin example permits this trivia around `pkgs`.
 	skip_trivia : List(U8), U64 -> U64
 	skip_trivia = |bytes, index|
-	# Trivia after the `pkgs` field may run to the end of the body.
+	# Trailing trivia may run to the body end, including after `pkgs`.
 		if index >= bytes.len() {
 			index
 		} else {
-			# Otherwise inspect the next byte before or after `pkgs`.
+			# Otherwise inspect the next byte around the current field.
 			byte = Body.byte_at(bytes, index)
-			# Spaces before `pkgs` are ignored.
+			# Whitespace is ignored; for example, spaces before `pkgs`.
 			if Body.is_whitespace(byte) {
 				Body.skip_trivia(bytes, index + 1)
-				# `# package note` starts a comment.
+				# `#` starts a body comment; for example, `# package note`.
 			} else if byte == Bytes.hash {
 				Body.skip_trivia(bytes, Body.skip_comment(bytes, index + 1))
 			} else {
-				# The `p` in `pkgs` is significant, so parsing resumes here.
+				# A nontrivia byte resumes parsing; for example, the `p` in `pkgs`.
 				index
 			}
 		}
 
-	# Skip from `# package note` to its line ending.
+	# Skip any body comment to its line ending, such as `# package note`.
 	skip_comment : List(U8), U64 -> U64
 	skip_comment = |bytes, index|
-	# A line feed or end-of-body terminates the shell comment.
+	# A line feed or end-of-body terminates the comment.
 		if index >= bytes.len() or Body.byte_at(bytes, index) == Bytes.line_feed {
 			index
 		} else {
-			# Bytes inside the shell comment are skipped until LF or end-of-body.
+			# Comment bytes are skipped until LF or end-of-body.
 			Body.skip_comment(bytes, index + 1)
 		}
 
-	# Recognize formatting around `pkgs: ["cowsay", "fortune"]`.
+	# Recognize body formatting whitespace, such as the spacing around
+	# `pkgs: ["cowsay", "fortune"]`.
 	is_whitespace : U8 -> Bool
 	is_whitespace = |byte|
 		byte == Bytes.space or
@@ -369,159 +391,179 @@ Body := [].{
 				byte == Bytes.line_feed or
 					byte == Bytes.carriage_return
 
-	# Accept the first `p` in the `pkgs` field name.
+	# Accept a valid first field-name byte, such as the `p` in `pkgs`.
 	is_name_start : U8 -> Bool
 	is_name_start = |byte|
 		(byte >= Bytes.uppercase_a and byte <= Bytes.uppercase_z) or
 			(byte >= Bytes.lowercase_a and byte <= Bytes.lowercase_z) or
 				byte == Bytes.underscore
 
-	# Accept the remaining letters in `pkgs` or digits in another valid field name.
+	# Accept valid continuation bytes, such as the remaining letters in `pkgs`
+	# or digits in another field name.
 	is_name_continue : U8 -> Bool
 	is_name_continue = |byte|
 		Body.is_name_start(byte) or
 			(byte >= Bytes.digit_zero and byte <= Bytes.digit_nine)
 
-	# Safely inspect the shell body even at its end.
+	# Safely inspect any body even at its end.
 	byte_at : List(U8), U64 -> U8
 	byte_at = |bytes, index| bytes.get(index) ?? Bytes.nul
 
-	# Match parsed `pkgs` against the shell body's declared field.
+	# -- Schema and entry lookup --------------------------------------------
+
+	# Match a parsed name against the body's declarations. For example, match
+	# `pkgs` against StdPlugin's shell shape.
 	find_field : List(Field), Str -> Try(Field, [NotFound])
 	find_field = |fields, name|
 		match fields {
-			# `extra` reaches the end because the shell body only declares `pkgs`.
+			# An undeclared name reaches the end. For example, `extra` is absent
+			# when the shell body declares only `pkgs`.
 			[] => Err(NotFound)
-			# A nonempty shell schema compares its next declaration with the name.
+			# A nonempty schema compares its next declaration with the parsed name.
 			[first, .. as rest] =>
-			# The parsed name `pkgs` matches the shell's required field.
+			# A matching declaration is returned; for example, shell's `pkgs` field.
 				if first.name == name {
 					Ok(first)
 				} else {
-					# An unknown name continues past `pkgs` and eventually returns NotFound.
+					# An unknown name continues through declarations and returns NotFound.
 					Body.find_field(rest, name)
 				}
 			}
 
-	# Detect whether `pkgs` was already parsed.
+	# Detect whether any field was already parsed, such as `pkgs`.
 	has_entry : List(Entry), Str -> Bool
 	has_entry = |entries, name|
 		match entries {
-			# Before parsing the shell's first field, no `pkgs` entry exists.
+			# Before parsing the first field, no entry exists, including `pkgs`.
 			[] => Bool.False
-			# After parsing, compare `pkgs` or search any later entries.
+			# Compare the requested name or search later entries.
 			[first, .. as rest] => first.name == name or Body.has_entry(rest, name)
 		}
 
-	# Ensure the shell's required `pkgs` entry was provided.
+	# Ensure every required declaration has an entry. For example, StdPlugin's
+	# shell body must provide `pkgs`.
 	require_fields : List(Field), List(Entry), U64 -> Try({}, Diagnostic)
 	require_fields = |fields, entries, end|
 		match fields {
-			# Once every shell field was checked, validation succeeds.
+			# Once every declared field was checked, validation succeeds.
 			[] => Ok({})
-			# A remaining shell field is checked for required presence.
+			# Check each remaining declaration for required presence.
 			[first, .. as rest] =>
-			# An empty shell body is missing required `pkgs`.
+			# A missing required field fails; for example, an empty shell body lacks
+			# required `pkgs`.
 				if first.presence == Required and !Body.has_entry(entries, first.name) {
 					Err({ byte_offset: end, kind: MissingField(first.name) })
 				} else {
-					# A present `pkgs`, or an omitted optional field, allows checking the rest.
+					# A present required field, or any omitted optional field, allows the
+					# remaining declarations to be checked.
 					Body.require_fields(rest, entries, end)
 				}
 			}
 
-	# Locate `pkgs` in the shell's validated entries.
+	# -- Validated value access ---------------------------------------------
+
+	# Locate a named value in validated entries. For example, locate `pkgs` in
+	# the StdPlugin shell configuration.
 	find_entry : List(Entry), Str -> Try(Value, AccessError)
 	find_entry = |entries, name|
 		match entries {
-			# A malformed shell configuration with no `pkgs` reports it missing.
+			# Exhausting the entries reports the requested field missing.
 			[] => Err(MissingField(name))
-			# A nonempty shell configuration compares the next entry.
+			# A nonempty configuration compares the next entry.
 			[first, .. as rest] =>
-			# The `pkgs` entry returns its validated value.
+			# A matching entry returns its value; for example, the `pkgs` list.
 				if first.name == name {
 					Ok(first.value)
 				} else {
-					# A lookup for another shell field continues through the entries.
+					# A nonmatching lookup continues through the remaining entries.
 					Body.find_entry(rest, name)
 				}
 			}
 
-	# Read a validated String field, such as an optional shell `description`.
+	# Read any validated String field. For example, a shell shape could declare
+	# an optional `description`.
 	get_string : Configuration, Str -> Try(Str, AccessError)
 	get_string = |Config(entries), name|
 		match Body.find_entry(entries, name)? {
-			# `description: "development shell"` returns its text.
+			# A StringValue returns its text; for example, `description`.
 			StringValue(value) => Ok(value)
-			# Asking for the shell's `pkgs` list as a string is an error.
+			# A StringListValue has the wrong type; for example, shell's `pkgs`.
 			StringListValue(_) => Err(WrongType({ expected: String, field: name }))
 		}
 
-	# Read the shell's validated `pkgs` StringList.
+	# Read any validated StringList field. For example, StdPlugin reads the
+	# shell's `pkgs` list this way.
 	get_strings : Configuration, Str -> Try(List(Str), AccessError)
 	get_strings = |Config(entries), name|
 		match Body.find_entry(entries, name)? {
-			# `pkgs: ["cowsay"]` returns its list.
+			# A StringListValue returns its list; for example, `pkgs: ["cowsay"]`.
 			StringListValue(values) => Ok(values)
-			# Asking for a shell `description` string as a list is an error.
+			# A StringValue has the wrong type; for example, shell `description`.
 			StringValue(_) => Err(WrongType({ expected: StringList, field: name }))
 		}
 
-	# An optional shell String field such as `description` could use this.
+	# Read any optional String field. For example, a shell `description` could
+	# use this accessor.
 	maybe_string : Configuration, Str -> Try([None, Some(Str)], AccessError)
 	maybe_string = |Config(entries), name|
 		match Body.find_entry(entries, name) {
-			# An omitted optional shell `description` returns None.
+			# An omitted optional field returns None; for example, `description`.
 			Err(MissingField(_)) => Ok(None)
-			# Any lookup type error for `description` is preserved.
+			# Any lookup type error is preserved.
 			Err(WrongType(problem)) => Err(WrongType(problem))
-			# `description: "development shell"` returns Some("development shell").
+			# A string returns Some; for example, `description: "development shell"`.
 			Ok(StringValue(value)) => Ok(Some(value))
-			# A list stored under `description` cannot be read as an optional string.
+			# A stored list cannot be read as a string; for example, under
+			# `description`.
 			Ok(StringListValue(_)) => Err(WrongType({ expected: String, field: name }))
 		}
 
-	# The shell's `pkgs` StringList can be read through an optional accessor.
+	# Read any optional StringList field. For example, a shape with optional
+	# `pkgs` could use this accessor.
 	maybe_strings : Configuration, Str -> Try([None, Some(List(Str))], AccessError)
 	maybe_strings = |Config(entries), name|
 		match Body.find_entry(entries, name) {
-			# No `pkgs` entry returns None; required-field validation normally prevents this.
+			# An omitted optional field returns None. Required-field validation
+			# normally prevents this for StdPlugin's `pkgs`.
 			Err(MissingField(_)) => Ok(None)
-			# Any lookup type error for `pkgs` is preserved.
+			# Any lookup type error is preserved.
 			Err(WrongType(problem)) => Err(WrongType(problem))
-			# `pkgs: ["cowsay"]` returns Some(["cowsay"]).
+			# A list returns Some; for example, `pkgs: ["cowsay"]`.
 			Ok(StringListValue(values)) => Ok(Some(values))
-			# A string stored under `pkgs` cannot be read as an optional list.
+			# A stored string cannot be read as a list; for example, under `pkgs`.
 			Ok(StringValue(_)) => Err(WrongType({ expected: StringList, field: name }))
 		}
 
-	# Turn a shell body diagnostic into user-facing text.
+	# -- Diagnostic formatting ---------------------------------------------
+
+	# Turn any body diagnostic into user-facing text. Examples below use the
+	# StdPlugin shell body.
 	describe : Diagnostic -> Str
 	describe = |diagnostic|
 		match diagnostic.kind {
-			# Two `pkgs` fields become `duplicate field 'pkgs'`.
+			# Name a duplicated field; two `pkgs` fields produce this message.
 			DuplicateField(name) => "duplicate field '${name}'"
-			# A missing colon after `pkgs` keeps its specific syntax message.
+			# Preserve specific syntax text, such as a missing colon after `pkgs`.
 			InvalidSyntax(message) => message
-			# An invalid escape in a package name keeps its string error message.
+			# Preserve string error text, such as an invalid package-name escape.
 			InvalidString(message) => message
-			# An empty shell body reports `missing required field 'pkgs'`.
+			# Name a missing required field; an empty shell body reports `pkgs`.
 			MissingField(name) => "missing required field '${name}'"
-			# The shell's undeclared `extra` field reports `unknown field 'extra'`.
+			# Name an undeclared field; shell's `extra` reports this message.
 			UnknownField(name) => "unknown field '${name}'"
-			# `pkgs: [1]` reports that package items must be strings.
+			# Require string list items; for example, `pkgs: [1]` fails.
 			WrongListItem(field) => "items in field '${field}' must be strings"
-			# `pkgs: "cowsay"` reports that `pkgs` must be a list of strings.
+			# Name the expected shape; `pkgs: "cowsay"` expects a string list.
 			WrongType({ expected, field }) => "field '${field}' must be ${Body.shape_name(expected)}"
 		}
 
-	# Shell diagnostics use this to name an expected value shape.
+	# Name an expected value shape in any diagnostic, including shell errors.
 	shape_name : ValueShape -> Str
 	shape_name = |shape|
 		match shape {
-			# An optional shell `description` expectation is described as `a string`.
+			# A String expectation is `a string`; for example, shell `description`.
 			String => "a string"
-			# The shell's `pkgs` expectation is described as `a list of strings`.
+			# A StringList expectation is `a list of strings`; for example, `pkgs`.
 			StringList => "a list of strings"
 		}
 }

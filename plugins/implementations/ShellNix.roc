@@ -1,4 +1,5 @@
 import parser.Body
+import parser.Config
 import kai.Plugin as PluginApi
 import backends.Nix as NixBackend
 import commands.Shell as ShellCommand
@@ -49,44 +50,37 @@ ShellNix := [].{
 
 	parse : Str, Str -> Try(Body.Configuration, [InvalidConfig])
 	parse = |config_text, section| {
-		lines = config_text
-			.split_on("\n")
-			.map(
-				|line|
-					match line.find_first("#") {
-						Ok({ before, after: _ }) => before.trim()
-						Err(NotFound) => line.trim()
-					},
-			)
-			.keep_if(|line| !line.is_empty())
-
-		match ShellNix.find_shell(lines, "on ${section} {") {
-			Ok(shell_config) => Ok(shell_config)
-			Err(InvalidConfig) => ShellNix.find_default_shell(lines)
+		blocks = Config.scan(config_text) ? |_| InvalidConfig
+		selection = ShellNix.select_shell(blocks, section)?
+		match selection {
+			Missing => Err(InvalidConfig)
+			Selected(block) => {
+				config = Body.parse(ShellCommand.body, block.body) ? |_| InvalidConfig
+				Ok(config)
+			}
 		}
 	}
 
-	find_shell : List(Str), Str -> Try(Body.Configuration, [InvalidConfig])
-	find_shell = |lines, section_line|
-		match lines {
-			[] => Err(InvalidConfig)
-			[first, "shell {", body_line, ..] if first == section_line =>
-				ShellNix.parse_body(body_line)
-			[_, .. as rest] => ShellNix.find_shell(rest, section_line)
+	select_shell : List(Config.Block), Str -> Try(Config.Selection, [InvalidConfig])
+	select_shell = |blocks, section| {
+		host_selection = Config.select_exact(blocks, ["on", section]) ? |_| InvalidConfig
+		match host_selection {
+			Missing => {
+				fallback = Config.select_exact(blocks, ["shell"]) ? |_| InvalidConfig
+				Ok(fallback)
+			}
+			Selected(host) => {
+				nested = Config.scan(host.body) ? |_| InvalidConfig
+				nested_selection = Config.select_exact(nested, ["shell"]) ? |_| InvalidConfig
+				match nested_selection {
+					Missing => {
+						fallback = Config.select_exact(blocks, ["shell"]) ? |_| InvalidConfig
+						Ok(fallback)
+					}
+					Selected(shell) => Ok(Selected(shell))
+				}
+			}
 		}
-
-	find_default_shell : List(Str) -> Try(Body.Configuration, [InvalidConfig])
-	find_default_shell = |lines|
-		match lines {
-			[] => Err(InvalidConfig)
-			["shell {", body_line, ..] => ShellNix.parse_body(body_line)
-			[_, .. as rest] => ShellNix.find_default_shell(rest)
-		}
-
-	parse_body : Str -> Try(Body.Configuration, [InvalidConfig])
-	parse_body = |body| {
-		config = Body.parse(ShellCommand.body, body) ? |_| InvalidConfig
-		Ok(config)
 	}
 
 	implementation : PluginApi.Implementation
