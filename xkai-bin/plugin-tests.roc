@@ -267,6 +267,29 @@ Fixtures := [].{
 		}
 	}
 
+	validation_command : Str -> PluginApi.Command
+	validation_command = |name| PluginApi.Command.{
+		argument_policy: NoArguments,
+		body: Body.object([]),
+		config_block: OptionalConfigBlock(name),
+		default_backend: local.name,
+		name,
+	}
+
+	validation_implementation : Str, Str -> PluginApi.Implementation
+	validation_implementation = |command_name, backend_name| PluginApi.Implementation.{
+		actions: [],
+		backend: backend_name,
+		command: command_name,
+		renderer: Fixtures.empty_renderer,
+	}
+
+	validation_registry : Str, List(PluginApi.Command), List(PluginApi.Backend), List(PluginApi.Implementation) -> PluginApi.RegistryDefinition
+	validation_registry = |name, commands, backends, implementations| {
+		definition: PluginApi.Definition.{ backends, commands, implementations, name },
+		select_config: Fixtures.select_missing,
+	}
+
 	registry_selector : PluginApi.ConfigSelector
 	registry_selector = |raw_config, selected_command, backend_choice, _os, _arch| {
 		block_name = match selected_command.config_block {
@@ -454,6 +477,75 @@ expect {
 			definition.backends.len() == 4 and
 				definition.implementations.len() == 4
 }
+
+# Registry definitions validate in order and require commands before other checks.
+expect PluginApi.validate_registry([
+	Fixtures.validation_registry("empty", [], [], []),
+	Fixtures.validation_registry("later-empty", [], [], []),
+]) == Err({ message: "must define at least one command", plugin: "empty" })
+
+# A registry with commands must also define a backend.
+expect {
+	command = Fixtures.validation_command("used")
+	PluginApi.validate_registry([
+		Fixtures.validation_registry("empty-backend", [command], [], []),
+	]) == Err({ message: "must define at least one backend", plugin: "empty-backend" })
+}
+
+# A registry with commands and backends must connect them with an implementation.
+expect {
+	command = Fixtures.validation_command("used")
+	PluginApi.validate_registry([
+		Fixtures.validation_registry("empty-implementation", [command], [Fixtures.local], []),
+	]) == Err({ message: "must define at least one implementation", plugin: "empty-implementation" })
+}
+
+# Implementation references validate the command before the backend.
+expect {
+	command = Fixtures.validation_command("used")
+	implementation = Fixtures.validation_implementation("missing-command", "missing-backend")
+	PluginApi.validate_registry([
+		Fixtures.validation_registry("bad-reference", [command], [Fixtures.local], [implementation]),
+	]) == Err({
+		message: "implementation 'missing-command/missing-backend' references unknown command 'missing-command'",
+		plugin: "bad-reference",
+	})
+}
+
+# An implementation cannot reference an absent backend.
+expect {
+	command = Fixtures.validation_command("used")
+	implementation = Fixtures.validation_implementation(command.name, "missing-backend")
+	PluginApi.validate_registry([
+		Fixtures.validation_registry("bad-backend", [command], [Fixtures.local], [implementation]),
+	]) == Err({
+		message: "implementation 'used/missing-backend' references unknown backend 'missing-backend'",
+		plugin: "bad-backend",
+	})
+}
+
+# Dangling command checks precede dangling backend checks.
+expect {
+	used = Fixtures.validation_command("used")
+	unused = Fixtures.validation_command("unused")
+	implementation = Fixtures.validation_implementation(used.name, Fixtures.local.name)
+	PluginApi.validate_registry([
+		Fixtures.validation_registry("unused-command", [used, unused], [Fixtures.local, Fixtures.guix], [implementation]),
+	]) == Err({ message: "command 'unused' has no implementation", plugin: "unused-command" })
+}
+
+# Every declared backend must have an implementation.
+expect {
+	command = Fixtures.validation_command("used")
+	implementation = Fixtures.validation_implementation(command.name, Fixtures.local.name)
+	PluginApi.validate_registry([
+		StdPlugin.plugin,
+		Fixtures.validation_registry("unused-backend", [command], [Fixtures.local, Fixtures.guix], [implementation]),
+	]) == Err({ message: "backend 'guix' has no implementation", plugin: "unused-backend" })
+}
+
+# A complete registry passes structural validation.
+expect PluginApi.validate_registry([StdPlugin.plugin]) == Ok({})
 
 # The first registry owning a command wins and its default backend is retained.
 expect {

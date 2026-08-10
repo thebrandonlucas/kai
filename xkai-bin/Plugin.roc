@@ -237,6 +237,91 @@ Plugin := [].{
 		name : Str,
 	}
 
+	RegistryDiagnostic := {
+		message : Str,
+		plugin : Str,
+	}
+
+	validate_registry : List(RegistryDefinition) -> Try({}, RegistryDiagnostic)
+	validate_registry = |registry|
+		match registry {
+			[] => Ok({})
+			[first, .. as rest] => {
+				Plugin.validate_definition(first.definition)?
+				Plugin.validate_registry(rest)
+			}
+		}
+
+	validate_definition : Definition -> Try({}, RegistryDiagnostic)
+	validate_definition = |definition|
+		if definition.commands.is_empty() {
+			Plugin.registry_failure(definition.name, "must define at least one command")
+		} else if definition.backends.is_empty() {
+			Plugin.registry_failure(definition.name, "must define at least one backend")
+		} else if definition.implementations.is_empty() {
+			Plugin.registry_failure(definition.name, "must define at least one implementation")
+		} else {
+			Plugin.validate_implementation_references(definition.implementations, definition)?
+			Plugin.validate_commands_used(definition.commands, definition.implementations, definition.name)?
+			Plugin.validate_backends_used(definition.backends, definition.implementations, definition.name)
+		}
+
+	validate_implementation_references : List(Implementation), Definition -> Try({}, RegistryDiagnostic)
+	validate_implementation_references = |implementations, definition|
+		match implementations {
+			[] => Ok({})
+			[first, .. as rest] =>
+				match Plugin.find_command(definition.commands, first.command) {
+					Err(NotFound) => Plugin.registry_failure(definition.name, "implementation '${first.command}/${first.backend}' references unknown command '${first.command}'")
+					Ok(_) =>
+						match Plugin.find_backend(definition.backends, first.backend) {
+							Err(NotFound) => Plugin.registry_failure(definition.name, "implementation '${first.command}/${first.backend}' references unknown backend '${first.backend}'")
+							Ok(_) => Plugin.validate_implementation_references(rest, definition)
+						}
+					}
+			}
+
+	validate_commands_used : List(Command), List(Implementation), Str -> Try({}, RegistryDiagnostic)
+	validate_commands_used = |commands, implementations, plugin|
+		match commands {
+			[] => Ok({})
+			[first, .. as rest] =>
+				if Plugin.uses_command(implementations, first.name) {
+					Plugin.validate_commands_used(rest, implementations, plugin)
+				} else {
+					Plugin.registry_failure(plugin, "command '${first.name}' has no implementation")
+				}
+			}
+
+	validate_backends_used : List(Backend), List(Implementation), Str -> Try({}, RegistryDiagnostic)
+	validate_backends_used = |backends, implementations, plugin|
+		match backends {
+			[] => Ok({})
+			[first, .. as rest] =>
+				if Plugin.uses_backend(implementations, first.name) {
+					Plugin.validate_backends_used(rest, implementations, plugin)
+				} else {
+					Plugin.registry_failure(plugin, "backend '${first.name}' has no implementation")
+				}
+			}
+
+	uses_command : List(Implementation), Str -> Bool
+	uses_command = |implementations, command|
+		match implementations {
+			[] => Bool.False
+			[first, .. as rest] => first.command == command or Plugin.uses_command(rest, command)
+		}
+
+	uses_backend : List(Implementation), Str -> Bool
+	uses_backend = |implementations, backend|
+		match implementations {
+			[] => Bool.False
+			[first, .. as rest] => first.backend == backend or Plugin.uses_backend(rest, backend)
+		}
+
+	registry_failure : Str, Str -> Try({}, RegistryDiagnostic)
+	registry_failure = |plugin, message| Err({ message, plugin })
+
 	Plan := {
 		actions : List(Action),
 		backend : Backend,
