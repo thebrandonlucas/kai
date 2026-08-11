@@ -195,10 +195,153 @@ Fixtures := [].{
 					}
 			}
 
+	select_missing : PluginApi.ConfigSelector
+	select_missing = |_, _, _, _, _| Ok(Missing)
+
+	# FIX confused by the purpose of Body.object why do we need that
+	registry_body = Body.object(
+		[Body.required("value", String)],
+	)
+
+	registry_command : PluginApi.Command
+	registry_command = PluginApi.Command.{
+		argument_policy: NoArguments,
+		# ???
+		body: registry_body,
+		# ???
+		config_block: RequiredConfigBlock("fixture"),
+		default_backend: nix.name,
+		name: "registry-command",
+	}
+
+	registry_renderer : PluginApi.Renderer
+	registry_renderer = |selected_context| {
+		value = Body.get_string(selected_context.config, "value") ? |_| {
+			byte_offset: None,
+			message: "value missing after validation",
+		}
+		Ok(
+			PluginApi.RenderResult.{
+				outputs: [{ name: "selected", text: value }],
+				requested_packages: ["requested"],
+			},
+		)
+	}
+
+	optional_renderer : PluginApi.Renderer
+	optional_renderer = |selected_context|
+		match selected_context.config_block {
+			NoConfigBlock =>
+				if selected_context.config == Body.empty {
+					Ok(
+						PluginApi.RenderResult.{
+							outputs: [{ name: "selected", text: "empty" }],
+							requested_packages: [],
+						},
+					)
+				} else {
+					Err({ byte_offset: None, message: "expected empty config" })
+				}
+			SelectedConfigBlock(_) => Err({ byte_offset: None, message: "expected no config block" })
+		}
+
+	registry_definition : Str, PluginApi.Command, PluginApi.Renderer -> PluginApi.RegistryDefinition
+	registry_definition = |name, selected_command, renderer| {
+		make_implementation = |backend_name| PluginApi.Implementation.{
+			actions: [
+				WriteConfigUtf8({ output: "selected", path: "selected.txt" }),
+				Exec({ args: ["run"], command: "driver" }),
+			],
+			backend: backend_name,
+			command: selected_command.name,
+			renderer,
+		}
+		{
+			definition: PluginApi.Definition.{
+				backends: [nix, guix],
+				commands: [selected_command],
+				implementations: [make_implementation(nix.name), make_implementation(guix.name)],
+				name,
+			},
+			select_config: Fixtures.registry_selector,
+		}
+	}
+
+	validation_command : Str -> PluginApi.Command
+	validation_command = |name| PluginApi.Command.{
+		argument_policy: NoArguments,
+		body: Body.object([]),
+		config_block: OptionalConfigBlock(name),
+		default_backend: local.name,
+		name,
+	}
+
+	validation_implementation : Str, Str -> PluginApi.Implementation
+	validation_implementation = |command_name, backend_name| PluginApi.Implementation.{
+		actions: [],
+		backend: backend_name,
+		command: command_name,
+		renderer: Fixtures.empty_renderer,
+	}
+
+	validation_registry : Str, List(PluginApi.Command), List(PluginApi.Backend), List(PluginApi.Implementation) -> PluginApi.RegistryDefinition
+	validation_registry = |name, commands, backends, implementations| {
+		definition: PluginApi.Definition.{ backends, commands, implementations, name },
+		select_config: Fixtures.select_missing,
+	}
+
+	registry_selector : PluginApi.ConfigSelector
+	registry_selector = |raw_config, selected_command, backend_choice, _os, _arch| {
+		block_name = match selected_command.config_block {
+			OptionalConfigBlock(name) => name
+			RequiredConfigBlock(name) => name
+		}
+		backend_header = match backend_choice {
+			DefaultBackend(selected_backend) => [block_name, "default", selected_backend.name]
+			ExplicitBackend(selected_backend) => [block_name, "explicit", selected_backend.name]
+		}
+		# This fixture plugin owns all header meanings; the planner only passes data.
+		blocks = Config.scan(raw_config) ? |diagnostic| {
+			location: At(Fixtures.source_location(diagnostic.location)),
+			message: "invalid fixture config",
+		}
+		selection = Config.select_exact(blocks, backend_header) ? |_| {
+			location: None,
+			message: "duplicate fixture config",
+		}
+		match selection {
+			Missing => Ok(Missing)
+			Selected(block) => Ok(
+				Selected({
+					body: block.body,
+					location: Fixtures.source_location(block.location),
+				}),
+			)
+		}
+	}
+
+	source_location : Config.Location -> PluginApi.SourceLocation
+	source_location = |location| {
+		byte_offset: location.byte_offset,
+		column: location.column,
+		line: location.line,
+	}
+
+	plan_registry : List(PluginApi.RegistryDefinition), Str, List(Str) -> Try(PluginApi.Plan, PluginApi.Error)
+	plan_registry = |registry, config, args| PluginApi.plan_registry(registry, config, args, LINUX, X64)
+
 	plan_contains : Str, PluginApi.HostOs, PluginApi.HostArch, Str -> Bool
 	plan_contains = |config_text, os, arch, expected|
-		match StdPlugin.plan(config_text, ["shell"], os, arch) {
-			Ok({ actions: [WriteUtf8({ content, path: _ }), Exec(_)] }) => content.contains(expected)
+		match PluginApi.plan_registry([StdPlugin.plugin], config_text, ["shell"], os, arch) {
+			Ok(
+				{
+					actions: [WriteUtf8({ content, path: _ }), Exec(_)],
+					backend: _,
+					command: _,
+					plugin: _,
+					requested_packages: _,
+				},
+			) => content.contains(expected)
 			_ => Bool.False
 		}
 }
@@ -269,31 +412,249 @@ expect {
 	Fixtures.plan_contains(config_text, LINUX, X64, ".\"fortune\"")
 }
 
+# Explicit backend selection uses the backend-qualified command block.
+expect {
+	match PluginApi.select_config(
+		"fixture guix {value: \"selected\"}",
+		Fixtures.registry_command,
+		ExplicitBackend(Fixtures.guix),
+		LINUX,
+		X64,
+	) {
+		Ok(Selected({ body, location: _ })) => body == "value: \"selected\""
+		_ => Bool.False
+	}
+}
+
+# Duplicate applicable blocks report the second block's body location.
+expect PluginApi.select_config(
+	"fixture {value: \"one\"}\nfixture {value: \"two\"}",
+	Fixtures.registry_command,
+	DefaultBackend(Fixtures.nix),
+	LINUX,
+	X64,
+) == Err({
+	location: At({ byte_offset: 32, column: 10, line: 2 }),
+	message: "duplicate command configuration",
+})
+
+# Nested selector failures retain their absolute source location.
+expect PluginApi.select_config(
+	"on linux {\n  \"oops\"\n}",
+	Fixtures.registry_command,
+	DefaultBackend(Fixtures.nix),
+	LINUX,
+	X64,
+) == Err({
+	location: At({ byte_offset: 13, column: 3, line: 2 }),
+	message: "invalid host configuration",
+})
+
+# Nested body failures retain their absolute source location and registry owner.
+expect PluginApi.plan_registry(
+	[StdPlugin.plugin],
+	"on linux {\n  shell {\n    pkgs: \"cowsay\"\n  }\n}",
+	["shell"],
+	LINUX,
+	X64,
+) == Err(
+	PlanningFailed({
+		backend: "nix",
+		command: "shell",
+		location: At({ byte_offset: 31, column: 11, line: 3 }),
+		message: "field 'pkgs' must be a list of strings",
+		plugin: "std",
+	}),
+)
+
 # Expected definition: name "minimal" with one command, four backends, and four implementations
 expect {
-	plugin = PluginApi.Plugin.Registry({ definition: Fixtures.definition })
-	definition = PluginApi.definition(plugin)
+	plugin : PluginApi.RegistryDefinition
+	plugin = { definition: Fixtures.definition, select_config: Fixtures.select_missing }
+	definition = plugin.definition
 	definition.name == "minimal" and
 		definition.commands.len() == 1 and
 			definition.backends.len() == 4 and
 				definition.implementations.len() == 4
 }
 
+# Registry definitions validate in order and require commands before other checks.
+expect PluginApi.validate_registry([
+	Fixtures.validation_registry("empty", [], [], []),
+	Fixtures.validation_registry("later-empty", [], [], []),
+]) == Err({ message: "must define at least one command", plugin: "empty" })
+
+# A registry with commands must also define a backend.
+expect {
+	command = Fixtures.validation_command("used")
+	PluginApi.validate_registry([
+		Fixtures.validation_registry("empty-backend", [command], [], []),
+	]) == Err({ message: "must define at least one backend", plugin: "empty-backend" })
+}
+
+# A registry with commands and backends must connect them with an implementation.
+expect {
+	command = Fixtures.validation_command("used")
+	PluginApi.validate_registry([
+		Fixtures.validation_registry("empty-implementation", [command], [Fixtures.local], []),
+	]) == Err({ message: "must define at least one implementation", plugin: "empty-implementation" })
+}
+
+# Implementation references validate the command before the backend.
+expect {
+	command = Fixtures.validation_command("used")
+	implementation = Fixtures.validation_implementation("missing-command", "missing-backend")
+	PluginApi.validate_registry([
+		Fixtures.validation_registry("bad-reference", [command], [Fixtures.local], [implementation]),
+	]) == Err({
+		message: "implementation 'missing-command/missing-backend' references unknown command 'missing-command'",
+		plugin: "bad-reference",
+	})
+}
+
+# An implementation cannot reference an absent backend.
+expect {
+	command = Fixtures.validation_command("used")
+	implementation = Fixtures.validation_implementation(command.name, "missing-backend")
+	PluginApi.validate_registry([
+		Fixtures.validation_registry("bad-backend", [command], [Fixtures.local], [implementation]),
+	]) == Err({
+		message: "implementation 'used/missing-backend' references unknown backend 'missing-backend'",
+		plugin: "bad-backend",
+	})
+}
+
+# Dangling command checks precede dangling backend checks.
+expect {
+	used = Fixtures.validation_command("used")
+	unused = Fixtures.validation_command("unused")
+	implementation = Fixtures.validation_implementation(used.name, Fixtures.local.name)
+	PluginApi.validate_registry([
+		Fixtures.validation_registry("unused-command", [used, unused], [Fixtures.local, Fixtures.guix], [implementation]),
+	]) == Err({ message: "command 'unused' has no implementation", plugin: "unused-command" })
+}
+
+# Every declared backend must have an implementation.
+expect {
+	command = Fixtures.validation_command("used")
+	implementation = Fixtures.validation_implementation(command.name, Fixtures.local.name)
+	PluginApi.validate_registry([
+		StdPlugin.plugin,
+		Fixtures.validation_registry("unused-backend", [command], [Fixtures.local, Fixtures.guix], [implementation]),
+	]) == Err({ message: "backend 'guix' has no implementation", plugin: "unused-backend" })
+}
+
+# A complete registry passes structural validation.
+expect PluginApi.validate_registry([StdPlugin.plugin]) == Ok({})
+
+# The first registry owning a command wins and its default backend is retained.
+expect {
+	first = Fixtures.registry_definition("first", Fixtures.registry_command, Fixtures.registry_renderer)
+	second = Fixtures.registry_definition("second", Fixtures.registry_command, Fixtures.registry_renderer)
+	match Fixtures.plan_registry(
+		[first, second],
+		"fixture default nix {value: \"first value\"}",
+		[Fixtures.registry_command.name],
+	) {
+		Ok(plan) => plan.plugin == "first" and plan.backend == Fixtures.nix
+		_ => Bool.False
+	}
+}
+
+# A known backend argument is explicit, consumed, and retained with all plan data.
+expect {
+	registry = Fixtures.registry_definition("owner", Fixtures.registry_command, Fixtures.registry_renderer)
+	match Fixtures.plan_registry(
+		[registry],
+		"fixture explicit guix {value: \"kept\"}",
+		[Fixtures.registry_command.name, "guix"],
+	) {
+		Ok(plan) =>
+			plan.plugin == "owner" and
+				plan.command == Fixtures.registry_command.name and
+					plan.backend == Fixtures.guix and
+						plan.requested_packages == ["requested"] and
+							plan.actions == [
+								WriteUtf8({ content: "kept", path: "selected.txt" }),
+								Exec({ args: ["run"], command: "driver" }),
+							]
+		_ => Bool.False
+	}
+}
+
+# A missing required block identifies its owner and selected backend.
+expect {
+	registry = Fixtures.registry_definition("owner", Fixtures.registry_command, Fixtures.registry_renderer)
+	Fixtures.plan_registry([registry], "", [Fixtures.registry_command.name]) == Err(
+		PlanningFailed({
+			backend: "nix",
+			command: Fixtures.registry_command.name,
+			location: None,
+			message: "missing required config block 'fixture'",
+			plugin: "owner",
+		}),
+	)
+}
+
+# A missing optional block reaches the renderer as Body.empty and NoConfigBlock.
+expect {
+	registry = Fixtures.registry_definition("optional-owner", Fixtures.command, Fixtures.optional_renderer)
+	match Fixtures.plan_registry([registry], "", [Fixtures.command.name]) {
+		Ok(plan) => plan.actions == [
+			WriteUtf8({ content: "empty", path: "selected.txt" }),
+			Exec({ args: ["run"], command: "driver" }),
+		]
+		_ => Bool.False
+	}
+}
+
+# Body-relative failures are translated and identify plugin, command, and backend.
+expect {
+	registry = Fixtures.registry_definition("body-owner", Fixtures.registry_command, Fixtures.registry_renderer)
+	Fixtures.plan_registry(
+		[registry],
+		"fixture default nix {\nvalue: []\n}",
+		[Fixtures.registry_command.name],
+	) == Err(
+		PlanningFailed({
+			backend: "nix",
+			command: Fixtures.registry_command.name,
+			location: At({ byte_offset: 29, column: 8, line: 2 }),
+			message: "field 'value' must be a string",
+			plugin: "body-owner",
+		}),
+	)
+}
+
 # Inputs: outputs first="one" and second="two"
 # Expected writes: first.txt="one" and second.txt="two"
-expect PluginApi.lower(Fixtures.multiple_writes, Fixtures.multiple_result) == Ok(
+expect PluginApi.lower(
+	Fixtures.multiple_writes,
+	Fixtures.multiple_result,
+	Fixtures.definition.name,
+	Fixtures.local,
+) == Ok(
 	PluginApi.Plan.{
 		actions: [
 			WriteUtf8({ content: "one", path: "first.txt" }),
 			WriteUtf8({ content: "two", path: "second.txt" }),
 		],
+		backend: Fixtures.local,
+		command: Fixtures.command.name,
+		plugin: Fixtures.definition.name,
+		requested_packages: [],
 	},
 )
 
 expect Fixtures.empty_renderer(Fixtures.context) == Ok(Fixtures.empty_result)
 
 # Input requests missing output "missing" -> error "plugin renderer did not return named output 'missing'"
-expect PluginApi.lower(Fixtures.missing_write, Fixtures.multiple_result) == Err({
+expect PluginApi.lower(
+	Fixtures.missing_write,
+	Fixtures.multiple_result,
+	Fixtures.definition.name,
+	Fixtures.local,
+) == Err({
 	byte_offset: None,
 	message: "plugin renderer did not return named output 'missing'",
 })

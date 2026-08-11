@@ -1,4 +1,4 @@
-# A simple demo plugin. It's `config.kai` looks like:
+# A simple demo plugin. Its `config.kai` looks like:
 #
 # ```Kaifile
 #   custom {
@@ -7,18 +7,19 @@
 # ```
 #
 # Building with `xkai build` and then running with
-# `./kai custom-plugin` should create a file called
+# `./kai custom-write` should create a file called
 # "custom-plugin-output.txt" with the message "Hello from CustomPlugin!"
 
 import parser.Body
+import parser.Config
 import kai.Plugin as PluginApi
 
 CustomPlugin := [].{
-	plugin : PluginApi.Plugin
-	plugin = PluginApi.Plugin.Module({
+	plugin : PluginApi.RegistryDefinition
+	plugin = {
 		definition,
-		plan: CustomPlugin.plan,
-	})
+		select_config: CustomPlugin.select_config,
+	}
 
 	local : PluginApi.Backend
 	local = PluginApi.Backend.{
@@ -92,58 +93,37 @@ CustomPlugin := [].{
 				}
 			}
 
-	plan :
-		Str,
-		List(Str),
-		PluginApi.HostOs,
-		PluginApi.HostArch ->
-			Try(
-				PluginApi.Plan,
-				PluginApi.Error,
+	select_config : PluginApi.ConfigSelector
+	select_config = |config_text, command, _, _, _| {
+		block_name = match command.config_block {
+			OptionalConfigBlock(name) => name
+			RequiredConfigBlock(name) => name
+		}
+		blocks = Config.scan(config_text) ? |diagnostic| {
+			location: At(CustomPlugin.source_location(diagnostic.location)),
+			message: "invalid custom configuration",
+		}
+		selection = Config.select_exact(blocks, [block_name]) ? |selection_error| {
+			location = match selection_error {
+				DuplicateHeader({ first: _, header: _, second }) => At(CustomPlugin.source_location(second))
+			}
+			{ location, message: "duplicate custom configuration" }
+		}
+		match selection {
+			Missing => Ok(Missing)
+			Selected(block) => Ok(
+				Selected({
+					body: block.body,
+					location: CustomPlugin.source_location(block.location),
+				}),
 			)
-	plan = |config_text, args, _os, _arch|
-		match args {
-			["custom-write"] => {
-				message = CustomPlugin.parse_message(config_text.split_on("\n"))?
-				Ok(
-					PluginApi.Plan.{
-						actions: [WriteUtf8({ content: message, path: "custom-plugin-output.txt" })],
-					},
-				)
-			}
-			_ => Err(UnknownCommand)
 		}
+	}
 
-	# Parses the message part of the body in the custom plugin
-	parse_message : List(Str) -> Try(Str, [InvalidConfig])
-	parse_message = |lines|
-		match lines {
-			[] => Err(InvalidConfig)
-			[first, .. as rest] => {
-				line = first.trim()
-				if line.starts_with("message:") {
-					decoded : Try(Str, Json.ParseErr)
-					decoded = Json.parse(line.drop_prefix("message:").trim())
-					match decoded {
-						Ok(message) => Ok(message)
-						Err(_) => Err(InvalidConfig)
-					}
-				} else {
-					CustomPlugin.parse_message(rest)
-				}
-			}
-		}
+	source_location : Config.Location -> PluginApi.SourceLocation
+	source_location = |location| {
+		byte_offset: location.byte_offset,
+		column: location.column,
+		line: location.line,
+	}
 }
-
-# parse_message extracts message field from config.kai string
-#
-# Input:
-# custom {
-#   message: "custom plugin worked"
-# }
-# Expected output: "custom plugin worked"
-expect CustomPlugin.parse_message([
-	"custom {",
-	"message: \"custom plugin worked\"",
-	"}",
-]) == Ok("custom plugin worked")

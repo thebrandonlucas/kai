@@ -4,26 +4,11 @@ import commands.Shell as ShellCommand
 import implementations.ShellNix
 
 StdPlugin := [].{
-	plugin : PluginApi.Plugin
-	plugin = PluginApi.Plugin.Module({
+	plugin : PluginApi.RegistryDefinition
+	plugin = {
 		definition,
-		plan: StdPlugin.plan,
-	})
-
-	plan :
-		Str,
-		List(Str),
-		PluginApi.HostOs,
-		PluginApi.HostArch ->
-			Try(
-				PluginApi.Plan,
-				PluginApi.Error,
-			)
-	plan = |config_text, args, os, arch|
-		match args {
-			["shell"] => ShellNix.plan(config_text, os, arch)
-			_ => Err(UnknownCommand)
-		}
+		select_config: PluginApi.select_config,
+	}
 
 	commands : List(PluginApi.Command)
 	commands = [ShellCommand.command]

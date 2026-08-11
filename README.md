@@ -2,6 +2,8 @@
 
 > WARNING: Hobby project. Use at your own risk!
 
+See the [roadmap](roadmap.md) for planned work.
+
 Kai is a CLI that makes using reproducible systems easy, friendly, and fun.
 
 There are basically two complete reproducible systems today: [Nix](https://determinate.systems/) and [Guix](https://guix.gnu.org/). They are hard to use. Kai builds on top of them with the goal of making them easy, extensible, customizable, and powerful.
@@ -55,15 +57,7 @@ on linux {
 }
 ```
 
-`StdPlugin` and custom plugins implement the same contract: each exports a plugin module that turns the configuration source, command arguments, and host platform into a pure action plan. The shared executor performs that plan's file writes and backend commands.
-
-`xkai` is the plugin builder, similar to `xcaddy`. Pass it custom Roc plugin modules to add commands or override standard behavior:
-
-```sh
-xkai build path/to/CustomPlugin.roc
-```
-
-For the build only, `xkai` writes its embedded API, executor, standard plugin, and supplied custom plugins to a temporary directory and invokes Roc. `basic-cli` is the compile-time Roc platform for both stock and customized binaries. The result is a portable `kai` binary with that registry compiled in; the temporary build inputs are removed. At runtime, `kai` reads `config.kai`. The `.kai/` directory contains backend output such as `.kai/flake.nix`, never Roc source or plugin build inputs.
+See the [plugin documentation](docs/plugin.md) for the plugin contract and `xkai` build details.
 
 ## Platform support
 
