@@ -137,6 +137,19 @@ fn addFilesCommand(
     return b.addSystemCommand(args.items);
 }
 
+fn addDevtoolCommand(
+    b: *std.Build,
+    devtool: std.Build.LazyPath,
+    command: []const u8,
+    forwarded_args: []const []const u8,
+) *std.Build.Step.Run {
+    const run = std.Build.Step.Run.create(b, b.fmt("run devtool {s}", .{command}));
+    run.addFileArg(devtool);
+    run.addArg(command);
+    run.addArgs(forwarded_args);
+    return run;
+}
+
 fn artifactName(b: *std.Build, source_path: []const u8) []const u8 {
     const extension_len = ".roc".len;
     const stem = source_path[0 .. source_path.len - extension_len];
@@ -149,6 +162,34 @@ fn artifactName(b: *std.Build, source_path: []const u8) []const u8 {
 
 pub fn build(b: *std.Build) void {
     const sources = discoverSources(b);
+
+    const build_devtool = b.addSystemCommand(&.{ "roc", "build" });
+    build_devtool.addFileArg(b.path("devtool/main.roc"));
+    build_devtool.addFileInput(b.path("devtool/Cli.roc"));
+    build_devtool.addArg("--opt=dev");
+    const devtool = build_devtool.addPrefixedOutputFileArg("--output=", "kai-devtool");
+    const forwarded_args = b.args orelse &.{};
+
+    const build_release_step = b.step(
+        "build-release",
+        "Build and validate release artifacts",
+    );
+    const build_release = addDevtoolCommand(b, devtool, "build-release", forwarded_args);
+    build_release_step.dependOn(&build_release.step);
+
+    const release_step = b.step(
+        "release",
+        "Prepare and push a protected-branch release",
+    );
+    const prepare_release = addDevtoolCommand(b, devtool, "prepare-release", forwarded_args);
+    release_step.dependOn(&prepare_release.step);
+
+    const publish_release_step = b.step(
+        "publish-release",
+        "Publish a merged release (CI only)",
+    );
+    const publish_release = addDevtoolCommand(b, devtool, "publish-release", forwarded_args);
+    publish_release_step.dependOn(&publish_release.step);
 
     // All static checks (roc, zig, sh)
     const check_step = b.step(

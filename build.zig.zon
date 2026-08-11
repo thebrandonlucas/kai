@@ -9,6 +9,7 @@
         ".github",
         "build.zig",
         "build.zig.zon",
+        "devtool",
         "examples",
         "flake.nix",
         "plugins",
