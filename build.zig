@@ -202,6 +202,9 @@ pub fn build(b: *std.Build) void {
     release_parity.addArgs(forwarded_args);
     release_parity_step.dependOn(&release_parity.step);
 
+    const test_prepare_release = b.addSystemCommand(&.{"scripts/test-prepare-release.sh"});
+    test_prepare_release.addFileArg(devtool);
+
     const release_step = b.step(
         "release",
         "Prepare and push a protected-branch release",
@@ -312,6 +315,8 @@ pub fn build(b: *std.Build) void {
         "Run checks and Roc tests.",
     );
     test_step.dependOn(check_step);
+    test_prepare_release.step.dependOn(check_step);
+    test_step.dependOn(&test_prepare_release.step);
 
     for (sources.roc_apps) |app| {
         const test_app = b.addSystemCommand(&.{ "roc", "test", app });
