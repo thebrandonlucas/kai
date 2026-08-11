@@ -193,6 +193,15 @@ pub fn build(b: *std.Build) void {
     const build_release = addDevtoolCommand(b, devtool, "build-release", forwarded_args);
     build_release_step.dependOn(&build_release.step);
 
+    const release_parity_step = b.step(
+        "release-parity",
+        "Compare the Bash and Roc release artifact builders",
+    );
+    const release_parity = b.addSystemCommand(&.{"scripts/test-build-release-parity.sh"});
+    release_parity.addFileArg(devtool);
+    release_parity.addArgs(forwarded_args);
+    release_parity_step.dependOn(&release_parity.step);
+
     const release_step = b.step(
         "release",
         "Prepare and push a protected-branch release",
