@@ -137,6 +137,20 @@ fn addFilesCommand(
     return b.addSystemCommand(args.items);
 }
 
+fn addCiCommand(
+    b: *std.Build,
+    ci_step: *std.Build.Step,
+    prerequisite: *std.Build.Step,
+    name: []const u8,
+    args: []const []const u8,
+) *std.Build.Step.Run {
+    const command = std.Build.Step.Run.create(b, name);
+    command.addArgs(args);
+    command.step.dependOn(prerequisite);
+    ci_step.dependOn(&command.step);
+    return command;
+}
+
 fn addDevtoolCommand(
     b: *std.Build,
     devtool: std.Build.LazyPath,
@@ -299,6 +313,38 @@ pub fn build(b: *std.Build) void {
         "Run tests and build representative applications",
     );
     ci_step.dependOn(test_step);
+
+    const nix_flake_check = addCiCommand(
+        b,
+        ci_step,
+        test_step,
+        "check Nix flake",
+        &.{ "nix", "flake", "check" },
+    );
+
+    switch (b.graph.host.result.os.tag) {
+        .linux => _ = addCiCommand(
+            b,
+            ci_step,
+            &nix_flake_check.step,
+            "build Linux release outputs",
+            &.{
+                "nix",
+                "build",
+                ".#release-x86_64-linux",
+                ".#release-aarch64-linux",
+                "--no-link",
+            },
+        ),
+        .macos => _ = addCiCommand(
+            b,
+            ci_step,
+            &nix_flake_check.step,
+            "skip Linux release outputs on Darwin",
+            &.{ "echo", "Skipping Linux-only release output builds on Darwin" },
+        ),
+        else => @panic("zig build ci supports only Linux and Darwin hosts"),
+    }
 
     // Avoid shell redirection or mkdir inside a script.
     const prepare_outputs = b.addSystemCommand(&.{

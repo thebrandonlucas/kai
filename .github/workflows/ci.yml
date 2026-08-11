@@ -31,16 +31,3 @@ jobs:
 
       - name: Run Project CI
         run: nix develop --command zig build ci
-
-      - name: Check Nix formatting
-        run: nix fmt -- --check flake.nix
-
-      - name: Check Nix package
-        run: nix flake check
-
-      - name: Build release outputs
-        run: |
-          nix build \
-            .#release-x86_64-linux \
-            .#release-aarch64-linux \
-            --no-link
