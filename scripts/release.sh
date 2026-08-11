@@ -6,6 +6,31 @@ version_file="$root_dir/xkai-bin/VERSION"
 manifest_file="$root_dir/build.zig.zon"
 semver_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 
+set_manifest_version() {
+  local version_to_set="$1"
+  local temp_manifest
+  temp_manifest="$(mktemp "$root_dir/.build.zig.zon.XXXXXX")"
+
+  if ! awk -v version="$version_to_set" '
+    /^[[:space:]]*\.version = "[^"]+",?[[:space:]]*$/ {
+      sub(/"[^"]+"/, "\"" version "\"")
+      matches++
+    }
+    { print }
+    END { exit matches == 1 ? 0 : 1 }
+  ' "$manifest_file" >"$temp_manifest"; then
+    rm -f "$temp_manifest"
+    echo "error: build.zig.zon must contain exactly one literal .version entry" >&2
+    return 1
+  fi
+
+  if ! cat "$temp_manifest" >"$manifest_file"; then
+    rm -f "$temp_manifest"
+    return 1
+  fi
+  rm -f "$temp_manifest"
+}
+
 if (($# != 2)); then
   echo "usage: $0 NAME X.Y.Z" >&2
   exit 1
@@ -110,9 +135,7 @@ cleanup() {
   elif [[ "$version_changed" == true ]]; then
     git reset --quiet -- build.zig.zon xkai-bin/VERSION 2>/dev/null || true
     printf '%s' "$current_version" >"$version_file"
-    perl -0pi -e \
-      's/([[:space:]]*\.version = ")[^"]+("[,]?)/$1'"$current_version"'$2/' \
-      "$manifest_file"
+    set_manifest_version "$current_version" || true
   fi
 
   echo "error: release failed; local release changes were rolled back" >&2
@@ -123,9 +146,7 @@ trap cleanup EXIT
 if [[ "$version" != "$current_version" ]]; then
   version_changed=true
   printf '%s' "$version" >"$version_file"
-  perl -0pi -e \
-    's/([[:space:]]*\.version = ")[^"]+("[,]?)/$1'"$version"'$2/' \
-    "$manifest_file"
+  set_manifest_version "$version"
 else
   echo "Using the already prepared, unreleased version $version."
 fi
