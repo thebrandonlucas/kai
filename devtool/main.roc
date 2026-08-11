@@ -9,6 +9,7 @@ import pf.Path
 import pf.Stdout
 
 import Cli
+import GitHub
 import PrepareRelease
 import Release
 

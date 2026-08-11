@@ -1,5 +1,31 @@
 # Pure release metadata parsing and artifact inventory.
 Release := [].{
+	PublicationInput : {
+		branch_contains_target : Bool,
+		branch_name : Str,
+		canonical_version : Str,
+		manifest_version : Str,
+		name : Str,
+		tag_name : Str,
+		target_commit : Str,
+	}
+	MergedRelease : {
+		assets : List(Str),
+		name : Str,
+		tag_name : Str,
+		target_commit : Str,
+		version : Str,
+	}
+	PublicationError : [
+		InvalidPublicationName,
+		InvalidPublicationTarget(Str),
+		InvalidPublicationVersion(Str),
+		PublicationManifestMismatch({ canonical : Str, manifest : Str }),
+		PublicationTagMismatch({ actual : Str, expected : Str }),
+		PublicationTargetNotOnMaster,
+		UnexpectedPublicationBranch(Str),
+	]
+
 	is_semver : Str -> Bool
 	is_semver = |version|
 		match version.split_on(".") {
@@ -148,6 +174,42 @@ Release := [].{
 		} else {
 			repository = Release.parse_github_origin(origin)?
 			Ok("https://github.com/${repository.owner}/${repository.repository}/compare/master...release%2Fv${version}?expand=1")
+		}
+	}
+
+	is_commit_id = |commit| {
+		bytes = Str.to_utf8(commit)
+		(bytes.len() == 40 or bytes.len() == 64) and List.all(
+			bytes,
+			|byte| (byte >= '0' and byte <= '9') or (byte >= 'a' and byte <= 'f') or (byte >= 'A' and byte <= 'F'),
+		)
+	}
+
+	validate_publication : PublicationInput -> Try(MergedRelease, PublicationError)
+	validate_publication = |input| {
+		expected_tag = "v${input.canonical_version}"
+		if !Release.is_release_name(input.name) {
+			Err(InvalidPublicationName)
+		} else if !Release.is_semver(input.canonical_version) {
+			Err(InvalidPublicationVersion(input.canonical_version))
+		} else if input.manifest_version != input.canonical_version {
+			Err(PublicationManifestMismatch({ canonical: input.canonical_version, manifest: input.manifest_version }))
+		} else if input.branch_name != "master" {
+			Err(UnexpectedPublicationBranch(input.branch_name))
+		} else if !input.branch_contains_target {
+			Err(PublicationTargetNotOnMaster)
+		} else if !Release.is_commit_id(input.target_commit) {
+			Err(InvalidPublicationTarget(input.target_commit))
+		} else if input.tag_name != expected_tag {
+			Err(PublicationTagMismatch({ actual: input.tag_name, expected: expected_tag }))
+		} else {
+			Ok({
+				assets: Release.inventory(input.canonical_version),
+				name: input.name,
+				tag_name: input.tag_name,
+				target_commit: input.target_commit,
+				version: input.canonical_version,
+			})
 		}
 	}
 
@@ -328,6 +390,32 @@ expect Release.inventory("1.2.3") == [
 expect Release.is_exact_inventory(["b", "a"], ["a", "b"])
 expect !Release.is_exact_inventory(["a", "a"], ["a", "b"])
 expect !Release.is_exact_inventory(["a", "b", "extra"], ["a", "b"])
+
+publication_input = {
+	branch_contains_target: Bool.True,
+	branch_name: "master",
+	canonical_version: "0.0.3",
+	manifest_version: "0.0.3",
+	name: "μοριων \"blue\" \\ path 🚀",
+	tag_name: "v0.0.3",
+	target_commit: "0123456789abcdef0123456789abcdef01234567",
+}
+
+merged_release = {
+	assets: ["SHA256SUMS", "kai-0.0.3-aarch64-linux.tar.gz", "kai-0.0.3-x86_64-linux.tar.gz"],
+	name: publication_input.name,
+	tag_name: "v0.0.3",
+	target_commit: publication_input.target_commit,
+	version: "0.0.3",
+}
+expect Release.validate_publication(publication_input) == Ok(merged_release)
+expect Release.validate_publication({ ..publication_input, name: " \t " }) == Err(InvalidPublicationName)
+expect Release.validate_publication({ ..publication_input, canonical_version: "0.3" }) == Err(InvalidPublicationVersion("0.3"))
+expect Release.validate_publication({ ..publication_input, manifest_version: "0.0.2" }) == Err(PublicationManifestMismatch({ canonical: "0.0.3", manifest: "0.0.2" }))
+expect Release.validate_publication({ ..publication_input, branch_name: "release/v0.0.3" }) == Err(UnexpectedPublicationBranch("release/v0.0.3"))
+expect Release.validate_publication({ ..publication_input, branch_contains_target: Bool.False }) == Err(PublicationTargetNotOnMaster)
+expect Release.validate_publication({ ..publication_input, target_commit: "not-a-commit" }) == Err(InvalidPublicationTarget("not-a-commit"))
+expect Release.validate_publication({ ..publication_input, tag_name: "v0.0.2" }) == Err(PublicationTagMismatch({ actual: "v0.0.2", expected: "v0.0.3" }))
 
 # A workspace left by a failed build is removed when the next build starts.
 expect Release.is_release_workspace(".release-build.failed")
