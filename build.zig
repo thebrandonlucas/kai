@@ -180,6 +180,7 @@ pub fn build(b: *std.Build) void {
     const build_devtool = b.addSystemCommand(&.{ "roc", "build" });
     build_devtool.addFileArg(b.path("devtool/main.roc"));
     build_devtool.addFileInput(b.path("devtool/Cli.roc"));
+    build_devtool.addFileInput(b.path("devtool/PrepareRelease.roc"));
     build_devtool.addFileInput(b.path("devtool/Release.roc"));
     build_devtool.addArg("--opt=dev");
     const devtool = build_devtool.addPrefixedOutputFileArg("--output=", "kai-devtool");

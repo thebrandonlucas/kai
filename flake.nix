@@ -334,6 +334,7 @@
               pkgs.diffutils
               pkgs.findutils
               pkgs.gawk
+              pkgs.git
               pkgs.gnused
               pkgs.gnutar
               pkgs.gzip

@@ -9,6 +9,7 @@ import pf.Path
 import pf.Stdout
 
 import Cli
+import PrepareRelease
 import Release
 
 validate_metadata! = || {
@@ -226,7 +227,7 @@ main! = |args|
 	match Cli.parse(args.drop_first(1).map(OsStr.display)) {
 		Ok(Cli.Command.Help) => Stdout.line!(Cli.usage)
 		Ok(Cli.Command.BuildRelease) => build_release!()
-		Ok(Cli.Command.PrepareRelease(_)) => Err(NotYetImplemented("prepare-release"))
+		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(name, version)
 		Ok(Cli.Command.PublishRelease) => Err(NotYetImplemented("publish-release"))
 		Err(error) => Err(InvalidArguments(Cli.error_message(error)))
 	}

@@ -18,6 +18,154 @@ Release := [].{
 			_ => Bool.False
 		}
 
+	bytes_order = |left, right|
+		match (left, right) {
+			([], []) => EQ
+			([left_byte, .. as left_rest], [right_byte, .. as right_rest]) =>
+				if left_byte < right_byte {
+					LT
+				} else if left_byte > right_byte {
+					GT
+				} else {
+					Release.bytes_order(left_rest, right_rest)
+				}
+			_ => EQ
+		}
+
+	component_order = |left, right| {
+		left_bytes = Str.to_utf8(left)
+		right_bytes = Str.to_utf8(right)
+		if left_bytes.len() < right_bytes.len() {
+			LT
+		} else if left_bytes.len() > right_bytes.len() {
+			GT
+		} else {
+			Release.bytes_order(left_bytes, right_bytes)
+		}
+	}
+
+	version_order : Str, Str -> Try([EQ, GT, LT], [InvalidVersion])
+	version_order = |left, right|
+		if !Release.is_semver(left) or !Release.is_semver(right) {
+			Err(InvalidVersion)
+		} else {
+			match (left.split_on("."), right.split_on(".")) {
+				([left_major, left_minor, left_patch], [right_major, right_minor, right_patch]) => {
+					major = Release.component_order(left_major, right_major)
+					minor = Release.component_order(left_minor, right_minor)
+					Ok(
+						if major != EQ {
+							major
+						} else if minor != EQ {
+							minor
+						} else {
+							Release.component_order(left_patch, right_patch)
+						},
+					)
+				}
+				_ => Err(InvalidVersion)
+			}
+		}
+
+	is_release_name : Str -> Bool
+	is_release_name = |name|
+		!name.trim().is_empty() and
+			!name.contains("\n") and
+				!name.contains("\r") and
+					!name.contains(" ") and !name.contains(" ")
+
+	is_github_part = |part|
+		!part.is_empty() and List.all(
+			Str.to_utf8(part),
+			|byte|
+				(byte >= 'a' and byte <= 'z') or
+					(byte >= 'A' and byte <= 'Z') or
+						(byte >= '0' and byte <= '9') or
+							byte == '-' or byte == '_' or byte == '.',
+		)
+
+	parse_repo_path = |path| {
+		parts = path.split_on("/")
+		match parts {
+			[owner, raw_repository] => {
+				repository = if raw_repository.ends_with(".git") {
+					Str.from_utf8_lossy(Str.to_utf8(raw_repository).drop_last(4))
+				} else {
+					raw_repository
+				}
+				if Release.is_github_part(owner) and Release.is_github_part(repository) {
+					Ok({ owner, repository })
+				} else {
+					Err(UnsupportedOrigin)
+				}
+			}
+			_ => Err(UnsupportedOrigin)
+		}
+	}
+
+	parse_github_origin : Str -> Try({ owner : Str, repository : Str }, [UnsupportedOrigin])
+	parse_github_origin = |origin| {
+		https_prefix = "https://github.com/"
+		ssh_prefix = "ssh://git@github.com/"
+		scp_prefix = "git@github.com:"
+		if origin.starts_with(https_prefix) {
+			Release.parse_repo_path(Str.join_with(origin.split_on(https_prefix).drop_first(1), https_prefix))
+		} else if origin.starts_with(ssh_prefix) {
+			Release.parse_repo_path(Str.join_with(origin.split_on(ssh_prefix).drop_first(1), ssh_prefix))
+		} else if origin.starts_with(scp_prefix) {
+			Release.parse_repo_path(Str.join_with(origin.split_on(scp_prefix).drop_first(1), scp_prefix))
+		} else {
+			Err(UnsupportedOrigin)
+		}
+	}
+
+	ascii_lower = |input|
+		Str.from_utf8_lossy(
+			Str.to_utf8(input).map(
+				|byte|
+					if byte >= 'A' and byte <= 'Z' {
+						byte + 32
+					} else {
+						byte
+					},
+			),
+		)
+
+	same_github_repository : Str, Str -> Try(Bool, [UnsupportedOrigin])
+	same_github_repository = |left, right| {
+		left_repo = Release.parse_github_origin(left)?
+		right_repo = Release.parse_github_origin(right)?
+		Ok(
+			Release.ascii_lower(left_repo.owner) == Release.ascii_lower(right_repo.owner) and
+				Release.ascii_lower(left_repo.repository) == Release.ascii_lower(right_repo.repository),
+		)
+	}
+
+	pull_request_url : Str, Str -> Try(Str, [InvalidVersion, UnsupportedOrigin])
+	pull_request_url = |origin, version| {
+		if !Release.is_semver(version) {
+			Err(InvalidVersion)
+		} else {
+			repository = Release.parse_github_origin(origin)?
+			Ok("https://github.com/${repository.owner}/${repository.repository}/compare/master...release%2Fv${version}?expand=1")
+		}
+	}
+
+	release_files = ["build.zig.zon", "xkai-bin/RELEASE_NAME", "xkai-bin/VERSION"]
+
+	are_allowed_release_files : List(Str) -> Bool
+	are_allowed_release_files = |files| {
+		expected_length = if files.contains("xkai-bin/RELEASE_NAME") {
+			3
+		} else {
+			2
+		}
+		files.contains("build.zig.zon") and
+			files.contains("xkai-bin/VERSION") and
+				files.len() == expected_length and
+					List.all(files, |file| Release.release_files.contains(file))
+	}
+
 	manifest_version : Str -> Try(Str, [DuplicateManifestVersion, InvalidManifestVersion, MissingManifestVersion])
 	manifest_version = |manifest|
 		match manifest.split_on("\n").keep_if(|line| line.trim().starts_with(".version =")) {
@@ -94,6 +242,62 @@ invalid_versions = ["", "1", "1.2", "1.2.3.4", "01.2.3", "1.02.3", "1.2.03", "1.
 
 expect List.all(valid_versions, Release.is_semver)
 expect List.all(invalid_versions, |version| !Release.is_semver(version))
+
+version_order_cases = [
+	{ left: "0.0.2", right: "0.0.3", expected: LT },
+	{ left: "1.10.0", right: "1.9.999", expected: GT },
+	{ left: "18446744073709551616.2.3", right: "18446744073709551615.999.999", expected: GT },
+	{ left: "999999999999999999999999.0.0", right: "999999999999999999999999.0.0", expected: EQ },
+]
+expect List.all(version_order_cases, |case| Release.version_order(case.left, case.right) == Ok(case.expected))
+expect Release.version_order("1.0", "2.0.0") == Err(InvalidVersion)
+
+name_cases = [
+	{ name: "Kai 0.0.3", valid: Bool.True },
+	{ name: " μοριων ", valid: Bool.True },
+	{ name: "", valid: Bool.False },
+	{ name: " \t ", valid: Bool.False },
+	{ name: "line one\nline two", valid: Bool.False },
+	{ name: "line one\rline two", valid: Bool.False },
+	{ name: "line one line two", valid: Bool.False },
+	{ name: "line one line two", valid: Bool.False },
+]
+expect List.all(name_cases, |case| Release.is_release_name(case.name) == case.valid)
+
+origin_cases = [
+	{ origin: "git@github.com:example-owner/example-repo.git", expected: Ok({ owner: "example-owner", repository: "example-repo" }) },
+	{ origin: "ssh://git@github.com/example-owner/example-repo", expected: Ok({ owner: "example-owner", repository: "example-repo" }) },
+	{ origin: "https://github.com/example-owner/example-repo.git", expected: Ok({ owner: "example-owner", repository: "example-repo" }) },
+]
+expect List.all(origin_cases, |case| Release.parse_github_origin(case.origin) == case.expected)
+
+invalid_origins = ["git@gitlab.com:example-owner/example-repo.git", "https://github.com/example-owner/example-repo/extra", "/tmp/example-repo.git"]
+expect List.all(
+	invalid_origins,
+	|origin|
+		match Release.parse_github_origin(origin) {
+			Err(UnsupportedOrigin) => Bool.True
+			_ => Bool.False
+		},
+)
+
+repository_cases = [
+	{ left: "git@github.com:example-owner/example-repo.git", right: "https://github.com/example-owner/example-repo", expected: Ok(Bool.True) },
+	{ left: "ssh://git@github.com/Example-Owner/Example-Repo.git", right: "git@github.com:example-owner/example-repo", expected: Ok(Bool.True) },
+	{ left: "git@github.com:example-owner/example-repo.git", right: "git@github.com:redirected/example-repo.git", expected: Ok(Bool.False) },
+	{ left: "git@github.com:example-owner/example-repo.git", right: "git@gitlab.com:example-owner/example-repo.git", expected: Err(UnsupportedOrigin) },
+]
+expect List.all(repository_cases, |case| Release.same_github_repository(case.left, case.right) == case.expected)
+expect Release.pull_request_url("git@github.com:example-owner/example-repo.git", "1.2.3") == Ok("https://github.com/example-owner/example-repo/compare/master...release%2Fv1.2.3?expand=1")
+
+allowed_file_cases = [
+	{ files: ["build.zig.zon", "xkai-bin/VERSION"], allowed: Bool.True },
+	{ files: ["xkai-bin/RELEASE_NAME", "xkai-bin/VERSION", "build.zig.zon"], allowed: Bool.True },
+	{ files: ["xkai-bin/RELEASE_NAME"], allowed: Bool.False },
+	{ files: ["build.zig.zon", "xkai-bin/VERSION", "xkai-bin/VERSION"], allowed: Bool.False },
+	{ files: ["README.md", "build.zig.zon", "xkai-bin/VERSION"], allowed: Bool.False },
+]
+expect List.all(allowed_file_cases, |case| Release.are_allowed_release_files(case.files) == case.allowed)
 
 manifest = ".{\n    .name = .kai,\n    .version = \"0.0.2\",\n    .paths = .{},\n}\n"
 
