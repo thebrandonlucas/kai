@@ -1,4 +1,4 @@
-# A simple demo plugin. It's `config.kai` looks like:
+# A simple demo plugin. Its `config.kai` looks like:
 #
 # ```Kaifile
 #   custom {
@@ -7,7 +7,7 @@
 # ```
 #
 # Building with `xkai build` and then running with
-# `./kai custom-plugin` should create a file called
+# `./kai custom-write` should create a file called
 # "custom-plugin-output.txt" with the message "Hello from CustomPlugin!"
 
 import parser.Body
