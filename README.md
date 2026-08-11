@@ -2,6 +2,8 @@
 
 > WARNING: Hobby project. Use at your own risk!
 
+See the [roadmap](roadmap.md) for planned work.
+
 Kai is a CLI that makes using reproducible systems easy, friendly, and fun.
 
 There are basically two complete reproducible systems today: [Nix](https://determinate.systems/) and [Guix](https://guix.gnu.org/). They are hard to use. Kai builds on top of them with the goal of making them easy, extensible, customizable, and powerful.
