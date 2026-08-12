@@ -1,7 +1,7 @@
 .{
     .name = .kai,
     // Required package metadata; release versions come from xkai-bin/VERSION.
-    .version = "0.0.2",
+    .version = "0.0.3",
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
     .fingerprint = 0xf34b7ec9d56015fc,
