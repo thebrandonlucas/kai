@@ -21,7 +21,35 @@ ShellNix := [].{
 		actions: [
 			WriteConfigUtf8({ output: "flake", path: ".kai/flake.nix" }),
 			Exec({
-				args: ["develop", "path:.kai#default"],
+				args: [
+					"flake",
+					"lock",
+					"path:.kai",
+					"--reference-lock-file",
+					"kai.lock",
+					"--output-lock-file",
+					"kai.lock",
+				],
+				command: NixBackend.backend.name,
+			}),
+			Exec({
+				args: [
+					"flake",
+					"lock",
+					"path:.kai",
+					"--reference-lock-file",
+					"kai.lock",
+					"--output-lock-file",
+					".kai/flake.lock",
+				],
+				command: NixBackend.backend.name,
+			}),
+			Exec({
+				args: [
+					"develop",
+					"path:.kai#default",
+					"--no-update-lock-file",
+				],
 				command: NixBackend.backend.name,
 			}),
 		],
