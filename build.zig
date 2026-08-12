@@ -137,6 +137,33 @@ fn addFilesCommand(
     return b.addSystemCommand(args.items);
 }
 
+fn addCiCommand(
+    b: *std.Build,
+    ci_step: *std.Build.Step,
+    prerequisite: *std.Build.Step,
+    name: []const u8,
+    args: []const []const u8,
+) *std.Build.Step.Run {
+    const command = std.Build.Step.Run.create(b, name);
+    command.addArgs(args);
+    command.step.dependOn(prerequisite);
+    ci_step.dependOn(&command.step);
+    return command;
+}
+
+fn addDevtoolCommand(
+    b: *std.Build,
+    devtool: std.Build.LazyPath,
+    command: []const u8,
+    forwarded_args: []const []const u8,
+) *std.Build.Step.Run {
+    const run = std.Build.Step.Run.create(b, b.fmt("run devtool {s}", .{command}));
+    run.addFileArg(devtool);
+    run.addArg(command);
+    run.addArgs(forwarded_args);
+    return run;
+}
+
 fn artifactName(b: *std.Build, source_path: []const u8) []const u8 {
     const extension_len = ".roc".len;
     const stem = source_path[0 .. source_path.len - extension_len];
@@ -149,6 +176,53 @@ fn artifactName(b: *std.Build, source_path: []const u8) []const u8 {
 
 pub fn build(b: *std.Build) void {
     const sources = discoverSources(b);
+
+    const build_devtool = b.addSystemCommand(&.{ "roc", "build" });
+    build_devtool.addFileArg(b.path("devtool/main.roc"));
+    build_devtool.addFileInput(b.path("devtool/Cli.roc"));
+    build_devtool.addFileInput(b.path("devtool/GitHub.roc"));
+    build_devtool.addFileInput(b.path("devtool/PrepareRelease.roc"));
+    build_devtool.addFileInput(b.path("devtool/Release.roc"));
+    build_devtool.addArg("--opt=dev");
+    const devtool = build_devtool.addPrefixedOutputFileArg("--output=", "kai-devtool");
+
+    const build_publish_devtool = b.addSystemCommand(&.{ "roc", "build" });
+    build_publish_devtool.addFileArg(b.path("devtool/publish.roc"));
+    build_publish_devtool.addFileInput(b.path("devtool/GitHub.roc"));
+    build_publish_devtool.addFileInput(b.path("devtool/GitHubApi.roc"));
+    build_publish_devtool.addFileInput(b.path("devtool/PublishRelease.roc"));
+    build_publish_devtool.addFileInput(b.path("devtool/Release.roc"));
+    build_publish_devtool.addArg("--opt=dev");
+    const publish_devtool = build_publish_devtool.addPrefixedOutputFileArg("--output=", "kai-publish-devtool");
+    const forwarded_args = b.args orelse &.{};
+
+    const build_release_step = b.step(
+        "build-release",
+        "Build and validate release artifacts",
+    );
+    const build_release = addDevtoolCommand(b, devtool, "build-release", forwarded_args);
+    build_release_step.dependOn(&build_release.step);
+
+    const test_prepare_release = b.addSystemCommand(&.{"scripts/test-prepare-release.sh"});
+    test_prepare_release.addFileArg(devtool);
+    const test_publish_release = b.addSystemCommand(&.{ "python3", "scripts/test-publish-release.py" });
+    test_publish_release.addFileArg(publish_devtool);
+
+    const release_step = b.step(
+        "release",
+        "Prepare and push a protected-branch release",
+    );
+    const prepare_release = addDevtoolCommand(b, devtool, "prepare-release", forwarded_args);
+    release_step.dependOn(&prepare_release.step);
+
+    const publish_release_step = b.step(
+        "publish-release",
+        "Publish a merged release (CI only)",
+    );
+    const publish_release = std.Build.Step.Run.create(b, "run publish devtool");
+    publish_release.addFileArg(publish_devtool);
+    publish_release.addArgs(forwarded_args);
+    publish_release_step.dependOn(&publish_release.step);
 
     // All static checks (roc, zig, sh)
     const check_step = b.step(
@@ -246,6 +320,10 @@ pub fn build(b: *std.Build) void {
         "Run checks and Roc tests.",
     );
     test_step.dependOn(check_step);
+    test_prepare_release.step.dependOn(check_step);
+    test_step.dependOn(&test_prepare_release.step);
+    test_publish_release.step.dependOn(check_step);
+    test_step.dependOn(&test_publish_release.step);
 
     for (sources.roc_apps) |app| {
         const test_app = b.addSystemCommand(&.{ "roc", "test", app });
@@ -258,6 +336,39 @@ pub fn build(b: *std.Build) void {
         "Run tests and build representative applications",
     );
     ci_step.dependOn(test_step);
+    build_release.step.dependOn(ci_step);
+
+    const nix_flake_check = addCiCommand(
+        b,
+        ci_step,
+        test_step,
+        "check Nix flake",
+        &.{ "nix", "flake", "check" },
+    );
+
+    switch (b.graph.host.result.os.tag) {
+        .linux => _ = addCiCommand(
+            b,
+            ci_step,
+            &nix_flake_check.step,
+            "build Linux release outputs",
+            &.{
+                "nix",
+                "build",
+                ".#release-x86_64-linux",
+                ".#release-aarch64-linux",
+                "--no-link",
+            },
+        ),
+        .macos => _ = addCiCommand(
+            b,
+            ci_step,
+            &nix_flake_check.step,
+            "skip Linux release outputs on Darwin",
+            &.{ "echo", "Skipping Linux-only release output builds on Darwin" },
+        ),
+        else => @panic("zig build ci supports only Linux and Darwin hosts"),
+    }
 
     // Avoid shell redirection or mkdir inside a script.
     const prepare_outputs = b.addSystemCommand(&.{

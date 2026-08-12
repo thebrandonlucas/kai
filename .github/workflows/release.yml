@@ -2,8 +2,10 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - master
+    paths:
+      - xkai-bin/VERSION
   workflow_dispatch:
 
 permissions:
@@ -15,7 +17,7 @@ concurrency:
 
 jobs:
   release:
-    name: Release ${{ github.ref_name }}
+    name: Publish release
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -25,114 +27,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Read and validate version
-        shell: bash
-        run: |
-          VERSION="$(<xkai-bin/VERSION)"
-
-          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "xkai-bin/VERSION must contain a semantic version (X.Y.Z)."
-            exit 1
-          fi
-
-          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF_NAME" != "v$VERSION" ]]; then
-            echo "Tag $GITHUB_REF_NAME does not match xkai-bin/VERSION ($VERSION)."
-            exit 1
-          fi
-
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
-              echo "Manual releases must run from master."
-              exit 1
-            fi
-
-            if git rev-parse --verify --quiet "refs/tags/v$VERSION" >/dev/null; then
-              echo "Tag v$VERSION already exists; rerun its tag workflow instead."
-              exit 1
-            fi
-          fi
-
-          git fetch --quiet origin master:refs/remotes/origin/master
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/master; then
-            echo "Release commit $GITHUB_SHA is not on origin/master."
-            exit 1
-          fi
-
-          RELEASE_NAME="Kai $VERSION"
-          if [[ "$GITHUB_EVENT_NAME" == "push" ]] &&
-            [[ "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" == "tag" ]]; then
-            TAG_NAME="$(
-              git for-each-ref \
-                --format='%(contents:subject)' \
-                "refs/tags/$GITHUB_REF_NAME"
-            )"
-            if [[ -n "$TAG_NAME" ]]; then
-              RELEASE_NAME="$TAG_NAME"
-            fi
-          fi
-
-          echo "VERSION=$VERSION" >>"$GITHUB_ENV"
-          echo "RELEASE_NAME=$RELEASE_NAME" >>"$GITHUB_ENV"
-
       - name: Install Nix
         uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Reject existing GitHub release
+      - name: Publish release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if gh release view "v${VERSION}" >/dev/null 2>&1; then
-            echo "Release v${VERSION} already exists."
-            exit 1
-          fi
-
-      - name: Build and test release artifacts
-        run: nix develop --command ./scripts/build-release.sh
-
-      - name: Verify release artifact set
-        run: |
-          test -f "dist/kai-${VERSION}-x86_64-linux.tar.gz"
-          test -f "dist/kai-${VERSION}-aarch64-linux.tar.gz"
-          test -f "dist/SHA256SUMS"
-
-          artifact_count="$(find dist -maxdepth 1 -type f | wc -l)"
-          if [[ "$artifact_count" -ne 3 ]]; then
-            echo "Expected two CLI archives and SHA256SUMS, found $artifact_count files."
-            exit 1
-          fi
-
-          (
-            cd dist
-            sha256sum -c SHA256SUMS
-          )
-
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          release_created=false
-          cleanup() {
-            status=$?
-            trap - EXIT
-            if [[ "$status" -ne 0 && "$release_created" == true ]]; then
-              gh release delete "v${VERSION}" --yes >/dev/null 2>&1 || true
-            fi
-            exit "$status"
-          }
-          trap cleanup EXIT
-
-          gh release create "v${VERSION}" \
-            --target "${GITHUB_SHA}" \
-            --title "${RELEASE_NAME}" \
-            --generate-notes \
-            --draft
-          release_created=true
-
-          gh release upload "v${VERSION}" \
-            dist/*.tar.gz \
-            dist/SHA256SUMS
-
-          gh release edit "v${VERSION}" --draft=false
-          trap - EXIT
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: nix develop --command zig build publish-release
