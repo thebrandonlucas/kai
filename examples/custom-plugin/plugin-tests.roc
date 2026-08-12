@@ -25,6 +25,7 @@ expect {
 		config,
 		host_arch: X64,
 		host_os: LINUX,
+		related_config: NoRelatedConfig,
 		# FIX: what is SelectedConfigBlock and where is that def coming from?
 		config_block: SelectedConfigBlock({
 			body: "message: [\"not the renderer input\"]",
@@ -40,6 +41,7 @@ expect {
 	CustomPlugin.render(context) == Ok(
 		# FIX: what is renderresult?
 		PluginApi.RenderResult.{
+			actions: [],
 			outputs: [
 				{
 					name: "message",

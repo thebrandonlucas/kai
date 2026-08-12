@@ -5,9 +5,12 @@ Shell := [].{
 	body : Body.Shape
 	body = Body.object([Body.required("pkgs", StringList)])
 
+	environment_body : Body.Shape
+	environment_body = Body.object([Body.required("packages", StringList)])
+
 	command : PluginApi.Command
 	command = PluginApi.Command.{
-		argument_policy: NoArguments,
+		argument_policy: AllowArguments,
 		body,
 		config_block: RequiredConfigBlock("shell"),
 		default_backend: "nix",

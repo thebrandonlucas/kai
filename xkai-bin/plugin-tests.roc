@@ -11,6 +11,7 @@ import parser.Body
 import parser.Config
 import kai.Plugin as PluginApi
 import commands.Shell as ShellCommand
+import commands.Task as TaskCommand
 import implementations.ShellNix
 import std.StdPlugin
 
@@ -22,14 +23,16 @@ Fixtures := [].{
 		config_block: NoConfigBlock,
 		host_arch: X64,
 		host_os: LINUX,
+		related_config: NoRelatedConfig,
 	}
 
-	empty_result = PluginApi.RenderResult.{ outputs: [], requested_packages: [] }
+	empty_result = PluginApi.RenderResult.{ actions: [], outputs: [], requested_packages: [] }
 
 	empty_renderer : PluginApi.Renderer
 	empty_renderer = |_| Ok(Fixtures.empty_result)
 
 	multiple_result = PluginApi.RenderResult.{
+		actions: [],
 		outputs: [
 			{ name: "first", text: "one" },
 			{ name: "second", text: "two" },
@@ -146,6 +149,7 @@ Fixtures := [].{
 			}),
 			host_arch: arch,
 			host_os: os,
+			related_config: NoRelatedConfig,
 		}
 
 	render_standard : Str, PluginApi.HostOs, PluginApi.HostArch -> Try(PluginApi.RenderResult, Str)
@@ -154,6 +158,9 @@ Fixtures := [].{
 		rendered = ShellNix.renderer(Fixtures.standard_context(config, body_text, os, arch)) ? |diagnostic| diagnostic.message
 		Ok(rendered)
 	}
+
+	nix_package_line : Str, Str -> Str
+	nix_package_line = |system, escaped_package| "              nixpkgs.\"legacyPackages\".\"${system}\".\"${escaped_package}\""
 
 	packages_rendered : Str, Str, List(Str) -> Bool
 	packages_rendered = |text, system, pkgs|
@@ -175,7 +182,7 @@ Fixtures := [].{
 			[first, .. as rest] =>
 				match Fixtures.render_standard(first.body_text, first.os, first.arch) {
 					Err(_) => Bool.False
-					Ok({ outputs, requested_packages }) =>
+					Ok({ actions: _, outputs, requested_packages }) =>
 						match outputs {
 							[{ name, text }] =>
 								name == "flake" and
@@ -196,7 +203,7 @@ Fixtures := [].{
 			}
 
 	select_missing : PluginApi.ConfigSelector
-	select_missing = |_, _, _, _, _| Ok(Missing)
+	select_missing = |_, _, _, _, _, _| Ok(Missing)
 
 	# FIX confused by the purpose of Body.object why do we need that
 	registry_body = Body.object(
@@ -222,6 +229,7 @@ Fixtures := [].{
 		}
 		Ok(
 			PluginApi.RenderResult.{
+				actions: [],
 				outputs: [{ name: "selected", text: value }],
 				requested_packages: ["requested"],
 			},
@@ -235,6 +243,7 @@ Fixtures := [].{
 				if selected_context.config == Body.empty {
 					Ok(
 						PluginApi.RenderResult.{
+							actions: [],
 							outputs: [{ name: "selected", text: "empty" }],
 							requested_packages: [],
 						},
@@ -291,7 +300,7 @@ Fixtures := [].{
 	}
 
 	registry_selector : PluginApi.ConfigSelector
-	registry_selector = |raw_config, selected_command, backend_choice, _os, _arch| {
+	registry_selector = |raw_config, selected_command, backend_choice, _, _os, _arch| {
 		block_name = match selected_command.config_block {
 			OptionalConfigBlock(name) => name
 			RequiredConfigBlock(name) => name
@@ -330,6 +339,13 @@ Fixtures := [].{
 	plan_registry : List(PluginApi.RegistryDefinition), Str, List(Str) -> Try(PluginApi.Plan, PluginApi.Error)
 	plan_registry = |registry, config, args| PluginApi.plan_registry(registry, config, args, LINUX, X64)
 
+	planning_message : Str, List(Str), Str -> Bool
+	planning_message = |config, args, expected|
+		match Fixtures.plan_registry([StdPlugin.plugin], config, args) {
+			Err(PlanningFailed({ backend: _, command: _, location: _, message, plugin: _ })) => message == expected
+			_ => Bool.False
+		}
+
 	plan_contains : Str, PluginApi.HostOs, PluginApi.HostArch, Str -> Bool
 	plan_contains = |config_text, os, arch, expected|
 		match PluginApi.plan_registry([StdPlugin.plugin], config_text, ["shell"], os, arch) {
@@ -362,31 +378,58 @@ expect {
 	])
 }
 
-# Input: pkgs: "cowsay" -> WrongType(StringList, "pkgs") at byte 6
-# Input: <empty> -> MissingField("pkgs") at byte 0
+# Package attributes are encoded as Nix string data, including characters
+# which could otherwise close a string, interpolate, or start source syntax.
+expect {
+	quote = "quote\"pkg"
+	backslash = "back\\slash"
+	interpolation = Str.from_utf8_lossy([105, 110, 116, 101, 114, 112, 36, 123, 112, 97, 121, 108, 111, 97, 100, 125])
+	newline = "line\nnext"
+	comment = "# comment } ;"
+	escaped_quote = "quote\\\"pkg"
+	escaped_backslash = "back\\\\slash"
+	escaped_interpolation = Str.from_utf8_lossy([105, 110, 116, 101, 114, 112, 92, 36, 123, 112, 97, 121, 108, 111, 97, 100, 125])
+	text = ShellNix.render_nix([quote, backslash, interpolation, newline, comment], "x86_64-linux")
+	ShellNix.escape_nix_string(quote) == escaped_quote and
+		ShellNix.escape_nix_string(backslash) == escaped_backslash and
+			ShellNix.escape_nix_string(interpolation) == escaped_interpolation and
+				ShellNix.escape_nix_string(newline) == newline and
+					text.contains(Fixtures.nix_package_line("x86_64-linux", escaped_quote)) and
+						text.contains(Fixtures.nix_package_line("x86_64-linux", escaped_backslash)) and
+							text.contains(Fixtures.nix_package_line("x86_64-linux", escaped_interpolation)) and
+								text.contains(Fixtures.nix_package_line("x86_64-linux", newline)) and
+									text.contains(Fixtures.nix_package_line("x86_64-linux", comment))
+}
+
+# Default and named environment package shapes validate independently.
 expect {
 	Body.parse(ShellCommand.body, "pkgs: \"cowsay\"") == Err({
 		byte_offset: 6,
 		kind: WrongType({ expected: StringList, field: "pkgs" }),
-	}) and Body.parse(ShellCommand.body, "") == Err({ byte_offset: 0, kind: MissingField("pkgs") })
+	}) and Body.parse(ShellCommand.body, "") == Err({ byte_offset: 0, kind: MissingField("pkgs") }) and
+		Body.parse(ShellCommand.environment_body, "packages: \"roc\"") == Err({
+			byte_offset: 10,
+			kind: WrongType({ expected: StringList, field: "packages" }),
+		}) and Body.parse(ShellCommand.environment_body, "") == Err({ byte_offset: 0, kind: MissingField("packages") })
 }
 
-# Expected definition: name "std" with one command, backend, and implementation
+# The standard registry connects shell, run, and update to Nix.
 expect {
 	definition = StdPlugin.definition
 	definition.name == "std" and
-		definition.commands.len() == 1 and
+		definition.commands.len() == 3 and
 			definition.backends.len() == 1 and
-				definition.implementations.len() == 1
+				definition.implementations.len() == 3 and
+					PluginApi.validate_registry([StdPlugin.plugin]) == Ok({})
 }
 
-# Input: empty validated config -> error "validated shell configuration is missing 'pkgs'"
+# Input: empty validated config -> preserve the legacy shell diagnostic.
 expect ShellNix.renderer(Fixtures.standard_context(Body.empty, "pkgs: []", LINUX, X64)) == Err({
 	byte_offset: None,
 	message: "validated shell configuration is missing 'pkgs'",
 })
 
-# Input: pkgs: [""] -> error "shell package names must not be empty"
+# Input: pkgs: [""] -> preserve the legacy shell diagnostic.
 expect Fixtures.render_standard("pkgs: [\"\"]", LINUX, X64) == Err("shell package names must not be empty")
 
 # Input: pkgs: [] on unsupported OS -> error "unsupported shell platform"
@@ -443,6 +486,356 @@ expect {
 	}
 }
 
+# A named environment selects its packages while preserving the default
+# shell's generate, lock, materialize, and develop actions.
+expect {
+	config_text = "shell { pkgs: [\"cowsay\"] }\nenvironment dev { packages: [\"zig\", \"roc\"] }"
+	match (
+		PluginApi.plan_registry([StdPlugin.plugin], config_text, ["shell"], LINUX, X64),
+		PluginApi.plan_registry([StdPlugin.plugin], config_text, ["shell", "dev"], LINUX, X64),
+	) {
+		(
+			Ok({ actions: default_actions, backend: _, command: _, plugin: _, requested_packages: default_packages }),
+			Ok({ actions: [WriteUtf8(generated), .. as named_actions], backend, command, plugin, requested_packages }),
+		) =>
+			default_packages == ["cowsay"] and
+				requested_packages == ["zig", "roc"] and
+					generated.content.contains(".\"zig\"") and
+						generated.content.contains(".\"roc\"") and
+							!generated.content.contains(".\"cowsay\"") and
+								default_actions.drop_first(1) == named_actions and
+									backend.name == "nix" and command == "shell" and plugin == "std"
+		_ => Bool.False
+	}
+}
+
+# The default convenience still requires shell {}, while a requested name must
+# have a matching environment block.
+expect {
+	PluginApi.plan_registry(
+		[StdPlugin.plugin],
+		"environment dev { packages: [\"zig\"] }",
+		["shell"],
+		LINUX,
+		X64,
+	) == Err(
+		PlanningFailed({
+			backend: "nix",
+			command: "shell",
+			location: None,
+			message: "missing required config block 'shell'",
+			plugin: "std",
+		}),
+	) and PluginApi.plan_registry(
+		[StdPlugin.plugin],
+		"shell { pkgs: [\"cowsay\"] }",
+		["shell", "dev"],
+		LINUX,
+		X64,
+	) == Err(
+		PlanningFailed({
+			backend: "nix",
+			command: "shell",
+			location: None,
+			message: "missing environment 'dev'",
+			plugin: "std",
+		}),
+	)
+}
+
+# Shell accepts zero or one environment name after backend selection.
+expect PluginApi.plan_registry(
+	[StdPlugin.plugin],
+	"environment dev { packages: [\"zig\"] }",
+	["shell", "dev", "extra"],
+	LINUX,
+	X64,
+) == Err(
+	PlanningFailed({
+		backend: "nix",
+		command: "shell",
+		location: None,
+		message: "shell accepts at most one environment name",
+		plugin: "std",
+	}),
+)
+
+# Named environment bodies require packages and reject the shell convenience
+# field at its absolute source location.
+expect {
+	PluginApi.plan_registry(
+		[StdPlugin.plugin],
+		"environment dev { pkgs: [\"zig\"] }",
+		["shell", "dev"],
+		LINUX,
+		X64,
+	) == Err(
+		PlanningFailed({
+			backend: "nix",
+			command: "shell",
+			location: At({ byte_offset: 18, column: 19, line: 1 }),
+			message: "unknown field 'pkgs'",
+			plugin: "std",
+		}),
+	) and PluginApi.plan_registry(
+		[StdPlugin.plugin],
+		"environment dev {}",
+		["shell", "dev"],
+		LINUX,
+		X64,
+	) == Err(
+		PlanningFailed({
+			backend: "nix",
+			command: "shell",
+			location: At({ byte_offset: 17, column: 18, line: 1 }),
+			message: "missing required field 'packages'",
+			plugin: "std",
+		}),
+	)
+}
+
+# A task resolves its named environment, performs the shell lock materialization
+# without an update, then executes one argv action inside the generated shell.
+expect {
+	config_text = "environment dev { packages: [\"zig\", \"roc\"] }\ntask test { environment: \"dev\" run: [\"zig\", \"build\", \"test\"] }"
+	match PluginApi.plan_registry([StdPlugin.plugin], config_text, ["run", "test"], LINUX, X64) {
+		Ok({ actions: [WriteUtf8(generated), Exec(lock), Exec(materialize), Exec(run)], backend, command, plugin, requested_packages }) =>
+			generated.path == ".kai/flake.nix" and
+				generated.content.contains(".\"zig\"") and
+					generated.content.contains(".\"roc\"") and
+						lock == {
+							args: [
+								"flake",
+								"lock",
+								"path:.kai",
+								"--reference-lock-file",
+								"kai.lock",
+								"--output-lock-file",
+								"kai.lock",
+							],
+							command: "nix",
+						} and materialize == {
+							args: [
+								"flake",
+								"lock",
+								"path:.kai",
+								"--reference-lock-file",
+								"kai.lock",
+								"--output-lock-file",
+								".kai/flake.lock",
+							],
+							command: "nix",
+						} and run == {
+							args: [
+								"develop",
+								"path:.kai#default",
+								"--no-update-lock-file",
+								"--command",
+								"zig",
+								"build",
+								"test",
+							],
+							command: "nix",
+						} and backend.name == "nix" and
+							command == "run" and
+								plugin == "std" and
+									requested_packages == ["zig", "roc"]
+		_ => Bool.False
+	}
+}
+
+# Run requires exactly one nonempty task name and never chooses a default task.
+expect {
+	config_text = "environment dev { packages: [] }\ntask test { environment: \"dev\" run: [\"true\"] }"
+	Fixtures.planning_message(config_text, ["run"], "run requires exactly one task name") and
+		Fixtures.planning_message(config_text, ["run", "test", "extra"], "run requires exactly one task name") and
+			Fixtures.planning_message(config_text, ["run", ""], "task name must not be empty")
+}
+
+# Named resources take precedence when their name matches the Nix backend.
+expect {
+	config_text = "environment nix { packages: [\"hello\"] }\ntask nix { environment: \"nix\" run: [\"true\"] }"
+	match (
+		PluginApi.plan_registry([StdPlugin.plugin], config_text, ["shell", "nix"], LINUX, X64),
+		PluginApi.plan_registry([StdPlugin.plugin], config_text, ["run", "nix"], LINUX, X64),
+		PluginApi.plan_registry([StdPlugin.plugin], "shell nix { pkgs: [\"legacy\"] }", ["shell", "nix"], LINUX, X64),
+	) {
+		(
+			Ok({ actions: [WriteUtf8(shell_flake), Exec(_), Exec(_), Exec(_)], backend: _, command: shell_command, plugin: _, requested_packages: shell_packages }),
+			Ok({ actions: [WriteUtf8(task_flake), Exec(_), Exec(_), Exec(run)], backend: _, command: task_command, plugin: _, requested_packages: task_packages }),
+			Ok({ actions: _, backend: _, command: _, plugin: _, requested_packages: legacy_packages }),
+		) =>
+			shell_command == "shell" and task_command == "run" and
+				shell_packages == ["hello"] and task_packages == ["hello"] and legacy_packages == ["legacy"] and
+					shell_flake.content.contains(".\"hello\"") and task_flake.content.contains(".\"hello\"") and
+						run.args.drop_first(4) == ["true"]
+		_ => Bool.False
+	}
+}
+
+# Named environments prefer the host scope, fall back to top level, and
+# report duplicates instead of choosing one.
+expect {
+	host_config = "environment dev { packages: [\"top\"] }\non linux { environment dev { packages: [\"host\"] } }"
+	fallback_config = "environment dev { packages: [\"top\"] }\non linux { other { ignored } }"
+	duplicate_config = "on linux { environment dev { packages: [] } environment dev { packages: [] } }"
+	match (
+		PluginApi.plan_registry([StdPlugin.plugin], host_config, ["shell", "dev"], LINUX, X64),
+		PluginApi.plan_registry([StdPlugin.plugin], fallback_config, ["shell", "dev"], LINUX, X64),
+		PluginApi.plan_registry([StdPlugin.plugin], duplicate_config, ["shell", "dev"], LINUX, X64),
+	) {
+		(
+			Ok({ actions: _, backend: _, command: _, plugin: _, requested_packages: host_packages }),
+			Ok({ actions: _, backend: _, command: _, plugin: _, requested_packages: fallback_packages }),
+			Err(PlanningFailed({ backend: _, command: _, location: At(_), message, plugin: _ })),
+		) => host_packages == ["host"] and fallback_packages == ["top"] and message == "duplicate command configuration"
+		_ => Bool.False
+	}
+}
+
+# Named tasks and their environments independently use host scope, top-level
+# fallback, and duplicate diagnostics.
+expect {
+	host_config = "environment dev { packages: [\"top\"] }\ntask test { environment: \"dev\" run: [\"false\"] }\non linux { environment dev { packages: [\"host\"] } task test { environment: \"dev\" run: [\"true\"] } }"
+	fallback_config = "environment dev { packages: [\"top\"] }\ntask test { environment: \"dev\" run: [\"true\"] }\non linux { other { ignored } }"
+	duplicate_config = "environment dev { packages: [] }\non linux { task test { environment: \"dev\" run: [\"true\"] } task test { environment: \"dev\" run: [\"false\"] } }"
+	match (
+		PluginApi.plan_registry([StdPlugin.plugin], host_config, ["run", "test"], LINUX, X64),
+		PluginApi.plan_registry([StdPlugin.plugin], fallback_config, ["run", "test"], LINUX, X64),
+		PluginApi.plan_registry([StdPlugin.plugin], duplicate_config, ["run", "test"], LINUX, X64),
+	) {
+		(
+			Ok({ actions: [WriteUtf8(_), Exec(_), Exec(_), Exec(host_run)], backend: _, command: _, plugin: _, requested_packages: host_packages }),
+			Ok({ actions: [WriteUtf8(_), Exec(_), Exec(_), Exec(fallback_run)], backend: _, command: _, plugin: _, requested_packages: fallback_packages }),
+			Err(PlanningFailed({ backend: _, command: _, location: At(_), message, plugin: _ })),
+		) =>
+			host_packages == ["host"] and fallback_packages == ["top"] and
+				host_run.args.drop_first(4) == ["true"] and fallback_run.args.drop_first(4) == ["true"] and
+					message == "duplicate command configuration"
+		_ => Bool.False
+	}
+}
+
+# Task and environment references must both resolve.
+expect {
+	Fixtures.planning_message(
+		"environment dev { packages: [] }",
+		["run", "test"],
+		"missing task 'test'",
+	) and Fixtures.planning_message(
+		"task test { environment: \"dev\" run: [\"true\"] }",
+		["run", "test"],
+		"missing environment 'dev'",
+	)
+}
+
+# Task and environment bodies retain their separate validated shapes.
+expect {
+	Fixtures.planning_message(
+		"task test { environment: [\"dev\"] run: [\"true\"] }",
+		["run", "test"],
+		"field 'environment' must be a string",
+	) and Fixtures.planning_message(
+		"environment dev { packages: \"zig\" }\ntask test { environment: \"dev\" run: [\"true\"] }",
+		["run", "test"],
+		"field 'packages' must be a list of strings",
+	)
+}
+
+# Environment names, package names, task argv lists, and task programs must not be empty.
+expect {
+	Fixtures.planning_message(
+		"task test { environment: \"\" run: [\"true\"] }",
+		["run", "test"],
+		"task 'test' environment name must not be empty",
+	) and Fixtures.planning_message(
+		"environment dev { packages: [\"\"] }\ntask test { environment: \"dev\" run: [\"true\"] }",
+		["run", "test"],
+		"environment package names must not be empty",
+	) and Fixtures.planning_message(
+		"task test { environment: \"dev\" run: [] }",
+		["run", "test"],
+		"task 'test' run list must not be empty",
+	) and Fixtures.planning_message(
+		"task test { environment: \"dev\" run: [\"\"] }",
+		["run", "test"],
+		"task 'test' run program must not be empty",
+	)
+}
+
+# The command shape requires a quoted environment and an argv list.
+expect {
+	Body.parse(TaskCommand.body, "environment: \"dev\" run: \"zig build test\"") == Err({
+		byte_offset: 24,
+		kind: WrongType({ expected: StringList, field: "run" }),
+	})
+}
+
+# Update uses only the standard input graph, so an empty project and a
+# named-environment/task-only project produce the same exact refresh plan.
+expect {
+	named_only = "environment dev { packages: [\"zig\"] }\ntask test { environment: \"dev\" run: [\"zig\", \"build\", \"test\"] }"
+	match (
+		PluginApi.plan_registry([StdPlugin.plugin], "", ["update"], LINUX, X64),
+		PluginApi.plan_registry([StdPlugin.plugin], named_only, ["update"], LINUX, X64),
+	) {
+		(
+			Ok(empty_plan),
+			Ok({ actions: [WriteUtf8(generated), Exec(refresh), Exec(materialize)], backend, command, plugin, requested_packages }),
+		) =>
+			empty_plan.actions == [WriteUtf8(generated), Exec(refresh), Exec(materialize)] and
+				empty_plan.requested_packages == [] and
+					generated == {
+						content: "{\n  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";\n  outputs = _: {};\n}",
+						path: ".kai/flake.nix",
+					} and refresh == {
+						args: [
+							"flake",
+							"update",
+							"--flake",
+							"path:.kai",
+							"--reference-lock-file",
+							"kai.lock",
+							"--output-lock-file",
+							"kai.lock",
+						],
+						command: "nix",
+					} and materialize == {
+						args: [
+							"flake",
+							"lock",
+							"path:.kai",
+							"--reference-lock-file",
+							"kai.lock",
+							"--output-lock-file",
+							".kai/flake.lock",
+						],
+						command: "nix",
+					} and backend.name == "nix" and
+						command == "update" and
+							plugin == "std" and
+								requested_packages == []
+		_ => Bool.False
+	}
+}
+
+# Per-input updates are not part of the plain update command.
+expect PluginApi.plan_registry(
+	[StdPlugin.plugin],
+	"shell { pkgs: [] }",
+	["update", "zig"],
+	LINUX,
+	X64,
+) == Err(
+	PlanningFailed({
+		backend: "nix",
+		command: "update",
+		location: None,
+		message: "command does not accept arguments",
+		plugin: "std",
+	}),
+)
+
 # Input selects pkgs: ["fortune"] from the macOS shell block.
 # Expected generated flake to contain: ."fortune"
 expect {
@@ -462,6 +855,7 @@ expect {
 		"fixture guix {value: \"selected\"}",
 		Fixtures.registry_command,
 		ExplicitBackend(Fixtures.guix),
+		[],
 		LINUX,
 		X64,
 	) {
@@ -475,6 +869,7 @@ expect PluginApi.select_config(
 	"fixture {value: \"one\"}\nfixture {value: \"two\"}",
 	Fixtures.registry_command,
 	DefaultBackend(Fixtures.nix),
+	[],
 	LINUX,
 	X64,
 ) == Err({
@@ -487,6 +882,7 @@ expect PluginApi.select_config(
 	"on linux {\n  \"oops\"\n}",
 	Fixtures.registry_command,
 	DefaultBackend(Fixtures.nix),
+	[],
 	LINUX,
 	X64,
 ) == Err({

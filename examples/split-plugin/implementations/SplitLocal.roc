@@ -10,6 +10,7 @@ SplitLocal := [].{
 		command: SplitCommand.command.name,
 		renderer: |_| Ok(
 			PluginApi.RenderResult.{
+				actions: [],
 				outputs: [{ name: "message", text: "split plugin worked" }],
 				requested_packages: [],
 			},

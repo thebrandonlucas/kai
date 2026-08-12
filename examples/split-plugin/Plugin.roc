@@ -12,6 +12,6 @@ Plugin := [].{
 			implementations: [SplitLocal.implementation],
 			name: "split",
 		},
-		select_config: |_, _, _, _, _| Ok(Missing),
+		select_config: |_, _, _, _, _, _| Ok(Missing),
 	}
 }
