@@ -214,6 +214,8 @@ pub fn build(b: *std.Build) void {
 
     const test_prepare_release = b.addSystemCommand(&.{"scripts/test-prepare-release.sh"});
     test_prepare_release.addFileArg(devtool);
+    const test_publish_release = b.addSystemCommand(&.{ "python3", "scripts/test-publish-release.py" });
+    test_publish_release.addFileArg(publish_devtool);
 
     const release_step = b.step(
         "release",
@@ -329,6 +331,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(check_step);
     test_prepare_release.step.dependOn(check_step);
     test_step.dependOn(&test_prepare_release.step);
+    test_publish_release.step.dependOn(check_step);
+    test_step.dependOn(&test_publish_release.step);
 
     for (sources.roc_apps) |app| {
         const test_app = b.addSystemCommand(&.{ "roc", "test", app });

@@ -339,6 +339,7 @@
               pkgs.gnutar
               pkgs.gzip
               pkgs.llvmPackages.bintools
+              pkgs.python3
               pkgs.shfmt
               pkgs.shellcheck
               pkgs.curl
