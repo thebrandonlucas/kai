@@ -335,7 +335,7 @@ Fixtures := [].{
 		match PluginApi.plan_registry([StdPlugin.plugin], config_text, ["shell"], os, arch) {
 			Ok(
 				{
-					actions: [WriteUtf8({ content, path: _ }), Exec(_)],
+					actions: [WriteUtf8({ content, path: _ }), Exec(_), Exec(_), Exec(_)],
 					backend: _,
 					command: _,
 					plugin: _,
@@ -398,6 +398,50 @@ expect Fixtures.render_standard("pkgs: []", OTHER("unsupported"), X64) == Err("u
 # }
 # Expected generated flake to contain: ."cowsay"
 expect Fixtures.plan_contains("shell {\n  pkgs: [\"cowsay\"]\n}", LINUX, X64, ".\"cowsay\"")
+
+# The tracked lock is copied into the generated flake before the shell uses it.
+expect {
+	match PluginApi.plan_registry(
+		[StdPlugin.plugin],
+		"shell { pkgs: [] }",
+		["shell"],
+		LINUX,
+		X64,
+	) {
+		Ok({ actions: [WriteUtf8(_), Exec(lock), Exec(materialize), Exec(develop)], backend: _, command: _, plugin: _, requested_packages: _ }) =>
+			lock == {
+				args: [
+					"flake",
+					"lock",
+					"path:.kai",
+					"--reference-lock-file",
+					"kai.lock",
+					"--output-lock-file",
+					"kai.lock",
+				],
+				command: "nix",
+			} and materialize == {
+				args: [
+					"flake",
+					"lock",
+					"path:.kai",
+					"--reference-lock-file",
+					"kai.lock",
+					"--output-lock-file",
+					".kai/flake.lock",
+				],
+				command: "nix",
+			} and develop == {
+				args: [
+					"develop",
+					"path:.kai#default",
+					"--no-update-lock-file",
+				],
+				command: "nix",
+			}
+		_ => Bool.False
+	}
+}
 
 # Input selects pkgs: ["fortune"] from the macOS shell block.
 # Expected generated flake to contain: ."fortune"
