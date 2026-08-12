@@ -1,6 +1,6 @@
 - Read [AI_POLICY.md](./docs/AI_POLICY.md) first.
 - Do not read any non-local reference links from the internet here or within the referenced files unless additional context is very helpful for accomplishing the given task.
 - Read the following for relevant context:
-    - [rules.md](./rules.md) for development rules
-    - [design.md](./design.md) for design and architecture
-    - [vision.md](./vision.md) for project purpose and goals
+    - [rules.md](./docs/rules.md) for development rules
+    - [design.md](./docs/design.md) for design and architecture
+    - [vision.md](./docs/vision.md) for project purpose and goals
