@@ -335,14 +335,12 @@
               pkgs.findutils
               pkgs.gawk
               pkgs.git
-              pkgs.gnused
               pkgs.gnutar
               pkgs.gzip
               pkgs.llvmPackages.bintools
               pkgs.python3
               pkgs.shfmt
               pkgs.shellcheck
-              pkgs.curl
               pkgs.file
             ];
           };

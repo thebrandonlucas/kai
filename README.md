@@ -30,11 +30,11 @@ nix run github:thebrandonlucas/kai -- version
 
 ### Build locally
 
-```sh 
+```sh
 git clone https://github.com/thebrandonlucas/kai.git
-cd kai 
-nix build .#kai 
-./result/bin/kai help
+cd kai
+nix develop
+zig build ci
 ```
 
 ## Design
@@ -71,15 +71,12 @@ Other than `nix develop` anytime you want a shell or `direnv allow` once, we hav
 
    | Task | Command |
    |---|---|
-   | Format Roc, Zig, and shell files | `zig build fmt` |
-   | Format Nix files | `nix fmt flake.nix` |
+   | Format Roc, Zig, Nix, and shell files | `zig build fmt` |
    | Run static and formatting checks | `zig build check` |
-   | Check Nix formatting | `nix fmt -- --check flake.nix` |
    | Run tests | `zig build test` |
    | Run complete source CI locally | `zig build ci` |
-   | Check the native Nix package | `nix flake check` |
-   | Build the native Kai package | `nix build .#kai` |
-   | Build the native xkai package | `nix build .#xkai` |
+   | Build and validate release artifacts | `zig build build-release` |
+   | Prepare a protected release pull request | `zig build release -- "Kai X.Y.Z" X.Y.Z` |
    | Run Kai through Nix | `nix run . -- version` |
    | Run xkai through Nix | `nix run .#xkai -- version` |
 
@@ -104,6 +101,8 @@ kai-<version>-x86_64-linux.tar.gz
 kai-<version>-aarch64-linux.tar.gz
 SHA256SUMS
 ```
+
+Build them with `zig build build-release`. Maintainers prepare a protected release pull request with `zig build release -- "Kai X.Y.Z" X.Y.Z`; merging it publishes the release automatically. See [the release guide](docs/RELEASE.md) for metadata ownership and recovery.
 
 ## Goals
 
