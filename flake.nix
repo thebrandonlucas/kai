@@ -329,18 +329,11 @@
               pkgs.zig_0_16
 
               pkgs.actionlint
-              pkgs.bash
               pkgs.coreutils
-              pkgs.diffutils
-              pkgs.findutils
-              pkgs.gawk
               pkgs.git
               pkgs.gnutar
               pkgs.gzip
               pkgs.llvmPackages.bintools
-              pkgs.python3
-              pkgs.shfmt
-              pkgs.shellcheck
               pkgs.file
             ];
           };

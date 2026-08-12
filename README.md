@@ -71,7 +71,7 @@ Other than `nix develop` anytime you want a shell or `direnv allow` once, we hav
 
    | Task | Command |
    |---|---|
-   | Format Roc, Zig, Nix, and shell files | `zig build fmt` |
+   | Format Roc, Zig, and Nix files | `zig build fmt` |
    | Run static and formatting checks | `zig build check` |
    | Run tests | `zig build test` |
    | Run complete source CI locally | `zig build ci` |

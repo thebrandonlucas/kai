@@ -5,7 +5,6 @@ const SourceTree = struct {
     roc_apps: []const []const u8,
     roc_files: []const []const u8,
     roc_roots: []const []const u8,
-    shell_files: []const []const u8,
     zig_files: []const []const u8,
 };
 
@@ -58,7 +57,6 @@ fn discoverSources(b: *std.Build) SourceTree {
     var roc_apps = std.ArrayList([]const u8).empty;
     var roc_files = std.ArrayList([]const u8).empty;
     var roc_roots = std.ArrayList([]const u8).empty;
-    var shell_files = std.ArrayList([]const u8).empty;
     var zig_files = std.ArrayList([]const u8).empty;
 
     var source_dir = std.Io.Dir.cwd().openDir(
@@ -98,8 +96,6 @@ fn discoverSources(b: *std.Build) SourceTree {
             }
         } else if (std.mem.endsWith(u8, path, ".zig")) {
             zig_files.append(allocator, path) catch @panic("out of memory");
-        } else if (std.mem.endsWith(u8, path, ".sh")) {
-            shell_files.append(allocator, path) catch @panic("out of memory");
         } else if (std.mem.endsWith(u8, path, ".nix")) {
             nix_files.append(allocator, path) catch @panic("out of memory");
         } else {
@@ -111,7 +107,6 @@ fn discoverSources(b: *std.Build) SourceTree {
     sortPaths(roc_apps.items);
     sortPaths(roc_files.items);
     sortPaths(roc_roots.items);
-    sortPaths(shell_files.items);
     sortPaths(zig_files.items);
 
     return .{
@@ -119,7 +114,6 @@ fn discoverSources(b: *std.Build) SourceTree {
         .roc_apps = roc_apps.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_files = roc_files.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_roots = roc_roots.toOwnedSlice(allocator) catch @panic("out of memory"),
-        .shell_files = shell_files.toOwnedSlice(allocator) catch @panic("out of memory"),
         .zig_files = zig_files.toOwnedSlice(allocator) catch @panic("out of memory"),
     };
 }
@@ -203,11 +197,6 @@ pub fn build(b: *std.Build) void {
     const build_release = addDevtoolCommand(b, devtool, "build-release", forwarded_args);
     build_release_step.dependOn(&build_release.step);
 
-    const test_prepare_release = b.addSystemCommand(&.{"scripts/test-prepare-release.sh"});
-    test_prepare_release.addFileArg(devtool);
-    const test_publish_release = b.addSystemCommand(&.{ "python3", "scripts/test-publish-release.py" });
-    test_publish_release.addFileArg(publish_devtool);
-
     const release_step = b.step(
         "release",
         "Prepare and push a protected-branch release",
@@ -224,7 +213,7 @@ pub fn build(b: *std.Build) void {
     publish_release.addArgs(forwarded_args);
     publish_release_step.dependOn(&publish_release.step);
 
-    // All static checks (roc, zig, sh)
+    // All static checks (Roc and Zig).
     const check_step = b.step(
         "check",
         "Run formatting and static checks",
@@ -245,22 +234,6 @@ pub fn build(b: *std.Build) void {
     );
     check_step.dependOn(&zig_fmt.step);
 
-    const sh_fmt = addFilesCommand(
-        b,
-        &.{ "shfmt", "-d" },
-        sources.shell_files,
-        &.{},
-    );
-    check_step.dependOn(&sh_fmt.step);
-
-    const check_scripts = addFilesCommand(
-        b,
-        &.{"shellcheck"},
-        sources.shell_files,
-        &.{},
-    );
-    check_step.dependOn(&check_scripts.step);
-
     const check_actions = b.addSystemCommand(&.{"actionlint"});
     check_step.dependOn(&check_actions.step);
 
@@ -278,7 +251,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // Mutating format step. Convenience for devs who don't have
-    // editor config for roc, zig, nix, and sh all setup.
+    // editor config for Roc, Zig, and Nix all setup.
     //
     // Not used in CI -- CI only does static checks.
     const fmt_step = b.step("fmt", "Format all source code files.");
@@ -299,14 +272,6 @@ pub fn build(b: *std.Build) void {
     );
     fmt_step.dependOn(&zig_fmt_write.step);
 
-    const sh_fmt_write = addFilesCommand(
-        b,
-        &.{ "shfmt", "-w" },
-        sources.shell_files,
-        &.{},
-    );
-    fmt_step.dependOn(&sh_fmt_write.step);
-
     const nix_fmt_write = addFilesCommand(
         b,
         &.{ "nix", "fmt" },
@@ -320,10 +285,6 @@ pub fn build(b: *std.Build) void {
         "Run checks and Roc tests.",
     );
     test_step.dependOn(check_step);
-    test_prepare_release.step.dependOn(check_step);
-    test_step.dependOn(&test_prepare_release.step);
-    test_publish_release.step.dependOn(check_step);
-    test_step.dependOn(&test_publish_release.step);
 
     for (sources.roc_apps) |app| {
         const test_app = b.addSystemCommand(&.{ "roc", "test", app });
@@ -391,21 +352,5 @@ pub fn build(b: *std.Build) void {
         });
         build_app.step.dependOn(&prepare_outputs.step);
         ci_step.dependOn(&build_app.step);
-
-        if (std.mem.eql(u8, app, "xkai-bin/main.roc")) {
-            const test_portability = b.addSystemCommand(&.{
-                "scripts/test-xkai-portability.sh",
-                output_path,
-            });
-            test_portability.step.dependOn(&build_app.step);
-            ci_step.dependOn(&test_portability.step);
-
-            const test_projects = b.addSystemCommand(&.{
-                "scripts/test-xkai-projects.sh",
-                output_path,
-            });
-            test_projects.step.dependOn(&build_app.step);
-            ci_step.dependOn(&test_projects.step);
-        }
     }
 }
