@@ -13,7 +13,6 @@
         "examples",
         "flake.nix",
         "plugins",
-        "scripts",
         "xkai-bin",
     },
 }
