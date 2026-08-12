@@ -185,6 +185,15 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileInput(b.path("devtool/Release.roc"));
     build_devtool.addArg("--opt=dev");
     const devtool = build_devtool.addPrefixedOutputFileArg("--output=", "kai-devtool");
+
+    const build_publish_devtool = b.addSystemCommand(&.{ "roc", "build" });
+    build_publish_devtool.addFileArg(b.path("devtool/publish.roc"));
+    build_publish_devtool.addFileInput(b.path("devtool/GitHub.roc"));
+    build_publish_devtool.addFileInput(b.path("devtool/GitHubApi.roc"));
+    build_publish_devtool.addFileInput(b.path("devtool/PublishRelease.roc"));
+    build_publish_devtool.addFileInput(b.path("devtool/Release.roc"));
+    build_publish_devtool.addArg("--opt=dev");
+    const publish_devtool = build_publish_devtool.addPrefixedOutputFileArg("--output=", "kai-publish-devtool");
     const forwarded_args = b.args orelse &.{};
 
     const build_release_step = b.step(
@@ -217,7 +226,9 @@ pub fn build(b: *std.Build) void {
         "publish-release",
         "Publish a merged release (CI only)",
     );
-    const publish_release = addDevtoolCommand(b, devtool, "publish-release", forwarded_args);
+    const publish_release = std.Build.Step.Run.create(b, "run publish devtool");
+    publish_release.addFileArg(publish_devtool);
+    publish_release.addArgs(forwarded_args);
     publish_release_step.dependOn(&publish_release.step);
 
     // All static checks (roc, zig, sh)

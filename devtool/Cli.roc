@@ -1,6 +1,6 @@
 # Pure command-line parsing for Kai's private development tool.
 Cli := [].{
-	Command := [BuildRelease, Help, PrepareRelease({ name : Str, version : Str }), PublishRelease].{
+	Command := [BuildRelease, Help, PrepareRelease({ name : Str, version : Str })].{
 		is_eq : Command, Command -> Bool
 		is_eq = |left, right|
 			match (left, right) {
@@ -8,7 +8,6 @@ Cli := [].{
 				(Help, Help) => Bool.True
 				(PrepareRelease(left_args), PrepareRelease(right_args))
 					=> left_args == right_args
-				(PublishRelease, PublishRelease) => Bool.True
 				_ => Bool.False
 			}
 	}
@@ -28,7 +27,7 @@ Cli := [].{
 	}
 
 	usage : Str
-	usage = "Usage: kai-devtool <command> [arguments]\n\nCommands:\n  build-release\n  prepare-release NAME VERSION\n  publish-release\n  help"
+	usage = "Usage: kai-devtool <command> [arguments]\n\nCommands:\n  build-release\n  prepare-release NAME VERSION\n  help"
 
 	parse : List(Str) -> Try(Command, Error)
 	parse = |args|
@@ -37,13 +36,11 @@ Cli := [].{
 			["help"] => Ok(Help)
 			["build-release"] => Ok(BuildRelease)
 			["prepare-release", name, version] => Ok(PrepareRelease({ name, version }))
-			["publish-release"] => Ok(PublishRelease)
 			[first, ..] =>
 				match first {
 					"help" => Err(ArgumentsNotAllowed(first))
 					"build-release" => Err(ArgumentsNotAllowed(first))
 					"prepare-release" => Err(ExpectedArguments(first))
-					"publish-release" => Err(ArgumentsNotAllowed(first))
 					unknown => Err(UnknownCommand(unknown))
 				}
 			}

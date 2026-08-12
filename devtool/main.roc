@@ -229,7 +229,6 @@ main! = |args|
 		Ok(Cli.Command.Help) => Stdout.line!(Cli.usage)
 		Ok(Cli.Command.BuildRelease) => build_release!()
 		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(name, version)
-		Ok(Cli.Command.PublishRelease) => Err(NotYetImplemented("publish-release"))
 		Err(error) => Err(InvalidArguments(Cli.error_message(error)))
 	}
 
@@ -243,14 +242,9 @@ parse_cases = [
 		args: ["prepare-release", "μοριων", "0.0.3"],
 		expected: Ok(Cli.Command.PrepareRelease({ name: "μοριων", version: "0.0.3" })),
 	},
-	{ args: ["publish-release"], expected: Ok(Cli.Command.PublishRelease) },
 	{
 		args: ["build-release", "extra"],
 		expected: Err(Cli.Error.ArgumentsNotAllowed("build-release")),
-	},
-	{
-		args: ["publish-release", "extra"],
-		expected: Err(Cli.Error.ArgumentsNotAllowed("publish-release")),
 	},
 	{
 		args: ["prepare-release", "only-name"],
@@ -263,7 +257,6 @@ usage_lines = [
 	"Usage: kai-devtool <command> [arguments]",
 	"build-release",
 	"prepare-release NAME VERSION",
-	"publish-release",
 	"help",
 ]
 
