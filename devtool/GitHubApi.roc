@@ -50,8 +50,20 @@ GitHubApi := [].{
 	releases_url = |api, repository|
 		Url.append_path_segments(api, ["repos", repository.owner, repository.repository, "releases"])
 
+	release_by_id_url = |api, repository, id|
+		Url.append_path_segments(api, ["repos", repository.owner, repository.repository, "releases", U64.to_str(id)])
+
 	get_release! = |api, repository, tag, token| {
 		response = Http.send!(GitHubApi.request(GET, GitHubApi.release_url(api, repository, tag), token))?
+		match Response.status(response) {
+			200 => Ok(FoundRelease(GitHubApi.decode_release_response(response)?))
+			404 => Ok(NoRelease)
+			status => Err(UnexpectedGitHubStatus({ actual: status, body: GitHubApi.response_body(response), expected: 200 }))
+		}
+	}
+
+	get_release_by_id! = |api, repository, id, token| {
+		response = Http.send!(GitHubApi.request(GET, GitHubApi.release_by_id_url(api, repository, id), token))?
 		match Response.status(response) {
 			200 => Ok(FoundRelease(GitHubApi.decode_release_response(response)?))
 			404 => Ok(NoRelease)
@@ -114,7 +126,7 @@ GitHubApi := [].{
 	}
 
 	publish_draft! = |api, repository, id, release, expected_assets, token| {
-		url = Url.append_path_segments(api, ["repos", repository.owner, repository.repository, "releases", U64.to_str(id)])
+		url = GitHubApi.release_by_id_url(api, repository, id)
 		response = Http.send_json!(GitHubApi.request(PATCH, url, token), { draft: Bool.False })?
 		_ = GitHubApi.require_status(response, 200)?
 		published = GitHubApi.decode_release_response(response)?

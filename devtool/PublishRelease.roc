@@ -260,7 +260,7 @@ PublishRelease := [].{
 		for artifact in artifacts {
 			GitHubApi.upload_asset!(api, draft.upload_url, artifact, token) ? UploadAssetFailed
 		}
-		confirmed = match GitHubApi.get_release!(api, repository, release.tag_name, token) ? InspectReleaseFailed {
+		confirmed = match GitHubApi.get_release_by_id!(api, repository, draft.id, token) ? InspectReleaseFailed {
 			FoundRelease(found) => found
 			NoRelease => return Err(ReleaseDisappeared)
 		}
