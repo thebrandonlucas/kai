@@ -84,14 +84,26 @@ Plugin := [].{
 
 	BackendChoice : [DefaultBackend(Backend), ExplicitBackend(Backend)]
 
-	ConfigSelection : [Missing, Selected(LocatedConfigBlock)]
+	ConfigSelection : [
+		Missing,
+		Selected(LocatedConfigBlock),
+		SelectedWithBody({ block : LocatedConfigBlock, body : Body.Shape }),
+		SelectedWithRelated(
+			{
+				block : LocatedConfigBlock,
+				body : Body.Shape,
+				related_block : LocatedConfigBlock,
+				related_body : Body.Shape,
+			},
+		),
+	]
 
 	SelectorDiagnostic := {
 		location : [At(SourceLocation), None],
 		message : Str,
 	}
 
-	ConfigSelector : Str, Command, BackendChoice, HostOs, HostArch -> Try(ConfigSelection, SelectorDiagnostic)
+	ConfigSelector : Str, Command, BackendChoice, List(Str), HostOs, HostArch -> Try(ConfigSelection, SelectorDiagnostic)
 
 	RegistryDefinition := {
 		definition : Definition,
@@ -109,14 +121,21 @@ Plugin := [].{
 	# Select the current host's command/backend block, falling back to an
 	# unscoped block when the host section does not contain one.
 	select_config : ConfigSelector
-	select_config = |config_text, command, backend_choice, os, _| {
+	select_config = |config_text, command, backend_choice, _, os, _| {
 		block_name = match command.config_block {
 			OptionalConfigBlock(name) => name
 			RequiredConfigBlock(name) => name
 		}
+		Plugin.select_config_header(config_text, [block_name], backend_choice, os)
+	}
+
+	# Select a generic, possibly named block while retaining the standard host
+	# fallback and explicit-backend behavior.
+	select_config_header : Str, List(Str), BackendChoice, HostOs -> Try(ConfigSelection, SelectorDiagnostic)
+	select_config_header = |config_text, header, backend_choice, os| {
 		block_header = match backend_choice {
-			DefaultBackend(_) => [block_name]
-			ExplicitBackend(backend) => [block_name, backend.name]
+			DefaultBackend(_) => header
+			ExplicitBackend(backend) => header.append(backend.name)
 		}
 		blocks = Config.scan(config_text) ? |diagnostic| {
 			location: At(Plugin.source_location(diagnostic.location)),
@@ -138,6 +157,8 @@ Plugin := [].{
 						match Plugin.select_nested(host, block_header)? {
 							Missing => Plugin.select_top_level(blocks, block_header)
 							Selected(block) => Ok(Selected(block))
+							SelectedWithBody(selected) => Ok(SelectedWithBody(selected))
+							SelectedWithRelated(selected) => Ok(SelectedWithRelated(selected))
 						}
 					}
 			}
@@ -194,12 +215,23 @@ Plugin := [].{
 		line: location.line,
 	}
 
+	RelatedConfig : [
+		NoRelatedConfig,
+		SelectedRelatedConfig(
+			{
+				block : LocatedConfigBlock,
+				config : Body.Configuration,
+			},
+		),
+	]
+
 	RenderContext := {
 		args : List(Str),
 		config : Body.Configuration,
 		config_block : [NoConfigBlock, SelectedConfigBlock(LocatedConfigBlock)],
 		host_arch : HostArch,
 		host_os : HostOs,
+		related_config : RelatedConfig,
 	}
 
 	# Text that will get written to disk.
@@ -212,6 +244,7 @@ Plugin := [].{
 	}
 
 	RenderResult := {
+		actions : List(Action),
 		outputs : List(RenderedOutput),
 		requested_packages : List(Str),
 	}
@@ -351,18 +384,34 @@ Plugin := [].{
 					implementation = Plugin.find_implementation(plugin_definition.implementations, command.name, backend_selection.backend.name) ? |_|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plugin has no implementation for selected backend"))
 					selector = owner.registry_definition.select_config
-					selection = selector(config_text, command, backend_selection.choice, os, arch) ? |diagnostic|
+					selection = selector(config_text, command, backend_selection.choice, backend_selection.args, os, arch) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, diagnostic.location, diagnostic.message))
 					parsed = match selection {
 						Missing =>
 							match command.config_block {
 								RequiredConfigBlock(name) => Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "missing required config block '${name}'")))
-								OptionalConfigBlock(_) => Ok({ config: Body.empty, config_block: NoConfigBlock })
+								OptionalConfigBlock(_) => Ok({ config: Body.empty, config_block: NoConfigBlock, related_config: NoRelatedConfig })
 							}
 						Selected(block) => {
 							config = Body.parse(command.body, block.body) ? |diagnostic|
 								PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, At(Plugin.translate_location(block, diagnostic.byte_offset)), Body.describe(diagnostic)))
-							Ok({ config, config_block: SelectedConfigBlock(block) })
+							Ok({ config, config_block: SelectedConfigBlock(block), related_config: NoRelatedConfig })
+						}
+						SelectedWithBody({ block, body }) => {
+							config = Body.parse(body, block.body) ? |diagnostic|
+								PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, At(Plugin.translate_location(block, diagnostic.byte_offset)), Body.describe(diagnostic)))
+							Ok({ config, config_block: SelectedConfigBlock(block), related_config: NoRelatedConfig })
+						}
+						SelectedWithRelated({ block, body, related_block, related_body }) => {
+							config = Body.parse(body, block.body) ? |diagnostic|
+								PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, At(Plugin.translate_location(block, diagnostic.byte_offset)), Body.describe(diagnostic)))
+							related = Body.parse(related_body, related_block.body) ? |diagnostic|
+								PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, At(Plugin.translate_location(related_block, diagnostic.byte_offset)), Body.describe(diagnostic)))
+							Ok({
+								config,
+								config_block: SelectedConfigBlock(block),
+								related_config: SelectedRelatedConfig({ block: related_block, config: related }),
+							})
 						}
 					}?
 					context = Plugin.RenderContext.{
@@ -371,6 +420,7 @@ Plugin := [].{
 						config_block: parsed.config_block,
 						host_arch: arch,
 						host_os: os,
+						related_config: parsed.related_config,
 					}
 					renderer = implementation.renderer
 					rendered = renderer(context) ? |diagnostic|
@@ -454,13 +504,18 @@ Plugin := [].{
 	renderer_location : ConfigSelection, [At(U64), None] -> [At(SourceLocation), None]
 	renderer_location = |selection, relative|
 		match (selection, relative) {
-			(Selected(block), At(byte_offset)) =>
-				if byte_offset <= block.body.to_utf8().len() {
-					At(Plugin.translate_location(block, byte_offset))
-				} else {
-					None
-				}
+			(Selected(block), At(byte_offset)) => Plugin.relative_location(block, byte_offset)
+			(SelectedWithBody({ block, body: _ }), At(byte_offset)) => Plugin.relative_location(block, byte_offset)
+			(SelectedWithRelated({ block, body: _, related_block: _, related_body: _ }), At(byte_offset)) => Plugin.relative_location(block, byte_offset)
 			_ => None
+		}
+
+	relative_location : LocatedConfigBlock, U64 -> [At(SourceLocation), None]
+	relative_location = |block, byte_offset|
+		if byte_offset <= block.body.to_utf8().len() {
+			At(Plugin.translate_location(block, byte_offset))
+		} else {
+			None
 		}
 
 	translate_location : LocatedConfigBlock, U64 -> SourceLocation
@@ -490,7 +545,7 @@ Plugin := [].{
 		)?
 		Ok(
 			Plugin.Plan.{
-				actions,
+				actions: actions.concat(rendered.actions),
 				backend,
 				command: implementation.command,
 				plugin,

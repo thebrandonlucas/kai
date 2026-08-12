@@ -86,6 +86,7 @@ CustomPlugin := [].{
 					})
 					Ok(message) => Ok(
 						PluginApi.RenderResult.{
+							actions: [],
 							outputs: [{ name: "message", text: message }],
 							requested_packages: [],
 						},
@@ -94,7 +95,7 @@ CustomPlugin := [].{
 			}
 
 	select_config : PluginApi.ConfigSelector
-	select_config = |config_text, command, _, _, _| {
+	select_config = |config_text, command, _, _, _, _| {
 		block_name = match command.config_block {
 			OptionalConfigBlock(name) => name
 			RequiredConfigBlock(name) => name
