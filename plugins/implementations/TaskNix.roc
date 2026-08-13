@@ -7,7 +7,7 @@ import ShellNix
 TaskNix := [].{
 	implementation : PluginApi.Implementation
 	implementation = PluginApi.Implementation.{
-		actions: ShellNix.prepare_actions,
+		actions: NixBackend.locked_flake_templates,
 		backend: NixBackend.backend.name,
 		command: TaskCommand.command.name,
 		renderer: TaskNix.renderer,
@@ -19,7 +19,7 @@ TaskNix := [].{
 			byte_offset: None,
 			message: "validated task configuration is missing 'run'",
 		}
-		TaskNix.validate_run(run)?
+		PluginApi.renderer_validation(PluginApi.validate_string_list(run, TaskCommand.run_rules("task")))?
 		environment = match context.related_config {
 			NoRelatedConfig => Err({ byte_offset: None, message: "task environment is required" })
 			SelectedRelatedConfig({ block: _, config }) => Ok(config)
@@ -34,32 +34,10 @@ TaskNix := [].{
 		rendered = ShellNix.render_result(pkgs, [], target.system)
 		Ok(
 			PluginApi.RenderResult.{
-				actions: [
-					Exec({
-						args: [
-							"develop",
-							"path:.kai#default",
-							"--no-update-lock-file",
-							"--command",
-						].concat(run),
-						command: NixBackend.backend.name,
-					}),
-				],
+				actions: NixBackend.task_actions(run),
 				outputs: rendered.outputs,
 				requested_packages: rendered.requested_packages,
 			},
 		)
 	}
-
-	validate_run : List(Str) -> Try({}, PluginApi.RendererDiagnostic)
-	validate_run = |run|
-		match run {
-			[] => Err({ byte_offset: None, message: "task run list must not be empty" })
-			[program, ..] =>
-				if program.is_empty() {
-					Err({ byte_offset: None, message: "task run program must not be empty" })
-				} else {
-					Ok({})
-				}
-			}
 }

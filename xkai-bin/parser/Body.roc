@@ -12,9 +12,10 @@ import Bytes
 Body := [].{
 	# -- Public configuration model -----------------------------------------
 
-	# Fields currently support string or string-list values. For example,
-	# `["cowsay", ...]` in the StdPlugin `packages` field is a StringList.
-	ValueShape : [String, StringList]
+	# Fields support identifiers, strings, or string-list values. For example,
+	# `dev` in an environment reference is an Identifier and `["cowsay", ...]`
+	# in the StdPlugin `packages` field is a StringList.
+	ValueShape : [Identifier, String, StringList]
 	# Whether a declared field must be present. For example, StdPlugin requires
 	# `packages` in its `shell` body.
 	Presence : [Optional, Required]
@@ -181,6 +182,10 @@ Body := [].{
 			)
 	parse_value = |bytes, index, field|
 		match field.value {
+			Identifier => {
+				parsed = Body.parse_identifier(bytes, index, field.name)?
+				Ok({ rest: parsed.rest, value: StringValue(parsed.value) })
+			}
 			String =>
 			# Strings must begin with double quotes
 				if Body.byte_at(bytes, index) != Bytes.double_quote {
@@ -219,6 +224,25 @@ Body := [].{
 					})
 				}
 			}
+
+	# Parse an unquoted identifier reference such as `dev`.
+	parse_identifier : List(U8), U64, Str -> Try({ rest : U64, value : Str }, Diagnostic)
+	parse_identifier = |bytes, start, field_name|
+		if !Body.is_name_start(Body.byte_at(bytes, start)) {
+			Err({ byte_offset: start, kind: WrongType({ expected: Identifier, field: field_name }) })
+		} else {
+			end = Body.find_identifier_end(bytes, start + 1)
+			value = Str.from_utf8(bytes.sublist({ start, len: end - start })) ?? ""
+			Ok({ rest: end, value })
+		}
+
+	find_identifier_end : List(U8), U64 -> U64
+	find_identifier_end = |bytes, index|
+		if index < bytes.len() and Body.is_identifier_continue(Body.byte_at(bytes, index)) {
+			Body.find_identifier_end(bytes, index + 1)
+		} else {
+			index
+		}
 
 	# Parse a generic StringList field. StdPlugin uses this for
 	# `packages: ["cowsay", ..]`.
@@ -405,6 +429,11 @@ Body := [].{
 		Body.is_name_start(byte) or
 			(byte >= Bytes.digit_zero and byte <= Bytes.digit_nine)
 
+	# Environment references additionally allow conservative header-name punctuation.
+	is_identifier_continue : U8 -> Bool
+	is_identifier_continue = |byte|
+		Body.is_name_continue(byte) or byte == Bytes.hyphen or byte == Bytes.period
+
 	# Safely inspect any body even at its end.
 	byte_at : List(U8), U64 -> U8
 	byte_at = |bytes, index| bytes.get(index) ?? Bytes.nul
@@ -561,6 +590,8 @@ Body := [].{
 	shape_name : ValueShape -> Str
 	shape_name = |shape|
 		match shape {
+			# An Identifier expectation is an unquoted named reference, such as `dev`.
+			Identifier => "an identifier"
 			# A String expectation is `a string`; for example, shell `description`.
 			String => "a string"
 			# A StringList expectation is `a list of strings`; for example, `packages`.
