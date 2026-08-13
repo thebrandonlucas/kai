@@ -1,11 +1,23 @@
-on linux {
-     shell {
-       packages: ["cowsay", "fortune"]
-     }
-   }
+environment cow {
+ packages: ["cowsay", "fortune"]
+}
 
-   on macos {
-     shell {
-       packages: ["cowsay", "fortune"]
-     }
-   }
+environment poke {
+ packages: ["pokemonsay", "fortune"]
+}
+
+task moo {
+ environment: "cow"
+ run: ["cowsay", "$(fortune)"]
+}
+
+task pika {
+ environment: "poke"
+ run: ["pokemonsay", "$(fortune)"]
+}
+
+build kai {
+  environment: poke,
+  run: ["roc", "build", "./xkai-bin/main.roc", "--opt=size", "--output=xkai"],
+  output: "."
+}
