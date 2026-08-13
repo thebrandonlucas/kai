@@ -4,7 +4,7 @@ shell nix {
     pkgs: ["cowsay", "fortune"]
 }
 ```
-When called by the `kai` CLI, this `config.kai` file produces backend runtime output such as `.kai/flake.nix`, then calls `nix develop` to enter that shell. `.kai` contains backend output only; plugin source and compiler inputs do not persist there. Kai supplies assumed defaults where Nix is more explicit.
+When called by the `kai` CLI, this `Kaifile` produces backend runtime output such as `.kai/flake.nix`, then calls `nix develop` to enter that shell. `.kai` contains backend output only; plugin source and compiler inputs do not persist there. Kai supplies assumed defaults where Nix is more explicit.
 - Kai uses Caddy-like [modularity](https://caddyserver.com/docs/architecture) and aspires to Unix philosophy. There is a standard plugin and users can write custom plugins which augment or replace standard plugin commands via a registry where each plugin must supply generic commands, a "backend" to run on (i.e. `nix` or `guix`) and implementations which connect the two. This setup is powerful, as it allows users to swap commands or add their own. Eventually this could even mean that certain painful parts of `nix` can be rewritten (such as the famously slow evaluator) while the rest of `kai` still uses `nix` under the hood!
 - [Work in small steps to stay motivated](https://mitchellh.com/writing/building-large-technical-projects). Avoid big changes where possible.
 - If the programmer tells you to implement a concept, do the minimal amount of work to prove the concept while still following the rules and design philosophy (for example, you may still add a simple test or two).

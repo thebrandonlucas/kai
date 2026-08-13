@@ -47,7 +47,7 @@ The design is heavily inspired by [`caddy`](https://caddyserver.com/). `caddy`'s
 
 It is a masterclass in tool design.
 
-Thus Kai uses a similar architecture. The stock `kai` binary includes `StdPlugin`, which reads `config.kai` and provides the default commands and Nix backend. For example:
+Thus Kai uses a similar architecture. The stock `kai` binary includes `StdPlugin`, which reads `Kaifile` and provides the default commands and Nix backend. For example:
 
 ```kai
 on linux {

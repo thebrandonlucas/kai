@@ -1,4 +1,4 @@
-# A simple demo plugin. Its `config.kai` looks like:
+# A simple demo plugin. Its `Kaifile` looks like:
 #
 # ```Kaifile
 #   custom {

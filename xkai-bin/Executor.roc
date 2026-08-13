@@ -29,7 +29,7 @@ Executor := [].{
 				Ok({})
 			}
 			_ => {
-				config_text = Path.read_utf8!(Path.utf8("config.kai"))?
+				config_text = Path.read_utf8!(Path.utf8("Kaifile"))?
 				host = Env.platform!()
 				host_os : PluginApi.HostOs
 				host_os = match host.os {
