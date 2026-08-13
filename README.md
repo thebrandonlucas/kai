@@ -59,6 +59,18 @@ on linux {
 
 See the [plugin documentation](docs/plugin.md) for the plugin contract and `xkai` build details.
 
+### Local workflows
+
+Workflows compose existing named tasks and builds in source order:
+
+```kai
+workflow ci {
+  steps: ["run test", "build app"]
+}
+```
+
+Run one with `kai workflow ci`; `kai ci` is an alias for the workflow named `ci`. Steps are limited to `run <name>` and `build <name>`, execute sequentially, and stop on the first failure.
+
 ## Platform support
 
 I've only tested this on `x86_64-linux` so far, feel free to open an issue if it doesn't build on your system. In theory, it should work on arm64, x64, across Linux and MacOS.

@@ -36,6 +36,7 @@ TaskNix := [].{
 			PluginApi.RenderResult.{
 				actions: NixBackend.task_actions(run),
 				outputs: rendered.outputs,
+				requests: [],
 				requested_packages: rendered.requested_packages,
 			},
 		)

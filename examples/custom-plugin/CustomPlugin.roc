@@ -88,6 +88,7 @@ CustomPlugin := [].{
 						PluginApi.RenderResult.{
 							actions: [],
 							outputs: [{ name: "message", text: message }],
+							requests: [],
 							requested_packages: [],
 						},
 					)
