@@ -58,6 +58,7 @@ Executor := [].{
 	execute_action! : PluginApi.Action => Try({}, _)
 	execute_action! = |action|
 		match action {
+			PrintLine(line) => Stdout.line!(line)
 			WriteUtf8({ content, path }) => {
 				parent_parts = Str.split_on(path, "/").drop_last(1)
 				if !parent_parts.is_empty() {

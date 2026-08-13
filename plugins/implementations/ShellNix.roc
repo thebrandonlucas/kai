@@ -40,6 +40,7 @@ ShellNix := [].{
 		PluginApi.RenderResult.{
 			actions: [],
 			outputs: [{ name: "flake", text: ShellNix.render_nix(pkgs, overlays, system) }],
+			requests: [],
 			requested_packages: pkgs,
 		}
 

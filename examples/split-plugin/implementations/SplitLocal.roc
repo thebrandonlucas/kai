@@ -12,6 +12,7 @@ SplitLocal := [].{
 			PluginApi.RenderResult.{
 				actions: [],
 				outputs: [{ name: "message", text: "split plugin worked" }],
+				requests: [],
 				requested_packages: [],
 			},
 		),
