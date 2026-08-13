@@ -8,6 +8,9 @@ Task := [].{
 		Body.required("run", StringList),
 	])
 
+	name_rules : List(PluginApi.TextRule)
+	name_rules = [NonemptyText("task name must not be empty")]
+
 	run_rules : Str -> List(PluginApi.StringListRule)
 	run_rules = |task|
 		[

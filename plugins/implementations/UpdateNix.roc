@@ -4,34 +4,7 @@ import commands.Update as UpdateCommand
 UpdateNix := [].{
 	implementation : PluginApi.Implementation
 	implementation = PluginApi.Implementation.{
-		actions: [
-			WriteConfigUtf8({ output: "flake", path: ".kai/flake.nix" }),
-			Exec({
-				args: [
-					"flake",
-					"update",
-					"--flake",
-					"path:.kai",
-					"--reference-lock-file",
-					"kai.lock",
-					"--output-lock-file",
-					"kai.lock",
-				],
-				command: NixBackend.backend.name,
-			}),
-			Exec({
-				args: [
-					"flake",
-					"lock",
-					"path:.kai",
-					"--reference-lock-file",
-					"kai.lock",
-					"--output-lock-file",
-					".kai/flake.lock",
-				],
-				command: NixBackend.backend.name,
-			}),
-		],
+		actions: NixBackend.update_recipe,
 		backend: NixBackend.backend.name,
 		command: UpdateCommand.command.name,
 		renderer: |_| Ok(
