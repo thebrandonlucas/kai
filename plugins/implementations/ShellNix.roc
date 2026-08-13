@@ -66,8 +66,8 @@ ShellNix := [].{
 				match ShellNix.target(context.host_os, context.host_arch) {
 					Err(_) => Err({ byte_offset: None, message: "unsupported shell platform" })
 					Ok(selected_target) =>
-						match Body.get_strings(context.config, "pkgs") {
-							Err(_) => Err({ byte_offset: None, message: "validated shell configuration is missing 'pkgs'" })
+						match Body.get_strings(context.config, "packages") {
+							Err(_) => Err({ byte_offset: None, message: "validated shell configuration is missing 'packages'" })
 							Ok(pkgs) => {
 								ShellNix.validate_packages(pkgs)?
 								Ok(ShellNix.render_result(pkgs, selected_target.system))

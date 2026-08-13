@@ -1,7 +1,7 @@
 - The architecture is inspired by [Caddy](https://caddyserver.com/docs/architecture). The DSL is simple, like that in `Caddyfile`:
 ```kai
 shell nix {
-    pkgs: ["cowsay", "fortune"]
+    packages: ["cowsay", "fortune"]
 }
 ```
 When called by the `kai` CLI, this `Kaifile` produces backend runtime output such as `.kai/flake.nix`, then calls `nix develop` to enter that shell. `.kai` contains backend output only; plugin source and compiler inputs do not persist there. Kai supplies assumed defaults where Nix is more explicit.

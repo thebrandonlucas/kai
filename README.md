@@ -52,7 +52,7 @@ Thus Kai uses a similar architecture. The stock `kai` binary includes `StdPlugin
 ```kai
 on linux {
   shell {
-    pkgs: ["cowsay", "fortune"]
+    packages: ["cowsay", "fortune"]
   }
 }
 ```

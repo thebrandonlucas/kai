@@ -9,7 +9,7 @@
 # ```kai
 # on linux {
 #     shell {
-#         pkgs: ["cowsay"]
+#         packages: ["cowsay"]
 #     }
 # }
 # ```
@@ -43,9 +43,9 @@ Config := [].{
 	# # byte after the opening `{` in the source passed to `scan`
 	#   on linux {
 	#     # This is a nested block with `header`: `shell`
-	#     # and `body`: `pkgs: ["cowsay"]`
+	#     # and `body`: `packages: ["cowsay"]`
 	#     shell {
-	#       pkgs: ["cowsay"]
+	#       packages: ["cowsay"]
 	#     }
 	#   }
 	#  ```
