@@ -3,7 +3,7 @@ import kai.Plugin as PluginApi
 
 Shell := [].{
 	body : Body.Shape
-	body = Body.object([Body.required("pkgs", StringList)])
+	body = Body.object([Body.required("packages", StringList)])
 
 	command : PluginApi.Command
 	command = PluginApi.Command.{
