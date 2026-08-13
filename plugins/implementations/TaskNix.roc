@@ -28,8 +28,8 @@ TaskNix := [].{
 			byte_offset: None,
 			message: "validated environment configuration is missing 'packages'",
 		}
-		ShellNix.validate_packages(pkgs)?
-		target = ShellNix.target(context.host_os, context.host_arch) ? |_|
+		PluginApi.renderer_validation(PluginApi.validate_string_list(pkgs, NixBackend.package_rules))?
+		target = NixBackend.target(context.host_os, context.host_arch) ? |_|
 			{ byte_offset: None, message: "unsupported task platform" }
 		rendered = ShellNix.render_result(pkgs, [], target.system)
 		Ok(

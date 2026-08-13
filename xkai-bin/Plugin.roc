@@ -27,15 +27,19 @@ Plugin := [].{
 	]
 
 	AsciiByte : [AsciiDigit, AsciiLowercase, AsciiUppercase, ExactByte(U8)]
+	ByteRange := { max : U8, min : U8 }
 
 	TextRule : [
 		AllBytes({ allowed : List(AsciiByte), message : Str }),
+		BytesInRanges({ excluded : List(U8), message : Str, ranges : List(ByteRange) }),
 		DisallowedPrefix({ message : Str, prefix : Str }),
+		DotSeparatedNonemptySegments(Str),
 		ForbiddenPathSegments({ message : Str, segments : List(Str) }),
 		NonemptyText(Str),
 	]
 
 	StringListRule : [
+		AllStrings(TextRule),
 		NonemptyFirstString(Str),
 		NonemptyStringList(Str),
 	]
@@ -51,12 +55,22 @@ Plugin := [].{
 					NonemptyText(_) => !value.is_empty()
 					DisallowedPrefix({ message: _, prefix }) => !value.starts_with(prefix)
 					AllBytes({ allowed, message: _ }) => List.all(value.to_utf8(), |byte| Plugin.byte_matches_any(byte, allowed))
+					BytesInRanges({ excluded, message: _, ranges }) =>
+						List.all(
+							value.to_utf8(),
+							|byte| List.any(ranges, |range| byte >= range.min and byte <= range.max) and !excluded.contains(byte),
+						)
+					# A missing value is covered by NonemptyText rather than producing
+					# a dependent second failure.
+					DotSeparatedNonemptySegments(_) => value.is_empty() or List.all(value.split_on("."), |part| !part.is_empty())
 					ForbiddenPathSegments({ message: _, segments }) => !List.any(value.split_on("/"), |part| List.any(segments, |segment| part == segment))
 				}
 				message = match first {
 					NonemptyText(rule_message) => rule_message
 					DisallowedPrefix({ message: rule_message, prefix: _ }) => rule_message
 					AllBytes({ allowed: _, message: rule_message }) => rule_message
+					BytesInRanges({ excluded: _, message: rule_message, ranges: _ }) => rule_message
+					DotSeparatedNonemptySegments(rule_message) => rule_message
 					ForbiddenPathSegments({ message: rule_message, segments: _ }) => rule_message
 				}
 				failures = if passes {
@@ -74,12 +88,14 @@ Plugin := [].{
 			[] => []
 			[first, .. as rest] => {
 				passes = match first {
+					AllStrings(rule) => List.all(values, |value| Plugin.validate_text(value, [rule]).is_empty())
 					NonemptyStringList(_) => !values.is_empty()
 					# A missing first value is covered by NonemptyStringList rather than
 					# producing a dependent second failure.
 					NonemptyFirstString(_) => values.is_empty() or !(values.first() ?? "").is_empty()
 				}
 				message = match first {
+					AllStrings(rule) => Plugin.text_rule_message(rule)
 					NonemptyStringList(rule_message) => rule_message
 					NonemptyFirstString(rule_message) => rule_message
 				}
@@ -90,6 +106,17 @@ Plugin := [].{
 				}
 				failures.concat(Plugin.validate_string_list(values, rest))
 			}
+		}
+
+	text_rule_message : TextRule -> Str
+	text_rule_message = |rule|
+		match rule {
+			AllBytes({ allowed: _, message }) => message
+			BytesInRanges({ excluded: _, message, ranges: _ }) => message
+			DisallowedPrefix({ message, prefix: _ }) => message
+			DotSeparatedNonemptySegments(message) => message
+			ForbiddenPathSegments({ message, segments: _ }) => message
+			NonemptyText(message) => message
 		}
 
 	byte_matches_any : U8, List(AsciiByte) -> Bool
@@ -721,6 +748,32 @@ validation_cases = [
 expect List.all(
 	validation_cases,
 	|case| Plugin.validate_text(case.value, case.rules) == case.expected,
+)
+
+string_list_validation_cases = [
+	{
+		expected: [],
+		values: ["rocpkgs.nightly", "hello"],
+	},
+	{
+		expected: ["empty"],
+		values: ["hello", ""],
+	},
+	{
+		expected: ["segments", "unsafe"],
+		values: ["hello$unsafe", "rocpkgs..nightly"],
+	},
+]
+
+string_list_rules = [
+	AllStrings(NonemptyText("empty")),
+	AllStrings(DotSeparatedNonemptySegments("segments")),
+	AllStrings(BytesInRanges({ excluded: [34, 36, 92], message: "unsafe", ranges: [{ max: 126, min: 33 }] })),
+]
+
+expect List.all(
+	string_list_validation_cases,
+	|case| Plugin.validate_string_list(case.values, string_list_rules) == case.expected,
 )
 
 expect Plugin.selector_validation(["first", "second"]) == Err({

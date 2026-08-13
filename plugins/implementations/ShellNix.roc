@@ -1,22 +1,9 @@
 import parser.Body
-import parser.Bytes
 import kai.Plugin as PluginApi
 import backends.Nix as NixBackend
 import commands.Shell as ShellCommand
 
 ShellNix := [].{
-	Target : { system : Str }
-
-	target : PluginApi.HostOs, PluginApi.HostArch -> Try(Target, [UnsupportedPlatform])
-	target = |os, arch|
-		match (os, arch) {
-			(LINUX, X64) => Ok({ system: "x86_64-linux" })
-			(LINUX, AARCH64) => Ok({ system: "aarch64-linux" })
-			(MACOS, X64) => Ok({ system: "x86_64-darwin" })
-			(MACOS, AARCH64) => Ok({ system: "aarch64-darwin" })
-			_ => Err(UnsupportedPlatform)
-		}
-
 	implementation : PluginApi.Implementation
 	implementation = PluginApi.Implementation.{
 		actions: NixBackend.shell_templates,
@@ -26,75 +13,27 @@ ShellNix := [].{
 	}
 
 	renderer : PluginApi.Renderer
-	renderer = |context|
+	renderer = |context| {
 		match context.config_block {
 			NoConfigBlock => Err({ byte_offset: None, message: "shell configuration is required" })
-			SelectedConfigBlock({ body: _, location: _ }) =>
-				match ShellNix.target(context.host_os, context.host_arch) {
-					Err(_) => Err({ byte_offset: None, message: "unsupported shell platform" })
-					Ok(selected_target) =>
-						match Body.get_strings(context.config, "packages") {
-							Err(_) => Err({ byte_offset: None, message: "validated shell configuration is missing 'packages'" })
-							Ok(pkgs) =>
-								match Body.maybe_strings(context.config, "overlays") {
-									Err(_) => Err({ byte_offset: None, message: "validated shell configuration has invalid 'overlays'" })
-									Ok(maybe_overlays) => {
-										overlays = match maybe_overlays {
-											None => []
-											Some(values) => values
-										}
-										ShellNix.validate_packages(pkgs)?
-										ShellNix.validate_overlays(overlays)?
-										Ok(ShellNix.render_result(pkgs, overlays, selected_target.system))
-									}
-								}
-							}
-					}
-			}
-
-	validate_packages : List(Str) -> Try({}, PluginApi.RendererDiagnostic)
-	validate_packages = |pkgs|
-		match pkgs {
-			[] => Ok({})
-			[first, .. as rest] =>
-				if first.is_empty() {
-					Err({ byte_offset: None, message: "shell package names must not be empty" })
-				} else if !List.all(first.split_on("."), |part| !part.is_empty()) {
-					Err({ byte_offset: None, message: "shell package attribute paths must not contain empty segments" })
-				} else if !ShellNix.is_safe_nix_string(first) {
-					Err({ byte_offset: None, message: "shell package attribute paths contain characters unsafe for Nix output" })
-				} else {
-					ShellNix.validate_packages(rest)
-				}
-			}
-
-	validate_overlays : List(Str) -> Try({}, PluginApi.RendererDiagnostic)
-	validate_overlays = |overlays|
-		match overlays {
-			[] => Ok({})
-			[first, .. as rest] =>
-				if first.is_empty() {
-					Err({ byte_offset: None, message: "shell overlay references must not be empty" })
-				} else if !ShellNix.is_safe_nix_string(first) {
-					Err({ byte_offset: None, message: "shell overlay references contain characters unsafe for Nix output" })
-				} else {
-					ShellNix.validate_overlays(rest)
-				}
-			}
-
-	# Values are interpolated into Nix double-quoted strings. Restrict them to
-	# printable ASCII and exclude Nix string escape/interpolation prefixes.
-	is_safe_nix_string : Str -> Bool
-	is_safe_nix_string = |value|
-		List.all(
-			value.to_utf8(),
-			|byte|
-				byte >= Bytes.exclamation_mark and
-					byte <= Bytes.tilde and
-						byte != Bytes.double_quote and
-							byte != Bytes.dollar_sign and
-								byte != Bytes.backslash,
+			SelectedConfigBlock(_) => Ok({})
+		}?
+		selected_target = NixBackend.target(context.host_os, context.host_arch) ? |_|
+			{ byte_offset: None, message: "unsupported shell platform" }
+		pkgs = Body.get_strings(context.config, "packages") ? |_|
+			{ byte_offset: None, message: "validated shell configuration is missing 'packages'" }
+		maybe_overlays = Body.maybe_strings(context.config, "overlays") ? |_|
+			{ byte_offset: None, message: "validated shell configuration has invalid 'overlays'" }
+		overlays = match maybe_overlays {
+			None => []
+			Some(values) => values
+		}
+		failures = PluginApi.validate_string_list(pkgs, NixBackend.package_rules).concat(
+			PluginApi.validate_string_list(overlays, NixBackend.overlay_rules),
 		)
+		PluginApi.renderer_validation(failures)?
+		Ok(ShellNix.render_result(pkgs, overlays, selected_target.system))
+	}
 
 	render_result : List(Str), List(Str), Str -> PluginApi.RenderResult
 	render_result = |pkgs, overlays, system|
@@ -290,42 +229,23 @@ expect List.all(
 	|case| ShellNix.render_nix(case.pkgs, case.overlays, "x86_64-linux") == case.expected,
 )
 
-invalid_package_cases = [
-	{
-		expected: "shell package attribute paths must not contain empty segments",
-		pkgs: ["rocpkgs..nightly"],
-	},
-	{
-		expected: "shell package attribute paths contain characters unsafe for Nix output",
-		pkgs: ["rocpkgs.$nightly"],
-	},
-]
+invalid_shell_body = "packages: [\"rocpkgs..nightly\"]\noverlays: [\"github:example/overlay$unsafe\"]"
 
-expect List.all(
-	invalid_package_cases,
-	|case|
-		match ShellNix.validate_packages(case.pkgs) {
-			Err(diagnostic) => diagnostic.message == case.expected
-			Ok(_) => Bool.False
-		},
-)
-
-invalid_overlay_cases = [
-	{
-		expected: "shell overlay references must not be empty",
-		overlays: [""],
-	},
-	{
-		expected: "shell overlay references contain characters unsafe for Nix output",
-		overlays: ["github:example/overlay$unsafe"],
-	},
-]
-
-expect List.all(
-	invalid_overlay_cases,
-	|case|
-		match ShellNix.validate_overlays(case.overlays) {
-			Err(diagnostic) => diagnostic.message == case.expected
-			Ok(_) => Bool.False
-		},
-)
+expect match Body.parse(ShellCommand.body, invalid_shell_body) {
+	Err(_) => Bool.False
+	Ok(config) =>
+		ShellNix.renderer({
+			args: [],
+			config,
+			config_block: SelectedConfigBlock({
+				body: invalid_shell_body,
+				location: { byte_offset: 0, column: 1, line: 1 },
+			}),
+			host_arch: X64,
+			host_os: LINUX,
+			related_config: NoRelatedConfig,
+		}) == Err({
+			byte_offset: None,
+			message: "shell package attribute paths must not contain empty segments\nshell overlay references contain characters unsafe for Nix output",
+		})
+	}
