@@ -17,34 +17,38 @@ ShellNix := [].{
 			_ => Err(UnsupportedPlatform)
 		}
 
+	prepare_actions : List(PluginApi.ActionTemplate)
+	prepare_actions = [
+		WriteConfigUtf8({ output: "flake", path: ".kai/flake.nix" }),
+		Exec({
+			args: [
+				"flake",
+				"lock",
+				"path:.kai",
+				"--reference-lock-file",
+				"kai.lock",
+				"--output-lock-file",
+				"kai.lock",
+			],
+			command: NixBackend.backend.name,
+		}),
+		Exec({
+			args: [
+				"flake",
+				"lock",
+				"path:.kai",
+				"--reference-lock-file",
+				"kai.lock",
+				"--output-lock-file",
+				".kai/flake.lock",
+			],
+			command: NixBackend.backend.name,
+		}),
+	]
+
 	implementation : PluginApi.Implementation
 	implementation = PluginApi.Implementation.{
-		actions: [
-			WriteConfigUtf8({ output: "flake", path: ".kai/flake.nix" }),
-			Exec({
-				args: [
-					"flake",
-					"lock",
-					"path:.kai",
-					"--reference-lock-file",
-					"kai.lock",
-					"--output-lock-file",
-					"kai.lock",
-				],
-				command: NixBackend.backend.name,
-			}),
-			Exec({
-				args: [
-					"flake",
-					"lock",
-					"path:.kai",
-					"--reference-lock-file",
-					"kai.lock",
-					"--output-lock-file",
-					".kai/flake.lock",
-				],
-				command: NixBackend.backend.name,
-			}),
+		actions: prepare_actions.concat([
 			Exec({
 				args: [
 					"develop",
@@ -53,7 +57,7 @@ ShellNix := [].{
 				],
 				command: NixBackend.backend.name,
 			}),
-		],
+		]),
 		backend: NixBackend.backend.name,
 		command: ShellCommand.command.name,
 		renderer: ShellNix.renderer,
@@ -133,6 +137,7 @@ ShellNix := [].{
 	render_result : List(Str), List(Str), Str -> PluginApi.RenderResult
 	render_result = |pkgs, overlays, system|
 		PluginApi.RenderResult.{
+			actions: [],
 			outputs: [{ name: "flake", text: ShellNix.render_nix(pkgs, overlays, system) }],
 			requested_packages: pkgs,
 		}

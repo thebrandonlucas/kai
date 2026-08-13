@@ -21,7 +21,11 @@ import "Plugin.roc" as plugin_source : Str
 import "../plugins/StdPlugin.roc" as std_plugin_source : Str
 import "../plugins/backends/Nix.roc" as nix_backend_source : Str
 import "../plugins/commands/Shell.roc" as shell_command_source : Str
+import "../plugins/commands/Task.roc" as task_command_source : Str
+import "../plugins/commands/Update.roc" as update_command_source : Str
 import "../plugins/implementations/ShellNix.roc" as shell_nix_source : Str
+import "../plugins/implementations/TaskNix.roc" as task_nix_source : Str
+import "../plugins/implementations/UpdateNix.roc" as update_nix_source : Str
 import "VERSION" as version_source : Str
 
 platform_name = "FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn"
@@ -101,7 +105,7 @@ build_stage! = |stage, plugin_paths, output_name, output_path| {
 	Path.create_dir!(std_dir)?
 	Path.write_utf8!(
 		Path.join(std_dir, "main.roc"),
-		"package [StdPlugin] { backends: \"./backends/main.roc\", commands: \"./commands/main.roc\", implementations: \"./implementations/main.roc\", kai: \"../package.roc\" }\n",
+		"package [StdPlugin] { backends: \"./backends/main.roc\", commands: \"./commands/main.roc\", implementations: \"./implementations/main.roc\", kai: \"../package.roc\", parser: \"../parser/main.roc\" }\n",
 	)?
 	Path.write_utf8!(Path.join(std_dir, "StdPlugin.roc"), std_plugin_source)?
 
@@ -117,17 +121,21 @@ build_stage! = |stage, plugin_paths, output_name, output_path| {
 	Path.create_dir!(commands_dir)?
 	Path.write_utf8!(
 		Path.join(commands_dir, "main.roc"),
-		"package [Shell] { kai: \"../../package.roc\", parser: \"../../parser/main.roc\" }\n",
+		"package [Shell, Task, Update] { kai: \"../../package.roc\", parser: \"../../parser/main.roc\" }\n",
 	)?
 	Path.write_utf8!(Path.join(commands_dir, "Shell.roc"), shell_command_source)?
+	Path.write_utf8!(Path.join(commands_dir, "Task.roc"), task_command_source)?
+	Path.write_utf8!(Path.join(commands_dir, "Update.roc"), update_command_source)?
 
 	implementations_dir = Path.join(std_dir, "implementations")
 	Path.create_dir!(implementations_dir)?
 	Path.write_utf8!(
 		Path.join(implementations_dir, "main.roc"),
-		"package [ShellNix] { backends: \"../backends/main.roc\", commands: \"../commands/main.roc\", kai: \"../../package.roc\", parser: \"../../parser/main.roc\" }\n",
+		"package [ShellNix, TaskNix, UpdateNix] { backends: \"../backends/main.roc\", commands: \"../commands/main.roc\", kai: \"../../package.roc\", parser: \"../../parser/main.roc\" }\n",
 	)?
 	Path.write_utf8!(Path.join(implementations_dir, "ShellNix.roc"), shell_nix_source)?
+	Path.write_utf8!(Path.join(implementations_dir, "TaskNix.roc"), task_nix_source)?
+	Path.write_utf8!(Path.join(implementations_dir, "UpdateNix.roc"), update_nix_source)?
 
 	plugins = plugin_paths.map_with_index(|path, index| { index, path })
 	for plugin in plugins {
