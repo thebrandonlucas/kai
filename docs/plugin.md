@@ -61,6 +61,6 @@ xkai build path/to/CustomPlugin.roc path/to/split-plugin/Plugin.roc
 
 Custom registries are ordered as supplied and precede `StdPlugin`; the first registry declaring a command owns it. During the build, the generated `kai` validates that every registry has commands, backends, and implementations, that implementation references resolve, and that no command or backend is left unimplemented. An invalid registry is rejected before the resulting binary is published.
 
-For the build only, `xkai` writes its embedded API, executor, standard plugin, and supplied custom plugins to a temporary directory and invokes Roc. `basic-cli` is the compile-time Roc platform for both stock and customized binaries. The result is a portable `kai` binary with that registry compiled in; the temporary build inputs are removed. At runtime, `kai` reads `config.kai`. The `.kai/` directory contains backend output such as `.kai/flake.nix`, never Roc source or plugin build inputs.
+For the build only, `xkai` writes its embedded API, executor, standard plugin, and supplied custom plugins to a temporary directory and invokes Roc. `basic-cli` is the compile-time Roc platform for both stock and customized binaries. The result is a portable `kai` binary with that registry compiled in; the temporary build inputs are removed. At runtime, `kai` reads `Kaifile`. The `.kai/` directory contains backend output such as `.kai/flake.nix`, never Roc source or plugin build inputs.
 
 The registry contains data seams for features tracked in the [roadmap](../roadmap.md).

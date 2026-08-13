@@ -20,7 +20,6 @@
 import Bytes
 
 # Top-level representation of the `Kaifile` config object.
-# TODO: repo-wide rename `Kaifile`
 Config := [].{
 	# Keep track of where various things are.
 	# Mainly used for diagnostics so we can tell the user where
