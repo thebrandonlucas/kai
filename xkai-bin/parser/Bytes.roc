@@ -36,9 +36,21 @@ Bytes := [].{
 	backslash : U8
 	backslash = 92
 
+	# `!` starts the printable ASCII range after space.
+	exclamation_mark : U8
+	exclamation_mark = 33
+
+	# `$` opens Nix string interpolation.
+	dollar_sign : U8
+	dollar_sign = 36
+
 	# `#` opens a body comment.
 	hash : U8
 	hash = 35
+
+	# `~` ends the printable ASCII range.
+	tilde : U8
+	tilde = 126
 
 	# ` ` is a space.
 	space : U8
