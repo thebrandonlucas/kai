@@ -12,6 +12,8 @@ registry = [StdPlugin.plugin]
 
 main! = |args| Executor.run!(args, registry)
 
+# -- TESTS --
+
 plans_shell_packages = |source, expected|
 	match PluginApi.plan_registry(registry, source, ["shell"], LINUX, X64) {
 		Ok(plan) => plan.requested_packages == expected
