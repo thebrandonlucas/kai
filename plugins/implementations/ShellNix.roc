@@ -1,4 +1,5 @@
 import parser.Body
+import parser.Bytes
 import kai.Plugin as PluginApi
 import backends.Nix as NixBackend
 import commands.Shell as ShellCommand
@@ -121,8 +122,12 @@ ShellNix := [].{
 	is_safe_nix_string = |value|
 		List.all(
 			value.to_utf8(),
-			# FIX use our byte module for this
-			|byte| byte >= 33 and byte <= 126 and byte != 34 and byte != 36 and byte != 92,
+			|byte|
+				byte >= Bytes.exclamation_mark and
+					byte <= Bytes.tilde and
+						byte != Bytes.double_quote and
+							byte != Bytes.dollar_sign and
+								byte != Bytes.backslash,
 		)
 
 	render_result : List(Str), List(Str), Str -> PluginApi.RenderResult
@@ -144,7 +149,17 @@ ShellNix := [].{
 			ShellNix.render_nix_with_overlays(pkgs, overlays, system)
 		}
 
-	# FIX give the shape of the completed nix file with the example cowsay
+	# `render_nix_without_overlays(["cowsay"], "x86_64-linux")` renders:
+	# {
+	#   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+	#   outputs = { nixpkgs, ... }: {
+	#     devShells."x86_64-linux".default = nixpkgs.legacyPackages."x86_64-linux".mkShell {
+	#       packages = [
+	#               nixpkgs."legacyPackages"."x86_64-linux"."cowsay"
+	#       ];
+	#     };
+	#   };
+	# }
 	render_nix_without_overlays : List(Str), Str -> Str
 	render_nix_without_overlays = |pkgs, system| {
 		package_lines = pkgs.map(
@@ -165,7 +180,26 @@ ShellNix := [].{
 		Str.join_with(lines, "\n")
 	}
 
-	# FIX give the shape of the completed nix file with the example "cowsay"
+	# `render_nix_with_overlays(["cowsay"], ["github:example/packages"], "x86_64-linux")` renders:
+	# {
+	#   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+	#   inputs.overlay0.url = "github:example/packages";
+	#   outputs = { nixpkgs, overlay0, ... }:
+	#     let
+	#       pkgs = import nixpkgs {
+	#         system = "x86_64-linux";
+	#         overlays = [
+	#           overlay0.overlays.default
+	#         ];
+	#       };
+	#     in {
+	#       devShells."x86_64-linux".default = pkgs.mkShell {
+	#         packages = [
+	#               pkgs."cowsay"
+	#         ];
+	#       };
+	#     };
+	# }
 	render_nix_with_overlays : List(Str), List(Str), Str -> Str
 	render_nix_with_overlays = |pkgs, overlays, system| {
 		overlay_names = overlays.map_with_index(|_, index| "overlay${U64.to_str(index)}")
