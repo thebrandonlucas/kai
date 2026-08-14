@@ -56,6 +56,7 @@ BuildNix := [].{
 						text: Json.to_str({ name, output, pkgs, run, system: target.system }),
 					},
 				],
+				requests: [],
 				requested_packages: pkgs,
 			},
 		)

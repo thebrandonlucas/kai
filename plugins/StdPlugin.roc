@@ -5,10 +5,12 @@ import commands.Build as BuildCommand
 import commands.Shell as ShellCommand
 import commands.Task as TaskCommand
 import commands.Update as UpdateCommand
+import commands.Workflow as WorkflowCommand
 import implementations.BuildNix
 import implementations.ShellNix
 import implementations.TaskNix
 import implementations.UpdateNix
+import implementations.WorkflowNix
 
 StdPlugin := [].{
 	plugin : PluginApi.RegistryDefinition
@@ -43,6 +45,11 @@ StdPlugin := [].{
 			match (backend_choice, args) {
 				(ExplicitBackend(backend), []) => StdPlugin.select_build(config_text, DefaultBackend(backend), [backend.name], os)
 				_ => StdPlugin.select_build(config_text, backend_choice, args, os)
+			}
+		} else if command.name == WorkflowCommand.command.name {
+			match (backend_choice, args) {
+				(ExplicitBackend(backend), []) => StdPlugin.select_workflow(config_text, DefaultBackend(backend), [backend.name], os)
+				_ => StdPlugin.select_workflow(config_text, backend_choice, args, os)
 			}
 		} else {
 			PluginApi.select_config(config_text, command, backend_choice, args, os, arch)
@@ -146,6 +153,24 @@ StdPlugin := [].{
 			_ => Err({ location: None, message: "build requires exactly one artifact name" })
 		}
 
+	select_workflow : Str, PluginApi.BackendChoice, List(Str), PluginApi.HostOs -> Try(PluginApi.ConfigSelection, PluginApi.SelectorDiagnostic)
+	select_workflow = |config_text, backend_choice, args, os|
+		match args {
+			[workflow_name] => {
+				PluginApi.selector_validation(PluginApi.validate_text(workflow_name, WorkflowCommand.name_rules))?
+				StdPlugin.select_named_workflow(config_text, backend_choice, workflow_name, os)
+			}
+			_ => Err({ location: None, message: "workflow requires exactly one name" })
+		}
+
+	select_named_workflow : Str, PluginApi.BackendChoice, Str, PluginApi.HostOs -> Try(PluginApi.ConfigSelection, PluginApi.SelectorDiagnostic)
+	select_named_workflow = |config_text, backend_choice, workflow_name, os|
+		match StdPlugin.select_with_backend_fallback(config_text, ["workflow", workflow_name], backend_choice, os)? {
+			Missing => Err({ location: None, message: "missing workflow '${workflow_name}'" })
+			Selected(block) => Ok(SelectedWithBody({ block, body: WorkflowCommand.body }))
+			_ => Err({ location: None, message: "invalid workflow selection" })
+		}
+
 	select_with_backend_fallback : Str, List(Str), PluginApi.BackendChoice, PluginApi.HostOs -> Try(PluginApi.ConfigSelection, PluginApi.SelectorDiagnostic)
 	select_with_backend_fallback = |config_text, header, backend_choice, os| {
 		selection = PluginApi.select_config_header(config_text, header, backend_choice, os)?
@@ -156,13 +181,13 @@ StdPlugin := [].{
 	}
 
 	commands : List(PluginApi.Command)
-	commands = [BuildCommand.command, ShellCommand.command, TaskCommand.command, UpdateCommand.command]
+	commands = [BuildCommand.command, ShellCommand.command, TaskCommand.command, UpdateCommand.command, WorkflowCommand.command]
 
 	backends : List(PluginApi.Backend)
 	backends = [NixBackend.backend]
 
 	implementations : List(PluginApi.Implementation)
-	implementations = [BuildNix.implementation, ShellNix.implementation, TaskNix.implementation, UpdateNix.implementation]
+	implementations = [BuildNix.implementation, ShellNix.implementation, TaskNix.implementation, UpdateNix.implementation, WorkflowNix.implementation]
 
 	definition : PluginApi.Definition
 	definition = PluginApi.Definition.{

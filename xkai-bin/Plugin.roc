@@ -10,6 +10,7 @@ Plugin := [].{
 	# Side effects to be performed by a plugin.
 	Action := [
 		Exec({ args : List(Str), command : Str }),
+		PrintLine(Str),
 		WriteUtf8({ content : Str, path : Str }),
 	].{
 		encoder_for : _
@@ -368,9 +369,15 @@ Plugin := [].{
 		text : Str,
 	}
 
+	PlanRequest := {
+		args : List(Str),
+		status : Str,
+	}
+
 	RenderResult := {
 		actions : List(Action),
 		outputs : List(RenderedOutput),
+		requests : List(PlanRequest),
 		requested_packages : List(Str),
 	}
 
@@ -494,6 +501,10 @@ Plugin := [].{
 	# Plan the first registry definition that owns the CLI command.
 	plan_registry : List(RegistryDefinition), Str, List(Str), HostOs, HostArch -> Try(Plan, Error)
 	plan_registry = |registry, config_text, args, os, arch|
+		Plugin.plan_registry_nested(registry, config_text, args, os, arch, [], 0)
+
+	plan_registry_nested : List(RegistryDefinition), Str, List(Str), HostOs, HostArch, List(List(Str)), U64 -> Try(Plan, Error)
+	plan_registry_nested = |registry, config_text, args, os, arch, ancestors, depth|
 		match args {
 			[] => Err(UnknownCommand)
 			[command_name, .. as command_args] => {
@@ -503,7 +514,11 @@ Plugin := [].{
 				backend_selection = Plugin.select_backend(plugin_definition.backends, command, command_args) ? |backend_name|
 					PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_name, None, "plugin command refers to unknown backend '${backend_name}'"))
 
-				if command.argument_policy == NoArguments and !backend_selection.args.is_empty() {
+				if List.any(ancestors, |ancestor| ancestor == args) {
+					Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plan request cycle detected")))
+				} else if depth >= 64 {
+					Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plan request nesting exceeds 64 levels")))
+				} else if command.argument_policy == NoArguments and !backend_selection.args.is_empty() {
 					Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "command does not accept arguments")))
 				} else {
 					implementation = Plugin.find_implementation(plugin_definition.implementations, command.name, backend_selection.backend.name) ? |_|
@@ -550,11 +565,41 @@ Plugin := [].{
 					renderer = implementation.renderer
 					rendered = renderer(context) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
-					match Plugin.lower(implementation, rendered, plugin_definition.name, backend_selection.backend) {
-						Ok(plan) => Ok(plan)
-						Err(diagnostic) => Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message)))
-					}
+					base_plan = Plugin.lower(implementation, rendered, plugin_definition.name, backend_selection.backend) ? |diagnostic|
+						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
+					requested = Plugin.plan_requests(
+						registry,
+						config_text,
+						rendered.requests,
+						os,
+						arch,
+						[args].concat(ancestors),
+						depth + 1,
+					)?
+					Ok(
+						Plugin.Plan.{
+							actions: base_plan.actions.concat(requested.actions),
+							backend: base_plan.backend,
+							command: base_plan.command,
+							plugin: base_plan.plugin,
+							requested_packages: base_plan.requested_packages.concat(requested.requested_packages),
+						},
+					)
 				}
+			}
+		}
+
+	plan_requests : List(RegistryDefinition), Str, List(PlanRequest), HostOs, HostArch, List(List(Str)), U64 -> Try({ actions : List(Action), requested_packages : List(Str) }, Error)
+	plan_requests = |registry, config_text, requests, os, arch, ancestors, depth|
+		match requests {
+			[] => Ok({ actions: [], requested_packages: [] })
+			[first, .. as rest] => {
+				child = Plugin.plan_registry_nested(registry, config_text, first.args, os, arch, ancestors, depth)?
+				remaining = Plugin.plan_requests(registry, config_text, rest, os, arch, ancestors, depth)?
+				Ok({
+					actions: [PrintLine(first.status)].concat(child.actions).concat(remaining.actions),
+					requested_packages: child.requested_packages.concat(remaining.requested_packages),
+				})
 			}
 		}
 

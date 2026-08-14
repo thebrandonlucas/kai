@@ -11,6 +11,7 @@ UpdateNix := [].{
 			PluginApi.RenderResult.{
 				actions: [],
 				outputs: [{ name: "flake", text: UpdateNix.flake }],
+				requests: [],
 				requested_packages: [],
 			},
 		),
