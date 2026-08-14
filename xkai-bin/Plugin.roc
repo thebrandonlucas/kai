@@ -369,8 +369,11 @@ Plugin := [].{
 		text : Str,
 	}
 
+	PlanRequirement : [AnyPlan, PlanFrom({ backend : Str, plugin : Str })]
+
 	PlanRequest := {
 		args : List(Str),
+		requirement : PlanRequirement,
 		status : Str,
 	}
 
@@ -578,7 +581,7 @@ Plugin := [].{
 					)?
 					Ok(
 						Plugin.Plan.{
-							actions: base_plan.actions.concat(requested.actions),
+							actions: requested.actions.concat(base_plan.actions),
 							backend: base_plan.backend,
 							command: base_plan.command,
 							plugin: base_plan.plugin,
@@ -595,6 +598,7 @@ Plugin := [].{
 			[] => Ok({ actions: [], requested_packages: [] })
 			[first, .. as rest] => {
 				child = Plugin.plan_registry_nested(registry, config_text, first.args, os, arch, ancestors, depth)?
+				Plugin.validate_plan_requirement(first.requirement, child)?
 				remaining = Plugin.plan_requests(registry, config_text, rest, os, arch, ancestors, depth)?
 				Ok({
 					actions: [PrintLine(first.status)].concat(child.actions).concat(remaining.actions),
@@ -602,6 +606,28 @@ Plugin := [].{
 				})
 			}
 		}
+
+	validate_plan_requirement : PlanRequirement, Plan -> Try({}, Error)
+	validate_plan_requirement = |requirement, child|
+		match requirement {
+			AnyPlan => Ok({})
+			PlanFrom(expected) =>
+				if child.plugin == expected.plugin and child.backend.name == expected.backend {
+					Ok({})
+				} else {
+					Err(
+						PlanningFailed(
+							Plugin.failure(
+								child.plugin,
+								child.command,
+								child.backend.name,
+								None,
+								"plan request requires '${expected.plugin}/${expected.backend}', but child planned from '${child.plugin}/${child.backend.name}'",
+							),
+						),
+					)
+				}
+			}
 
 	find_owner : List(RegistryDefinition), Str -> Try({ command : Command, registry_definition : RegistryDefinition }, [UnknownCommand])
 	find_owner = |registry, command_name|

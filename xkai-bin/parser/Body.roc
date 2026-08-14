@@ -225,10 +225,10 @@ Body := [].{
 				}
 			}
 
-	# Parse an unquoted identifier reference such as `dev`.
+	# Parse an unquoted named reference such as `dev` or `app-1`.
 	parse_identifier : List(U8), U64, Str -> Try({ rest : U64, value : Str }, Diagnostic)
 	parse_identifier = |bytes, start, field_name|
-		if !Body.is_name_start(Body.byte_at(bytes, start)) {
+		if !Body.is_identifier_continue(Body.byte_at(bytes, start)) {
 			Err({ byte_offset: start, kind: WrongType({ expected: Identifier, field: field_name }) })
 		} else {
 			end = Body.find_identifier_end(bytes, start + 1)
@@ -429,7 +429,7 @@ Body := [].{
 		Body.is_name_start(byte) or
 			(byte >= Bytes.digit_zero and byte <= Bytes.digit_nine)
 
-	# Environment references additionally allow conservative header-name punctuation.
+	# Named references allow conservative header-name punctuation.
 	is_identifier_continue : U8 -> Bool
 	is_identifier_continue = |byte|
 		Body.is_name_continue(byte) or byte == Bytes.hyphen or byte == Bytes.period

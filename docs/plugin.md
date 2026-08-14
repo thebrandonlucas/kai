@@ -63,4 +63,11 @@ Custom registries are ordered as supplied and precede `StdPlugin`; the first reg
 
 For the build only, `xkai` writes its embedded API, executor, standard plugin, and supplied custom plugins to a temporary directory and invokes Roc. `basic-cli` is the compile-time Roc platform for both stock and customized binaries. The result is a portable `kai` binary with that registry compiled in; the temporary build inputs are removed. At runtime, `kai` reads `Kaifile`. The `.kai/` directory contains backend output such as `.kai/flake.nix`, never Roc source or plugin build inputs.
 
+Renderers return direct actions, named outputs, requested packages, and ordered plan requests. A plan request asks the generic planner to plan another command through the complete registry without performing effects during rendering. Each request includes `args`, a progress `status`, and a `requirement`:
+
+- `AnyPlan` accepts whichever plugin and backend own the child command. This preserves registry extensibility and is appropriate for workflows.
+- `PlanFrom({ plugin, backend })` requires the planned child metadata to match both names. Selection still uses normal registry precedence; a mismatch returns `PlanningFailed` for the child command before any actions execute. This is appropriate when a parent depends on a specific implementation contract rather than only a command name.
+
+Requested child plans execute in request order before the renderer's direct actions. `PrintLine` actions provide generic progress output. For migration, plugins built against the previous plan-request API must add `requirement: AnyPlan` to each non-empty request to preserve its old behavior. Empty `requests: []` values do not change. Plugins built against versions before plan requests must also add `requests: []` to ordinary render results and handle `PrintLine` when exhaustively matching actions.
+
 The registry contains data seams for features tracked in the [roadmap](../roadmap.md).

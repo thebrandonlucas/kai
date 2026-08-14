@@ -36,6 +36,14 @@ workflow_test_config = Str.join_with(
 		"workflow nix {",
 		"  steps: [\"run test\"]",
 		"}",
+		"deploy production {",
+		"  artifact: app",
+		"  to: \"ssh://user@host\"",
+		"}",
+		"deploy nix {",
+		"  artifact: app",
+		"  to: \"ssh://nix-user@deploy-host\"",
+		"}",
 	],
 	"\n",
 )
@@ -45,6 +53,8 @@ workflow_plan = PluginApi.plan_registry(registry, workflow_test_config, ["workfl
 task_plan = PluginApi.plan_registry(registry, workflow_test_config, ["run", "test"], LINUX, X64)
 
 build_plan = PluginApi.plan_registry(registry, workflow_test_config, ["build", "app"], LINUX, X64)
+
+deploy_plan = PluginApi.plan_registry(registry, workflow_test_config, ["deploy", "production"], LINUX, X64)
 
 expect match (workflow_plan, task_plan, build_plan) {
 	(Ok(planned_workflow), Ok(planned_task), Ok(planned_build)) =>
@@ -92,6 +102,51 @@ expect match PluginApi.plan_registry(registry, invalid_child_config, ["workflow"
 	_ => Bool.False
 }
 
+expect match (deploy_plan, build_plan) {
+	(Ok(planned_deploy), Ok(planned_build)) =>
+		planned_deploy.actions.first() == Ok(PrintLine("deploy: build app")) and
+			planned_deploy.actions.drop_first(1).drop_last(2) == planned_build.actions and
+				match planned_deploy.actions.drop_first(1 + planned_build.actions.len()) {
+					[WriteUtf8(write), Exec(exec)] =>
+						write.path == ".kai/deployments/production.sh" and
+							exec == { args: [".kai/deployments/production.sh"], command: "sh" }
+					_ => Bool.False
+				}
+	_ => Bool.False
+}
+
+missing_deploy_build_config = "deploy production { artifact: missing to: \"ssh://user@host\" }"
+
+expect match PluginApi.plan_registry(registry, missing_deploy_build_config, ["deploy", "production"], LINUX, X64) {
+	Err(PlanningFailed(diagnostic)) => diagnostic.command == "build" and diagnostic.message == "missing build 'missing'"
+	_ => Bool.False
+}
+
+invalid_destination_config = "deploy production { artifact: app to: \"ssh://user@host:22\" }"
+
+expect match PluginApi.plan_registry(registry, invalid_destination_config, ["deploy", "production"], LINUX, X64) {
+	Err(PlanningFailed(diagnostic)) =>
+		diagnostic.command == "deploy" and
+			diagnostic.message == "deployment destination must be exactly ssh://user@host with a safe user and hostname"
+	_ => Bool.False
+}
+
+expect match PluginApi.plan_registry(registry, workflow_test_config, ["deploy", "production"], MACOS, AARCH64) {
+	Err(PlanningFailed(diagnostic)) => diagnostic.command == "deploy" and diagnostic.message == "unsupported deployment platform"
+	_ => Bool.False
+}
+
+expect match PluginApi.plan_registry(registry, workflow_test_config, ["deploy", "nix"], LINUX, X64) {
+	Ok(plan) =>
+		match plan.actions.drop_last(1).last() {
+			Ok(WriteUtf8(write)) =>
+				write.path == ".kai/deployments/nix.sh" and
+					write.content.contains("target='nix-user@deploy-host'")
+			_ => Bool.False
+		}
+	_ => Bool.False
+}
+
 cycle_backend = PluginApi.Backend.{
 	determinate_system: PluginApi.DeterminateSystem.{
 		default_package_source: "local",
@@ -119,7 +174,7 @@ cycle_implementation = PluginApi.Implementation.{
 		PluginApi.RenderResult.{
 			actions: [],
 			outputs: [],
-			requests: [{ args: ["loop"], status: "loop" }],
+			requests: [{ args: ["loop"], requirement: AnyPlan, status: "loop" }],
 			requested_packages: [],
 		},
 	),
@@ -164,11 +219,33 @@ custom_run_implementation = PluginApi.Implementation.{
 	),
 }
 
+parent_command = PluginApi.Command.{
+	argument_policy: NoArguments,
+	body: Body.object([]),
+	config_block: OptionalConfigBlock("parent"),
+	default_backend: cycle_backend.name,
+	name: "parent",
+}
+
+parent_implementation = PluginApi.Implementation.{
+	actions: [],
+	backend: cycle_backend.name,
+	command: parent_command.name,
+	renderer: |_| Ok(
+		PluginApi.RenderResult.{
+			actions: [PrintLine("parent action")],
+			outputs: [],
+			requests: [{ args: ["run"], requirement: AnyPlan, status: "request child" }],
+			requested_packages: [],
+		},
+	),
+}
+
 custom_run_registry = {
 	definition: PluginApi.Definition.{
 		backends: [cycle_backend],
-		commands: [custom_run_command],
-		implementations: [custom_run_implementation],
+		commands: [custom_run_command, parent_command],
+		implementations: [custom_run_implementation, parent_implementation],
 		name: "custom-run",
 	},
 	select_config: PluginApi.select_config,
@@ -182,5 +259,64 @@ expect match PluginApi.plan_registry(
 	X64,
 ) {
 	Ok(plan) => plan.actions == [PrintLine("workflow: run test"), PrintLine("custom run")]
+	_ => Bool.False
+}
+
+expect match PluginApi.plan_registry([custom_run_registry], "", ["parent"], LINUX, X64) {
+	Ok(plan) => plan.actions == [PrintLine("request child"), PrintLine("custom run"), PrintLine("parent action")]
+	_ => Bool.False
+}
+
+custom_build_backend = PluginApi.Backend.{
+	determinate_system: cycle_backend.determinate_system,
+	fallback: cycle_backend.fallback,
+	name: "nix",
+	required_packages: cycle_backend.required_packages,
+}
+
+custom_build_command = PluginApi.Command.{
+	argument_policy: AllowArguments,
+	body: Body.object([]),
+	config_block: OptionalConfigBlock("custom-build"),
+	default_backend: custom_build_backend.name,
+	name: "build",
+}
+
+custom_build_implementation = PluginApi.Implementation.{
+	actions: [],
+	backend: custom_build_backend.name,
+	command: custom_build_command.name,
+	renderer: |_| Ok(
+		PluginApi.RenderResult.{
+			actions: [PrintLine("custom build")],
+			outputs: [],
+			requests: [],
+			requested_packages: [],
+		},
+	),
+}
+
+custom_build_registry = {
+	definition: PluginApi.Definition.{
+		backends: [custom_build_backend],
+		commands: [custom_build_command],
+		implementations: [custom_build_implementation],
+		name: "custom-build-owner",
+	},
+	select_config: PluginApi.select_config,
+}
+
+expect match PluginApi.plan_registry(
+	[custom_build_registry, StdPlugin.plugin],
+	workflow_test_config,
+	["deploy", "production"],
+	LINUX,
+	X64,
+) {
+	Err(PlanningFailed(diagnostic)) =>
+		diagnostic.command == "build" and
+			diagnostic.plugin == "custom-build-owner" and
+				diagnostic.backend == "nix" and
+					diagnostic.message == "plan request requires 'std/nix', but child planned from 'custom-build-owner/nix'"
 	_ => Bool.False
 }
