@@ -58,6 +58,8 @@ build_plan = PluginApi.plan_registry(registry, workflow_test_config, ["build", "
 
 deploy_plan = PluginApi.plan_registry(registry, workflow_test_config, ["deploy", "production"], LINUX, X64)
 
+rollback_plan = PluginApi.plan_registry(registry, workflow_test_config, ["rollback", "production"], LINUX, X64)
+
 expect match (workflow_plan, task_plan, build_plan) {
 	(Ok(planned_workflow), Ok(planned_task), Ok(planned_build)) =>
 		planned_workflow.actions == [PrintLine("workflow: run test")]
@@ -115,7 +117,26 @@ expect match (deploy_plan, build_plan) {
 				match planned_deploy.actions.drop_first(1 + planned_build.actions.len()) {
 					[WriteUtf8(write), Exec(exec)] =>
 						write.path == ".kai/deployments/production.sh" and
-							exec == { args: [".kai/deployments/production.sh"], command: "sh" }
+							write.content.contains("predecessor_owned=1") and
+								exec == { args: [".kai/deployments/production.sh"], command: "sh" }
+					_ => Bool.False
+				}
+	_ => Bool.False
+}
+
+expect match rollback_plan {
+	Ok(planned_rollback) =>
+		planned_rollback.command == "rollback" and
+			planned_rollback.requested_packages == [] and
+				match planned_rollback.actions {
+					[WriteUtf8(write), Exec(exec)] =>
+						write.path == ".kai/rollbacks/production.sh" and
+							write.content.contains("target='user@host'") and
+								write.content.contains("predecessor=$predecessors/$current_generation") and
+									write.content.contains("rollback_verified=1") and
+										write.content.contains("release_lock=0") and
+											!write.content.contains("nix copy") and
+												exec == { args: [".kai/rollbacks/production.sh"], command: "sh" }
 					_ => Bool.False
 				}
 	_ => Bool.False
@@ -128,6 +149,11 @@ expect match PluginApi.plan_registry(registry, missing_deploy_build_config, ["de
 	_ => Bool.False
 }
 
+expect match PluginApi.plan_registry(registry, missing_deploy_build_config, ["rollback", "production"], LINUX, X64) {
+	Ok(plan) => plan.actions.len() == 2 and plan.command == "rollback"
+	_ => Bool.False
+}
+
 invalid_destination_config = "deploy production { artifact: app to: \"ssh://user@host:22\" }"
 
 expect match PluginApi.plan_registry(registry, invalid_destination_config, ["deploy", "production"], LINUX, X64) {
@@ -137,8 +163,20 @@ expect match PluginApi.plan_registry(registry, invalid_destination_config, ["dep
 	_ => Bool.False
 }
 
+expect match PluginApi.plan_registry(registry, invalid_destination_config, ["rollback", "production"], LINUX, X64) {
+	Err(PlanningFailed(diagnostic)) =>
+		diagnostic.command == "rollback" and
+			diagnostic.message == "deployment destination must be exactly ssh://user@host with a safe user and hostname"
+	_ => Bool.False
+}
+
 expect match PluginApi.plan_registry(registry, workflow_test_config, ["deploy", "production"], MACOS, AARCH64) {
 	Err(PlanningFailed(diagnostic)) => diagnostic.command == "deploy" and diagnostic.message == "unsupported deployment platform"
+	_ => Bool.False
+}
+
+expect match PluginApi.plan_registry(registry, workflow_test_config, ["rollback", "production"], MACOS, AARCH64) {
+	Err(PlanningFailed(diagnostic)) => diagnostic.command == "rollback" and diagnostic.message == "unsupported rollback platform"
 	_ => Bool.False
 }
 
@@ -147,6 +185,17 @@ expect match PluginApi.plan_registry(registry, workflow_test_config, ["deploy", 
 		match plan.actions.drop_last(1).last() {
 			Ok(WriteUtf8(write)) =>
 				write.path == ".kai/deployments/nix.sh" and
+					write.content.contains("target='nix-user@deploy-host'")
+			_ => Bool.False
+		}
+	_ => Bool.False
+}
+
+expect match PluginApi.plan_registry(registry, workflow_test_config, ["rollback", "nix"], LINUX, X64) {
+	Ok(plan) =>
+		match plan.actions.first() {
+			Ok(WriteUtf8(write)) =>
+				write.path == ".kai/rollbacks/nix.sh" and
 					write.content.contains("target='nix-user@deploy-host'")
 			_ => Bool.False
 		}

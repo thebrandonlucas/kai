@@ -83,6 +83,15 @@ Deploy := [].{
 		default_backend: "nix",
 		name: "deploy",
 	}
+
+	rollback_command : PluginApi.Command
+	rollback_command = PluginApi.Command.{
+		argument_policy: AllowArguments,
+		body,
+		config_block: RequiredConfigBlock("deploy"),
+		default_backend: "nix",
+		name: "rollback",
+	}
 }
 
 # -- TESTS --

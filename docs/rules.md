@@ -8,6 +8,7 @@
 - Sometimes I will write comments in a file and ask you to address them. You should just respond to the questions and not overwrite the comments/modify the file when I do this.
 - When asked to implement a brainstormed feature, favor terseness over verbosity. Assume I will have to read and understand the code and therefore the smallest change to implement desired behavior while following rules is preferred.
 - You are strictly forbidden from workarounds, or modifying tests with the purpose of getting them to merely work with the current output of a function. Tests may only be written to test new features or fix boundary assumptions in the data if function assumptions change significantly, or as explicitly instructed by the developer.
+- Do not write e2e tests. Do not write tests in any language other than `.roc`. Tests should be data driven at the boundary of the interface. They do not test internal function code which often needs refactoring, but primarily user-facing APIs.
 - Commits should strive to be reviewable by a human. +50/-50 average, upper bound +500/-500 if possible.
 
 

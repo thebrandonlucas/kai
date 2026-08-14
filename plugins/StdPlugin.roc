@@ -48,10 +48,10 @@ StdPlugin := [].{
 				(ExplicitBackend(backend), []) => StdPlugin.select_build(config_text, DefaultBackend(backend), [backend.name], os)
 				_ => StdPlugin.select_build(config_text, backend_choice, args, os)
 			}
-		} else if command.name == DeployCommand.command.name {
+		} else if command.name == DeployCommand.command.name or command.name == DeployCommand.rollback_command.name {
 			match (backend_choice, args) {
-				(ExplicitBackend(backend), []) => StdPlugin.select_deploy(config_text, DefaultBackend(backend), [backend.name], os)
-				_ => StdPlugin.select_deploy(config_text, backend_choice, args, os)
+				(ExplicitBackend(backend), []) => StdPlugin.select_deploy(config_text, DefaultBackend(backend), [backend.name], os, command.name)
+				_ => StdPlugin.select_deploy(config_text, backend_choice, args, os, command.name)
 			}
 		} else if command.name == WorkflowCommand.command.name {
 			match (backend_choice, args) {
@@ -162,8 +162,8 @@ StdPlugin := [].{
 			_ => Err({ location: None, message: "build requires exactly one artifact name" })
 		}
 
-	select_deploy : Str, PluginApi.BackendChoice, List(Str), PluginApi.HostOs -> Try(PluginApi.ConfigSelection, PluginApi.SelectorDiagnostic)
-	select_deploy = |config_text, backend_choice, args, os|
+	select_deploy : Str, PluginApi.BackendChoice, List(Str), PluginApi.HostOs, Str -> Try(PluginApi.ConfigSelection, PluginApi.SelectorDiagnostic)
+	select_deploy = |config_text, backend_choice, args, os, command_name|
 		match args {
 			[deployment_name] => {
 				PluginApi.selector_validation(PluginApi.validate_text(deployment_name, DeployCommand.name_rules))?
@@ -173,7 +173,7 @@ StdPlugin := [].{
 					_ => Err({ location: None, message: "invalid deploy selection" })
 				}
 			}
-			_ => Err({ location: None, message: "deploy requires exactly one deployment name" })
+			_ => Err({ location: None, message: "${command_name} requires exactly one deployment name" })
 		}
 
 	select_workflow : Str, PluginApi.BackendChoice, List(Str), PluginApi.HostOs -> Try(PluginApi.ConfigSelection, PluginApi.SelectorDiagnostic)
@@ -204,13 +204,13 @@ StdPlugin := [].{
 	}
 
 	commands : List(PluginApi.Command)
-	commands = [BuildCommand.command, DeployCommand.command, ShellCommand.command, TaskCommand.command, UpdateCommand.command, WorkflowCommand.command, WorkflowCommand.ci_command]
+	commands = [BuildCommand.command, DeployCommand.command, DeployCommand.rollback_command, ShellCommand.command, TaskCommand.command, UpdateCommand.command, WorkflowCommand.command, WorkflowCommand.ci_command]
 
 	backends : List(PluginApi.Backend)
 	backends = [NixBackend.backend]
 
 	implementations : List(PluginApi.Implementation)
-	implementations = [BuildNix.implementation, DeployNix.implementation, ShellNix.implementation, TaskNix.implementation, UpdateNix.implementation, WorkflowNix.implementation, WorkflowNix.ci_implementation]
+	implementations = [BuildNix.implementation, DeployNix.implementation, DeployNix.rollback_implementation, ShellNix.implementation, TaskNix.implementation, UpdateNix.implementation, WorkflowNix.implementation, WorkflowNix.ci_implementation]
 
 	definition : PluginApi.Definition
 	definition = PluginApi.Definition.{

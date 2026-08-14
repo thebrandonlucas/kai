@@ -163,6 +163,15 @@ Nix := [].{
 			Exec({ args: [path], command: "sh" }),
 		]
 	}
+
+	rollback_actions : Str, Str -> List(PluginApi.Action)
+	rollback_actions = |name, script| {
+		path = ".kai/rollbacks/${name}.sh"
+		[
+			WriteUtf8({ content: script, path }),
+			Exec({ args: [path], command: "sh" }),
+		]
+	}
 }
 
 # -- TESTS --
@@ -257,4 +266,9 @@ expect Nix.task_actions(["zig", "build"]) == [
 expect Nix.deploy_actions("production", "script") == [
 	WriteUtf8({ content: "script", path: ".kai/deployments/production.sh" }),
 	Exec({ args: [".kai/deployments/production.sh"], command: "sh" }),
+]
+
+expect Nix.rollback_actions("production", "script") == [
+	WriteUtf8({ content: "script", path: ".kai/rollbacks/production.sh" }),
+	Exec({ args: [".kai/rollbacks/production.sh"], command: "sh" }),
 ]
