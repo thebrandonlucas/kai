@@ -51,59 +51,55 @@ StdPlugin := [].{
 	select_environment : Str, PluginApi.BackendChoice, List(Str), PluginApi.HostOs -> Try(PluginApi.ConfigSelection, PluginApi.SelectorDiagnostic)
 	select_environment = |config_text, backend_choice, args, os|
 		match args {
-			[environment] =>
-				if environment.is_empty() {
-					Err({ location: None, message: "environment name must not be empty" })
-				} else {
-					match PluginApi.select_config_header(config_text, ["environment", environment], backend_choice, os)? {
-						Missing => Err({ location: None, message: "missing environment '${environment}'" })
-						Selected(block) => Ok(SelectedWithBody({ block, body: ShellCommand.environment_body }))
-						_ => Err({ location: None, message: "invalid environment selection" })
-					}
+			[environment] => {
+				PluginApi.selector_validation(PluginApi.validate_text(environment, ShellCommand.environment_name_rules))?
+				match PluginApi.select_config_header(config_text, ["environment", environment], backend_choice, os)? {
+					Missing => Err({ location: None, message: "missing environment '${environment}'" })
+					Selected(block) => Ok(SelectedWithBody({ block, body: ShellCommand.environment_body }))
+					_ => Err({ location: None, message: "invalid environment selection" })
 				}
+			}
 			_ => Err({ location: None, message: "shell accepts at most one environment name" })
 		}
 
 	select_task : Str, PluginApi.BackendChoice, List(Str), PluginApi.HostOs -> Try(PluginApi.ConfigSelection, PluginApi.SelectorDiagnostic)
 	select_task = |config_text, backend_choice, args, os|
 		match args {
-			[task_name] =>
-				if task_name.is_empty() {
-					Err({ location: None, message: "task name must not be empty" })
-				} else {
-					task_block = match PluginApi.select_config_header(config_text, ["task", task_name], backend_choice, os)? {
-						Missing => Err({ location: None, message: "missing task '${task_name}'" })
-						Selected(block) => Ok(block)
-						_ => Err({ location: None, message: "invalid task selection" })
-					}?
-					task_config = Body.parse(TaskCommand.body, task_block.body) ? |diagnostic| {
-						location: At(PluginApi.translate_location(task_block, diagnostic.byte_offset)),
-						message: Body.describe(diagnostic),
-					}
-					environment = Body.get_string(task_config, "environment") ? |_|
-						{ location: None, message: "validated task '${task_name}' is missing 'environment'" }
-					run = Body.get_strings(task_config, "run") ? |_|
-						{ location: None, message: "validated task '${task_name}' is missing 'run'" }
-					failures = PluginApi.validate_text(environment, TaskCommand.environment_rules(task_name)).concat(
-						PluginApi.validate_string_list(run, TaskCommand.run_rules("task '${task_name}'")),
-					)
-					PluginApi.selector_validation(failures)?
-					{
-						environment_block = match PluginApi.select_config_header(config_text, ["environment", environment], backend_choice, os)? {
-							Missing => Err({ location: None, message: "missing environment '${environment}'" })
-							Selected(block) => Ok(block)
-							_ => Err({ location: None, message: "invalid environment selection" })
-						}?
-						Ok(
-							SelectedWithRelated({
-								block: task_block,
-								body: TaskCommand.body,
-								related_block: environment_block,
-								related_body: ShellCommand.environment_body,
-							}),
-						)
-					}
+			[task_name] => {
+				PluginApi.selector_validation(PluginApi.validate_text(task_name, TaskCommand.name_rules))?
+				task_block = match PluginApi.select_config_header(config_text, ["task", task_name], backend_choice, os)? {
+					Missing => Err({ location: None, message: "missing task '${task_name}'" })
+					Selected(block) => Ok(block)
+					_ => Err({ location: None, message: "invalid task selection" })
+				}?
+				task_config = Body.parse(TaskCommand.body, task_block.body) ? |diagnostic| {
+					location: At(PluginApi.translate_location(task_block, diagnostic.byte_offset)),
+					message: Body.describe(diagnostic),
 				}
+				environment = Body.get_string(task_config, "environment") ? |_|
+					{ location: None, message: "validated task '${task_name}' is missing 'environment'" }
+				run = Body.get_strings(task_config, "run") ? |_|
+					{ location: None, message: "validated task '${task_name}' is missing 'run'" }
+				failures = PluginApi.validate_text(environment, TaskCommand.environment_rules(task_name)).concat(
+					PluginApi.validate_string_list(run, TaskCommand.run_rules("task '${task_name}'")),
+				)
+				PluginApi.selector_validation(failures)?
+				{
+					environment_block = match PluginApi.select_config_header(config_text, ["environment", environment], backend_choice, os)? {
+						Missing => Err({ location: None, message: "missing environment '${environment}'" })
+						Selected(block) => Ok(block)
+						_ => Err({ location: None, message: "invalid environment selection" })
+					}?
+					Ok(
+						SelectedWithRelated({
+							block: task_block,
+							body: TaskCommand.body,
+							related_block: environment_block,
+							related_body: ShellCommand.environment_body,
+						}),
+					)
+				}
+			}
 			_ => Err({ location: None, message: "run requires exactly one task name" })
 		}
 
