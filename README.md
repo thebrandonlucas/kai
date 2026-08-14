@@ -71,6 +71,23 @@ workflow ci {
 
 Run one with `kai workflow ci`; `kai ci` is an alias for the workflow named `ci`. Steps are limited to `run <name>` and `build <name>`, execute sequentially, and stop on the first failure.
 
+### Nix deployments over SSH
+
+The first deployment path copies a named build artifact's Nix closure to a Nix-enabled Linux host:
+
+```kai
+deploy production {
+  artifact: app
+  to: "ssh://user@host"
+}
+```
+
+Run it with `kai deploy production`. Kai always plans and builds `app` first, checks that the local and remote Nix `currentSystem` match, copies the closure with `nix copy`, and atomically updates the remote `current` symlink. OpenSSH's normal host-key and authentication behavior is preserved.
+
+Both machines must run Linux with the same Nix system. The SSH user must have Nix, POSIX `sh`, and GNU coreutils available in its non-interactive `PATH`, and the remote Nix configuration must accept the copied closure through its normal trusted-user or signature policy. Remote user-owned state is retained under `$HOME/.local/state/kai/deployments/production`: `generations/` contains persistent Nix GC roots, `current` selects the active generation, and `lock` prevents concurrent activation. Deployment only activates this symlink; it does not start or restart a process. Rollback and generation pruning are deferred to later commands.
+
+Kai never guesses that a deployment lock is stale or breaks one automatically. If deployment was interrupted and Kai reports the lock path, first confirm that no activation for that deployment is still running as the remote SSH user. Only then remove the empty lock directory on the remote host with `rmdir -- "$HOME/.local/state/kai/deployments/production/lock"` and retry. Replace `production` with the deployment name; never remove the lock while an activation may still be using it.
+
 ## Platform support
 
 I've only tested this on `x86_64-linux` so far, feel free to open an issue if it doesn't build on your system. In theory, it should work on arm64, x64, across Linux and MacOS.

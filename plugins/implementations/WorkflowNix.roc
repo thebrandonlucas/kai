@@ -60,6 +60,7 @@ WorkflowNix := [].{
 		match WorkflowNix.words(step) {
 			[operation, name] if operation == "run" or operation == "build" => Ok({
 				args: [operation, name],
+				requirement: AnyPlan,
 				status: "workflow: ${operation} ${name}",
 			})
 			_ => Err(InvalidWorkflowStep)
@@ -108,15 +109,15 @@ WorkflowNix := [].{
 
 step_cases = [
 	{
-		expected: Ok({ args: ["run", "test"], status: "workflow: run test" }),
+		expected: Ok({ args: ["run", "test"], requirement: AnyPlan, status: "workflow: run test" }),
 		step: "run test",
 	},
 	{
-		expected: Ok({ args: ["build", "app"], status: "workflow: build app" }),
+		expected: Ok({ args: ["build", "app"], requirement: AnyPlan, status: "workflow: build app" }),
 		step: " \tbuild\n  app\r ",
 	},
 	{
-		expected: Ok({ args: ["run", "test:unit"], status: "workflow: run test:unit" }),
+		expected: Ok({ args: ["run", "test:unit"], requirement: AnyPlan, status: "workflow: run test:unit" }),
 		step: "run test:unit",
 	},
 	{ expected: Err(InvalidWorkflowStep), step: "" },
@@ -125,7 +126,7 @@ step_cases = [
 	{ expected: Err(InvalidWorkflowStep), step: "shell dev" },
 	{ expected: Err(InvalidWorkflowStep), step: "workflow ci" },
 	{ expected: Err(InvalidWorkflowStep), step: "deploy production" },
-	{ expected: Ok({ args: ["run", "test;"], status: "workflow: run test;" }), step: "run test;" },
+	{ expected: Ok({ args: ["run", "test;"], requirement: AnyPlan, status: "workflow: run test;" }), step: "run test;" },
 	{ expected: Err(InvalidWorkflowStep), step: "run test && echo bad" },
 	{ expected: Err(InvalidWorkflowStep), step: "build app | cat" },
 ]

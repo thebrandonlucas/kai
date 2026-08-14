@@ -2,11 +2,13 @@ import parser.Body
 import kai.Plugin as PluginApi
 import backends.Nix as NixBackend
 import commands.Build as BuildCommand
+import commands.Deploy as DeployCommand
 import commands.Shell as ShellCommand
 import commands.Task as TaskCommand
 import commands.Update as UpdateCommand
 import commands.Workflow as WorkflowCommand
 import implementations.BuildNix
+import implementations.DeployNix
 import implementations.ShellNix
 import implementations.TaskNix
 import implementations.UpdateNix
@@ -45,6 +47,11 @@ StdPlugin := [].{
 			match (backend_choice, args) {
 				(ExplicitBackend(backend), []) => StdPlugin.select_build(config_text, DefaultBackend(backend), [backend.name], os)
 				_ => StdPlugin.select_build(config_text, backend_choice, args, os)
+			}
+		} else if command.name == DeployCommand.command.name {
+			match (backend_choice, args) {
+				(ExplicitBackend(backend), []) => StdPlugin.select_deploy(config_text, DefaultBackend(backend), [backend.name], os)
+				_ => StdPlugin.select_deploy(config_text, backend_choice, args, os)
 			}
 		} else if command.name == WorkflowCommand.command.name {
 			match (backend_choice, args) {
@@ -155,6 +162,20 @@ StdPlugin := [].{
 			_ => Err({ location: None, message: "build requires exactly one artifact name" })
 		}
 
+	select_deploy : Str, PluginApi.BackendChoice, List(Str), PluginApi.HostOs -> Try(PluginApi.ConfigSelection, PluginApi.SelectorDiagnostic)
+	select_deploy = |config_text, backend_choice, args, os|
+		match args {
+			[deployment_name] => {
+				PluginApi.selector_validation(PluginApi.validate_text(deployment_name, DeployCommand.name_rules))?
+				match StdPlugin.select_with_backend_fallback(config_text, ["deploy", deployment_name], backend_choice, os)? {
+					Missing => Err({ location: None, message: "missing deploy '${deployment_name}'" })
+					Selected(block) => Ok(SelectedWithBody({ block, body: DeployCommand.body }))
+					_ => Err({ location: None, message: "invalid deploy selection" })
+				}
+			}
+			_ => Err({ location: None, message: "deploy requires exactly one deployment name" })
+		}
+
 	select_workflow : Str, PluginApi.BackendChoice, List(Str), PluginApi.HostOs -> Try(PluginApi.ConfigSelection, PluginApi.SelectorDiagnostic)
 	select_workflow = |config_text, backend_choice, args, os|
 		match args {
@@ -183,13 +204,13 @@ StdPlugin := [].{
 	}
 
 	commands : List(PluginApi.Command)
-	commands = [BuildCommand.command, ShellCommand.command, TaskCommand.command, UpdateCommand.command, WorkflowCommand.command, WorkflowCommand.ci_command]
+	commands = [BuildCommand.command, DeployCommand.command, ShellCommand.command, TaskCommand.command, UpdateCommand.command, WorkflowCommand.command, WorkflowCommand.ci_command]
 
 	backends : List(PluginApi.Backend)
 	backends = [NixBackend.backend]
 
 	implementations : List(PluginApi.Implementation)
-	implementations = [BuildNix.implementation, ShellNix.implementation, TaskNix.implementation, UpdateNix.implementation, WorkflowNix.implementation, WorkflowNix.ci_implementation]
+	implementations = [BuildNix.implementation, DeployNix.implementation, ShellNix.implementation, TaskNix.implementation, UpdateNix.implementation, WorkflowNix.implementation, WorkflowNix.ci_implementation]
 
 	definition : PluginApi.Definition
 	definition = PluginApi.Definition.{

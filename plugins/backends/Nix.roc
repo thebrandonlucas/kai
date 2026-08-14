@@ -154,6 +154,15 @@ Nix := [].{
 				command: backend.name,
 			}),
 		]
+
+	deploy_actions : Str, Str -> List(PluginApi.Action)
+	deploy_actions = |name, script| {
+		path = ".kai/deployments/${name}.sh"
+		[
+			WriteUtf8({ content: script, path }),
+			Exec({ args: [path], command: "sh" }),
+		]
+	}
 }
 
 # -- TESTS --
@@ -243,4 +252,9 @@ expect Nix.task_actions(["zig", "build"]) == [
 		args: ["develop", "path:.kai#default", "--no-update-lock-file", "--command", "zig", "build"],
 		command: "nix",
 	}),
+]
+
+expect Nix.deploy_actions("production", "script") == [
+	WriteUtf8({ content: "script", path: ".kai/deployments/production.sh" }),
+	Exec({ args: [".kai/deployments/production.sh"], command: "sh" }),
 ]

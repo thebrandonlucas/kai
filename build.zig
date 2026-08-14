@@ -282,7 +282,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step(
         "test",
-        "Run checks and Roc tests.",
+        "Run checks, Roc tests, and Linux shell E2E tests.",
     );
     test_step.dependOn(check_step);
 
