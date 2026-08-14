@@ -48,6 +48,14 @@ Bytes := [].{
 	hash : U8
 	hash = 35
 
+	# `-` is allowed in identifier references and artifact names.
+	hyphen : U8
+	hyphen = 45
+
+	# `.` is allowed in identifier references and artifact names.
+	period : U8
+	period = 46
+
 	# `~` ends the printable ASCII range.
 	tilde : U8
 	tilde = 126

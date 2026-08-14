@@ -26,6 +26,104 @@ Plugin := [].{
 		WriteConfigUtf8({ output : Str, path : Str }),
 	]
 
+	AsciiByte : [AsciiDigit, AsciiLowercase, AsciiUppercase, ExactByte(U8)]
+
+	TextRule : [
+		AllBytes({ allowed : List(AsciiByte), message : Str }),
+		DisallowedPrefix({ message : Str, prefix : Str }),
+		ForbiddenPathSegments({ message : Str, segments : List(Str) }),
+		NonemptyText(Str),
+	]
+
+	StringListRule : [
+		NonemptyFirstString(Str),
+		NonemptyStringList(Str),
+	]
+
+	# Validation definitions are data. Engines retain every failure in rule
+	# order so one diagnostic can report independent problems together.
+	validate_text : Str, List(TextRule) -> List(Str)
+	validate_text = |value, rules|
+		match rules {
+			[] => []
+			[first, .. as rest] => {
+				passes = match first {
+					NonemptyText(_) => !value.is_empty()
+					DisallowedPrefix({ message: _, prefix }) => !value.starts_with(prefix)
+					AllBytes({ allowed, message: _ }) => List.all(value.to_utf8(), |byte| Plugin.byte_matches_any(byte, allowed))
+					ForbiddenPathSegments({ message: _, segments }) => !List.any(value.split_on("/"), |part| List.any(segments, |segment| part == segment))
+				}
+				message = match first {
+					NonemptyText(rule_message) => rule_message
+					DisallowedPrefix({ message: rule_message, prefix: _ }) => rule_message
+					AllBytes({ allowed: _, message: rule_message }) => rule_message
+					ForbiddenPathSegments({ message: rule_message, segments: _ }) => rule_message
+				}
+				failures = if passes {
+					[]
+				} else {
+					[message]
+				}
+				failures.concat(Plugin.validate_text(value, rest))
+			}
+		}
+
+	validate_string_list : List(Str), List(StringListRule) -> List(Str)
+	validate_string_list = |values, rules|
+		match rules {
+			[] => []
+			[first, .. as rest] => {
+				passes = match first {
+					NonemptyStringList(_) => !values.is_empty()
+					# A missing first value is covered by NonemptyStringList rather than
+					# producing a dependent second failure.
+					NonemptyFirstString(_) => values.is_empty() or !(values.first() ?? "").is_empty()
+				}
+				message = match first {
+					NonemptyStringList(rule_message) => rule_message
+					NonemptyFirstString(rule_message) => rule_message
+				}
+				failures = if passes {
+					[]
+				} else {
+					[message]
+				}
+				failures.concat(Plugin.validate_string_list(values, rest))
+			}
+		}
+
+	byte_matches_any : U8, List(AsciiByte) -> Bool
+	byte_matches_any = |byte, allowed|
+		List.any(
+			allowed,
+			|matcher|
+				match matcher {
+					AsciiUppercase => byte >= 65 and byte <= 90
+					AsciiLowercase => byte >= 97 and byte <= 122
+					AsciiDigit => byte >= 48 and byte <= 57
+					ExactByte(expected) => byte == expected
+				},
+		)
+
+	validation_message : List(Str) -> Str
+	validation_message = |failures| Str.join_with(failures, "\n")
+
+	selector_validation : List(Str) -> Try({}, SelectorDiagnostic)
+	selector_validation = |failures|
+		if failures.is_empty() {
+			Ok({})
+		} else {
+			Err({ location: None, message: Plugin.validation_message(failures) })
+		}
+
+	renderer_validation : List(Str) -> Try({}, RendererDiagnostic)
+	renderer_validation = |failures|
+		if failures.is_empty() {
+			Ok({})
+		} else {
+			Err({ byte_offset: None, message: Plugin.validation_message(failures) })
+		}
+
 	ArgumentPolicy : [AllowArguments, NoArguments]
 
 	ConfigBlockRequirement : [OptionalConfigBlock(Str), RequiredConfigBlock(Str)]
@@ -595,3 +693,42 @@ Plugin := [].{
 				}
 			}
 }
+
+# -- TESTS --
+
+validation_cases = [
+	{
+		expected: [],
+		rules: [NonemptyText("empty"), DisallowedPrefix({ message: "absolute", prefix: "/" })],
+		value: "out",
+	},
+	{
+		expected: ["empty"],
+		rules: [NonemptyText("empty"), DisallowedPrefix({ message: "absolute", prefix: "/" })],
+		value: "",
+	},
+	{
+		expected: ["absolute", "parent"],
+		rules: [
+			NonemptyText("empty"),
+			DisallowedPrefix({ message: "absolute", prefix: "/" }),
+			ForbiddenPathSegments({ message: "parent", segments: [".."] }),
+		],
+		value: "/../out",
+	},
+]
+
+expect List.all(
+	validation_cases,
+	|case| Plugin.validate_text(case.value, case.rules) == case.expected,
+)
+
+expect Plugin.selector_validation(["first", "second"]) == Err({
+	location: None,
+	message: "first\nsecond",
+})
+
+expect Plugin.renderer_validation(["first", "second"]) == Err({
+	byte_offset: None,
+	message: "first\nsecond",
+})
