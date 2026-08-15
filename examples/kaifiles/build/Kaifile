@@ -1,0 +1,18 @@
+# You can build artifacts using the build command!
+#
+# This one combines `cowsay` and `fortune` to give you a
+# `wisecow` binary.
+
+environment cow {
+  packages: ["cowsay", "fortune"]
+}
+
+build wisecow {
+  environment: cow
+  run: [
+    "sh",
+    "-c",
+    "printf '#!%s\\n%s | %s\\n' \"$(command -v sh)\" \"$(command -v fortune)\" \"$(command -v cowsay)\" > wisecow && chmod +x wisecow"
+  ]
+  output: "wisecow"
+}

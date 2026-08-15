@@ -1,0 +1,39 @@
+# Workflows compose tasks and builds into one repeatable command.
+# Run this one with `kai workflow cowvolution`.
+environment cow {
+  packages: ["cowsay"]
+}
+
+task normalcow {
+  environment: "cow"
+  run: ["cowsay", "moo"]
+}
+
+task antiquitycow {
+  environment: "cow"
+  run: ["cowsay", "Non nobis solum nati sumus."]
+}
+
+task victoriancow {
+  environment: "cow"
+  run: ["cowsay", "doth mother know you weareth her drapes?"]
+}
+
+build moderncow {
+  environment: cow
+  run: [
+    "sh",
+    "-c",
+    "printf '#!%s\\nexec %s \"${*:-like, whateverrrr}\"\\n' \"$(command -v sh)\" \"$(command -v cowsay)\" > moderncow && chmod +x moderncow"
+  ]
+  output: "moderncow"
+}
+
+workflow cowvolution {
+  steps: [
+    "run normalcow",
+    "run antiquitycow",
+    "run victoriancow",
+    "build moderncow"
+  ]
+}
