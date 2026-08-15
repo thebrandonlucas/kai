@@ -19,6 +19,7 @@ const excluded_source_dirs = [_][]const u8{
     ".kai",
     ".zig-cache",
     "dist",
+    "fuzz",
     "zig-out",
 };
 
@@ -214,6 +215,22 @@ pub fn build(b: *std.Build) void {
     test_examples.addFileArg(examples_devtool);
     test_examples.addArg("examples/kaifiles");
     test_examples_step.dependOn(&test_examples.step);
+
+    const build_fuzz = b.addSystemCommand(&.{ "roc", "build", "--fuzz" });
+    build_fuzz.addFileArg(b.path("fuzz/Config.roc"));
+    build_fuzz.addFileInput(b.path("xkai-bin/parser/main.roc"));
+    build_fuzz.addFileInput(b.path("xkai-bin/parser/Config.roc"));
+    build_fuzz.addFileInput(b.path("xkai-bin/parser/Bytes.roc"));
+    const fuzz_executable = build_fuzz.addPrefixedOutputFileArg(
+        "--output=",
+        "kai-config-fuzz",
+    );
+
+    const fuzz_step = b.step("fuzz", "Build and run the Config fuzz target");
+    const run_fuzz = std.Build.Step.Run.create(b, "run Config fuzz campaign");
+    run_fuzz.addFileArg(fuzz_executable);
+    run_fuzz.addArg("run");
+    fuzz_step.dependOn(&run_fuzz.step);
 
     const build_release_step = b.step(
         "build-release",
