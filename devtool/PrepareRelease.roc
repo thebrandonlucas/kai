@@ -140,7 +140,7 @@ PrepareRelease := [].{
 		Stdout.line!("Building and checking ${name} (${version})...")?
 		Cmd.new_str("zig").args_str(["build", "build-release"]).exec_cmd!()?
 		PrepareRelease.verify_release_changes!()?
-		PrepareRelease.git!(["commit", "--no-gpg-sign", "-m", "chore: release ${version}"])?
+		PrepareRelease.git!(["commit", "--no-gpg-sign", "-m", "Release ${name}"])?
 		committed = PrepareRelease.git_lines!(["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"])?
 		if !Release.are_allowed_release_files(committed) {
 			Err(UnexpectedReleaseCommitFiles(committed))
