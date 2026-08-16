@@ -190,6 +190,31 @@ pub fn build(b: *std.Build) void {
     const publish_devtool = build_publish_devtool.addPrefixedOutputFileArg("--output=", "kai-publish-devtool");
     const forwarded_args = b.args orelse &.{};
 
+    const build_examples_devtool = b.addSystemCommand(&.{ "roc", "build" });
+    build_examples_devtool.addFileArg(b.path("devtool/test-examples.roc"));
+    build_examples_devtool.addFileInput(b.path("devtool/Examples.roc"));
+    for (sources.roc_files) |source| {
+        if (std.mem.startsWith(u8, source, "plugins/") or
+            std.mem.startsWith(u8, source, "xkai-bin/"))
+        {
+            build_examples_devtool.addFileInput(b.path(source));
+        }
+    }
+    build_examples_devtool.addArg("--opt=dev");
+    const examples_devtool = build_examples_devtool.addPrefixedOutputFileArg(
+        "--output=",
+        "kai-test-examples",
+    );
+
+    const test_examples_step = b.step(
+        "test-examples",
+        "Recursively test every Kaifile example",
+    );
+    const test_examples = std.Build.Step.Run.create(b, "run Kaifile examples test");
+    test_examples.addFileArg(examples_devtool);
+    test_examples.addArg("examples/kaifiles");
+    test_examples_step.dependOn(&test_examples.step);
+
     const build_release_step = b.step(
         "build-release",
         "Build and validate release artifacts",

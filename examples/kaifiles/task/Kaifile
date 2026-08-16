@@ -1,0 +1,9 @@
+# Run `kai run moo` to make the cow say a pithy quote!
+environment cow {
+  packages: ["cowsay", "fortune"]
+}
+
+task moo {
+  environment: "cow"
+  run: ["sh", "-c", "fortune | cowsay"]
+}

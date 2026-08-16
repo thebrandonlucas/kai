@@ -1,0 +1,20 @@
+# Environment blocks name reusable package collections.
+environment cow {
+  packages: ["cowsay"]
+}
+
+environment pokemon {
+  packages: ["pokemonsay"]
+}
+
+# Run `kai shell cow` or `kai shell pokemon` to enter one directly.
+# Tasks and builds can also reuse them by name.
+task moo {
+  environment: "cow"
+  run: ["cowsay", "moo"]
+}
+
+task pika {
+  environment: "pokemon"
+  run: ["pokemonsay", "-p", "pikachu", "pika!"]
+}

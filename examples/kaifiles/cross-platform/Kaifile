@@ -1,0 +1,14 @@
+# Any command can be configured differently on each host!
+#
+# If you run `kai shell` on this, Kai selects the matching host block.
+on linux {
+  shell {
+    packages: ["cowsay", "fortune"]
+  }
+}
+
+on macos {
+  shell {
+    packages: ["pokemonsay", "fortune"]
+  }
+}

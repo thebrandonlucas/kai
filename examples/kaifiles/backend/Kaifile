@@ -1,0 +1,9 @@
+# Nix is the default backend, but it can also be selected explicitly.
+#
+# Run this environment with `kai shell nix`.
+#
+# This is important because in future we could/will have other sources
+# for the determinate backend e.g. `guix`, or even a custom kai implementation!
+shell nix {
+  packages: ["cowsay", "fortune"]
+}
