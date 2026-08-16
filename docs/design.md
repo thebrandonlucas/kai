@@ -82,3 +82,4 @@ fn binary_search_singleton() {
 - Test the features of the code (think high-level about the data as opposed to low level about the code itself, and write the tests around that).
 - Make tests mentally frictionless and fast when possible (try to test functions purely and predictably so that you don't have to deal with the mental and physical costs of side-effects).
 - i.e., [data driven testing](https://matklad.github.io/2021/05/31/how-to-test.html#Data-Driven-Testing).
+- Keep a buglog as per [Don't Write Bugs](https://www.teamten.com/lawrence/programming/dont-write-bugs.html) under docs/bugs as `.md` files. They are `.gitignore`'d
