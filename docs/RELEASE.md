@@ -38,7 +38,7 @@ The command:
 1. creates `release/vX.Y.Z` from `origin/master` without moving local `master`;
 2. updates only `xkai-bin/VERSION`, `xkai-bin/RELEASE_NAME`, and `build.zig.zon`;
 3. runs the complete release artifact build;
-4. commits `chore: release X.Y.Z` and pushes only the release branch;
+4. commits `Release <name> <version>` and pushes only the release branch;
 5. restores the clean local `master`; and
 6. prints a compare URL of the form `https://github.com/OWNER/REPOSITORY/compare/master...release%2FvX.Y.Z?expand=1`.
 
