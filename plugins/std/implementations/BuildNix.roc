@@ -2,7 +2,6 @@ import parser.Body
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Build as BuildCommand
-import ShellNix
 
 BuildNix := [].{
 	implementation : Plugin.Implementation
@@ -49,7 +48,10 @@ BuildNix := [].{
 			Plugin.RenderResult.{
 				actions: NixBackend.named_artifact_actions(name),
 				outputs: [
-					{ name: "flake", text: ShellNix.render_nix(pkgs, [], target.system) },
+					{
+						name: "flake",
+						text: NixBackend.render_dev_shell({ overlays: [], pkgs, system: target.system }),
+					},
 					{ name: "build_nix", text: BuildNix.nix_expression },
 					{
 						name: "build_json",

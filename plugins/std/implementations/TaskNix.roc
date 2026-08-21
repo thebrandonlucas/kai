@@ -2,7 +2,6 @@ import parser.Body
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Task as TaskCommand
-import ShellNix
 
 TaskNix := [].{
 	implementation : Plugin.Implementation
@@ -31,13 +30,17 @@ TaskNix := [].{
 		Plugin.renderer_validation(Plugin.validate_string_list(pkgs, NixBackend.package_rules))?
 		target = NixBackend.target(context.host_os, context.host_arch) ? |_|
 			{ byte_offset: None, message: "unsupported task platform" }
-		rendered = ShellNix.render_result(pkgs, [], target.system)
 		Ok(
 			Plugin.RenderResult.{
 				actions: NixBackend.task_actions(run),
-				outputs: rendered.outputs,
+				outputs: [
+					{
+						name: "flake",
+						text: NixBackend.render_dev_shell({ overlays: [], pkgs, system: target.system }),
+					},
+				],
 				requests: [],
-				requested_packages: rendered.requested_packages,
+				requested_packages: pkgs,
 			},
 		)
 	}

@@ -36,6 +36,75 @@ Nix := [].{
 			ranges: [{ max: Bytes.tilde, min: Bytes.exclamation_mark }],
 		})
 
+	render_dev_shell : { overlays : List(Str), pkgs : List(Str), system : Str } -> Str
+	render_dev_shell = |{ overlays, pkgs, system }|
+		if overlays.is_empty() {
+			Nix.render_dev_shell_without_overlays(pkgs, system)
+		} else {
+			Nix.render_dev_shell_with_overlays(pkgs, overlays, system)
+		}
+
+	render_attributes : Str -> Str
+	render_attributes = |path|
+		Str.join_with(path.split_on(".").map(|part| "\"${part}\""), ".")
+
+	# Render a flake containing a dev shell backed directly by nixpkgs.
+	render_dev_shell_without_overlays : List(Str), Str -> Str
+	render_dev_shell_without_overlays = |pkgs, system| {
+		package_lines = pkgs.map(
+			|pkg| "              nixpkgs.\"legacyPackages\".\"${system}\".${Nix.render_attributes(pkg)}",
+		)
+		lines = [
+			"{",
+			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
+			"  outputs = { nixpkgs, ... }: {",
+			"    devShells.\"${system}\".default = nixpkgs.legacyPackages.\"${system}\".mkShell {",
+			"      packages = [",
+		].concat(package_lines).concat([
+			"      ];",
+			"    };",
+			"  };",
+			"}",
+		])
+		Str.join_with(lines, "\n")
+	}
+
+	# Render a flake containing a dev shell with additional flake overlays.
+	render_dev_shell_with_overlays : List(Str), List(Str), Str -> Str
+	render_dev_shell_with_overlays = |pkgs, overlays, system| {
+		overlay_names = overlays.map_with_index(|_, index| "overlay${U64.to_str(index)}")
+		input_lines = overlays.map_with_index(
+			|overlay, index| "  inputs.overlay${U64.to_str(index)}.url = \"${overlay}\";",
+		)
+		overlay_lines = overlay_names.map(|name| "          ${name}.overlays.default")
+		package_lines = pkgs.map(
+			|pkg| "              pkgs.${Nix.render_attributes(pkg)}",
+		)
+		outputs_args = Str.join_with(["nixpkgs"].concat(overlay_names), ", ")
+		lines = [
+			"{",
+			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
+		].concat(input_lines).concat([
+			"  outputs = { ${outputs_args}, ... }:",
+			"    let",
+			"      pkgs = import nixpkgs {",
+			"        system = \"${system}\";",
+			"        overlays = [",
+		]).concat(overlay_lines).concat([
+			"        ];",
+			"      };",
+			"    in {",
+			"      devShells.\"${system}\".default = pkgs.mkShell {",
+			"        packages = [",
+		]).concat(package_lines).concat([
+			"        ];",
+			"      };",
+			"    };",
+			"}",
+		])
+		Str.join_with(lines, "\n")
+	}
+
 	package_rules : List(Plugin.StringListRule)
 	package_rules = [
 		AllStrings(NonemptyText("shell package names must not be empty")),
