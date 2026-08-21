@@ -1,18 +1,18 @@
 import parser.Body
-import kai.Plugin as PluginApi
+import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Workflow as WorkflowCommand
 
 WorkflowNix := [].{
-	implementation : PluginApi.Implementation
-	implementation = PluginApi.Implementation.{
+	implementation : Plugin.Implementation
+	implementation = Plugin.Implementation.{
 		actions: [],
 		backend: NixBackend.backend.name,
 		command: WorkflowCommand.command.name,
 		renderer: WorkflowNix.renderer,
 	}
 
-	renderer : PluginApi.Renderer
+	renderer : Plugin.Renderer
 	renderer = |context| {
 		steps = Body.get_strings(context.config, "steps") ? |_| {
 			byte_offset: None,
@@ -23,7 +23,7 @@ WorkflowNix := [].{
 		} else {
 			requests = WorkflowNix.parse_steps(steps)?
 			Ok(
-				PluginApi.RenderResult.{
+				Plugin.RenderResult.{
 					actions: [],
 					outputs: [],
 					requests,
@@ -33,10 +33,10 @@ WorkflowNix := [].{
 		}
 	}
 
-	parse_steps : List(Str) -> Try(List(PluginApi.PlanRequest), PluginApi.RendererDiagnostic)
+	parse_steps : List(Str) -> Try(List(Plugin.PlanRequest), Plugin.RendererDiagnostic)
 	parse_steps = |steps| WorkflowNix.parse_steps_from(steps, 1)
 
-	parse_steps_from : List(Str), U64 -> Try(List(PluginApi.PlanRequest), PluginApi.RendererDiagnostic)
+	parse_steps_from : List(Str), U64 -> Try(List(Plugin.PlanRequest), Plugin.RendererDiagnostic)
 	parse_steps_from = |steps, index|
 		match steps {
 			[] => Ok([])
@@ -47,7 +47,7 @@ WorkflowNix := [].{
 			}
 		}
 
-	parse_step : Str -> Try(PluginApi.PlanRequest, [InvalidWorkflowStep])
+	parse_step : Str -> Try(Plugin.PlanRequest, [InvalidWorkflowStep])
 	parse_step = |step|
 		match WorkflowNix.words(step) {
 			[operation, name] if operation == "run" or operation == "build" => Ok({
@@ -57,7 +57,7 @@ WorkflowNix := [].{
 			_ => Err(InvalidWorkflowStep)
 		}
 
-	invalid_step : U64, Str -> PluginApi.RendererDiagnostic
+	invalid_step : U64, Str -> Plugin.RendererDiagnostic
 	invalid_step = |index, step| {
 		byte_offset: None,
 		message: "workflow step ${U64.to_str(index)} is invalid: '${step}'; expected 'run <name>' or 'build <name>'",

@@ -1,5 +1,5 @@
 import parser.Body
-import kai.Plugin as PluginApi
+import kai.Plugin
 
 Shell := [].{
 	packages_field : Body.Field
@@ -14,11 +14,11 @@ Shell := [].{
 	environment_body : Body.Shape
 	environment_body = Body.object([packages_field])
 
-	environment_name_rules : List(PluginApi.TextRule)
+	environment_name_rules : List(Plugin.TextRule)
 	environment_name_rules = [NonemptyText("environment name must not be empty")]
 
-	command : PluginApi.Command
-	command = PluginApi.Command.{
+	command : Plugin.Command
+	command = Plugin.Command.{
 		argument_policy: AllowArguments,
 		body,
 		config_block: RequiredConfigBlock("shell"),

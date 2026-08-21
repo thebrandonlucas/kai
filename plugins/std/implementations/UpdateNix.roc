@@ -1,14 +1,14 @@
-import kai.Plugin as PluginApi
+import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Update as UpdateCommand
 UpdateNix := [].{
-	implementation : PluginApi.Implementation
-	implementation = PluginApi.Implementation.{
+	implementation : Plugin.Implementation
+	implementation = Plugin.Implementation.{
 		actions: NixBackend.update_recipe,
 		backend: NixBackend.backend.name,
 		command: UpdateCommand.command.name,
 		renderer: |_| Ok(
-			PluginApi.RenderResult.{
+			Plugin.RenderResult.{
 				actions: [],
 				outputs: [{ name: "flake", text: UpdateNix.flake }],
 				requests: [],

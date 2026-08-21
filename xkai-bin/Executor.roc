@@ -7,7 +7,7 @@ import pf.OsStr
 import pf.Path
 import pf.Stdout
 
-import kai.Plugin as PluginApi
+import kai.Plugin
 
 import "VERSION" as canonical_version : Str
 
@@ -26,14 +26,14 @@ Executor := [].{
 				_ => Bool.False
 			}
 
-	command_lines : List(PluginApi.RegistryDefinition) -> List(Str)
+	command_lines : List(Plugin.RegistryDefinition) -> List(Str)
 	command_lines = |registry|
 		match registry {
 			[] => []
 			[first, .. as rest] => first.definition.commands.map(|command| "  ${command.name}").concat(Executor.command_lines(rest))
 		}
 
-	help : List(PluginApi.RegistryDefinition) -> Str
+	help : List(Plugin.RegistryDefinition) -> Str
 	help = |registry|
 		Str.join_with(
 			[
@@ -67,7 +67,7 @@ Executor := [].{
 			_ => Ok({ args, kaifile: "Kaifile" })
 		}
 
-	run! : List(OsStr), List(PluginApi.RegistryDefinition) => Try({}, _)
+	run! : List(OsStr), List(Plugin.RegistryDefinition) => Try({}, _)
 	run! = |args, registry| {
 		display_args = args.drop_first(1).map(OsStr.display)
 		if Executor.help_requested(display_args) {
@@ -79,7 +79,7 @@ Executor := [].{
 				Ok(invocation) =>
 					match invocation.args {
 						["--xkai-validate-registry"] =>
-							match PluginApi.validate_registry(registry) {
+							match Plugin.validate_registry(registry) {
 								Ok({}) => Ok({})
 								Err(diagnostic) => Err(InvalidRegistry(diagnostic))
 							}
@@ -90,14 +90,14 @@ Executor := [].{
 						_ => {
 							config_text = Path.read_utf8!(Path.utf8(invocation.kaifile))?
 							host = Env.platform!()
-							host_os : PluginApi.HostOs
+							host_os : Plugin.HostOs
 							host_os = match host.os {
 								LINUX => LINUX
 								MACOS => MACOS
 								OTHER(name) => OTHER(name)
 								_ => OTHER("unsupported")
 							}
-							match PluginApi.plan_registry(registry, config_text, invocation.args, host_os, host.arch) {
+							match Plugin.plan_registry(registry, config_text, invocation.args, host_os, host.arch) {
 								Ok(selected_plan) => Executor.execute!(selected_plan)
 								Err(PlanningFailed(diagnostic)) => Err(PlanningFailed(diagnostic))
 								Err(UnknownCommand) => Err(UnknownCommand)
@@ -108,7 +108,7 @@ Executor := [].{
 		}
 	}
 
-	execute! : PluginApi.Plan => Try({}, _)
+	execute! : Plugin.Plan => Try({}, _)
 	execute! = |execution_plan| {
 		for action in execution_plan.actions {
 			Executor.execute_action!(action)?
@@ -116,7 +116,7 @@ Executor := [].{
 		Ok({})
 	}
 
-	execute_action! : PluginApi.Action => Try({}, _)
+	execute_action! : Plugin.Action => Try({}, _)
 	execute_action! = |action|
 		match action {
 			PrintLine(line) => Stdout.line!(line)

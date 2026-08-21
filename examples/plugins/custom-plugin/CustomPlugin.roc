@@ -12,18 +12,18 @@
 
 import parser.Body
 import parser.Config
-import kai.Plugin as PluginApi
+import kai.Plugin
 
 CustomPlugin := [].{
-	plugin : PluginApi.RegistryDefinition
+	plugin : Plugin.RegistryDefinition
 	plugin = {
 		definition,
 		select_config: CustomPlugin.select_config,
 	}
 
-	local : PluginApi.Backend
-	local = PluginApi.Backend.{
-		determinate_system: PluginApi.DeterminateSystem.{
+	local : Plugin.Backend
+	local = Plugin.Backend.{
+		determinate_system: Plugin.DeterminateSystem.{
 			default_package_source: "local",
 			driver: NoDriver,
 			kind: Custom,
@@ -41,8 +41,8 @@ CustomPlugin := [].{
 		),
 	])
 
-	custom_write : PluginApi.Command
-	custom_write = PluginApi.Command.{
+	custom_write : Plugin.Command
+	custom_write = Plugin.Command.{
 		argument_policy: NoArguments,
 		body: custom_body,
 		default_backend: local.name,
@@ -50,8 +50,8 @@ CustomPlugin := [].{
 		config_block: RequiredConfigBlock("custom"),
 	}
 
-	implementation : PluginApi.Implementation
-	implementation = PluginApi.Implementation.{
+	implementation : Plugin.Implementation
+	implementation = Plugin.Implementation.{
 		actions: [
 			WriteConfigUtf8({
 				output: "message",
@@ -63,15 +63,15 @@ CustomPlugin := [].{
 		renderer: CustomPlugin.render,
 	}
 
-	definition : PluginApi.Definition
-	definition = PluginApi.Definition.{
+	definition : Plugin.Definition
+	definition = Plugin.Definition.{
 		backends: [local],
 		commands: [custom_write],
 		implementations: [implementation],
 		name: "custom",
 	}
 
-	render : PluginApi.Renderer
+	render : Plugin.Renderer
 	render = |context|
 		match context.config_block {
 			NoConfigBlock => Err({
@@ -85,7 +85,7 @@ CustomPlugin := [].{
 						message: "validated custom configuration is missing 'message'",
 					})
 					Ok(message) => Ok(
-						PluginApi.RenderResult.{
+						Plugin.RenderResult.{
 							actions: [],
 							outputs: [{ name: "message", text: message }],
 							requests: [],
@@ -95,7 +95,7 @@ CustomPlugin := [].{
 				}
 			}
 
-	select_config : PluginApi.ConfigSelector
+	select_config : Plugin.ConfigSelector
 	select_config = |config_text, command, _, _, _, _| {
 		block_name = match command.config_block {
 			OptionalConfigBlock(name) => name
@@ -122,7 +122,7 @@ CustomPlugin := [].{
 		}
 	}
 
-	source_location : Config.Location -> PluginApi.SourceLocation
+	source_location : Config.Location -> Plugin.SourceLocation
 	source_location = |location| {
 		byte_offset: location.byte_offset,
 		column: location.column,

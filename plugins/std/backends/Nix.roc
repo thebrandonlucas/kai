@@ -1,9 +1,9 @@
-import kai.Plugin as PluginApi
+import kai.Plugin
 
 Nix := [].{
-	backend : PluginApi.Backend
-	backend = PluginApi.Backend.{
-		determinate_system: PluginApi.DeterminateSystem.{
+	backend : Plugin.Backend
+	backend = Plugin.Backend.{
+		determinate_system: Plugin.DeterminateSystem.{
 			default_package_source: "nixpkgs",
 			driver: Program("nix"),
 			kind: Nix,
@@ -15,7 +15,7 @@ Nix := [].{
 
 	Target : { system : Str }
 
-	target : PluginApi.HostOs, PluginApi.HostArch -> Try(Target, [UnsupportedPlatform])
+	target : Plugin.HostOs, Plugin.HostArch -> Try(Target, [UnsupportedPlatform])
 	target = |os, arch|
 		match (os, arch) {
 			(LINUX, X64) => Ok({ system: "x86_64-linux" })
@@ -27,7 +27,7 @@ Nix := [].{
 
 	# Nix double-quoted strings accept printable ASCII except the characters
 	# that begin escaping or interpolation.
-	safe_string_rule : Str -> PluginApi.TextRule
+	safe_string_rule : Str -> Plugin.TextRule
 	safe_string_rule = |message|
 		BytesInRanges({
 			excluded: [34, 36, 92],
@@ -35,20 +35,20 @@ Nix := [].{
 			ranges: [{ max: 126, min: 33 }],
 		})
 
-	package_rules : List(PluginApi.StringListRule)
+	package_rules : List(Plugin.StringListRule)
 	package_rules = [
 		AllStrings(NonemptyText("shell package names must not be empty")),
 		AllStrings(DotSeparatedNonemptySegments("shell package attribute paths must not contain empty segments")),
 		AllStrings(safe_string_rule("shell package attribute paths contain characters unsafe for Nix output")),
 	]
 
-	overlay_rules : List(PluginApi.StringListRule)
+	overlay_rules : List(Plugin.StringListRule)
 	overlay_rules = [
 		AllStrings(NonemptyText("shell overlay references must not be empty")),
 		AllStrings(safe_string_rule("shell overlay references contain characters unsafe for Nix output")),
 	]
 
-	locked_flake_templates : List(PluginApi.ActionTemplate)
+	locked_flake_templates : List(Plugin.ActionTemplate)
 	locked_flake_templates = [
 		WriteConfigUtf8({ output: "flake", path: ".kai/flake.nix" }),
 		Exec({
@@ -77,7 +77,7 @@ Nix := [].{
 		}),
 	]
 
-	shell_templates : List(PluginApi.ActionTemplate)
+	shell_templates : List(Plugin.ActionTemplate)
 	shell_templates = locked_flake_templates.concat([
 		Exec({
 			args: [
@@ -89,13 +89,13 @@ Nix := [].{
 		}),
 	])
 
-	build_templates : List(PluginApi.ActionTemplate)
+	build_templates : List(Plugin.ActionTemplate)
 	build_templates = locked_flake_templates.concat([
 		WriteConfigUtf8({ output: "build_nix", path: ".kai/build.nix" }),
 		WriteConfigUtf8({ output: "build_json", path: ".kai/build.json" }),
 	])
 
-	update_recipe : List(PluginApi.ActionTemplate)
+	update_recipe : List(Plugin.ActionTemplate)
 	update_recipe = [
 		WriteConfigUtf8({ output: "flake", path: ".kai/flake.nix" }),
 		Exec({
@@ -125,7 +125,7 @@ Nix := [].{
 		}),
 	]
 
-	named_artifact_actions : Str -> List(PluginApi.Action)
+	named_artifact_actions : Str -> List(Plugin.Action)
 	named_artifact_actions = |name|
 		[
 			WriteUtf8({ content: "", path: ".kai/artifacts/.keep" }),
@@ -141,7 +141,7 @@ Nix := [].{
 			}),
 		]
 
-	task_actions : List(Str) -> List(PluginApi.Action)
+	task_actions : List(Str) -> List(Plugin.Action)
 	task_actions = |run|
 		[
 			Exec({

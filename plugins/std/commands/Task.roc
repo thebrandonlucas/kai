@@ -1,5 +1,5 @@
 import parser.Body
-import kai.Plugin as PluginApi
+import kai.Plugin
 
 Task := [].{
 	body : Body.Shape
@@ -8,22 +8,22 @@ Task := [].{
 		Body.required("run", StringList),
 	])
 
-	name_rules : List(PluginApi.TextRule)
+	name_rules : List(Plugin.TextRule)
 	name_rules = [NonemptyText("task name must not be empty")]
 
-	run_rules : Str -> List(PluginApi.StringListRule)
+	run_rules : Str -> List(Plugin.StringListRule)
 	run_rules = |task|
 		[
 			NonemptyStringList("${task} run list must not be empty"),
 			NonemptyFirstString("${task} run program must not be empty"),
 		]
 
-	environment_rules : Str -> List(PluginApi.TextRule)
+	environment_rules : Str -> List(Plugin.TextRule)
 	environment_rules = |task_name|
 		[NonemptyText("task '${task_name}' environment name must not be empty")]
 
-	command : PluginApi.Command
-	command = PluginApi.Command.{
+	command : Plugin.Command
+	command = Plugin.Command.{
 		argument_policy: AllowArguments,
 		body,
 		config_block: RequiredConfigBlock("task"),

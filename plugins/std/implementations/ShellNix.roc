@@ -1,18 +1,18 @@
 import parser.Body
-import kai.Plugin as PluginApi
+import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Shell as ShellCommand
 
 ShellNix := [].{
-	implementation : PluginApi.Implementation
-	implementation = PluginApi.Implementation.{
+	implementation : Plugin.Implementation
+	implementation = Plugin.Implementation.{
 		actions: NixBackend.shell_templates,
 		backend: NixBackend.backend.name,
 		command: ShellCommand.command.name,
 		renderer: ShellNix.renderer,
 	}
 
-	renderer : PluginApi.Renderer
+	renderer : Plugin.Renderer
 	renderer = |context| {
 		match context.config_block {
 			NoConfigBlock => Err({ byte_offset: None, message: "shell configuration is required" })
@@ -28,16 +28,16 @@ ShellNix := [].{
 			None => []
 			Some(values) => values
 		}
-		failures = PluginApi.validate_string_list(pkgs, NixBackend.package_rules).concat(
-			PluginApi.validate_string_list(overlays, NixBackend.overlay_rules),
+		failures = Plugin.validate_string_list(pkgs, NixBackend.package_rules).concat(
+			Plugin.validate_string_list(overlays, NixBackend.overlay_rules),
 		)
-		PluginApi.renderer_validation(failures)?
+		Plugin.renderer_validation(failures)?
 		Ok(ShellNix.render_result(pkgs, overlays, selected_target.system))
 	}
 
-	render_result : List(Str), List(Str), Str -> PluginApi.RenderResult
+	render_result : List(Str), List(Str), Str -> Plugin.RenderResult
 	render_result = |pkgs, overlays, system|
-		PluginApi.RenderResult.{
+		Plugin.RenderResult.{
 			actions: [],
 			outputs: [{ name: "flake", text: ShellNix.render_nix(pkgs, overlays, system) }],
 			requests: [],

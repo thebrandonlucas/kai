@@ -1,19 +1,19 @@
 import parser.Body
-import kai.Plugin as PluginApi
+import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Build as BuildCommand
 import ShellNix
 
 BuildNix := [].{
-	implementation : PluginApi.Implementation
-	implementation = PluginApi.Implementation.{
+	implementation : Plugin.Implementation
+	implementation = Plugin.Implementation.{
 		actions: NixBackend.build_templates,
 		backend: NixBackend.backend.name,
 		command: BuildCommand.command.name,
 		renderer: BuildNix.renderer,
 	}
 
-	renderer : PluginApi.Renderer
+	renderer : Plugin.Renderer
 	renderer = |context| {
 		name = match context.args {
 			[selected_name] => Ok(selected_name)
@@ -22,18 +22,18 @@ BuildNix := [].{
 			[] => Ok(NixBackend.backend.name)
 			_ => Err({ byte_offset: None, message: "build requires exactly one artifact name" })
 		}?
-		name_failures = PluginApi.validate_text(name, BuildCommand.artifact_name_rules)
+		name_failures = Plugin.validate_text(name, BuildCommand.artifact_name_rules)
 		run = Body.get_strings(context.config, "run") ? |_| {
 			byte_offset: None,
 			message: "validated build configuration is missing 'run'",
 		}
-		run_failures = PluginApi.validate_string_list(run, BuildCommand.run_rules)
+		run_failures = Plugin.validate_string_list(run, BuildCommand.run_rules)
 		output = Body.get_string(context.config, "output") ? |_| {
 			byte_offset: None,
 			message: "validated build configuration is missing 'output'",
 		}
-		output_failures = PluginApi.validate_text(output, BuildCommand.output_rules)
-		PluginApi.renderer_validation(name_failures.concat(run_failures).concat(output_failures))?
+		output_failures = Plugin.validate_text(output, BuildCommand.output_rules)
+		Plugin.renderer_validation(name_failures.concat(run_failures).concat(output_failures))?
 		environment = match context.related_config {
 			NoRelatedConfig => Err({ byte_offset: None, message: "build environment is required" })
 			SelectedRelatedConfig({ block: _, config }) => Ok(config)
@@ -42,11 +42,11 @@ BuildNix := [].{
 			byte_offset: None,
 			message: "validated environment configuration is missing 'packages'",
 		}
-		PluginApi.renderer_validation(PluginApi.validate_string_list(pkgs, NixBackend.package_rules))?
+		Plugin.renderer_validation(Plugin.validate_string_list(pkgs, NixBackend.package_rules))?
 		target = NixBackend.target(context.host_os, context.host_arch) ? |_|
 			{ byte_offset: None, message: "unsupported build platform" }
 		Ok(
-			PluginApi.RenderResult.{
+			Plugin.RenderResult.{
 				actions: NixBackend.named_artifact_actions(name),
 				outputs: [
 					{ name: "flake", text: ShellNix.render_nix(pkgs, [], target.system) },
@@ -134,7 +134,7 @@ name_cases = [
 
 expect List.all(
 	name_cases,
-	|case| PluginApi.validate_text(case.name, BuildCommand.artifact_name_rules) == case.expected,
+	|case| Plugin.validate_text(case.name, BuildCommand.artifact_name_rules) == case.expected,
 )
 
 run_cases = [
@@ -145,7 +145,7 @@ run_cases = [
 
 expect List.all(
 	run_cases,
-	|case| PluginApi.validate_string_list(case.run, BuildCommand.run_rules) == case.expected,
+	|case| Plugin.validate_string_list(case.run, BuildCommand.run_rules) == case.expected,
 )
 
 output_cases = [
@@ -171,12 +171,12 @@ output_cases = [
 
 expect List.all(
 	output_cases,
-	|case| PluginApi.validate_text(case.output, BuildCommand.output_rules) == case.expected,
+	|case| Plugin.validate_text(case.output, BuildCommand.output_rules) == case.expected,
 )
 
-expect PluginApi.renderer_validation(
-	PluginApi.validate_string_list([], BuildCommand.run_rules).concat(
-		PluginApi.validate_text("/../app", BuildCommand.output_rules),
+expect Plugin.renderer_validation(
+	Plugin.validate_string_list([], BuildCommand.run_rules).concat(
+		Plugin.validate_text("/../app", BuildCommand.output_rules),
 	),
 ) == Err({
 	byte_offset: None,

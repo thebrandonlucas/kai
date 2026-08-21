@@ -6,7 +6,7 @@ app [main!] {
 }
 
 import Executor
-import kai.Plugin as PluginApi
+import kai.Plugin
 import parser.Body
 import std.StdPlugin
 
@@ -40,11 +40,11 @@ workflow_test_config = Str.join_with(
 	"\n",
 )
 
-workflow_plan = PluginApi.plan_registry(registry, workflow_test_config, ["workflow", "ci"], LINUX, X64)
+workflow_plan = Plugin.plan_registry(registry, workflow_test_config, ["workflow", "ci"], LINUX, X64)
 
-task_plan = PluginApi.plan_registry(registry, workflow_test_config, ["run", "test"], LINUX, X64)
+task_plan = Plugin.plan_registry(registry, workflow_test_config, ["run", "test"], LINUX, X64)
 
-build_plan = PluginApi.plan_registry(registry, workflow_test_config, ["build", "app"], LINUX, X64)
+build_plan = Plugin.plan_registry(registry, workflow_test_config, ["build", "app"], LINUX, X64)
 
 expect match (workflow_plan, task_plan, build_plan) {
 	(Ok(planned_workflow), Ok(planned_task), Ok(planned_build)) =>
@@ -56,12 +56,12 @@ expect match (workflow_plan, task_plan, build_plan) {
 	_ => Bool.False
 }
 
-expect match PluginApi.plan_registry(registry, workflow_test_config, ["ci"], LINUX, X64) {
+expect match Plugin.plan_registry(registry, workflow_test_config, ["ci"], LINUX, X64) {
 	Err(UnknownCommand) => Bool.True
 	_ => Bool.False
 }
 
-expect match PluginApi.plan_registry(registry, workflow_test_config, ["workflow", "nix"], LINUX, X64) {
+expect match Plugin.plan_registry(registry, workflow_test_config, ["workflow", "nix"], LINUX, X64) {
 	Ok(named_backend_workflow) =>
 		match task_plan {
 			Ok(planned_task) => named_backend_workflow.actions == [PrintLine("workflow: run test")].concat(planned_task.actions)
@@ -71,7 +71,7 @@ expect match PluginApi.plan_registry(registry, workflow_test_config, ["workflow"
 }
 
 expect match (
-	PluginApi.plan_registry(registry, workflow_test_config, ["workflow", "nix", "ci"], LINUX, X64),
+	Plugin.plan_registry(registry, workflow_test_config, ["workflow", "nix", "ci"], LINUX, X64),
 	workflow_plan,
 ) {
 	(Ok(explicit_workflow), Ok(default_workflow)) => explicit_workflow.actions == default_workflow.actions
@@ -87,13 +87,13 @@ invalid_child_config = Str.join_with(
 	"\n",
 )
 
-expect match PluginApi.plan_registry(registry, invalid_child_config, ["workflow", "ci"], LINUX, X64) {
+expect match Plugin.plan_registry(registry, invalid_child_config, ["workflow", "ci"], LINUX, X64) {
 	Err(PlanningFailed(diagnostic)) => diagnostic.command == "build" and diagnostic.message == "missing build 'missing'"
 	_ => Bool.False
 }
 
-cycle_backend = PluginApi.Backend.{
-	determinate_system: PluginApi.DeterminateSystem.{
+cycle_backend = Plugin.Backend.{
+	determinate_system: Plugin.DeterminateSystem.{
 		default_package_source: "local",
 		driver: NoDriver,
 		kind: Custom,
@@ -103,7 +103,7 @@ cycle_backend = PluginApi.Backend.{
 	required_packages: [],
 }
 
-cycle_command = PluginApi.Command.{
+cycle_command = Plugin.Command.{
 	argument_policy: NoArguments,
 	body: Body.object([]),
 	config_block: OptionalConfigBlock("loop"),
@@ -111,12 +111,12 @@ cycle_command = PluginApi.Command.{
 	name: "loop",
 }
 
-cycle_implementation = PluginApi.Implementation.{
+cycle_implementation = Plugin.Implementation.{
 	actions: [],
 	backend: cycle_backend.name,
 	command: cycle_command.name,
 	renderer: |_| Ok(
-		PluginApi.RenderResult.{
+		Plugin.RenderResult.{
 			actions: [],
 			outputs: [],
 			requests: [{ args: ["loop"], status: "loop" }],
@@ -127,22 +127,22 @@ cycle_implementation = PluginApi.Implementation.{
 
 cycle_registry = [
 	{
-		definition: PluginApi.Definition.{
+		definition: Plugin.Definition.{
 			backends: [cycle_backend],
 			commands: [cycle_command],
 			implementations: [cycle_implementation],
 			name: "cycle",
 		},
-		select_config: PluginApi.select_config,
+		select_config: Plugin.select_config,
 	},
 ]
 
-expect match PluginApi.plan_registry(cycle_registry, "", ["loop"], LINUX, X64) {
+expect match Plugin.plan_registry(cycle_registry, "", ["loop"], LINUX, X64) {
 	Err(PlanningFailed(diagnostic)) => diagnostic.message == "plan request cycle detected"
 	_ => Bool.False
 }
 
-custom_run_command = PluginApi.Command.{
+custom_run_command = Plugin.Command.{
 	argument_policy: AllowArguments,
 	body: Body.object([]),
 	config_block: OptionalConfigBlock("custom-run"),
@@ -150,12 +150,12 @@ custom_run_command = PluginApi.Command.{
 	name: "run",
 }
 
-custom_run_implementation = PluginApi.Implementation.{
+custom_run_implementation = Plugin.Implementation.{
 	actions: [],
 	backend: cycle_backend.name,
 	command: custom_run_command.name,
 	renderer: |_| Ok(
-		PluginApi.RenderResult.{
+		Plugin.RenderResult.{
 			actions: [PrintLine("custom run")],
 			outputs: [],
 			requests: [],
@@ -165,16 +165,16 @@ custom_run_implementation = PluginApi.Implementation.{
 }
 
 custom_run_registry = {
-	definition: PluginApi.Definition.{
+	definition: Plugin.Definition.{
 		backends: [cycle_backend],
 		commands: [custom_run_command],
 		implementations: [custom_run_implementation],
 		name: "custom-run",
 	},
-	select_config: PluginApi.select_config,
+	select_config: Plugin.select_config,
 }
 
-expect match PluginApi.plan_registry(
+expect match Plugin.plan_registry(
 	[custom_run_registry, StdPlugin.plugin],
 	"workflow ci { steps: [\"run test\"] }",
 	["workflow", "ci"],

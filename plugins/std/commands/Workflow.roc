@@ -1,15 +1,15 @@
 import parser.Body
-import kai.Plugin as PluginApi
+import kai.Plugin
 
 Workflow := [].{
 	body : Body.Shape
 	body = Body.object([Body.required("steps", StringList)])
 
-	name_rules : List(PluginApi.TextRule)
+	name_rules : List(Plugin.TextRule)
 	name_rules = [NonemptyText("workflow name must not be empty")]
 
-	command : PluginApi.Command
-	command = PluginApi.Command.{
+	command : Plugin.Command
+	command = Plugin.Command.{
 		argument_policy: AllowArguments,
 		body,
 		config_block: RequiredConfigBlock("workflow"),
