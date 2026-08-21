@@ -17,79 +17,28 @@ import selectors.StandardConfig
 ## It aims to wrap `nix` commands into easy-to-use pieces that match primary
 ## `nix` use cases. It also demonstrates the canonical use and structure of
 # plugins and serve as an example of how to write them.
+
+# The simple interface describes `commands`, which define what commands that 
+# `kai` (and the `Kaifile`) have available, the compatible `backend`s that 
+# these commands can operate on, and the `implementation`s which glue together
+# a `backend` and a `command`.
 #
+# There are two types of validations that can occur:
+# - Those at _compile time_ where the plugin writer can specify
+#   which invariants must hold for given commands, backends, or
+#   command/backend combos. An example may be that the user forgot
+#   a command, used the wrong syntax, etc.
+# - Those at _runtime_ where there may be failures due to 
+#   underspecification in the plugin or maybe a missing requirement
+#   on the users system i.e. they don't have a compatible backend 
+#   installed.
+#
+# The individual commands/backends are like ingredients to a recipe: 
+# you can use any combination you like, but certain dishes require certain 
+# ingredients.
+
 StdPlugin := [].{
-	plugin : Plugin.RegistryDefinition
-	plugin = {
-		definition,
-		select_config: StdPlugin.select_config,
-	}
-
-	## I almost feel like selection should be implied?
-	## Like why can't i just have everything after line 86 (commands ...)
-	# just be what is defined, and then upstream `kai` just knows how to
-	# take the defined commands/backends/impl's and "select" them?
-	# It just seems like select_config should be generic code that shouldn't
-	# even exist here at all. Is it just because there's custom plugin specific
-	# validation rules like described in docs/plans/plugin-mod/plan2.md? or are there 
-	# other reasons this can't be lifted out of the plugin concern?
-
-	select_config : Plugin.ConfigSelector
-	select_config = |config_text, command, backend_choice, args, os, arch|
-		if command.name == ShellCommand.command.name {
-			StandardConfig.select_shell(
-				{
-					environment_body: ShellCommand.environment_body,
-					environment_name_rules: ShellCommand.environment_name_rules,
-				},
-				config_text,
-				command,
-				backend_choice,
-				args,
-				os,
-				arch,
-			)
-		} else if command.name == TaskCommand.command.name {
-			StandardConfig.select_task(
-				{
-					body: TaskCommand.body,
-					environment_body: ShellCommand.environment_body,
-					environment_rules: TaskCommand.environment_rules,
-					name_rules: TaskCommand.name_rules,
-					run_rules: TaskCommand.run_rules,
-				},
-				config_text,
-				backend_choice,
-				args,
-				os,
-			)
-		} else if command.name == BuildCommand.command.name {
-			StandardConfig.select_build(
-				{
-					artifact_name_rules: BuildCommand.artifact_name_rules,
-					body: BuildCommand.body,
-					environment_body: ShellCommand.environment_body,
-					environment_rules: BuildCommand.environment_rules,
-					output_rules: BuildCommand.output_rules,
-					run_rules: BuildCommand.run_rules,
-				},
-				config_text,
-				backend_choice,
-				args,
-				os,
-			)
-		} else if command.name == WorkflowCommand.command.name {
-			StandardConfig.select_workflow(
-				{ body: WorkflowCommand.body, name_rules: WorkflowCommand.name_rules },
-				config_text,
-				backend_choice,
-				args,
-				os,
-			)
-		} else {
-			Plugin.select_config(config_text, command, backend_choice, args, os, arch)
-		}
-
+	name = "std"
 	commands : List(Plugin.Command)
 	commands = [
 		BuildCommand.command,
@@ -110,13 +59,4 @@ StdPlugin := [].{
 		UpdateNix.implementation,
 		WorkflowNix.implementation,
 	]
-
-	definition : Plugin.Definition
-	definition = Plugin.Definition.{
-		backends,
-		commands,
-		default_backend: NixBackend.backend.name,
-		implementations,
-		name: "std",
-	}
 }
