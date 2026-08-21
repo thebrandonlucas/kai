@@ -118,7 +118,7 @@ build_stage! = |stage, plugin_paths, output_name, output_path| {
 	Path.create_dir!(backends_dir)?
 	Path.write_utf8!(
 		Path.join(backends_dir, "main.roc"),
-		"package [Nix] { kai: \"../../package.roc\" }\n",
+		"package [Nix] { kai: \"../../package.roc\", parser: \"../../parser/main.roc\" }\n",
 	)?
 	Path.write_utf8!(Path.join(backends_dir, "Nix.roc"), nix_backend_source)?
 

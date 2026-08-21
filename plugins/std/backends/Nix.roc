@@ -1,4 +1,5 @@
 import kai.Plugin
+import parser.Bytes
 
 Nix := [].{
 	backend : Plugin.Backend
@@ -30,9 +31,9 @@ Nix := [].{
 	safe_string_rule : Str -> Plugin.TextRule
 	safe_string_rule = |message|
 		BytesInRanges({
-			excluded: [34, 36, 92],
+			excluded: [Bytes.double_quote, Bytes.dollar_sign, Bytes.backslash],
 			message,
-			ranges: [{ max: 126, min: 33 }],
+			ranges: [{ max: Bytes.tilde, min: Bytes.exclamation_mark }],
 		})
 
 	package_rules : List(Plugin.StringListRule)
