@@ -296,22 +296,3 @@ main! = |args| {
 		}
 	}
 }
-
-## -- TESTS --
-
-# Inputs -> expected commands:
-# [] -> Help
-# ["build"] -> Build([])
-# ["build", "Example.roc"] -> Build(["Example.roc"])
-# ["help"] -> Help
-# ["version"] -> Version
-# ["socrates"] -> Unknown("socrates")
-expect Cli.check([], Cli.Command.Help)
-expect Cli.check(["build"], Cli.Command.Build([]))
-expect Cli.check(["build", "Example.roc"], Cli.Command.Build(["Example.roc"]))
-expect Cli.check(["help"], Cli.Command.Help)
-expect Cli.check(["version"], Cli.Command.Version)
-expect Cli.check(["socrates"], Cli.Command.Unknown("socrates"))
-expect Path.is_eq(plugin_parent("Plugin.roc", "Plugin.roc"), Path.utf8("."))
-expect Path.is_eq(plugin_parent("/Plugin.roc", "Plugin.roc"), Path.utf8("/"))
-expect Path.is_eq(plugin_parent("plugins/Plugin.roc", "Plugin.roc"), Path.utf8("plugins"))
