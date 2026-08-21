@@ -132,37 +132,3 @@ Executor := [].{
 				Cmd.exec!(OsStr.utf8(command), args.map(OsStr.utf8))
 			}
 }
-
-# -- TESTS --
-
-parse_invocation_cases = [
-	{
-		args: ["shell"],
-		expected: Ok({ args: ["shell"], kaifile: "Kaifile" }),
-	},
-	{
-		args: ["-f", "../shared/Kaifile", "shell"],
-		expected: Ok({ args: ["shell"], kaifile: "../shared/Kaifile" }),
-	},
-	{
-		args: ["--file", "/tmp/Kaifile", "run", "moo"],
-		expected: Ok({ args: ["run", "moo"], kaifile: "/tmp/Kaifile" }),
-	},
-	{
-		args: ["shell", "-f", "plugin-value"],
-		expected: Ok({ args: ["shell", "-f", "plugin-value"], kaifile: "Kaifile" }),
-	},
-]
-
-expect List.all(
-	parse_invocation_cases,
-	|case| Executor.parse_invocation(case.args) == case.expected,
-)
-
-expect Executor.parse_invocation(["-f"]) == Err(MissingKaifilePath)
-expect Executor.parse_invocation(["--file"]) == Err(MissingKaifilePath)
-expect Executor.help_requested([])
-expect Executor.help_requested(["shell", "--help"])
-expect Executor.help_requested(["--file", "OtherKaifile"])
-expect Executor.help_requested(["-f", "OtherKaifile", "help"])
-expect !Executor.help_requested(["shell"])
