@@ -1,5 +1,18 @@
 # A plugin should have:
 
+import kai.Plugin
+import backends.Nix as NixBackend
+import commands.Build as BuildCommand
+import commands.Shell as ShellCommand
+import commands.Task as TaskCommand
+import commands.Update as UpdateCommand
+import commands.Workflow as WorkflowCommand
+import implementations.BuildNix
+import implementations.ShellNix
+import implementations.TaskNix
+import implementations.UpdateNix
+import implementations.WorkflowNix
+
 Guix := [].{
 	# I would think that definitions would be grouped?
 	# i.e.

@@ -1,7 +1,8 @@
 package
 	[Guix]
 	{
-		backends: "./backends/main.roc",
-		commands: "./commands/main.roc",
-		implementations: "./implementations/main.roc",
+		backends: "../std/backends/main.roc",
+		commands: "../std/commands/main.roc",
+		implementations: "../std/implementations/main.roc",
+		kai: "../../xkai-bin/package.roc",
 	}

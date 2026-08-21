@@ -18,18 +18,18 @@ import "parser/Bytes.roc" as bytes_source : Str
 import "parser/Config.roc" as config_source : Str
 import "parser/main.roc" as parser_package_source : Str
 import "Plugin.roc" as plugin_source : Str
-import "../plugins/StdPlugin.roc" as std_plugin_source : Str
-import "../plugins/backends/Nix.roc" as nix_backend_source : Str
-import "../plugins/commands/Build.roc" as build_command_source : Str
-import "../plugins/commands/Shell.roc" as shell_command_source : Str
-import "../plugins/commands/Task.roc" as task_command_source : Str
-import "../plugins/commands/Update.roc" as update_command_source : Str
-import "../plugins/commands/Workflow.roc" as workflow_command_source : Str
-import "../plugins/implementations/BuildNix.roc" as build_nix_source : Str
-import "../plugins/implementations/ShellNix.roc" as shell_nix_source : Str
-import "../plugins/implementations/TaskNix.roc" as task_nix_source : Str
-import "../plugins/implementations/UpdateNix.roc" as update_nix_source : Str
-import "../plugins/implementations/WorkflowNix.roc" as workflow_nix_source : Str
+import "../plugins/std/StdPlugin.roc" as std_plugin_source : Str
+import "../plugins/std/backends/Nix.roc" as nix_backend_source : Str
+import "../plugins/std/commands/Build.roc" as build_command_source : Str
+import "../plugins/std/commands/Shell.roc" as shell_command_source : Str
+import "../plugins/std/commands/Task.roc" as task_command_source : Str
+import "../plugins/std/commands/Update.roc" as update_command_source : Str
+import "../plugins/std/commands/Workflow.roc" as workflow_command_source : Str
+import "../plugins/std/implementations/BuildNix.roc" as build_nix_source : Str
+import "../plugins/std/implementations/ShellNix.roc" as shell_nix_source : Str
+import "../plugins/std/implementations/TaskNix.roc" as task_nix_source : Str
+import "../plugins/std/implementations/UpdateNix.roc" as update_nix_source : Str
+import "../plugins/std/implementations/WorkflowNix.roc" as workflow_nix_source : Str
 import "VERSION" as version_source : Str
 
 platform_name = "FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn"

@@ -1,5 +1,5 @@
 package
 	[Nix]
 	{
-		kai: "../../xkai-bin/package.roc",
+		kai: "../../../xkai-bin/package.roc",
 	}
