@@ -6,11 +6,13 @@ import backends.Nix as NixBackend
 import commands.Shell as ShellCommand
 
 ShellNix := [].{
+	shell_nix_actions = [NixBackend.flake_template].concat(NixBackend.lock_templates).concat([NixBackend.develop_template])
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [NixBackend.flake_template].concat(NixBackend.lock_templates).concat([NixBackend.develop_template]),
+		actions: shell_nix_actions,
 		backend: NixBackend.backend.name,
 		command: ShellCommand.command.name,
+		validator: ShellNix.validator,
 		renderer: ShellNix.renderer,
 	}
 
