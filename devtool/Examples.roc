@@ -2,14 +2,14 @@ import pf.Path
 import pf.Stdout
 
 import parser.Config
-import kai.Plugin as PluginApi
+import kai.Plugin
 import std.StdPlugin
 
 Examples := [].{
 	Invocation := {
-		arch : PluginApi.HostArch,
+		arch : Plugin.HostArch,
 		args : List(Str),
-		os : PluginApi.HostOs,
+		os : Plugin.HostOs,
 	}
 
 	run! = |directory| {
@@ -69,7 +69,7 @@ Examples := [].{
 	invocations : List(Config.Block), Str -> Try(List(Examples.Invocation), _)
 	invocations = |blocks, path| Examples.collect_blocks(blocks, path, LINUX, X64, Bool.True)
 
-	collect_blocks : List(Config.Block), Str, PluginApi.HostOs, PluginApi.HostArch, Bool -> Try(List(Examples.Invocation), _)
+	collect_blocks : List(Config.Block), Str, Plugin.HostOs, Plugin.HostArch, Bool -> Try(List(Examples.Invocation), _)
 	collect_blocks = |blocks, path, os, arch, allow_hosts|
 		match blocks {
 			[] => Ok([])
@@ -96,7 +96,7 @@ Examples := [].{
 		Examples.collect_blocks(blocks, path, os, arch, Bool.False)
 	}
 
-	invocation_for_header : List(Str), Str, PluginApi.HostOs, PluginApi.HostArch -> Try(Examples.Invocation, _)
+	invocation_for_header : List(Str), Str, Plugin.HostOs, Plugin.HostArch -> Try(Examples.Invocation, _)
 	invocation_for_header = |header, path, os, arch| {
 		args = match header {
 			["shell"] => Ok(["shell"])
@@ -120,7 +120,7 @@ Examples := [].{
 		match remaining_invocations {
 			[] => Ok({})
 			[first, .. as rest] => {
-				plan = PluginApi.plan_registry(
+				plan = Plugin.plan_registry(
 					[StdPlugin.plugin],
 					source,
 					first.args,

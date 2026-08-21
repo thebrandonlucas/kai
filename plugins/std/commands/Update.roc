@@ -1,13 +1,13 @@
 import parser.Body
-import kai.Plugin as PluginApi
+import kai.Plugin
 
 Update := [].{
-	command : PluginApi.Command
-	command = PluginApi.Command.{
+	command : Plugin.Command
+	command = Plugin.Command.{
 		argument_policy: NoArguments,
 		body: Body.object([]),
+		config: DirectConfig(QualifiedOnly),
 		config_block: OptionalConfigBlock("update"),
-		default_backend: "nix",
 		name: "update",
 	}
 }

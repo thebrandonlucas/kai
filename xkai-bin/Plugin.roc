@@ -156,11 +156,34 @@ Plugin := [].{
 
 	ConfigBlockRequirement : [OptionalConfigBlock(Str), RequiredConfigBlock(Str)]
 
+	BackendLookup : [QualifiedOnly, QualifiedThenUnqualified]
+
+	ConfigMetadata : [
+		DirectConfig(BackendLookup),
+		DirectOrNamedConfig(
+			{
+				block : Str,
+				lookup : BackendLookup,
+				name_rules : List(TextRule),
+			},
+		),
+		NamedConfig({ lookup : BackendLookup, name_rules : List(TextRule) }),
+		NamedWithRelatedConfig(
+			{
+				lookup : BackendLookup,
+				name_rules : List(TextRule),
+				related_block : Str,
+				related_body : Body.Shape,
+				related_field : Str,
+			},
+		),
+	]
+
 	Command := {
 		argument_policy : ArgumentPolicy,
 		body : Body.Shape,
+		config : ConfigMetadata,
 		config_block : ConfigBlockRequirement,
-		default_backend : Str,
 		name : Str,
 	}
 
@@ -193,6 +216,12 @@ Plugin := [].{
 		fallback : [Fallback(Fallback), NoFallback],
 		name : Str,
 		required_packages : List(Package),
+	}
+
+	BackendTarget := {
+		arch : HostArch,
+		os : HostOs,
+		value : Str,
 	}
 
 	SourceLocation := {
@@ -231,11 +260,6 @@ Plugin := [].{
 
 	ConfigSelector : Str, Command, BackendChoice, List(Str), HostOs, HostArch -> Try(ConfigSelection, SelectorDiagnostic)
 
-	RegistryDefinition := {
-		definition : Definition,
-		select_config : ConfigSelector,
-	}
-
 	PlanningDiagnostic := {
 		backend : Str,
 		command : Str,
@@ -244,16 +268,100 @@ Plugin := [].{
 		plugin : Str,
 	}
 
-	# Select the current host's command/backend block, falling back to an
-	# unscoped block when the host section does not contain one.
+	# Select config from the command's declarative metadata.
 	select_config : ConfigSelector
-	select_config = |config_text, command, backend_choice, _, os, _| {
-		block_name = match command.config_block {
+	select_config = |config_text, command, backend_choice, args, os, _| {
+		block_name = Plugin.config_block_name(command.config_block)
+		match command.config {
+			DirectConfig(lookup) => Plugin.select_with_backend_fallback(config_text, [block_name], backend_choice, os, lookup)
+			DirectOrNamedConfig({ block, lookup, name_rules }) =>
+				match args {
+					[] =>
+						match backend_choice {
+							DefaultBackend(_) => Plugin.select_config_header(config_text, [block_name], backend_choice, os)
+							ExplicitBackend(backend) =>
+								match Plugin.select_config_header(config_text, [block, backend.name], DefaultBackend(backend), os)? {
+									Missing => Plugin.select_config_header(config_text, [block_name], backend_choice, os)
+									Selected(named_block) => Ok(Selected(named_block))
+									_ => Err({ location: None, message: "invalid ${block} selection" })
+								}
+							}
+					[name] => Plugin.select_named_config(config_text, block, name, backend_choice, os, lookup, name_rules)
+					_ => Err({ location: None, message: "${command.name} accepts at most one config name" })
+				}
+			NamedConfig({ lookup, name_rules }) =>
+				match args {
+					[name] => Plugin.select_named_config(config_text, block_name, name, backend_choice, os, lookup, name_rules)
+					_ => Err({ location: None, message: "${command.name} requires exactly one config name" })
+				}
+			NamedWithRelatedConfig({ lookup, name_rules, related_block, related_body, related_field }) =>
+				match args {
+					[name] => {
+						Plugin.selector_validation(Plugin.validate_text(name, name_rules))?
+						block = Plugin.select_required_named_block(config_text, block_name, name, backend_choice, os, lookup)?
+						config = Plugin.parse_selected_body(command.body, block)?
+						related_name = Body.get_string(config, related_field) ? |_|
+							{ location: None, message: "validated ${block_name} '${name}' is missing '${related_field}'" }
+						related = Plugin.select_required_named_block(config_text, related_block, related_name, backend_choice, os, lookup)?
+						Ok(SelectedWithRelated({ block, body: command.body, related_block: related, related_body }))
+					}
+					_ => Err({ location: None, message: "${command.name} requires exactly one config name" })
+				}
+			}
+	}
+
+	config_block_name : ConfigBlockRequirement -> Str
+	config_block_name = |requirement|
+		match requirement {
 			OptionalConfigBlock(name) => name
 			RequiredConfigBlock(name) => name
 		}
-		Plugin.select_config_header(config_text, [block_name], backend_choice, os)
+
+	normalize_command_backend : ConfigMetadata, BackendChoice, List(Str) -> { args : List(Str), backend_choice : BackendChoice }
+	normalize_command_backend = |metadata, backend_choice, args|
+		match metadata {
+			NamedConfig(_) | NamedWithRelatedConfig(_) =>
+				match (backend_choice, args) {
+					(ExplicitBackend(backend), []) => { args: [backend.name], backend_choice: DefaultBackend(backend) }
+					_ => { args, backend_choice }
+				}
+			DirectConfig(_) | DirectOrNamedConfig(_) => { args, backend_choice }
+		}
+
+	select_named_config : Str, Str, Str, BackendChoice, HostOs, BackendLookup, List(TextRule) -> Try(ConfigSelection, SelectorDiagnostic)
+	select_named_config = |config_text, block_name, name, backend_choice, os, lookup, name_rules| {
+		Plugin.selector_validation(Plugin.validate_text(name, name_rules))?
+		block = Plugin.select_required_named_block(config_text, block_name, name, backend_choice, os, lookup)?
+		Ok(Selected(block))
 	}
+
+	select_required_named_block : Str, Str, Str, BackendChoice, HostOs, BackendLookup -> Try(LocatedConfigBlock, SelectorDiagnostic)
+	select_required_named_block = |config_text, block_name, name, backend_choice, os, lookup|
+		match Plugin.select_with_backend_fallback(config_text, [block_name, name], backend_choice, os, lookup)? {
+			Missing => Err({ location: None, message: "missing ${block_name} '${name}'" })
+			Selected(block) => Ok(block)
+			_ => Err({ location: None, message: "invalid ${block_name} selection" })
+		}
+
+	select_with_backend_fallback : Str, List(Str), BackendChoice, HostOs, BackendLookup -> Try(ConfigSelection, SelectorDiagnostic)
+	select_with_backend_fallback = |config_text, header, backend_choice, os, lookup| {
+		selection = Plugin.select_config_header(config_text, header, backend_choice, os)?
+		match (selection, backend_choice, lookup) {
+			(Missing, ExplicitBackend(backend), QualifiedThenUnqualified) =>
+				Plugin.select_config_header(config_text, header, DefaultBackend(backend), os)
+			_ => Ok(selection)
+		}
+	}
+
+	parse_selected_body : Body.Shape, LocatedConfigBlock -> Try(Body.Configuration, SelectorDiagnostic)
+	parse_selected_body = |body, block|
+		match Body.parse(body, block.body) {
+			Ok(config) => Ok(config)
+			Err(diagnostic) => Err({
+				location: At(Plugin.translate_location(block, diagnostic.byte_offset)),
+				message: Body.describe(diagnostic),
+			})
+		}
 
 	# Select a generic, possibly named block while retaining the standard host
 	# fallback and explicit-backend behavior.
@@ -358,7 +466,20 @@ Plugin := [].{
 		host_arch : HostArch,
 		host_os : HostOs,
 		related_config : RelatedConfig,
+		target : [NoTarget, SelectedTarget(Str)],
 	}
+
+	StringListValidation := {
+		field : Body.Field,
+		rules : List(StringListRule),
+	}
+
+	TargetValidation : [NoTargetValidation, SupportedTargets({ message : Str, supported : List(BackendTarget) })]
+
+	Validator : [
+		NoValidation,
+		Validate({ string_lists : List(StringListValidation), target : TargetValidation }),
+	]
 
 	# Text that will get written to disk.
 	# "name" is what our plugin would name
@@ -393,7 +514,78 @@ Plugin := [].{
 		backend : Str,
 		command : Str,
 		renderer : Renderer,
+		validator : Validator,
 	}
+
+	validate_render_context : RenderContext, Validator -> Try(RenderContext, RendererDiagnostic)
+	validate_render_context = |context, validator|
+		match validator {
+			NoValidation => Ok(context)
+			Validate({ string_lists, target }) => {
+				selected_target = match target {
+					NoTargetValidation => Ok(NoTarget)
+					SupportedTargets({ message, supported }) =>
+						match Plugin.target_value(supported, context.host_os, context.host_arch) {
+							Ok(value) => Ok(SelectedTarget(value))
+							Err(_) => Err({ byte_offset: None, message })
+						}
+					}?
+				failures = Plugin.validate_string_list_fields(context.config, string_lists)?
+				Plugin.renderer_validation(failures)?
+				Ok(
+					Plugin.RenderContext.{
+						args: context.args,
+						config: context.config,
+						config_block: context.config_block,
+						host_arch: context.host_arch,
+						host_os: context.host_os,
+						related_config: context.related_config,
+						target: selected_target,
+					},
+				)
+			}
+		}
+
+	validate_string_list_fields : Body.Configuration, List(StringListValidation) -> Try(List(Str), RendererDiagnostic)
+	validate_string_list_fields = |config, validations|
+		match validations {
+			[] => Ok([])
+			[first, .. as rest] => {
+				values = Plugin.validated_strings(config, first.field)?
+				remaining = Plugin.validate_string_list_fields(config, rest)?
+				Ok(Plugin.validate_string_list(values, first.rules).concat(remaining))
+			}
+		}
+
+	validated_strings : Body.Configuration, Body.Field -> Try(List(Str), RendererDiagnostic)
+	validated_strings = |config, field|
+		match Body.get_strings(config, field.name) {
+			Ok(values) => Ok(values)
+			Err(MissingField(_)) if field.presence == Optional => Ok([])
+			Err(_) => Err({
+				byte_offset: None,
+				message: "validated configuration does not match declared field '${field.name}'",
+			})
+		}
+
+	validated_target : RenderContext -> Try(Str, RendererDiagnostic)
+	validated_target = |context|
+		match context.target {
+			SelectedTarget(value) => Ok(value)
+			NoTarget => Err({ byte_offset: None, message: "implementation requires a validated backend target" })
+		}
+
+	target_value : List(BackendTarget), HostOs, HostArch -> Try(Str, [UnsupportedPlatform])
+	target_value = |supported, os, arch|
+		match supported {
+			[] => Err(UnsupportedPlatform)
+			[first, .. as rest] =>
+				if first.os == os and first.arch == arch {
+					Ok(first.value)
+				} else {
+					Plugin.target_value(rest, os, arch)
+				}
+			}
 
 	Definition := {
 		backends : List(Backend),
@@ -407,12 +599,12 @@ Plugin := [].{
 		plugin : Str,
 	}
 
-	validate_registry : List(RegistryDefinition) -> Try({}, RegistryDiagnostic)
+	validate_registry : List(Definition) -> Try({}, RegistryDiagnostic)
 	validate_registry = |registry|
 		match registry {
 			[] => Ok({})
 			[first, .. as rest] => {
-				Plugin.validate_definition(first.definition)?
+				Plugin.validate_definition(first)?
 				Plugin.validate_registry(rest)
 			}
 		}
@@ -427,8 +619,13 @@ Plugin := [].{
 			Plugin.registry_failure(definition.name, "must define at least one implementation")
 		} else {
 			Plugin.validate_implementation_references(definition.implementations, definition)?
-			Plugin.validate_commands_used(definition.commands, definition.implementations, definition.name)?
-			Plugin.validate_backends_used(definition.backends, definition.implementations, definition.name)
+			match definition.backends {
+				[] => Plugin.registry_failure(definition.name, "must define at least one backend")
+				[default_backend, ..] => {
+					Plugin.validate_default_implementations(definition.commands, default_backend.name, definition.implementations, definition.name)?
+					Plugin.validate_backends_used(definition.backends, definition.implementations, definition.name)
+				}
+			}
 		}
 
 	validate_implementation_references : List(Implementation), Definition -> Try({}, RegistryDiagnostic)
@@ -446,15 +643,14 @@ Plugin := [].{
 					}
 			}
 
-	validate_commands_used : List(Command), List(Implementation), Str -> Try({}, RegistryDiagnostic)
-	validate_commands_used = |commands, implementations, plugin|
+	validate_default_implementations : List(Command), Str, List(Implementation), Str -> Try({}, RegistryDiagnostic)
+	validate_default_implementations = |commands, default_backend, implementations, plugin|
 		match commands {
 			[] => Ok({})
 			[first, .. as rest] =>
-				if Plugin.uses_command(implementations, first.name) {
-					Plugin.validate_commands_used(rest, implementations, plugin)
-				} else {
-					Plugin.registry_failure(plugin, "command '${first.name}' has no implementation")
+				match Plugin.find_implementation(implementations, first.name, default_backend) {
+					Ok(_) => Plugin.validate_default_implementations(rest, default_backend, implementations, plugin)
+					Err(NotFound) => Plugin.registry_failure(plugin, "command '${first.name}' has no implementation for default backend '${default_backend}'")
 				}
 			}
 
@@ -469,13 +665,6 @@ Plugin := [].{
 					Plugin.registry_failure(plugin, "backend '${first.name}' has no implementation")
 				}
 			}
-
-	uses_command : List(Implementation), Str -> Bool
-	uses_command = |implementations, command|
-		match implementations {
-			[] => Bool.False
-			[first, .. as rest] => first.command == command or Plugin.uses_command(rest, command)
-		}
 
 	uses_backend : List(Implementation), Str -> Bool
 	uses_backend = |implementations, backend|
@@ -498,21 +687,22 @@ Plugin := [].{
 		parser_for : _
 	}
 
-	# Plan the first registry definition that owns the CLI command.
-	plan_registry : List(RegistryDefinition), Str, List(Str), HostOs, HostArch -> Try(Plan, Error)
+	# Plan the first definition that owns the CLI command.
+	plan_registry : List(Definition), Str, List(Str), HostOs, HostArch -> Try(Plan, Error)
 	plan_registry = |registry, config_text, args, os, arch|
 		Plugin.plan_registry_nested(registry, config_text, args, os, arch, [], 0)
 
-	plan_registry_nested : List(RegistryDefinition), Str, List(Str), HostOs, HostArch, List(List(Str)), U64 -> Try(Plan, Error)
+	plan_registry_nested : List(Definition), Str, List(Str), HostOs, HostArch, List(List(Str)), U64 -> Try(Plan, Error)
 	plan_registry_nested = |registry, config_text, args, os, arch, ancestors, depth|
 		match args {
 			[] => Err(UnknownCommand)
 			[command_name, .. as command_args] => {
 				owner = Plugin.find_owner(registry, command_name)?
-				plugin_definition = owner.registry_definition.definition
+				plugin_definition = owner.definition
 				command = owner.command
-				backend_selection = Plugin.select_backend(plugin_definition.backends, command, command_args) ? |backend_name|
+				backend_selection = Plugin.select_backend(plugin_definition.backends, command_args) ? |backend_name|
 					PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_name, None, "plugin command refers to unknown backend '${backend_name}'"))
+				config_selection = Plugin.normalize_command_backend(command.config, backend_selection.choice, backend_selection.args)
 
 				if List.any(ancestors, |ancestor| ancestor == args) {
 					Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plan request cycle detected")))
@@ -523,8 +713,7 @@ Plugin := [].{
 				} else {
 					implementation = Plugin.find_implementation(plugin_definition.implementations, command.name, backend_selection.backend.name) ? |_|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plugin has no implementation for selected backend"))
-					selector = owner.registry_definition.select_config
-					selection = selector(config_text, command, backend_selection.choice, backend_selection.args, os, arch) ? |diagnostic|
+					selection = Plugin.select_config(config_text, command, config_selection.backend_choice, config_selection.args, os, arch) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, diagnostic.location, diagnostic.message))
 					parsed = match selection {
 						Missing =>
@@ -555,15 +744,18 @@ Plugin := [].{
 						}
 					}?
 					context = Plugin.RenderContext.{
-						args: backend_selection.args,
+						args: config_selection.args,
 						config: parsed.config,
 						config_block: parsed.config_block,
 						host_arch: arch,
 						host_os: os,
 						related_config: parsed.related_config,
+						target: NoTarget,
 					}
+					validated_context = Plugin.validate_render_context(context, implementation.validator) ? |diagnostic|
+						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
 					renderer = implementation.renderer
-					rendered = renderer(context) ? |diagnostic|
+					rendered = renderer(validated_context) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
 					base_plan = Plugin.lower(implementation, rendered, plugin_definition.name, backend_selection.backend) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
@@ -589,7 +781,7 @@ Plugin := [].{
 			}
 		}
 
-	plan_requests : List(RegistryDefinition), Str, List(PlanRequest), HostOs, HostArch, List(List(Str)), U64 -> Try({ actions : List(Action), requested_packages : List(Str) }, Error)
+	plan_requests : List(Definition), Str, List(PlanRequest), HostOs, HostArch, List(List(Str)), U64 -> Try({ actions : List(Action), requested_packages : List(Str) }, Error)
 	plan_requests = |registry, config_text, requests, os, arch, ancestors, depth|
 		match requests {
 			[] => Ok({ actions: [], requested_packages: [] })
@@ -603,13 +795,13 @@ Plugin := [].{
 			}
 		}
 
-	find_owner : List(RegistryDefinition), Str -> Try({ command : Command, registry_definition : RegistryDefinition }, [UnknownCommand])
+	find_owner : List(Definition), Str -> Try({ command : Command, definition : Definition }, [UnknownCommand])
 	find_owner = |registry, command_name|
 		match registry {
 			[] => Err(UnknownCommand)
 			[first, .. as rest] =>
-				match Plugin.find_command(first.definition.commands, command_name) {
-					Ok(command) => Ok({ command, registry_definition: first })
+				match Plugin.find_command(first.commands, command_name) {
+					Ok(command) => Ok({ command, definition: first })
 					Err(NotFound) => Plugin.find_owner(rest, command_name)
 				}
 			}
@@ -638,22 +830,22 @@ Plugin := [].{
 				}
 			}
 
-	select_backend : List(Backend), Command, List(Str) -> Try({ args : List(Str), backend : Backend, choice : BackendChoice }, Str)
-	select_backend = |backends, command, args|
+	select_backend : List(Backend), List(Str) -> Try({ args : List(Str), backend : Backend, choice : BackendChoice }, Str)
+	select_backend = |backends, args|
 		match args {
 			[candidate, .. as rest] =>
 				match Plugin.find_backend(backends, candidate) {
 					Ok(backend) => Ok({ args: rest, backend, choice: ExplicitBackend(backend) })
-					Err(NotFound) => Plugin.select_default_backend(backends, command, args)
+					Err(NotFound) => Plugin.select_default_backend(backends, args)
 				}
-			[] => Plugin.select_default_backend(backends, command, args)
+			[] => Plugin.select_default_backend(backends, args)
 		}
 
-	select_default_backend : List(Backend), Command, List(Str) -> Try({ args : List(Str), backend : Backend, choice : BackendChoice }, Str)
-	select_default_backend = |backends, command, args|
-		match Plugin.find_backend(backends, command.default_backend) {
-			Ok(backend) => Ok({ args, backend, choice: DefaultBackend(backend) })
-			Err(NotFound) => Err(command.default_backend)
+	select_default_backend : List(Backend), List(Str) -> Try({ args : List(Str), backend : Backend, choice : BackendChoice }, Str)
+	select_default_backend = |backends, args|
+		match backends {
+			[backend, ..] => Ok({ args, backend, choice: DefaultBackend(backend) })
+			[] => Err("")
 		}
 
 	find_implementation : List(Implementation), Str, Str -> Try(Implementation, [NotFound])
@@ -765,68 +957,3 @@ Plugin := [].{
 				}
 			}
 }
-
-# -- TESTS --
-
-validation_cases = [
-	{
-		expected: [],
-		rules: [NonemptyText("empty"), DisallowedPrefix({ message: "absolute", prefix: "/" })],
-		value: "out",
-	},
-	{
-		expected: ["empty"],
-		rules: [NonemptyText("empty"), DisallowedPrefix({ message: "absolute", prefix: "/" })],
-		value: "",
-	},
-	{
-		expected: ["absolute", "parent"],
-		rules: [
-			NonemptyText("empty"),
-			DisallowedPrefix({ message: "absolute", prefix: "/" }),
-			ForbiddenPathSegments({ message: "parent", segments: [".."] }),
-		],
-		value: "/../out",
-	},
-]
-
-expect List.all(
-	validation_cases,
-	|case| Plugin.validate_text(case.value, case.rules) == case.expected,
-)
-
-string_list_validation_cases = [
-	{
-		expected: [],
-		values: ["rocpkgs.nightly", "hello"],
-	},
-	{
-		expected: ["empty"],
-		values: ["hello", ""],
-	},
-	{
-		expected: ["segments", "unsafe"],
-		values: ["hello$unsafe", "rocpkgs..nightly"],
-	},
-]
-
-string_list_rules = [
-	AllStrings(NonemptyText("empty")),
-	AllStrings(DotSeparatedNonemptySegments("segments")),
-	AllStrings(BytesInRanges({ excluded: [34, 36, 92], message: "unsafe", ranges: [{ max: 126, min: 33 }] })),
-]
-
-expect List.all(
-	string_list_validation_cases,
-	|case| Plugin.validate_string_list(case.values, string_list_rules) == case.expected,
-)
-
-expect Plugin.selector_validation(["first", "second"]) == Err({
-	location: None,
-	message: "first\nsecond",
-})
-
-expect Plugin.renderer_validation(["first", "second"]) == Err({
-	byte_offset: None,
-	message: "first\nsecond",
-})
