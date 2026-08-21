@@ -16,6 +16,210 @@ main! = |args| Executor.run!(args, registry)
 
 # -- TESTS --
 
+std_nix_backend = Plugin.find_backend(StdPlugin.plugin.definition.backends, "nix")
+
+std_shell_command = Plugin.find_command(StdPlugin.plugin.definition.commands, "shell")
+
+std_task_command = Plugin.find_command(StdPlugin.plugin.definition.commands, "run")
+
+std_build_command = Plugin.find_command(StdPlugin.plugin.definition.commands, "build")
+
+std_workflow_command = Plugin.find_command(StdPlugin.plugin.definition.commands, "workflow")
+
+selector_host_config = Str.join_with(
+	[
+		"shell { packages: [\"top-shell\"] }",
+		"environment dev { packages: [\"top-environment\"] }",
+		"on linux {",
+		"  shell { packages: [\"linux-shell\"] }",
+		"  environment dev { packages: [\"linux-environment\"] }",
+		"}",
+	],
+	"\n",
+)
+
+expect match (std_shell_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		match StdPlugin.select_config(selector_host_config, command, DefaultBackend(backend), [], LINUX, X64) {
+			Ok(Selected(block)) => block.body.contains("linux-shell")
+			_ => Bool.False
+		}
+	_ => Bool.False
+}
+
+expect match (std_shell_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		match StdPlugin.select_config(selector_host_config, command, DefaultBackend(backend), [], MACOS, X64) {
+			Ok(Selected(block)) => block.body.contains("top-shell")
+			_ => Bool.False
+		}
+	_ => Bool.False
+}
+
+expect match (std_shell_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		match StdPlugin.select_config(selector_host_config, command, DefaultBackend(backend), ["dev"], LINUX, X64) {
+			Ok(SelectedWithBody({ block, body: _ })) => block.body.contains("linux-environment")
+			_ => Bool.False
+		}
+	_ => Bool.False
+}
+
+explicit_fallback_config = Str.join_with(
+	[
+		"environment dev { packages: [\"hello\"] }",
+		"task test { environment: \"dev\" run: [\"true\"] }",
+		"build app { environment: dev run: [\"true\"] output: \"app\" }",
+		"workflow ci { steps: [] }",
+	],
+	"\n",
+)
+
+qualified_task_config = Str.join_with(
+	[
+		"environment dev nix { packages: [\"hello\"] }",
+		"task test nix { environment: \"dev\" run: [\"true\"] }",
+	],
+	"\n",
+)
+
+qualified_task_unqualified_environment_config = Str.join_with(
+	[
+		"environment dev { packages: [\"hello\"] }",
+		"task test nix { environment: \"dev\" run: [\"true\"] }",
+	],
+	"\n",
+)
+
+qualified_fallback_config = Str.join_with(
+	[
+		"environment qualified nix { packages: [\"qualified-package\"] }",
+		"environment unqualified { packages: [\"unqualified-package\"] }",
+		"build app nix { environment: qualified run: [\"true\"] output: \"qualified\" }",
+		"build app { environment: unqualified run: [\"true\"] output: \"unqualified\" }",
+		"workflow ci nix { steps: [\"run qualified\"] }",
+		"workflow ci { steps: [\"run unqualified\"] }",
+	],
+	"\n",
+)
+
+expect match (std_task_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		StdPlugin.select_config(explicit_fallback_config, command, ExplicitBackend(backend), ["test"], LINUX, X64) == Err({
+			location: None,
+			message: "missing task 'test'",
+		})
+	_ => Bool.False
+}
+
+expect match (std_shell_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		StdPlugin.select_config(explicit_fallback_config, command, ExplicitBackend(backend), ["dev"], LINUX, X64) == Err({
+			location: None,
+			message: "missing environment 'dev'",
+		})
+	_ => Bool.False
+}
+
+expect match (std_build_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		match StdPlugin.select_config(explicit_fallback_config, command, ExplicitBackend(backend), ["app"], LINUX, X64) {
+			Ok(SelectedWithRelated(_)) => Bool.True
+			_ => Bool.False
+		}
+	_ => Bool.False
+}
+
+expect match (std_workflow_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		match StdPlugin.select_config(explicit_fallback_config, command, ExplicitBackend(backend), ["ci"], LINUX, X64) {
+			Ok(SelectedWithBody(_)) => Bool.True
+			_ => Bool.False
+		}
+	_ => Bool.False
+}
+
+expect match (std_task_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		match StdPlugin.select_config(qualified_task_config, command, ExplicitBackend(backend), ["test"], LINUX, X64) {
+			Ok(SelectedWithRelated(_)) => Bool.True
+			_ => Bool.False
+		}
+	_ => Bool.False
+}
+
+expect match (std_task_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		StdPlugin.select_config(qualified_task_unqualified_environment_config, command, ExplicitBackend(backend), ["test"], LINUX, X64) == Err({
+			location: None,
+			message: "missing environment 'dev'",
+		})
+	_ => Bool.False
+}
+
+expect match (std_build_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		match StdPlugin.select_config(qualified_fallback_config, command, ExplicitBackend(backend), ["app"], LINUX, X64) {
+			Ok(SelectedWithRelated({ block, body: _, related_block, related_body: _ })) =>
+				block.body.contains("output: \"qualified\"") and related_block.body.contains("qualified-package")
+			_ => Bool.False
+		}
+	_ => Bool.False
+}
+
+expect match (std_workflow_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		match StdPlugin.select_config(qualified_fallback_config, command, ExplicitBackend(backend), ["ci"], LINUX, X64) {
+			Ok(SelectedWithBody({ block, body: _ })) => block.body.contains("run qualified")
+			_ => Bool.False
+		}
+	_ => Bool.False
+}
+
+related_location_config = "environment dev { packages: [\"hello\"] }\ntask test { environment: \"dev\" run: [\"true\"] }"
+
+expect match (std_task_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		match StdPlugin.select_config(related_location_config, command, DefaultBackend(backend), ["test"], LINUX, X64) {
+			Ok(SelectedWithRelated({ block, body: _, related_block, related_body: _ })) =>
+				block.location == { byte_offset: 51, column: 12, line: 2 } and
+					related_block.location == { byte_offset: 17, column: 18, line: 1 }
+			_ => Bool.False
+		}
+	_ => Bool.False
+}
+
+expect match (std_build_command, std_nix_backend) {
+	(Ok(command), Ok(backend)) =>
+		StdPlugin.select_config("", command, DefaultBackend(backend), [".bad"], LINUX, X64) == Err({
+			location: None,
+			message: "artifact name must not start with '.'",
+		})
+	_ => Bool.False
+}
+
+backend_collision_config = Str.join_with(
+	[
+		"environment nix { packages: [\"hello\"] }",
+		"task nix { environment: \"nix\" run: [\"true\"] }",
+		"build nix { environment: nix run: [\"true\"] output: \"app\" }",
+		"workflow nix { steps: [\"run nix\"] }",
+	],
+	"\n",
+)
+
+backend_collision_matches : List(Str), Str -> Bool
+backend_collision_matches = |args, expected_command|
+	match Plugin.plan_registry(registry, backend_collision_config, args, LINUX, X64) {
+		Ok(plan) => plan.backend.name == "nix" and plan.command == expected_command
+		_ => Bool.False
+	}
+
+expect backend_collision_matches(["shell", "nix"], "shell") and
+	backend_collision_matches(["run", "nix"], "run") and
+		backend_collision_matches(["build", "nix"], "build") and
+			backend_collision_matches(["workflow", "nix"], "workflow")
+
 workflow_test_config = Str.join_with(
 	[
 		"environment dev {",

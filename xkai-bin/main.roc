@@ -30,6 +30,7 @@ import "../plugins/std/implementations/ShellNix.roc" as shell_nix_source : Str
 import "../plugins/std/implementations/TaskNix.roc" as task_nix_source : Str
 import "../plugins/std/implementations/UpdateNix.roc" as update_nix_source : Str
 import "../plugins/std/implementations/WorkflowNix.roc" as workflow_nix_source : Str
+import "../plugins/std/selectors/StandardConfig.roc" as standard_config_source : Str
 import "VERSION" as version_source : Str
 
 platform_name = "FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn"
@@ -109,7 +110,7 @@ build_stage! = |stage, plugin_paths, output_name, output_path| {
 	Path.create_dir!(std_dir)?
 	Path.write_utf8!(
 		Path.join(std_dir, "main.roc"),
-		"package [StdPlugin] { backends: \"./backends/main.roc\", commands: \"./commands/main.roc\", implementations: \"./implementations/main.roc\", kai: \"../package.roc\", parser: \"../parser/main.roc\" }\n",
+		"package [StdPlugin] { backends: \"./backends/main.roc\", commands: \"./commands/main.roc\", implementations: \"./implementations/main.roc\", kai: \"../package.roc\", parser: \"../parser/main.roc\", selectors: \"./selectors/main.roc\" }\n",
 	)?
 	Path.write_utf8!(Path.join(std_dir, "StdPlugin.roc"), std_plugin_source)?
 
@@ -132,6 +133,14 @@ build_stage! = |stage, plugin_paths, output_name, output_path| {
 	Path.write_utf8!(Path.join(commands_dir, "Task.roc"), task_command_source)?
 	Path.write_utf8!(Path.join(commands_dir, "Update.roc"), update_command_source)?
 	Path.write_utf8!(Path.join(commands_dir, "Workflow.roc"), workflow_command_source)?
+
+	selectors_dir = Path.join(std_dir, "selectors")
+	Path.create_dir!(selectors_dir)?
+	Path.write_utf8!(
+		Path.join(selectors_dir, "main.roc"),
+		"package [StandardConfig] { kai: \"../../package.roc\", parser: \"../../parser/main.roc\" }\n",
+	)?
+	Path.write_utf8!(Path.join(selectors_dir, "StandardConfig.roc"), standard_config_source)?
 
 	implementations_dir = Path.join(std_dir, "implementations")
 	Path.create_dir!(implementations_dir)?
