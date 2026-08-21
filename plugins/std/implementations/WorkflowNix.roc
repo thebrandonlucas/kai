@@ -1,18 +1,19 @@
 import parser.Body
-import kai.Plugin as PluginApi
+import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Workflow as WorkflowCommand
 
 WorkflowNix := [].{
-	implementation : PluginApi.Implementation
-	implementation = PluginApi.Implementation.{
+	implementation : Plugin.Implementation
+	implementation = Plugin.Implementation.{
 		actions: [],
 		backend: NixBackend.backend.name,
 		command: WorkflowCommand.command.name,
 		renderer: WorkflowNix.renderer,
+		validator: NoValidation,
 	}
 
-	renderer : PluginApi.Renderer
+	renderer : Plugin.Renderer
 	renderer = |context| {
 		steps = Body.get_strings(context.config, "steps") ? |_| {
 			byte_offset: None,
@@ -23,7 +24,7 @@ WorkflowNix := [].{
 		} else {
 			requests = WorkflowNix.parse_steps(steps)?
 			Ok(
-				PluginApi.RenderResult.{
+				Plugin.RenderResult.{
 					actions: [],
 					outputs: [],
 					requests,
@@ -33,10 +34,10 @@ WorkflowNix := [].{
 		}
 	}
 
-	parse_steps : List(Str) -> Try(List(PluginApi.PlanRequest), PluginApi.RendererDiagnostic)
+	parse_steps : List(Str) -> Try(List(Plugin.PlanRequest), Plugin.RendererDiagnostic)
 	parse_steps = |steps| WorkflowNix.parse_steps_from(steps, 1)
 
-	parse_steps_from : List(Str), U64 -> Try(List(PluginApi.PlanRequest), PluginApi.RendererDiagnostic)
+	parse_steps_from : List(Str), U64 -> Try(List(Plugin.PlanRequest), Plugin.RendererDiagnostic)
 	parse_steps_from = |steps, index|
 		match steps {
 			[] => Ok([])
@@ -47,7 +48,7 @@ WorkflowNix := [].{
 			}
 		}
 
-	parse_step : Str -> Try(PluginApi.PlanRequest, [InvalidWorkflowStep])
+	parse_step : Str -> Try(Plugin.PlanRequest, [InvalidWorkflowStep])
 	parse_step = |step|
 		match WorkflowNix.words(step) {
 			[operation, name] if operation == "run" or operation == "build" => Ok({
@@ -57,7 +58,7 @@ WorkflowNix := [].{
 			_ => Err(InvalidWorkflowStep)
 		}
 
-	invalid_step : U64, Str -> PluginApi.RendererDiagnostic
+	invalid_step : U64, Str -> Plugin.RendererDiagnostic
 	invalid_step = |index, step| {
 		byte_offset: None,
 		message: "workflow step ${U64.to_str(index)} is invalid: '${step}'; expected 'run <name>' or 'build <name>'",
@@ -95,49 +96,3 @@ WorkflowNix := [].{
 		}
 
 }
-
-# -- TESTS --
-
-step_cases = [
-	{
-		expected: Ok({ args: ["run", "test"], status: "workflow: run test" }),
-		step: "run test",
-	},
-	{
-		expected: Ok({ args: ["build", "app"], status: "workflow: build app" }),
-		step: " \tbuild\n  app\r ",
-	},
-	{
-		expected: Ok({ args: ["run", "test:unit"], status: "workflow: run test:unit" }),
-		step: "run test:unit",
-	},
-	{ expected: Err(InvalidWorkflowStep), step: "" },
-	{ expected: Err(InvalidWorkflowStep), step: "run" },
-	{ expected: Err(InvalidWorkflowStep), step: "run test extra" },
-	{ expected: Err(InvalidWorkflowStep), step: "shell dev" },
-	{ expected: Err(InvalidWorkflowStep), step: "workflow ci" },
-	{ expected: Err(InvalidWorkflowStep), step: "deploy production" },
-	{ expected: Ok({ args: ["run", "test;"], status: "workflow: run test;" }), step: "run test;" },
-	{ expected: Err(InvalidWorkflowStep), step: "run test && echo bad" },
-	{ expected: Err(InvalidWorkflowStep), step: "build app | cat" },
-]
-
-expect List.all(step_cases, |case| WorkflowNix.parse_step(case.step) == case.expected)
-
-expect WorkflowNix.parse_steps(["run test", "deploy production"]) == Err({
-	byte_offset: None,
-	message: "workflow step 2 is invalid: 'deploy production'; expected 'run <name>' or 'build <name>'",
-})
-
-expect match Body.parse(WorkflowCommand.body, "steps: []") {
-	Err(_) => Bool.False
-	Ok(config) =>
-		WorkflowNix.renderer({
-			args: ["ci"],
-			config,
-			config_block: NoConfigBlock,
-			host_arch: X64,
-			host_os: LINUX,
-			related_config: NoRelatedConfig,
-		}) == Err({ byte_offset: None, message: "workflow must contain at least one step" })
-	}

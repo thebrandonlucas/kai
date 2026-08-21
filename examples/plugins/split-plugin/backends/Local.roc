@@ -1,9 +1,9 @@
-import kai.Plugin as PluginApi
+import kai.Plugin
 
 Local := [].{
-	backend : PluginApi.Backend
-	backend = PluginApi.Backend.{
-		determinate_system: PluginApi.DeterminateSystem.{
+	backend : Plugin.Backend
+	backend = Plugin.Backend.{
+		determinate_system: Plugin.DeterminateSystem.{
 			default_package_source: "local",
 			driver: NoDriver,
 			kind: Custom,
