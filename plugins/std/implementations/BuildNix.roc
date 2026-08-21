@@ -6,7 +6,7 @@ import commands.Build as BuildCommand
 BuildNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: NixBackend.build_templates,
+		actions: [NixBackend.flake_template].concat(NixBackend.lock_templates).concat(NixBackend.build_output_templates),
 		backend: NixBackend.backend.name,
 		command: BuildCommand.command.name,
 		renderer: BuildNix.renderer,
@@ -46,7 +46,7 @@ BuildNix := [].{
 			{ byte_offset: None, message: "unsupported build platform" }
 		Ok(
 			Plugin.RenderResult.{
-				actions: NixBackend.named_artifact_actions(name),
+				actions: NixBackend.build_artifact_actions(name),
 				outputs: [
 					{
 						name: "flake",

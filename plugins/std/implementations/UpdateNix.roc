@@ -4,7 +4,7 @@ import commands.Update as UpdateCommand
 UpdateNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: NixBackend.update_recipe,
+		actions: [NixBackend.flake_template].concat(NixBackend.update_lock_templates),
 		backend: NixBackend.backend.name,
 		command: UpdateCommand.command.name,
 		renderer: |_| Ok(

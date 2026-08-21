@@ -6,7 +6,7 @@ import commands.Task as TaskCommand
 TaskNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: NixBackend.locked_flake_templates,
+		actions: [NixBackend.flake_template].concat(NixBackend.lock_templates),
 		backend: NixBackend.backend.name,
 		command: TaskCommand.command.name,
 		renderer: TaskNix.renderer,
@@ -32,7 +32,7 @@ TaskNix := [].{
 			{ byte_offset: None, message: "unsupported task platform" }
 		Ok(
 			Plugin.RenderResult.{
-				actions: NixBackend.task_actions(run),
+				actions: NixBackend.develop_command_actions(run),
 				outputs: [
 					{
 						name: "flake",

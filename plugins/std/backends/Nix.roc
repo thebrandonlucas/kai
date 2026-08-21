@@ -118,9 +118,11 @@ Nix := [].{
 		AllStrings(safe_string_rule("shell overlay references contain characters unsafe for Nix output")),
 	]
 
-	locked_flake_templates : List(Plugin.ActionTemplate)
-	locked_flake_templates = [
-		WriteConfigUtf8({ output: "flake", path: ".kai/flake.nix" }),
+	flake_template : Plugin.ActionTemplate
+	flake_template = WriteConfigUtf8({ output: "flake", path: ".kai/flake.nix" })
+
+	lock_templates : List(Plugin.ActionTemplate)
+	lock_templates = [
 		Exec({
 			args: [
 				"flake",
@@ -147,27 +149,24 @@ Nix := [].{
 		}),
 	]
 
-	shell_templates : List(Plugin.ActionTemplate)
-	shell_templates = locked_flake_templates.concat([
-		Exec({
-			args: [
-				"develop",
-				"path:.kai#default",
-				"--no-update-lock-file",
-			],
-			command: backend.name,
-		}),
-	])
+	develop_template : Plugin.ActionTemplate
+	develop_template = Exec({
+		args: [
+			"develop",
+			"path:.kai#default",
+			"--no-update-lock-file",
+		],
+		command: backend.name,
+	})
 
-	build_templates : List(Plugin.ActionTemplate)
-	build_templates = locked_flake_templates.concat([
+	build_output_templates : List(Plugin.ActionTemplate)
+	build_output_templates = [
 		WriteConfigUtf8({ output: "build_nix", path: ".kai/build.nix" }),
 		WriteConfigUtf8({ output: "build_json", path: ".kai/build.json" }),
-	])
+	]
 
-	update_recipe : List(Plugin.ActionTemplate)
-	update_recipe = [
-		WriteConfigUtf8({ output: "flake", path: ".kai/flake.nix" }),
+	update_lock_templates : List(Plugin.ActionTemplate)
+	update_lock_templates = [
 		Exec({
 			args: [
 				"flake",
@@ -195,8 +194,8 @@ Nix := [].{
 		}),
 	]
 
-	named_artifact_actions : Str -> List(Plugin.Action)
-	named_artifact_actions = |name|
+	build_artifact_actions : Str -> List(Plugin.Action)
+	build_artifact_actions = |name|
 		[
 			WriteUtf8({ content: "", path: ".kai/artifacts/.keep" }),
 			Exec({
@@ -211,8 +210,8 @@ Nix := [].{
 			}),
 		]
 
-	task_actions : List(Str) -> List(Plugin.Action)
-	task_actions = |run|
+	develop_command_actions : List(Str) -> List(Plugin.Action)
+	develop_command_actions = |run|
 		[
 			Exec({
 				args: [
