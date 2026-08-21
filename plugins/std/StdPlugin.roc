@@ -24,7 +24,12 @@ StdPlugin := [].{
 		if command.name == ShellCommand.command.name {
 			match (backend_choice, args) {
 				(ExplicitBackend(backend), []) =>
-					match PluginApi.select_config_header(config_text, ["environment", backend.name], DefaultBackend(backend), os)? {
+					match PluginApi.select_config_header(
+						config_text,
+						["environment", backend.name],
+						DefaultBackend(backend),
+						os,
+					)? {
 						Missing => PluginApi.select_config(config_text, command, backend_choice, args, os, arch)
 						Selected(block) => Ok(SelectedWithBody({ block, body: ShellCommand.environment_body }))
 						_ => Err({ location: None, message: "invalid environment selection" })
@@ -181,7 +186,13 @@ StdPlugin := [].{
 	}
 
 	commands : List(PluginApi.Command)
-	commands = [BuildCommand.command, ShellCommand.command, TaskCommand.command, UpdateCommand.command, WorkflowCommand.command]
+	commands = [
+		BuildCommand.command,
+		ShellCommand.command,
+		TaskCommand.command,
+		UpdateCommand.command,
+		WorkflowCommand.command,
+	]
 
 	backends : List(PluginApi.Backend)
 	backends = [NixBackend.backend]

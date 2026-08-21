@@ -180,7 +180,10 @@ expect PluginApi.renderer_validation(
 	),
 ) == Err({
 	byte_offset: None,
-	message: "build run list must not be empty\nbuild output must be relative\nbuild output must not contain '.' or '..' path segments",
+	message: \\build run list must not be empty
+		\\\nbuild output must be relative
+		\\\nbuild output must not contain '.' or '..' path segments",
+	,
 })
 
 encoded_config = Json.to_str({
