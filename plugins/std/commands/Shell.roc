@@ -2,6 +2,10 @@
 import parser.Body
 import kai.Plugin
 
+# TODO: how to make this code more self documenting ie,
+# I want to be able to know easily: 
+# a) what new kai commands and command call shape from this code, and 
+# b) what the corresponding Kaifile will look like from it
 Shell := [].{
 	packages_field : Body.Field
 	packages_field = Body.required("packages", StringList)
@@ -11,12 +15,6 @@ Shell := [].{
 
 	body : Body.Shape
 	body = Body.object([packages_field, overlays_field])
-
-	environment_body : Body.Shape
-	environment_body = Body.object([packages_field])
-
-	environment_name_rules : List(Plugin.TextRule)
-	environment_name_rules = [NonemptyText("environment name must not be empty")]
 
 	command : Plugin.Command
 	command = Plugin.Command.{
