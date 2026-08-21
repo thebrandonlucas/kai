@@ -10,6 +10,7 @@ WorkflowNix := [].{
 		backend: NixBackend.backend.name,
 		command: WorkflowCommand.command.name,
 		renderer: WorkflowNix.renderer,
+		validator: NoValidation,
 	}
 
 	renderer : Plugin.Renderer

@@ -17,15 +17,19 @@ Nix := [].{
 
 	Target : { system : Str }
 
+	supported_targets : List(Plugin.BackendTarget)
+	supported_targets = [
+		{ arch: X64, os: LINUX, value: "x86_64-linux" },
+		{ arch: AARCH64, os: LINUX, value: "aarch64-linux" },
+		{ arch: X64, os: MACOS, value: "x86_64-darwin" },
+		{ arch: AARCH64, os: MACOS, value: "aarch64-darwin" },
+	]
+
 	target : Plugin.HostOs, Plugin.HostArch -> Try(Target, [UnsupportedPlatform])
-	target = |os, arch|
-		match (os, arch) {
-			(LINUX, X64) => Ok({ system: "x86_64-linux" })
-			(LINUX, AARCH64) => Ok({ system: "aarch64-linux" })
-			(MACOS, X64) => Ok({ system: "x86_64-darwin" })
-			(MACOS, AARCH64) => Ok({ system: "aarch64-darwin" })
-			_ => Err(UnsupportedPlatform)
-		}
+	target = |os, arch| {
+		system = Plugin.target_value(supported_targets, os, arch)?
+		Ok({ system: system })
+	}
 
 	# Nix double-quoted strings accept printable ASCII except the characters
 	# that begin escaping or interpolation.

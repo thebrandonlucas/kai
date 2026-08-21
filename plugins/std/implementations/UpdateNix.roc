@@ -15,6 +15,7 @@ UpdateNix := [].{
 				requested_packages: [],
 			},
 		),
+		validator: NoValidation,
 	}
 
 	flake : Str

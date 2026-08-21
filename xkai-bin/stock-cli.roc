@@ -326,6 +326,7 @@ cycle_implementation = Plugin.Implementation.{
 			requested_packages: [],
 		},
 	),
+	validator: NoValidation,
 }
 
 cycle_registry = [
@@ -365,6 +366,7 @@ custom_run_implementation = Plugin.Implementation.{
 			requested_packages: [],
 		},
 	),
+	validator: NoValidation,
 }
 
 alternate_backend = Plugin.Backend.{
@@ -390,6 +392,7 @@ alternate_run_implementation = Plugin.Implementation.{
 			requested_packages: [],
 		},
 	),
+	validator: NoValidation,
 }
 
 custom_run_definition = |default_backend| Plugin.Definition.{

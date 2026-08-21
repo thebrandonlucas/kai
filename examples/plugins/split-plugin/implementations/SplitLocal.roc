@@ -16,5 +16,6 @@ SplitLocal := [].{
 				requested_packages: [],
 			},
 		),
+		validator: NoValidation,
 	}
 }

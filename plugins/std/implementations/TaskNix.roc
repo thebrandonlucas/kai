@@ -10,6 +10,7 @@ TaskNix := [].{
 		backend: NixBackend.backend.name,
 		command: TaskCommand.command.name,
 		renderer: TaskNix.renderer,
+		validator: NoValidation,
 	}
 
 	renderer : Plugin.Renderer

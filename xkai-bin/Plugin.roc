@@ -194,6 +194,12 @@ Plugin := [].{
 		required_packages : List(Package),
 	}
 
+	BackendTarget := {
+		arch : HostArch,
+		os : HostOs,
+		value : Str,
+	}
+
 	SourceLocation := {
 		byte_offset : U64,
 		column : U64,
@@ -357,7 +363,20 @@ Plugin := [].{
 		host_arch : HostArch,
 		host_os : HostOs,
 		related_config : RelatedConfig,
+		target : [NoTarget, SelectedTarget(Str)],
 	}
+
+	StringListValidation := {
+		field : Body.Field,
+		rules : List(StringListRule),
+	}
+
+	TargetValidation : [NoTargetValidation, SupportedTargets({ message : Str, supported : List(BackendTarget) })]
+
+	Validator : [
+		NoValidation,
+		Validate({ string_lists : List(StringListValidation), target : TargetValidation }),
+	]
 
 	# Text that will get written to disk.
 	# "name" is what our plugin would name
@@ -392,7 +411,78 @@ Plugin := [].{
 		backend : Str,
 		command : Str,
 		renderer : Renderer,
+		validator : Validator,
 	}
+
+	validate_render_context : RenderContext, Validator -> Try(RenderContext, RendererDiagnostic)
+	validate_render_context = |context, validator|
+		match validator {
+			NoValidation => Ok(context)
+			Validate({ string_lists, target }) => {
+				selected_target = match target {
+					NoTargetValidation => Ok(NoTarget)
+					SupportedTargets({ message, supported }) =>
+						match Plugin.target_value(supported, context.host_os, context.host_arch) {
+							Ok(value) => Ok(SelectedTarget(value))
+							Err(_) => Err({ byte_offset: None, message })
+						}
+					}?
+				failures = Plugin.validate_string_list_fields(context.config, string_lists)?
+				Plugin.renderer_validation(failures)?
+				Ok(
+					Plugin.RenderContext.{
+						args: context.args,
+						config: context.config,
+						config_block: context.config_block,
+						host_arch: context.host_arch,
+						host_os: context.host_os,
+						related_config: context.related_config,
+						target: selected_target,
+					},
+				)
+			}
+		}
+
+	validate_string_list_fields : Body.Configuration, List(StringListValidation) -> Try(List(Str), RendererDiagnostic)
+	validate_string_list_fields = |config, validations|
+		match validations {
+			[] => Ok([])
+			[first, .. as rest] => {
+				values = Plugin.validated_strings(config, first.field)?
+				remaining = Plugin.validate_string_list_fields(config, rest)?
+				Ok(Plugin.validate_string_list(values, first.rules).concat(remaining))
+			}
+		}
+
+	validated_strings : Body.Configuration, Body.Field -> Try(List(Str), RendererDiagnostic)
+	validated_strings = |config, field|
+		match Body.get_strings(config, field.name) {
+			Ok(values) => Ok(values)
+			Err(MissingField(_)) if field.presence == Optional => Ok([])
+			Err(_) => Err({
+				byte_offset: None,
+				message: "validated configuration does not match declared field '${field.name}'",
+			})
+		}
+
+	validated_target : RenderContext -> Try(Str, RendererDiagnostic)
+	validated_target = |context|
+		match context.target {
+			SelectedTarget(value) => Ok(value)
+			NoTarget => Err({ byte_offset: None, message: "implementation requires a validated backend target" })
+		}
+
+	target_value : List(BackendTarget), HostOs, HostArch -> Try(Str, [UnsupportedPlatform])
+	target_value = |supported, os, arch|
+		match supported {
+			[] => Err(UnsupportedPlatform)
+			[first, .. as rest] =>
+				if first.os == os and first.arch == arch {
+					Ok(first.value)
+				} else {
+					Plugin.target_value(rest, os, arch)
+				}
+			}
 
 	Definition := {
 		backends : List(Backend),
@@ -561,9 +651,12 @@ Plugin := [].{
 						host_arch: arch,
 						host_os: os,
 						related_config: parsed.related_config,
+						target: NoTarget,
 					}
+					validated_context = Plugin.validate_render_context(context, implementation.validator) ? |diagnostic|
+						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
 					renderer = implementation.renderer
-					rendered = renderer(context) ? |diagnostic|
+					rendered = renderer(validated_context) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
 					base_plan = Plugin.lower(implementation, rendered, plugin_definition.name, backend_selection.backend) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))

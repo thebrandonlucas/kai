@@ -60,6 +60,7 @@ CustomPlugin := [].{
 		backend: local.name,
 		command: custom_write.name,
 		renderer: CustomPlugin.render,
+		validator: NoValidation,
 	}
 
 	definition : Plugin.Definition

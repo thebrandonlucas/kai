@@ -27,6 +27,7 @@ import "../plugins/std/commands/Update.roc" as update_command_source : Str
 import "../plugins/std/commands/Workflow.roc" as workflow_command_source : Str
 import "../plugins/std/implementations/BuildNix.roc" as build_nix_source : Str
 import "../plugins/std/implementations/ShellNix.roc" as shell_nix_source : Str
+import "../plugins/std/implementations/ShellNixValidation.roc" as shell_nix_validation_source : Str
 import "../plugins/std/implementations/TaskNix.roc" as task_nix_source : Str
 import "../plugins/std/implementations/UpdateNix.roc" as update_nix_source : Str
 import "../plugins/std/implementations/WorkflowNix.roc" as workflow_nix_source : Str
@@ -146,10 +147,11 @@ build_stage! = |stage, plugin_paths, output_name, output_path| {
 	Path.create_dir!(implementations_dir)?
 	Path.write_utf8!(
 		Path.join(implementations_dir, "main.roc"),
-		"package [BuildNix, ShellNix, TaskNix, UpdateNix, WorkflowNix] { backends: \"../backends/main.roc\", commands: \"../commands/main.roc\", kai: \"../../package.roc\", parser: \"../../parser/main.roc\" }\n",
+		"package [BuildNix, ShellNix, ShellNixValidation, TaskNix, UpdateNix, WorkflowNix] { backends: \"../backends/main.roc\", commands: \"../commands/main.roc\", kai: \"../../package.roc\", parser: \"../../parser/main.roc\" }\n",
 	)?
 	Path.write_utf8!(Path.join(implementations_dir, "BuildNix.roc"), build_nix_source)?
 	Path.write_utf8!(Path.join(implementations_dir, "ShellNix.roc"), shell_nix_source)?
+	Path.write_utf8!(Path.join(implementations_dir, "ShellNixValidation.roc"), shell_nix_validation_source)?
 	Path.write_utf8!(Path.join(implementations_dir, "TaskNix.roc"), task_nix_source)?
 	Path.write_utf8!(Path.join(implementations_dir, "UpdateNix.roc"), update_nix_source)?
 	Path.write_utf8!(Path.join(implementations_dir, "WorkflowNix.roc"), workflow_nix_source)?

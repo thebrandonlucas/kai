@@ -1,5 +1,5 @@
 package
-	[BuildNix, ShellNix, TaskNix, UpdateNix, WorkflowNix]
+	[BuildNix, ShellNix, ShellNixValidation, TaskNix, UpdateNix, WorkflowNix]
 	{
 		backends: "../backends/main.roc",
 		commands: "../commands/main.roc",
