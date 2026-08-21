@@ -204,6 +204,7 @@ StdPlugin := [].{
 	definition = Plugin.Definition.{
 		backends,
 		commands,
+		default_backend: NixBackend.backend.name,
 		implementations,
 		name: "std",
 	}

@@ -107,7 +107,6 @@ cycle_command = Plugin.Command.{
 	argument_policy: NoArguments,
 	body: Body.object([]),
 	config_block: OptionalConfigBlock("loop"),
-	default_backend: cycle_backend.name,
 	name: "loop",
 }
 
@@ -130,6 +129,7 @@ cycle_registry = [
 		definition: Plugin.Definition.{
 			backends: [cycle_backend],
 			commands: [cycle_command],
+			default_backend: cycle_backend.name,
 			implementations: [cycle_implementation],
 			name: "cycle",
 		},
@@ -146,7 +146,6 @@ custom_run_command = Plugin.Command.{
 	argument_policy: AllowArguments,
 	body: Body.object([]),
 	config_block: OptionalConfigBlock("custom-run"),
-	default_backend: cycle_backend.name,
 	name: "run",
 }
 
@@ -164,15 +163,107 @@ custom_run_implementation = Plugin.Implementation.{
 	),
 }
 
-custom_run_registry = {
-	definition: Plugin.Definition.{
-		backends: [cycle_backend],
-		commands: [custom_run_command],
-		implementations: [custom_run_implementation],
-		name: "custom-run",
+alternate_backend = Plugin.Backend.{
+	determinate_system: Plugin.DeterminateSystem.{
+		default_package_source: "alternate",
+		driver: NoDriver,
+		kind: Custom,
 	},
+	fallback: NoFallback,
+	name: "alternate",
+	required_packages: [],
+}
+
+alternate_run_implementation = Plugin.Implementation.{
+	actions: [],
+	backend: alternate_backend.name,
+	command: custom_run_command.name,
+	renderer: |_| Ok(
+		Plugin.RenderResult.{
+			actions: [PrintLine("alternate run")],
+			outputs: [],
+			requests: [],
+			requested_packages: [],
+		},
+	),
+}
+
+custom_run_definition = |default_backend| Plugin.Definition.{
+	backends: [cycle_backend, alternate_backend],
+	commands: [custom_run_command],
+	default_backend,
+	implementations: [custom_run_implementation, alternate_run_implementation],
+	name: "custom-run",
+}
+
+custom_run_registry = {
+	definition: custom_run_definition(cycle_backend.name),
 	select_config: Plugin.select_config,
 }
+
+backend_selection_cases = [
+	{
+		args: ["run"],
+		expected_action: PrintLine("custom run"),
+		expected_backend: cycle_backend.name,
+		registry: [custom_run_registry],
+	},
+	{
+		args: ["run"],
+		expected_action: PrintLine("alternate run"),
+		expected_backend: alternate_backend.name,
+		registry: [{ definition: custom_run_definition(alternate_backend.name), select_config: Plugin.select_config }],
+	},
+	{
+		args: ["run", alternate_backend.name],
+		expected_action: PrintLine("alternate run"),
+		expected_backend: alternate_backend.name,
+		registry: [custom_run_registry],
+	},
+]
+
+expect List.all(
+	backend_selection_cases,
+	|case|
+		match Plugin.plan_registry(case.registry, "", case.args, LINUX, X64) {
+			Ok(plan) => plan.backend.name == case.expected_backend and plan.actions == [case.expected_action]
+			_ => Bool.False
+		},
+)
+
+registry_validation_cases = [
+	{
+		definition: Plugin.Definition.{
+			backends: [cycle_backend],
+			commands: [custom_run_command],
+			default_backend: "unknown",
+			implementations: [custom_run_implementation],
+			name: "unknown-default",
+		},
+		expected_message: "default backend 'unknown' is not declared",
+		expected_plugin: "unknown-default",
+	},
+	{
+		definition: Plugin.Definition.{
+			backends: [cycle_backend, alternate_backend],
+			commands: [custom_run_command],
+			default_backend: alternate_backend.name,
+			implementations: [custom_run_implementation],
+			name: "missing-default-implementation",
+		},
+		expected_message: "command 'run' has no implementation for default backend 'alternate'",
+		expected_plugin: "missing-default-implementation",
+	},
+]
+
+expect List.all(
+	registry_validation_cases,
+	|case|
+		match Plugin.validate_registry([{ definition: case.definition, select_config: Plugin.select_config }]) {
+			Err(diagnostic) => diagnostic.message == case.expected_message and diagnostic.plugin == case.expected_plugin
+			Ok(_) => Bool.False
+		},
+)
 
 expect match Plugin.plan_registry(
 	[custom_run_registry, StdPlugin.plugin],

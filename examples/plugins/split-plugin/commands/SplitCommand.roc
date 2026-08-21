@@ -7,7 +7,6 @@ SplitCommand := [].{
 		argument_policy: NoArguments,
 		body: Body.object([]),
 		config_block: OptionalConfigBlock("split"),
-		default_backend: "local",
 		name: "split-command",
 	}
 }

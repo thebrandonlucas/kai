@@ -45,7 +45,6 @@ CustomPlugin := [].{
 	custom_write = Plugin.Command.{
 		argument_policy: NoArguments,
 		body: custom_body,
-		default_backend: local.name,
 		name: "custom-write",
 		config_block: RequiredConfigBlock("custom"),
 	}
@@ -67,6 +66,7 @@ CustomPlugin := [].{
 	definition = Plugin.Definition.{
 		backends: [local],
 		commands: [custom_write],
+		default_backend: local.name,
 		implementations: [implementation],
 		name: "custom",
 	}

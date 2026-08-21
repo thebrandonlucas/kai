@@ -45,7 +45,6 @@ Build := [].{
 		argument_policy: AllowArguments,
 		body,
 		config_block: RequiredConfigBlock("build"),
-		default_backend: "nix",
 		name: "build",
 	}
 }

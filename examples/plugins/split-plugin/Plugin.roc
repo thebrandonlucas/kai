@@ -9,6 +9,7 @@ Plugin := [].{
 		definition: PluginApi.Definition.{
 			backends: [Local.backend],
 			commands: [SplitCommand.command],
+			default_backend: Local.backend.name,
 			implementations: [SplitLocal.implementation],
 			name: "split",
 		},

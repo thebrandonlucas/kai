@@ -7,7 +7,6 @@ Update := [].{
 		argument_policy: NoArguments,
 		body: Body.object([]),
 		config_block: OptionalConfigBlock("update"),
-		default_backend: "nix",
 		name: "update",
 	}
 }

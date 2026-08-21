@@ -22,7 +22,6 @@ Shell := [].{
 		argument_policy: AllowArguments,
 		body,
 		config_block: RequiredConfigBlock("shell"),
-		default_backend: "nix",
 		name: "shell",
 	}
 }

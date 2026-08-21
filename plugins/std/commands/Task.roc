@@ -27,7 +27,6 @@ Task := [].{
 		argument_policy: AllowArguments,
 		body,
 		config_block: RequiredConfigBlock("task"),
-		default_backend: "nix",
 		name: "run",
 	}
 }

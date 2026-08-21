@@ -160,7 +160,6 @@ Plugin := [].{
 		argument_policy : ArgumentPolicy,
 		body : Body.Shape,
 		config_block : ConfigBlockRequirement,
-		default_backend : Str,
 		name : Str,
 	}
 
@@ -398,6 +397,7 @@ Plugin := [].{
 	Definition := {
 		backends : List(Backend),
 		commands : List(Command),
+		default_backend : Str,
 		implementations : List(Implementation),
 		name : Str,
 	}
@@ -426,9 +426,17 @@ Plugin := [].{
 		} else if definition.implementations.is_empty() {
 			Plugin.registry_failure(definition.name, "must define at least one implementation")
 		} else {
+			Plugin.validate_default_backend(definition)?
 			Plugin.validate_implementation_references(definition.implementations, definition)?
-			Plugin.validate_commands_used(definition.commands, definition.implementations, definition.name)?
+			Plugin.validate_default_implementations(definition.commands, definition.default_backend, definition.implementations, definition.name)?
 			Plugin.validate_backends_used(definition.backends, definition.implementations, definition.name)
+		}
+
+	validate_default_backend : Definition -> Try({}, RegistryDiagnostic)
+	validate_default_backend = |definition|
+		match Plugin.find_backend(definition.backends, definition.default_backend) {
+			Ok(_) => Ok({})
+			Err(NotFound) => Plugin.registry_failure(definition.name, "default backend '${definition.default_backend}' is not declared")
 		}
 
 	validate_implementation_references : List(Implementation), Definition -> Try({}, RegistryDiagnostic)
@@ -446,15 +454,14 @@ Plugin := [].{
 					}
 			}
 
-	validate_commands_used : List(Command), List(Implementation), Str -> Try({}, RegistryDiagnostic)
-	validate_commands_used = |commands, implementations, plugin|
+	validate_default_implementations : List(Command), Str, List(Implementation), Str -> Try({}, RegistryDiagnostic)
+	validate_default_implementations = |commands, default_backend, implementations, plugin|
 		match commands {
 			[] => Ok({})
 			[first, .. as rest] =>
-				if Plugin.uses_command(implementations, first.name) {
-					Plugin.validate_commands_used(rest, implementations, plugin)
-				} else {
-					Plugin.registry_failure(plugin, "command '${first.name}' has no implementation")
+				match Plugin.find_implementation(implementations, first.name, default_backend) {
+					Ok(_) => Plugin.validate_default_implementations(rest, default_backend, implementations, plugin)
+					Err(NotFound) => Plugin.registry_failure(plugin, "command '${first.name}' has no implementation for default backend '${default_backend}'")
 				}
 			}
 
@@ -469,13 +476,6 @@ Plugin := [].{
 					Plugin.registry_failure(plugin, "backend '${first.name}' has no implementation")
 				}
 			}
-
-	uses_command : List(Implementation), Str -> Bool
-	uses_command = |implementations, command|
-		match implementations {
-			[] => Bool.False
-			[first, .. as rest] => first.command == command or Plugin.uses_command(rest, command)
-		}
 
 	uses_backend : List(Implementation), Str -> Bool
 	uses_backend = |implementations, backend|
@@ -511,7 +511,7 @@ Plugin := [].{
 				owner = Plugin.find_owner(registry, command_name)?
 				plugin_definition = owner.registry_definition.definition
 				command = owner.command
-				backend_selection = Plugin.select_backend(plugin_definition.backends, command, command_args) ? |backend_name|
+				backend_selection = Plugin.select_backend(plugin_definition.backends, plugin_definition.default_backend, command_args) ? |backend_name|
 					PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_name, None, "plugin command refers to unknown backend '${backend_name}'"))
 
 				if List.any(ancestors, |ancestor| ancestor == args) {
@@ -638,22 +638,22 @@ Plugin := [].{
 				}
 			}
 
-	select_backend : List(Backend), Command, List(Str) -> Try({ args : List(Str), backend : Backend, choice : BackendChoice }, Str)
-	select_backend = |backends, command, args|
+	select_backend : List(Backend), Str, List(Str) -> Try({ args : List(Str), backend : Backend, choice : BackendChoice }, Str)
+	select_backend = |backends, default_backend, args|
 		match args {
 			[candidate, .. as rest] =>
 				match Plugin.find_backend(backends, candidate) {
 					Ok(backend) => Ok({ args: rest, backend, choice: ExplicitBackend(backend) })
-					Err(NotFound) => Plugin.select_default_backend(backends, command, args)
+					Err(NotFound) => Plugin.select_default_backend(backends, default_backend, args)
 				}
-			[] => Plugin.select_default_backend(backends, command, args)
+			[] => Plugin.select_default_backend(backends, default_backend, args)
 		}
 
-	select_default_backend : List(Backend), Command, List(Str) -> Try({ args : List(Str), backend : Backend, choice : BackendChoice }, Str)
-	select_default_backend = |backends, command, args|
-		match Plugin.find_backend(backends, command.default_backend) {
+	select_default_backend : List(Backend), Str, List(Str) -> Try({ args : List(Str), backend : Backend, choice : BackendChoice }, Str)
+	select_default_backend = |backends, default_backend, args|
+		match Plugin.find_backend(backends, default_backend) {
 			Ok(backend) => Ok({ args, backend, choice: DefaultBackend(backend) })
-			Err(NotFound) => Err(command.default_backend)
+			Err(NotFound) => Err(default_backend)
 		}
 
 	find_implementation : List(Implementation), Str, Str -> Try(Implementation, [NotFound])

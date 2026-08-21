@@ -13,7 +13,6 @@ Workflow := [].{
 		argument_policy: AllowArguments,
 		body,
 		config_block: RequiredConfigBlock("workflow"),
-		default_backend: "nix",
 		name: "workflow",
 	}
 }
