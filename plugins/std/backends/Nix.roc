@@ -1,3 +1,4 @@
+# - Backends define backend capabilities, validation constraints, rendering, and execution primitives.
 import kai.Plugin
 import parser.Bytes
 

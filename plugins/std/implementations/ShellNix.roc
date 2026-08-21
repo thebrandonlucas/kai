@@ -1,3 +1,5 @@
+# - Implementations translate a command into backend operations.
+# - Commands and backends do not depend on each other; implementations may depend on both.
 import parser.Body
 import kai.Plugin
 import backends.Nix as NixBackend

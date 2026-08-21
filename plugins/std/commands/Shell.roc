@@ -1,3 +1,4 @@
+# - Commands define user-facing syntax and semantics.
 import parser.Body
 import kai.Plugin
 
