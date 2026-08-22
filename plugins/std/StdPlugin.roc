@@ -12,6 +12,7 @@ import implementations.ShellNix
 import implementations.TaskNix
 import implementations.UpdateNix
 import implementations.WorkflowNix
+import project_configs.Source
 
 ## `StdPlugin` is the standard plugin shipped for most `kai` users.
 ##
@@ -45,6 +46,7 @@ StdPlugin := [].{
 		commands,
 		implementations,
 		name,
+		project_configs,
 	}
 
 	name = "std"
@@ -57,6 +59,9 @@ StdPlugin := [].{
 		UpdateCommand.command,
 		WorkflowCommand.command,
 	]
+
+	project_configs : List(Plugin.ProjectConfigDescriptor)
+	project_configs = [Source.descriptor]
 
 	backends : List(Plugin.Backend)
 	backends = [NixBackend.backend]

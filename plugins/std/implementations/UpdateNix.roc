@@ -15,10 +15,11 @@ UpdateNix := [].{
 	renderer : Plugin.Renderer
 	renderer = |context| {
 		overlays = EnvironmentNix.all_overlays(context)?
+		sources = EnvironmentNix.all_sources(context)?
 		Ok(
 			Plugin.RenderResult.{
 				actions: [],
-				outputs: [{ name: "flake", text: NixBackend.render_update_flake(overlays) }],
+				outputs: [{ name: "flake", text: NixBackend.render_update_flake(overlays, sources) }],
 				requests: [],
 				requested_packages: [],
 			},

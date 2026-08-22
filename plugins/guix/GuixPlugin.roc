@@ -10,9 +10,13 @@ GuixPlugin := [].{
 		backends,
 		implementations,
 		name,
+		project_configs,
 	}
 
 	name = "guix"
+
+	project_configs : List(Plugin.ProjectConfigDescriptor)
+	project_configs = []
 
 	commands : List(Plugin.Command)
 	commands = [ShellCommand.command]

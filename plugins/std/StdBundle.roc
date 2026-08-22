@@ -14,6 +14,7 @@ import "implementations/ShellNixValidation.roc" as shell_nix_validation_source :
 import "implementations/TaskNix.roc" as task_nix_source : Str
 import "implementations/UpdateNix.roc" as update_nix_source : Str
 import "implementations/WorkflowNix.roc" as workflow_nix_source : Str
+import "project_configs/Source.roc" as source_project_config_source : Str
 
 StdBundle := [].{
 	package_source = |modules, dependencies| {
@@ -35,6 +36,7 @@ StdBundle := [].{
 						{ name: "implementations", path: "./implementations/main.roc" },
 						{ name: "kai", path: "../package.roc" },
 						{ name: "parser", path: "../parser/main.roc" },
+						{ name: "project_configs", path: "./project_configs/main.roc" },
 					],
 				),
 			},
@@ -67,6 +69,17 @@ StdBundle := [].{
 			{ destination: "std/commands/Update.roc", contents: update_command_source },
 			{ destination: "std/commands/Workflow.roc", contents: workflow_command_source },
 			{
+				destination: "std/project_configs/main.roc",
+				contents: StdBundle.package_source(
+					["Source"],
+					[
+						{ name: "kai", path: "../../package.roc" },
+						{ name: "parser", path: "../../parser/main.roc" },
+					],
+				),
+			},
+			{ destination: "std/project_configs/Source.roc", contents: source_project_config_source },
+			{
 				destination: "std/implementations/main.roc",
 				contents: StdBundle.package_source(
 					["BuildNix", "EnvironmentNix", "MachineNix", "ShellNix", "ShellNixValidation", "TaskNix", "UpdateNix", "WorkflowNix"],
@@ -75,6 +88,7 @@ StdBundle := [].{
 						{ name: "commands", path: "../commands/main.roc" },
 						{ name: "kai", path: "../../package.roc" },
 						{ name: "parser", path: "../../parser/main.roc" },
+						{ name: "project_configs", path: "../project_configs/main.roc" },
 					],
 				),
 			},

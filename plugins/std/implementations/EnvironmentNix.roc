@@ -2,6 +2,7 @@
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Shell as ShellCommand
+import project_configs.Source
 
 EnvironmentNix := [].{
 	extract_overlays = |config| Plugin.validated_strings(config, ShellCommand.overlays_field)
@@ -36,11 +37,19 @@ EnvironmentNix := [].{
 		Ok(overlays)
 	}
 
+	all_sources = |context| Source.collect(Plugin.project_configs(context, ["source"]))
+
+	validate_source_inputs = |context, selected| {
+		sources = EnvironmentNix.all_sources(context)?
+		Source.validate_selected(selected, sources, [])
+	}
+
 	render_flake = |context, pkgs, overlays, export_legacy_packages, unsupported_message| {
 		locked_overlays = EnvironmentNix.all_overlays(context)?
+		sources = EnvironmentNix.all_sources(context)?
 		target = NixBackend.target(context.host_os, context.host_arch) ? |_|
 			{ byte_offset: None, message: unsupported_message }
-		Ok(NixBackend.render_dev_shell({ export_legacy_packages, locked_overlays, overlays, pkgs, system: target.system }))
+		Ok(NixBackend.render_dev_shell({ export_legacy_packages, locked_overlays, overlays, pkgs, sources, system: target.system }))
 	}
 
 	render_result : Plugin.RenderContext, List(Str), List(Str), Str -> Try(Plugin.RenderResult, Plugin.RendererDiagnostic)

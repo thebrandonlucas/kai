@@ -532,15 +532,15 @@ Plugin := [].{
 
 	ProjectConfigScope : [HostProjectConfigScope(Config.Block), TopLevelProjectConfigScope]
 
-	build_project_config : Str, List(Command), Str -> Try(List(ProjectConfigEntry), SelectorDiagnostic)
-	build_project_config = |config_text, commands, backend| {
+	build_project_config : Str, List(ProjectConfigDescriptor), Str -> Try(List(ProjectConfigEntry), SelectorDiagnostic)
+	build_project_config = |config_text, descriptors, backend| {
 		blocks = Config.scan(config_text) ? |diagnostic| {
 			location: At(Plugin.source_location(diagnostic.location)),
 			message: "invalid plugin configuration",
 		}
 		Plugin.collect_project_config(
 			blocks,
-			Plugin.config_descriptors(commands),
+			descriptors,
 			backend,
 			TopLevelProjectConfigScope,
 			Bool.True,
@@ -816,6 +816,7 @@ Plugin := [].{
 		commands : List(Command),
 		implementations : List(Implementation),
 		name : Str,
+		project_configs : List(ProjectConfigDescriptor),
 	}
 
 	RegistryDiagnostic := {
@@ -842,7 +843,7 @@ Plugin := [].{
 		} else if definition.implementations.is_empty() {
 			Plugin.registry_failure(definition.name, "must define at least one implementation")
 		} else {
-			Plugin.validate_config_descriptors(definition.commands, definition.name)?
+			Plugin.validate_config_descriptors(definition.commands, definition.project_configs, definition.name)?
 			Plugin.validate_implementation_references(definition.implementations, definition)?
 			match definition.backends {
 				[] => Plugin.registry_failure(definition.name, "must define at least one backend")
@@ -853,9 +854,9 @@ Plugin := [].{
 			}
 		}
 
-	validate_config_descriptors : List(Command), Str -> Try({}, RegistryDiagnostic)
-	validate_config_descriptors = |commands, plugin|
-		Plugin.validate_config_descriptor_list(Plugin.config_descriptors_without_deduplication(commands), plugin)
+	validate_config_descriptors : List(Command), List(ProjectConfigDescriptor), Str -> Try({}, RegistryDiagnostic)
+	validate_config_descriptors = |commands, standalone_descriptors, plugin|
+		Plugin.validate_config_descriptor_list(Plugin.config_descriptors_without_deduplication(commands).concat(standalone_descriptors), plugin)
 
 	config_descriptors_without_deduplication : List(Command) -> List(ProjectConfigDescriptor)
 	config_descriptors_without_deduplication = |commands|
@@ -979,7 +980,11 @@ Plugin := [].{
 					implementation = Plugin.find_implementation(plugin_definition.implementations, command.name, backend_selection.backend.name) ? |_|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plugin has no implementation for selected backend"))
 					project_commands = Plugin.effective_commands(registry, command.name)
-					project_config = Plugin.build_project_config(config_text, project_commands, backend_selection.backend.name) ? |diagnostic|
+					project_descriptors = Plugin.append_config_descriptors(
+						Plugin.config_descriptors(project_commands),
+						plugin_definition.project_configs,
+					)
+					project_config = Plugin.build_project_config(config_text, project_descriptors, backend_selection.backend.name) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, diagnostic.location, diagnostic.message))
 					selection = Plugin.select_config(config_text, command, config_selection.backend_choice, config_selection.args, os, arch) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, diagnostic.location, diagnostic.message))
