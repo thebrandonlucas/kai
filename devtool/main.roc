@@ -9,6 +9,7 @@ import pf.Path
 import pf.Stdout
 
 import Cli
+import Kaifiles
 import GitHub
 import PrepareRelease
 import Release
@@ -228,6 +229,7 @@ main! = |args|
 	match Cli.parse(args.drop_first(1).map(OsStr.display)) {
 		Ok(Cli.Command.Help) => Stdout.line!(Cli.usage)
 		Ok(Cli.Command.BuildRelease) => build_release!()
+		Ok(Cli.Command.Kaifiles) => Kaifiles.run!()
 		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(name, version)
 		Err(error) => Err(InvalidArguments(Cli.error_message(error)))
 	}
@@ -238,6 +240,7 @@ parse_cases = [
 	{ args: [], expected: Ok(Cli.Command.Help) },
 	{ args: ["help"], expected: Ok(Cli.Command.Help) },
 	{ args: ["build-release"], expected: Ok(Cli.Command.BuildRelease) },
+	{ args: ["kaifiles"], expected: Ok(Cli.Command.Kaifiles) },
 	{
 		args: ["prepare-release", "μοριων", "0.0.3"],
 		expected: Ok(Cli.Command.PrepareRelease({ name: "μοριων", version: "0.0.3" })),
@@ -245,6 +248,10 @@ parse_cases = [
 	{
 		args: ["build-release", "extra"],
 		expected: Err(Cli.Error.ArgumentsNotAllowed("build-release")),
+	},
+	{
+		args: ["kaifiles", "extra"],
+		expected: Err(Cli.Error.ArgumentsNotAllowed("kaifiles")),
 	},
 	{
 		args: ["prepare-release", "only-name"],
@@ -256,6 +263,7 @@ parse_cases = [
 usage_lines = [
 	"Usage: kai-devtool <command> [arguments]",
 	"build-release",
+	"kaifiles",
 	"prepare-release NAME VERSION",
 	"help",
 ]

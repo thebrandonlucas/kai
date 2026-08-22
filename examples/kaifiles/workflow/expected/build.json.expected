@@ -1,0 +1,1 @@
+{"name":"moderncow","output":"moderncow","pkgs":["cowsay"],"run":["sh","-c","printf '#!%s\\nexec %s \"${*:-like, whateverrrr}\"\\n' \"$(command -v sh)\" \"$(command -v cowsay)\" > moderncow && chmod +x moderncow"],"system":"{{system}}"}
