@@ -305,7 +305,6 @@ Body := [].{
 	parse_string = |bytes, start| {
 		end = Body.find_string_end(bytes, start + 1, Bool.False)?
 		raw = Str.from_utf8(bytes.sublist({ start, len: end - start + 1 })) ?? ""
-		decoded : Try(Str, Json.ParseErr)
 		decoded = Json.parse(raw)
 		match decoded {
 			# A valid JSON string is returned decoded; for example, `"cowsay"`

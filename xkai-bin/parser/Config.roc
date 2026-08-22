@@ -92,7 +92,7 @@ Config := [].{
 	select_exact = |blocks, header| Config.select_next(blocks, header, Missing)
 
 	# recursively search for blocks which match the header.
-	# if you find a matching header, 
+	# if you find a matching header,
 	# check if the found `Selection` is missing.
 	# If so, start recursing on the first and search through the list.
 	# else, it's a duplicate header and we throw an error with the diagnostic
