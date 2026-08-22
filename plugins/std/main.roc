@@ -1,5 +1,5 @@
 package
-	[StdPlugin]
+	[StdBundle, StdPlugin]
 	{
 		backends: "./backends/main.roc",
 		commands: "./commands/main.roc",
