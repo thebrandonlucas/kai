@@ -26,7 +26,7 @@
     let
       inherit (nixpkgs) lib;
 
-      version = builtins.readFile ./xkai-bin/VERSION;
+      version = builtins.readFile ./xkai/VERSION;
 
       supportedSystems = [
         "x86_64-linux"
@@ -79,6 +79,7 @@
           source,
           localSource,
           binaryName,
+          buildBinaryName ? binaryName,
         }:
         let
           roc = rocFor pkgs;
@@ -135,9 +136,9 @@
               ${localSource} \
               --opt=size \
               --target=${rocTarget} \
-              --output=${binaryName}
+              --output=${buildBinaryName}
 
-            llvm-strip ${binaryName}
+            llvm-strip ${buildBinaryName}
 
             runHook postBuild
           '';
@@ -146,7 +147,7 @@
 
             runHook preInstall
 
-            install -Dm755 ${binaryName} "$out/bin/${binaryName}"
+            install -Dm755 ${buildBinaryName} "$out/bin/${binaryName}"
 
             runHook postInstall
           '';
@@ -157,8 +158,8 @@
         pkgs: rocTarget:
         mkRocBinary pkgs rocTarget {
           pname = "kai";
-          source = "xkai-bin/stock-cli.roc";
-          localSource = "xkai-bin/stock-cli-local.roc";
+          source = "xkai/stock-cli.roc";
+          localSource = "xkai/stock-cli-local.roc";
           binaryName = "kai";
         };
 
@@ -166,9 +167,10 @@
         pkgs: rocTarget:
         mkRocBinary pkgs rocTarget {
           pname = "xkai";
-          source = "xkai-bin/main.roc";
-          localSource = "xkai-bin/main-local.roc";
+          source = "xkai/main.roc";
+          localSource = "xkai/main-local.roc";
           binaryName = "xkai";
+          buildBinaryName = "xkai-dev";
         };
 
       mkWrappedPackage =

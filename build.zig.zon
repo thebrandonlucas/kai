@@ -1,6 +1,6 @@
 .{
     .name = .kai,
-    // Required package metadata; release versions come from xkai-bin/VERSION.
+    // Required package metadata; release versions come from xkai/VERSION.
     .version = "0.0.5",
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
@@ -13,6 +13,6 @@
         "examples",
         "flake.nix",
         "plugins",
-        "xkai-bin",
+        "xkai",
     },
 }

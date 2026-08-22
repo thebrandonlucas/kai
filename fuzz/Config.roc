@@ -1,6 +1,6 @@
 app [target] {
 	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.2.1/9Qpttb6LTgcMaVsSBLsnaiS2mDUrf6Bxa6dX9Rqwviz4.tar.zst",
-	parser: "../xkai-bin/parser/main.roc",
+	parser: "../xkai/parser/main.roc",
 }
 
 import fuzz.Fuzz

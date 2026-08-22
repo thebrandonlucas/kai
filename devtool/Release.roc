@@ -216,17 +216,17 @@ Release := [].{
 		}
 	}
 
-	release_files = ["build.zig.zon", "xkai-bin/RELEASE_NAME", "xkai-bin/VERSION"]
+	release_files = ["build.zig.zon", "xkai/RELEASE_NAME", "xkai/VERSION"]
 
 	are_allowed_release_files : List(Str) -> Bool
 	are_allowed_release_files = |files| {
-		expected_length = if files.contains("xkai-bin/RELEASE_NAME") {
+		expected_length = if files.contains("xkai/RELEASE_NAME") {
 			3
 		} else {
 			2
 		}
 		files.contains("build.zig.zon") and
-			files.contains("xkai-bin/VERSION") and
+			files.contains("xkai/VERSION") and
 				files.len() == expected_length and
 					List.all(files, |file| Release.release_files.contains(file))
 	}
@@ -361,11 +361,11 @@ expect List.all(repository_cases, |case| Release.same_github_repository(case.lef
 expect Release.pull_request_url("git@github.com:example-owner/example-repo.git", "1.2.3") == Ok("https://github.com/example-owner/example-repo/compare/master...release%2Fv1.2.3?expand=1")
 
 allowed_file_cases = [
-	{ files: ["build.zig.zon", "xkai-bin/VERSION"], allowed: Bool.True },
-	{ files: ["xkai-bin/RELEASE_NAME", "xkai-bin/VERSION", "build.zig.zon"], allowed: Bool.True },
-	{ files: ["xkai-bin/RELEASE_NAME"], allowed: Bool.False },
-	{ files: ["build.zig.zon", "xkai-bin/VERSION", "xkai-bin/VERSION"], allowed: Bool.False },
-	{ files: ["README.md", "build.zig.zon", "xkai-bin/VERSION"], allowed: Bool.False },
+	{ files: ["build.zig.zon", "xkai/VERSION"], allowed: Bool.True },
+	{ files: ["xkai/RELEASE_NAME", "xkai/VERSION", "build.zig.zon"], allowed: Bool.True },
+	{ files: ["xkai/RELEASE_NAME"], allowed: Bool.False },
+	{ files: ["build.zig.zon", "xkai/VERSION", "xkai/VERSION"], allowed: Bool.False },
+	{ files: ["README.md", "build.zig.zon", "xkai/VERSION"], allowed: Bool.False },
 ]
 expect List.all(allowed_file_cases, |case| Release.are_allowed_release_files(case.files) == case.allowed)
 

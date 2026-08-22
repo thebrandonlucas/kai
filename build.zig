@@ -196,7 +196,7 @@ pub fn build(b: *std.Build) void {
     build_examples_devtool.addFileInput(b.path("devtool/Examples.roc"));
     for (sources.roc_files) |source| {
         if (std.mem.startsWith(u8, source, "plugins/") or
-            std.mem.startsWith(u8, source, "xkai-bin/"))
+            std.mem.startsWith(u8, source, "xkai/"))
         {
             build_examples_devtool.addFileInput(b.path(source));
         }
@@ -218,9 +218,9 @@ pub fn build(b: *std.Build) void {
 
     const build_fuzz = b.addSystemCommand(&.{ "roc", "build", "--fuzz" });
     build_fuzz.addFileArg(b.path("fuzz/Config.roc"));
-    build_fuzz.addFileInput(b.path("xkai-bin/parser/main.roc"));
-    build_fuzz.addFileInput(b.path("xkai-bin/parser/Config.roc"));
-    build_fuzz.addFileInput(b.path("xkai-bin/parser/Bytes.roc"));
+    build_fuzz.addFileInput(b.path("xkai/parser/main.roc"));
+    build_fuzz.addFileInput(b.path("xkai/parser/Config.roc"));
+    build_fuzz.addFileInput(b.path("xkai/parser/Bytes.roc"));
     const fuzz_executable = build_fuzz.addPrefixedOutputFileArg(
         "--output=",
         "kai-config-fuzz",

@@ -4,9 +4,9 @@ Kai releases use a protected release branch. Release preparation pushes only tha
 
 ## Metadata ownership
 
-- `xkai-bin/VERSION` is the canonical persisted semantic version used by Roc, Nix, artifacts, and release automation.
-- `xkai-bin/RELEASE_NAME` owns the exact one-line release title, including custom or Unicode names. It is not another version source.
-- `build.zig.zon` contains Zig's required literal version mirror. Release automation updates it and validates exact agreement with `xkai-bin/VERSION`.
+- `xkai/VERSION` is the canonical persisted semantic version used by Roc, Nix, artifacts, and release automation.
+- `xkai/RELEASE_NAME` owns the exact one-line release title, including custom or Unicode names. It is not another version source.
+- `build.zig.zon` contains Zig's required literal version mirror. Release automation updates it and validates exact agreement with `xkai/VERSION`.
 - The release branch, annotated tag, and GitHub release derive their version and name from this committed metadata. Do not edit them independently.
 
 ## Build artifacts without releasing
@@ -36,7 +36,7 @@ zig build release -- "Kai X.Y.Z" X.Y.Z
 The command:
 
 1. creates `release/vX.Y.Z` from `origin/master` without moving local `master`;
-2. updates only `xkai-bin/VERSION`, `xkai-bin/RELEASE_NAME`, and `build.zig.zon`;
+2. updates only `xkai/VERSION`, `xkai/RELEASE_NAME`, and `build.zig.zon`;
 3. runs the complete release artifact build;
 4. commits `Release <name> <version>` and pushes only the release branch;
 5. restores the clean local `master`; and
@@ -46,7 +46,7 @@ Open that URL, create the required pull request, review it, and merge it. Openin
 
 ## Automatic publication after merge
 
-A merge that changes `xkai-bin/VERSION` triggers `.github/workflows/release.yml`. The workflow validates that the merged commit is on `origin/master` and that all committed metadata agrees, then runs:
+A merge that changes `xkai/VERSION` triggers `.github/workflows/release.yml`. The workflow validates that the merged commit is on `origin/master` and that all committed metadata agrees, then runs:
 
 ```sh
 zig build publish-release

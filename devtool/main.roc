@@ -14,7 +14,7 @@ import PrepareRelease
 import Release
 
 validate_metadata! = || {
-	version = Path.read_utf8!(Path.utf8("xkai-bin/VERSION"))?
+	version = Path.read_utf8!(Path.utf8("xkai/VERSION"))?
 	if !Release.is_semver(version) {
 		Err(InvalidReleaseVersion(version))
 	} else {

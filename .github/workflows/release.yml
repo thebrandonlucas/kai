@@ -5,7 +5,7 @@ on:
     branches:
       - master
     paths:
-      - xkai-bin/VERSION
+      - xkai/VERSION
   workflow_dispatch:
 
 permissions:

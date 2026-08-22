@@ -8,7 +8,7 @@ import Release
 
 PrepareRelease := [].{
 	validate_metadata! = || {
-		version = Path.read_utf8!(Path.utf8("xkai-bin/VERSION"))?
+		version = Path.read_utf8!(Path.utf8("xkai/VERSION"))?
 		if !Release.is_semver(version) {
 			Err(InvalidReleaseVersion(version))
 		} else {
@@ -113,7 +113,7 @@ PrepareRelease := [].{
 		if !Release.are_allowed_release_files(changed) or !untracked.is_empty() {
 			Err(UnexpectedReleaseFiles({ changed, untracked }))
 		} else {
-			PrepareRelease.git!(["add", "--", "build.zig.zon", "xkai-bin/RELEASE_NAME", "xkai-bin/VERSION"])?
+			PrepareRelease.git!(["add", "--", "build.zig.zon", "xkai/RELEASE_NAME", "xkai/VERSION"])?
 			staged = PrepareRelease.git_lines!(["diff", "--cached", "--name-only"])?
 			unstaged = PrepareRelease.git_lines!(["diff", "--name-only"])?
 			if Release.are_allowed_release_files(staged) and unstaged.is_empty() {
@@ -130,8 +130,8 @@ PrepareRelease := [].{
 			Ok(value) => value
 			Err(error) => return Err(InvalidReleaseRewrite(error))
 		}
-		Path.write_utf8!(Path.utf8("xkai-bin/VERSION"), version)?
-		Path.write_utf8!(Path.utf8("xkai-bin/RELEASE_NAME"), name)?
+		Path.write_utf8!(Path.utf8("xkai/VERSION"), version)?
+		Path.write_utf8!(Path.utf8("xkai/RELEASE_NAME"), name)?
 		Path.write_utf8!(manifest_path, rewritten)?
 		Ok({})
 	}
