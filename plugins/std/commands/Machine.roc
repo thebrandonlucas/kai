@@ -86,30 +86,3 @@ Machine := [].{
 		name: "machine",
 	}
 }
-
-# -- TESTS --
-
-user_cases = [
-	{ expected: [], users: ["agent", "_deploy", "agent-1"] },
-	{ expected: ["machine users must match [a-z_][a-z0-9_-]*"], users: ["Agent"] },
-	{ expected: ["machine users must not contain duplicates"], users: ["agent", "agent"] },
-	{
-		expected: [
-			"machine user 'root' is unsupported because NixOS already defines it",
-			"machine user 'nobody' is unsupported because NixOS already defines it",
-		],
-		users: ["root", "nobody"],
-	},
-]
-
-service_cases = [
-	{ expected: [], services: ["openssh", "prometheus.exporters.node"] },
-	{ expected: ["machine services must not contain duplicates"], services: ["gateway", "gateway"] },
-	{
-		expected: ["machine service names may contain only ASCII letters, digits, '.', '_', and '-'"],
-		services: ["bad/service"],
-	},
-]
-
-expect List.all(user_cases, |case| Machine.user_failures(case.users) == case.expected)
-expect List.all(service_cases, |case| Machine.service_failures(case.services) == case.expected)

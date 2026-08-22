@@ -323,6 +323,65 @@ Nix := [].{
 		]
 	}
 
+	image_output_path : Str -> Str
+	image_output_path = |name| ".kai/artifacts/images/${name}/result"
+
+	image_file_path : Str -> Str
+	image_file_path = |name| "${Nix.image_output_path(name)}/${name}.qcow2"
+
+	image_flake_path : Str -> Str
+	image_flake_path = |name| ".kai/images/${name}"
+
+	image_metadata_path : Str -> Str
+	image_metadata_path = |name| ".kai/artifacts/images/${name}/metadata.json"
+
+	image_actions : Str, Str, Str, Str -> List(Plugin.Action)
+	image_actions = |name, flake, module_text, metadata| {
+		flake_path = Nix.image_flake_path(name)
+		metadata_path = Nix.image_metadata_path(name)
+		[
+			WriteUtf8({ content: "", path: metadata_path }),
+			WriteUtf8({ content: flake, path: "${flake_path}/flake.nix" }),
+			WriteUtf8({ content: module_text, path: "${flake_path}/machine.nix" }),
+			Exec({
+				args: [
+					"flake",
+					"lock",
+					"path:${flake_path}",
+					"--reference-lock-file",
+					"kai.lock",
+					"--output-lock-file",
+					"kai.lock",
+				],
+				command: backend.name,
+			}),
+			Exec({
+				args: [
+					"flake",
+					"lock",
+					"path:${flake_path}",
+					"--reference-lock-file",
+					"kai.lock",
+					"--output-lock-file",
+					"${flake_path}/flake.lock",
+				],
+				command: backend.name,
+			}),
+			WriteUtf8({ content: "", path: ".kai/artifacts/images/${name}/.keep" }),
+			Exec({
+				args: [
+					"build",
+					"path:${flake_path}#kaiImages.\"${name}\".image",
+					"--no-update-lock-file",
+					"--out-link",
+					Nix.image_output_path(name),
+				],
+				command: backend.name,
+			}),
+			WriteUtf8({ content: metadata, path: metadata_path }),
+		]
+	}
+
 	develop_command_actions : List(Str) -> List(Plugin.Action)
 	develop_command_actions = |run|
 		[

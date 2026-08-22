@@ -1,0 +1,35 @@
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  outputs = { nixpkgs, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [
+        ];
+      };
+      machine = nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = [
+          { nixpkgs.pkgs = pkgs; }
+          ({ modulesPath, ... }: {
+            imports = [
+              (modulesPath + "/profiles/qemu-guest.nix")
+              (modulesPath + "/virtualisation/disk-image.nix")
+            ];
+            image.baseName = "agent";
+          })
+          ./machine.nix
+        ];
+      };
+    in {
+      nixosConfigurations."agent" = machine;
+      kaiImages."agent" = {
+        kind = "machine-image";
+        name = "agent";
+        format = "qcow2";
+        inherit system;
+        image = machine.config.system.build.image;
+      };
+    };
+}
