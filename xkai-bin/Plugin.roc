@@ -697,7 +697,10 @@ Plugin := [].{
 		match args {
 			[] => Err(UnknownCommand)
 			[command_name, .. as command_args] => {
-				owner = Plugin.find_owner(registry, command_name)?
+				owner = match Plugin.find_owner(registry, command_name) {
+					Ok(found) => found
+					Err(UnknownCommand) => return Err(UnknownCommand)
+				}
 				plugin_definition = owner.definition
 				command = owner.command
 				backend_selection = Plugin.select_backend(plugin_definition.backends, command_args) ? |backend_name|
@@ -917,9 +920,7 @@ Plugin := [].{
 	}
 
 	lower_actions :
-		List(ActionTemplate),
-		List(RenderedOutput) ->
-			Try(List(Action), RendererDiagnostic)
+		List(ActionTemplate), List(RenderedOutput) -> Try(List(Action), RendererDiagnostic)
 	lower_actions = |templates, outputs|
 		match templates {
 			[] => Ok([])

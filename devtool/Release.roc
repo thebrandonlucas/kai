@@ -172,7 +172,10 @@ Release := [].{
 		if !Release.is_semver(version) {
 			Err(InvalidVersion)
 		} else {
-			repository = Release.parse_github_origin(origin)?
+			repository = match Release.parse_github_origin(origin) {
+				Ok(found) => found
+				Err(UnsupportedOrigin) => return Err(UnsupportedOrigin)
+			}
 			Ok("https://github.com/${repository.owner}/${repository.repository}/compare/master...release%2Fv${version}?expand=1")
 		}
 	}
@@ -252,7 +255,12 @@ Release := [].{
 		if !Release.is_semver(version) {
 			Err(InvalidVersion)
 		} else {
-			old_version = Release.manifest_version(manifest)?
+			old_version = match Release.manifest_version(manifest) {
+				Ok(found) => found
+				Err(DuplicateManifestVersion) => return Err(DuplicateManifestVersion)
+				Err(InvalidManifestVersion) => return Err(InvalidManifestVersion)
+				Err(MissingManifestVersion) => return Err(MissingManifestVersion)
+			}
 			lines = manifest.split_on("\n").map(
 				|line|
 					match Release.version_line(line) {

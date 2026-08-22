@@ -115,7 +115,6 @@ GitHub := [].{
 
 	decode_release : Str -> Try(RemoteRelease, [InvalidReleaseJson])
 	decode_release = |input| {
-		decoded : Try(RemoteRelease, Json.ParseErr)
 		decoded = Json.parse(input)
 		match decoded {
 			Ok(release) => Ok(release)

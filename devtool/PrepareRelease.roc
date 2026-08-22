@@ -128,7 +128,7 @@ PrepareRelease := [].{
 		manifest = Path.read_utf8!(manifest_path)?
 		rewritten = match Release.rewrite_manifest(manifest, version) {
 			Ok(value) => value
-			Err(error) => return Err(InvalidReleaseManifest(error))
+			Err(error) => return Err(InvalidReleaseRewrite(error))
 		}
 		Path.write_utf8!(Path.utf8("xkai-bin/VERSION"), version)?
 		Path.write_utf8!(Path.utf8("xkai-bin/RELEASE_NAME"), name)?
