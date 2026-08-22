@@ -80,7 +80,7 @@ Kaifiles := [].{
 		expected_root = Path.join(directory, "expected")
 		platform_expected = Path.join(expected_root, platform_name)
 		expected_directory = if Path.is_dir!(platform_expected)? platform_expected else expected_root
-		expected_outputs = Path.list!(expected_directory)?
+		expected_outputs = Kaifiles.expected_outputs!(expected_directory)?
 		if args.is_empty() {
 			Err(EmptyKaifileArguments(path))
 		} else if expected_outputs.is_empty() {
@@ -95,6 +95,30 @@ Kaifiles := [].{
 		}
 	}
 
+	expected_outputs! = |root| Kaifiles.expected_entries!(Path.list!(root)?, "")
+
+	expected_entries! = |entries, directory|
+		match entries {
+			[] => Ok([])
+			[first, .. as rest] => {
+				name = Path.display(Path.filename(first) ?? first)
+				relative = if directory.is_empty() name else "${directory}/${name}"
+				found = (
+					if Path.is_sym_link!(first)? {
+						Err(ExpectedOutputFileRequired(Path.display(first)))
+					} else if Path.is_dir!(first)? {
+						Kaifiles.expected_entries!(Path.list!(first)?, relative)
+					} else if Path.is_file!(first)? {
+						Ok([{ path: first, relative }])
+					} else {
+						Err(ExpectedOutputFileRequired(Path.display(first)))
+					}
+				)?
+				remaining = Kaifiles.expected_entries!(rest, directory)?
+				Ok(found.concat(remaining))
+			}
+		}
+
 	run_example! = |binary, args, expected_outputs, kaifile, lock, path, system, workspace| {
 		Path.write_utf8!(Path.join(workspace, "Kaifile"), Path.read_utf8!(kaifile)?)?
 		Path.write_utf8!(Path.join(workspace, "kai.lock"), lock)?
@@ -105,16 +129,12 @@ Kaifiles := [].{
 		Env.set_cwd!(original_directory)?
 		_ = command_result?
 
-		for expected_path in expected_outputs {
-			if !Path.is_file!(expected_path)? {
-				return Err(ExpectedOutputFileRequired(Path.display(expected_path)))
+		for expected_output in expected_outputs {
+			if !expected_output.relative.ends_with(".expected") {
+				return Err(ExpectedOutputSuffixRequired(expected_output.relative))
 			}
-			name = Path.display(Path.filename(expected_path) ?? expected_path)
-			if !name.ends_with(".expected") {
-				return Err(ExpectedOutputSuffixRequired(name))
-			}
-			output_name = Str.from_utf8_lossy(name.to_utf8().drop_last(9))
-			expected = Str.join_with(Path.read_utf8!(expected_path)?.split_on("{{system}}"), system)
+			output_name = Str.from_utf8_lossy(expected_output.relative.to_utf8().drop_last(9))
+			expected = Str.join_with(Path.read_utf8!(expected_output.path)?.split_on("{{system}}"), system)
 			actual_path = Path.join(Path.join(workspace, ".kai"), output_name)
 			actual = Path.read_utf8!(actual_path)?
 			if actual != expected {

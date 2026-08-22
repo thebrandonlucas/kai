@@ -1,0 +1,14 @@
+{ pkgs, ... }:
+{
+  boot.loader.grub.enable = false;
+  fileSystems."/" = {
+    device = "/dev/root";
+    fsType = "auto";
+  };
+  system.stateVersion = "25.05";
+  environment.systemPackages = [
+    pkgs."curl"
+  ];
+  users.users."agent".isNormalUser = true;
+  services."openssh".enable = true;
+}
