@@ -179,6 +179,14 @@ Plugin := [].{
 		),
 	]
 
+	ProjectConfigKind : [DirectProjectConfig, NamedProjectConfig]
+
+	ProjectConfigDescriptor := {
+		block : Str,
+		body : Body.Shape,
+		kind : ProjectConfigKind,
+	}
+
 	Command := {
 		argument_policy : ArgumentPolicy,
 		body : Body.Shape,
@@ -234,6 +242,13 @@ Plugin := [].{
 	# plugin selects a block nested inside another generic block.
 	LocatedConfigBlock := {
 		body : Str,
+		location : SourceLocation,
+	}
+
+	ProjectConfigEntry := {
+		block : Str,
+		config : Body.Configuration,
+		header : List(Str),
 		location : SourceLocation,
 	}
 
@@ -315,6 +330,72 @@ Plugin := [].{
 		match requirement {
 			OptionalConfigBlock(name) => name
 			RequiredConfigBlock(name) => name
+		}
+
+	config_descriptors : List(Command) -> List(ProjectConfigDescriptor)
+	config_descriptors = |commands| Plugin.collect_config_descriptors(commands, [])
+
+	collect_config_descriptors : List(Command), List(ProjectConfigDescriptor) -> List(ProjectConfigDescriptor)
+	collect_config_descriptors = |commands, descriptors|
+		match commands {
+			[] => descriptors
+			[first, .. as rest] => {
+				with_command = Plugin.append_config_descriptors(
+					descriptors,
+					Plugin.command_config_descriptors(first),
+				)
+				Plugin.collect_config_descriptors(rest, with_command)
+			}
+		}
+
+	command_config_descriptors : Command -> List(ProjectConfigDescriptor)
+	command_config_descriptors = |command| {
+		config_block = Plugin.config_block_name(command.config_block)
+		match command.config {
+			DirectConfig(_) => [{ block: config_block, body: command.body, kind: DirectProjectConfig }]
+			DirectOrNamedConfig({ block, lookup: _, name_rules: _ }) => [
+				{ block: config_block, body: command.body, kind: DirectProjectConfig },
+				{ block, body: command.body, kind: NamedProjectConfig },
+			]
+			NamedConfig(_) => [{ block: config_block, body: command.body, kind: NamedProjectConfig }]
+			NamedWithRelatedConfig({ lookup: _, name_rules: _, related_block, related_body, related_field: _ }) => [
+				{ block: config_block, body: command.body, kind: NamedProjectConfig },
+				{ block: related_block, body: related_body, kind: NamedProjectConfig },
+			]
+		}
+	}
+
+	append_config_descriptors : List(ProjectConfigDescriptor), List(ProjectConfigDescriptor) -> List(ProjectConfigDescriptor)
+	append_config_descriptors = |descriptors, additions|
+		match additions {
+			[] => descriptors
+			[first, .. as rest] => {
+				already_present = List.any(descriptors, |descriptor| Plugin.same_config_descriptor(descriptor, first))
+				updated = if already_present descriptors else descriptors.append(first)
+				Plugin.append_config_descriptors(updated, rest)
+			}
+		}
+
+	same_config_descriptor : ProjectConfigDescriptor, ProjectConfigDescriptor -> Bool
+	same_config_descriptor = |left, right|
+		left.block == right.block and left.kind == right.kind and Plugin.same_body_shape(left.body, right.body)
+
+	same_body_shape : Body.Shape, Body.Shape -> Bool
+	same_body_shape = |left, right|
+		match (left, right) {
+			(Object(left_fields), Object(right_fields)) => Plugin.same_body_fields(left_fields, right_fields)
+		}
+
+	same_body_fields : List(Body.Field), List(Body.Field) -> Bool
+	same_body_fields = |left, right|
+		match (left, right) {
+			([], []) => Bool.True
+			([left_field, .. as left_rest], [right_field, .. as right_rest]) =>
+				left_field.name == right_field.name and
+					left_field.presence == right_field.presence and
+						left_field.value == right_field.value and
+							Plugin.same_body_fields(left_rest, right_rest)
+			_ => Bool.False
 		}
 
 	normalize_command_backend : ConfigMetadata, BackendChoice, List(Str) -> { args : List(Str), backend_choice : BackendChoice }
@@ -449,6 +530,143 @@ Plugin := [].{
 		line: location.line,
 	}
 
+	ProjectConfigScope : [HostProjectConfigScope(Config.Block), TopLevelProjectConfigScope]
+
+	build_project_config : Str, List(Command), Str -> Try(List(ProjectConfigEntry), SelectorDiagnostic)
+	build_project_config = |config_text, commands, backend| {
+		blocks = Config.scan(config_text) ? |diagnostic| {
+			location: At(Plugin.source_location(diagnostic.location)),
+			message: "invalid plugin configuration",
+		}
+		Plugin.collect_project_config(
+			blocks,
+			Plugin.config_descriptors(commands),
+			backend,
+			TopLevelProjectConfigScope,
+			Bool.True,
+			[],
+			[],
+		)
+	}
+
+	collect_project_config : List(Config.Block), List(ProjectConfigDescriptor), Str, ProjectConfigScope, Bool, List(List(Str)), List(ProjectConfigEntry) -> Try(List(ProjectConfigEntry), SelectorDiagnostic)
+	collect_project_config = |blocks, descriptors, backend, scope, include_hosts, seen, entries|
+		match blocks {
+			[] => Ok(entries)
+			[first, .. as rest] => {
+				matching = Plugin.matching_project_descriptors(descriptors, first.header, backend)
+				if !matching.is_empty() {
+					if seen.contains(first.header) {
+						Err({
+							location: At(Plugin.project_block_location(first, scope).location),
+							message: "duplicate project configuration block",
+						})
+					} else {
+						located = Plugin.project_block_location(first, scope)
+						parsed = Plugin.parse_project_descriptors(matching, first.header, located)?
+						Plugin.collect_project_config(
+							rest,
+							descriptors,
+							backend,
+							scope,
+							include_hosts,
+							seen.append(first.header),
+							entries.concat(parsed),
+						)
+					}
+				} else if include_hosts and Plugin.is_project_host_section(first.header) {
+					if seen.contains(first.header) {
+						Err({
+							location: At(Plugin.source_location(first.location)),
+							message: "duplicate host configuration",
+						})
+					} else {
+						nested = Config.scan(first.body) ? |diagnostic| {
+							location: At(Plugin.nested_location(first, diagnostic.location)),
+							message: "invalid host configuration",
+						}
+						nested_entries = Plugin.collect_project_config(
+							nested,
+							descriptors,
+							backend,
+							HostProjectConfigScope(first),
+							Bool.False,
+							[],
+							[],
+						)?
+						Plugin.collect_project_config(
+							rest,
+							descriptors,
+							backend,
+							scope,
+							include_hosts,
+							seen.append(first.header),
+							entries.concat(nested_entries),
+						)
+					}
+				} else {
+					Plugin.collect_project_config(rest, descriptors, backend, scope, include_hosts, seen, entries)
+				}
+			}
+		}
+
+	matching_project_descriptors : List(ProjectConfigDescriptor), List(Str), Str -> List(ProjectConfigDescriptor)
+	matching_project_descriptors = |descriptors, header, backend|
+		match header {
+			[block] => descriptors.keep_if(|descriptor| descriptor.block == block and descriptor.kind == DirectProjectConfig)
+			[block, name] =>
+				if name == backend {
+					direct = descriptors.keep_if(|descriptor| descriptor.block == block and descriptor.kind == DirectProjectConfig)
+					if direct.is_empty() {
+						descriptors.keep_if(|descriptor| descriptor.block == block and descriptor.kind == NamedProjectConfig)
+					} else {
+						direct
+					}
+				} else {
+					descriptors.keep_if(|descriptor| descriptor.block == block and descriptor.kind == NamedProjectConfig)
+				}
+			[block, _, qualifier] =>
+				if qualifier == backend {
+					descriptors.keep_if(|descriptor| descriptor.block == block and descriptor.kind == NamedProjectConfig)
+				} else {
+					[]
+				}
+			_ => []
+		}
+
+	is_project_host_section : List(Str) -> Bool
+	is_project_host_section = |header| header == ["on", "linux"] or header == ["on", "macos"]
+
+	project_block_location : Config.Block, ProjectConfigScope -> LocatedConfigBlock
+	project_block_location = |block, scope|
+		match scope {
+			TopLevelProjectConfigScope => { body: block.body, location: Plugin.source_location(block.location) }
+			HostProjectConfigScope(host) => { body: block.body, location: Plugin.nested_location(host, block.location) }
+		}
+
+	parse_project_descriptors : List(ProjectConfigDescriptor), List(Str), LocatedConfigBlock -> Try(List(ProjectConfigEntry), SelectorDiagnostic)
+	parse_project_descriptors = |descriptors, header, block|
+		match descriptors {
+			[] => Ok([])
+			[first, .. as rest] => {
+				config = Body.parse(first.body, block.body) ? |diagnostic| {
+					location: At(Plugin.translate_location(block, diagnostic.byte_offset)),
+					message: Body.describe(diagnostic),
+				}
+				remaining = Plugin.parse_project_descriptors(rest, header, block)?
+				Ok(
+					[
+						{
+							block: first.block,
+							config,
+							header,
+							location: block.location,
+						},
+					].concat(remaining),
+				)
+			}
+		}
+
 	RelatedConfig : [
 		NoRelatedConfig,
 		SelectedRelatedConfig(
@@ -465,6 +683,7 @@ Plugin := [].{
 		config_block : [NoConfigBlock, SelectedConfigBlock(LocatedConfigBlock)],
 		host_arch : HostArch,
 		host_os : HostOs,
+		project_config : List(ProjectConfigEntry),
 		related_config : RelatedConfig,
 		target : [NoTarget, SelectedTarget(Str)],
 	}
@@ -517,6 +736,10 @@ Plugin := [].{
 		validator : Validator,
 	}
 
+	project_configs : RenderContext, List(Str) -> List(ProjectConfigEntry)
+	project_configs = |context, block_names|
+		context.project_config.keep_if(|entry| block_names.contains(entry.block))
+
 	validate_render_context : RenderContext, Validator -> Try(RenderContext, RendererDiagnostic)
 	validate_render_context = |context, validator|
 		match validator {
@@ -539,6 +762,7 @@ Plugin := [].{
 						config_block: context.config_block,
 						host_arch: context.host_arch,
 						host_os: context.host_os,
+						project_config: context.project_config,
 						related_config: context.related_config,
 						target: selected_target,
 					},
@@ -618,6 +842,7 @@ Plugin := [].{
 		} else if definition.implementations.is_empty() {
 			Plugin.registry_failure(definition.name, "must define at least one implementation")
 		} else {
+			Plugin.validate_config_descriptors(definition.commands, definition.name)?
 			Plugin.validate_implementation_references(definition.implementations, definition)?
 			match definition.backends {
 				[] => Plugin.registry_failure(definition.name, "must define at least one backend")
@@ -627,6 +852,43 @@ Plugin := [].{
 				}
 			}
 		}
+
+	validate_config_descriptors : List(Command), Str -> Try({}, RegistryDiagnostic)
+	validate_config_descriptors = |commands, plugin|
+		Plugin.validate_config_descriptor_list(Plugin.config_descriptors_without_deduplication(commands), plugin)
+
+	config_descriptors_without_deduplication : List(Command) -> List(ProjectConfigDescriptor)
+	config_descriptors_without_deduplication = |commands|
+		match commands {
+			[] => []
+			[first, .. as rest] => Plugin.command_config_descriptors(first).concat(Plugin.config_descriptors_without_deduplication(rest))
+		}
+
+	validate_config_descriptor_list : List(ProjectConfigDescriptor), Str -> Try({}, RegistryDiagnostic)
+	validate_config_descriptor_list = |descriptors, plugin|
+		match descriptors {
+			[] => Ok({})
+			[first, .. as rest] => {
+				Plugin.validate_config_descriptor_against(first, rest, plugin)?
+				Plugin.validate_config_descriptor_list(rest, plugin)
+			}
+		}
+
+	validate_config_descriptor_against : ProjectConfigDescriptor, List(ProjectConfigDescriptor), Str -> Try({}, RegistryDiagnostic)
+	validate_config_descriptor_against = |descriptor, remaining, plugin|
+		match remaining {
+			[] => Ok({})
+			[first, .. as rest] =>
+				if descriptor.block == first.block and descriptor.kind == first.kind and !Plugin.same_body_shape(descriptor.body, first.body) {
+					kind = match descriptor.kind {
+						DirectProjectConfig => "direct"
+						NamedProjectConfig => "named"
+					}
+					Plugin.registry_failure(plugin, "${kind} config block '${descriptor.block}' has conflicting body shapes")
+				} else {
+					Plugin.validate_config_descriptor_against(descriptor, rest, plugin)
+				}
+			}
 
 	validate_implementation_references : List(Implementation), Definition -> Try({}, RegistryDiagnostic)
 	validate_implementation_references = |implementations, definition|
@@ -716,6 +978,9 @@ Plugin := [].{
 				} else {
 					implementation = Plugin.find_implementation(plugin_definition.implementations, command.name, backend_selection.backend.name) ? |_|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plugin has no implementation for selected backend"))
+					project_commands = Plugin.effective_commands(registry, command.name)
+					project_config = Plugin.build_project_config(config_text, project_commands, backend_selection.backend.name) ? |diagnostic|
+						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, diagnostic.location, diagnostic.message))
 					selection = Plugin.select_config(config_text, command, config_selection.backend_choice, config_selection.args, os, arch) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, diagnostic.location, diagnostic.message))
 					parsed = match selection {
@@ -752,6 +1017,7 @@ Plugin := [].{
 						config_block: parsed.config_block,
 						host_arch: arch,
 						host_os: os,
+						project_config,
 						related_config: parsed.related_config,
 						target: NoTarget,
 					}
@@ -797,6 +1063,21 @@ Plugin := [].{
 				})
 			}
 		}
+
+	effective_commands : List(Definition), Str -> List(Command)
+	effective_commands = |registry, owner_command|
+		Plugin.find_effective_commands(registry, owner_command, [])
+
+	find_effective_commands : List(Definition), Str, List(Str) -> List(Command)
+	find_effective_commands = |registry, owner_command, shadowed|
+		match registry {
+			[] => []
+			[first, .. as rest] =>
+				match Plugin.find_command(first.commands, owner_command) {
+					Ok(_) => first.commands.keep_if(|command| !shadowed.contains(command.name))
+					Err(NotFound) => Plugin.find_effective_commands(rest, owner_command, shadowed.concat(first.commands.map(|command| command.name)))
+				}
+			}
 
 	find_owner : List(Definition), Str -> Try({ command : Command, definition : Definition }, [UnknownCommand])
 	find_owner = |registry, command_name|
