@@ -2,6 +2,7 @@ import parser.Body
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Build as BuildCommand
+import EnvironmentNix
 
 BuildNix := [].{
 	implementation : Plugin.Implementation
@@ -43,16 +44,15 @@ BuildNix := [].{
 			message: "validated environment configuration is missing 'packages'",
 		}
 		Plugin.renderer_validation(Plugin.validate_string_list(pkgs, NixBackend.package_rules))?
+		overlays = EnvironmentNix.extract_overlays(environment)?
 		target = NixBackend.target(context.host_os, context.host_arch) ? |_|
 			{ byte_offset: None, message: "unsupported build platform" }
+		flake = EnvironmentNix.render_flake(context, pkgs, overlays, Bool.True, "unsupported build platform")?
 		Ok(
 			Plugin.RenderResult.{
 				actions: NixBackend.build_artifact_actions(name),
 				outputs: [
-					{
-						name: "flake",
-						text: NixBackend.render_dev_shell({ overlays: [], pkgs, system: target.system }),
-					},
+					{ name: "flake", text: flake },
 					{ name: "build_nix", text: BuildNix.nix_expression },
 					{
 						name: "build_json",
@@ -71,7 +71,7 @@ BuildNix := [].{
 			"let",
 			"  config = builtins.fromJSON (builtins.readFile ./build.json);",
 			"  flake = builtins.getFlake (toString ./.);",
-			"  pkgs = builtins.getAttr config.system flake.inputs.nixpkgs.legacyPackages;",
+			"  pkgs = builtins.getAttr config.system flake.legacyPackages;",
 			"  lib = pkgs.lib;",
 			"  resolvePackage = name:",
 			"    lib.attrByPath (lib.splitString \".\" name)",

@@ -6,7 +6,7 @@ import commands.Task as TaskCommand
 import commands.Update as UpdateCommand
 import commands.Workflow as WorkflowCommand
 import implementations.BuildNix
-import shell_nix.ShellNix
+import implementations.ShellNix
 import implementations.TaskNix
 import implementations.UpdateNix
 import implementations.WorkflowNix

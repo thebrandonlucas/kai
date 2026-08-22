@@ -3,3 +3,14 @@ shell {
   packages: ["rocpkgs.nightly"]
   overlays: ["github:thebrandonlucas/roc-overlay"]
 }
+
+# Named environments make overlaid packages reusable by tasks and builds.
+environment roc {
+  packages: ["rocpkgs.nightly"]
+  overlays: ["github:thebrandonlucas/roc-overlay"]
+}
+
+task version {
+  environment: "roc"
+  run: ["roc", "version"]
+}

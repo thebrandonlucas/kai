@@ -3,6 +3,7 @@
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Shell as ShellCommand
+import EnvironmentNix
 import ShellNixValidation
 
 ShellNix := [].{
@@ -19,17 +20,7 @@ ShellNix := [].{
 	renderer : Plugin.Renderer
 	renderer = |context| {
 		pkgs = Plugin.validated_strings(context.config, ShellCommand.packages_field)?
-		overlays = Plugin.validated_strings(context.config, ShellCommand.overlays_field)?
-		system = Plugin.validated_target(context)?
-		Ok(ShellNix.render_result(pkgs, overlays, system))
+		overlays = EnvironmentNix.extract_overlays(context.config)?
+		EnvironmentNix.render_result(context, pkgs, overlays, "unsupported shell platform")
 	}
-
-	render_result : List(Str), List(Str), Str -> Plugin.RenderResult
-	render_result = |pkgs, overlays, system|
-		Plugin.RenderResult.{
-			actions: [],
-			outputs: [{ name: "flake", text: NixBackend.render_dev_shell({ overlays, pkgs, system }) }],
-			requests: [],
-			requested_packages: pkgs,
-		}
 }
