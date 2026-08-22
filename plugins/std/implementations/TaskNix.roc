@@ -2,6 +2,7 @@ import parser.Body
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Task as TaskCommand
+import EnvironmentNix
 
 TaskNix := [].{
 	implementation : Plugin.Implementation
@@ -29,20 +30,8 @@ TaskNix := [].{
 			message: "validated environment configuration is missing 'packages'",
 		}
 		Plugin.renderer_validation(Plugin.validate_string_list(pkgs, NixBackend.package_rules))?
-		target = NixBackend.target(context.host_os, context.host_arch) ? |_|
-			{ byte_offset: None, message: "unsupported task platform" }
-		Ok(
-			Plugin.RenderResult.{
-				actions: NixBackend.develop_command_actions(run),
-				outputs: [
-					{
-						name: "flake",
-						text: NixBackend.render_dev_shell({ overlays: [], pkgs, system: target.system }),
-					},
-				],
-				requests: [],
-				requested_packages: pkgs,
-			},
-		)
+		overlays = EnvironmentNix.extract_overlays(environment)?
+		result = EnvironmentNix.render_result(context, pkgs, overlays, "unsupported task platform")?
+		Ok({ ..result, actions: NixBackend.develop_command_actions(run) })
 	}
 }

@@ -26,8 +26,9 @@ import "../plugins/std/commands/Task.roc" as task_command_source : Str
 import "../plugins/std/commands/Update.roc" as update_command_source : Str
 import "../plugins/std/commands/Workflow.roc" as workflow_command_source : Str
 import "../plugins/std/implementations/BuildNix.roc" as build_nix_source : Str
-import "../plugins/std/implementations/shell-nix/ShellNix.roc" as shell_nix_source : Str
-import "../plugins/std/implementations/shell-nix/ShellNixValidation.roc" as shell_nix_validation_source : Str
+import "../plugins/std/implementations/EnvironmentNix.roc" as environment_nix_source : Str
+import "../plugins/std/implementations/ShellNix.roc" as shell_nix_source : Str
+import "../plugins/std/implementations/ShellNixValidation.roc" as shell_nix_validation_source : Str
 import "../plugins/std/implementations/TaskNix.roc" as task_nix_source : Str
 import "../plugins/std/implementations/UpdateNix.roc" as update_nix_source : Str
 import "../plugins/std/implementations/WorkflowNix.roc" as workflow_nix_source : Str
@@ -110,7 +111,7 @@ build_stage! = |stage, plugin_paths, output_name, output_path| {
 	Path.create_dir!(std_dir)?
 	Path.write_utf8!(
 		Path.join(std_dir, "main.roc"),
-		"package [StdPlugin] { backends: \"./backends/main.roc\", commands: \"./commands/main.roc\", implementations: \"./implementations/main.roc\", shell_nix: \"./implementations/shell-nix/main.roc\", kai: \"../package.roc\", parser: \"../parser/main.roc\" }\n",
+		"package [StdPlugin] { backends: \"./backends/main.roc\", commands: \"./commands/main.roc\", implementations: \"./implementations/main.roc\", kai: \"../package.roc\", parser: \"../parser/main.roc\" }\n",
 	)?
 	Path.write_utf8!(Path.join(std_dir, "StdPlugin.roc"), std_plugin_source)?
 
@@ -138,21 +139,15 @@ build_stage! = |stage, plugin_paths, output_name, output_path| {
 	Path.create_dir!(implementations_dir)?
 	Path.write_utf8!(
 		Path.join(implementations_dir, "main.roc"),
-		"package [BuildNix, TaskNix, UpdateNix, WorkflowNix] { backends: \"../backends/main.roc\", commands: \"../commands/main.roc\", kai: \"../../package.roc\", parser: \"../../parser/main.roc\" }\n",
+		"package [BuildNix, EnvironmentNix, ShellNix, ShellNixValidation, TaskNix, UpdateNix, WorkflowNix] { backends: \"../backends/main.roc\", commands: \"../commands/main.roc\", kai: \"../../package.roc\", parser: \"../../parser/main.roc\" }\n",
 	)?
 	Path.write_utf8!(Path.join(implementations_dir, "BuildNix.roc"), build_nix_source)?
+	Path.write_utf8!(Path.join(implementations_dir, "EnvironmentNix.roc"), environment_nix_source)?
+	Path.write_utf8!(Path.join(implementations_dir, "ShellNix.roc"), shell_nix_source)?
+	Path.write_utf8!(Path.join(implementations_dir, "ShellNixValidation.roc"), shell_nix_validation_source)?
 	Path.write_utf8!(Path.join(implementations_dir, "TaskNix.roc"), task_nix_source)?
 	Path.write_utf8!(Path.join(implementations_dir, "UpdateNix.roc"), update_nix_source)?
 	Path.write_utf8!(Path.join(implementations_dir, "WorkflowNix.roc"), workflow_nix_source)?
-
-	shell_nix_dir = Path.join(implementations_dir, "shell-nix")
-	Path.create_dir!(shell_nix_dir)?
-	Path.write_utf8!(
-		Path.join(shell_nix_dir, "main.roc"),
-		"package [ShellNix, ShellNixValidation] { backends: \"../../backends/main.roc\", commands: \"../../commands/main.roc\", kai: \"../../../package.roc\", parser: \"../../../parser/main.roc\" }\n",
-	)?
-	Path.write_utf8!(Path.join(shell_nix_dir, "ShellNix.roc"), shell_nix_source)?
-	Path.write_utf8!(Path.join(shell_nix_dir, "ShellNixValidation.roc"), shell_nix_validation_source)?
 
 	plugins = plugin_paths.map_with_index(|path, index| { index, path })
 	for plugin in plugins {
