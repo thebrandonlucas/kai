@@ -3,8 +3,8 @@ import parser.Body
 import kai.Plugin
 
 # TODO: how to make this code more self documenting ie,
-# I want to be able to know easily: 
-# a) what new kai commands and command call shape from this code, and 
+# I want to be able to know easily:
+# a) what new kai commands and command call shape from this code, and
 # b) what the corresponding Kaifile will look like from it
 Shell := [].{
 	packages_field : Body.Field

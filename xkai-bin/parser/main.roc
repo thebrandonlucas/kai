@@ -1,1 +1,1 @@
-package [Body, Config] {}
+package [Body, Bytes, Config] {}

@@ -17,8 +17,8 @@ import implementations.WorkflowNix
 ## `nix` use cases. It also demonstrates the canonical use and structure of
 # plugins and serve as an example of how to write them.
 
-# The simple interface describes `commands`, which define what commands that 
-# `kai` (and the `Kaifile`) have available, the compatible `backend`s that 
+# The simple interface describes `commands`, which define what commands that
+# `kai` (and the `Kaifile`) have available, the compatible `backend`s that
 # these commands can operate on, and the `implementation`s which glue together
 # a `backend` and a `command`.
 #
@@ -27,13 +27,13 @@ import implementations.WorkflowNix
 #   which invariants must hold for given commands, backends, or
 #   command/backend combos. An example may be that the user forgot
 #   a command, used the wrong syntax, etc.
-# - Those at _runtime_ where there may be failures due to 
+# - Those at _runtime_ where there may be failures due to
 #   underspecification in the plugin or maybe a missing requirement
-#   on the users system i.e. they don't have a compatible backend 
+#   on the users system i.e. they don't have a compatible backend
 #   installed.
 #
-# The individual commands/backends are like ingredients to a recipe: 
-# you can use any combination you like, but certain dishes require certain 
+# The individual commands/backends are like ingredients to a recipe:
+# you can use any combination you like, but certain dishes require certain
 # ingredients.
 
 StdPlugin := [].{

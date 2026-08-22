@@ -143,18 +143,17 @@ Examples := [].{
 
 # -- TESTS --
 
-expect Examples.invocation_for_header(["shell"], "Kaifile", LINUX, X64) == Ok({
-	arch: X64,
-	args: ["shell"],
-	os: LINUX,
-})
+expect match Examples.invocation_for_header(["shell"], "Kaifile", LINUX, X64) {
+	Ok(invocation) => invocation.arch == X64 and invocation.args == ["shell"] and invocation.os == LINUX
+	Err(_) => Bool.False
+}
 
-expect Examples.invocation_for_header(["task", "moo", "nix"], "Kaifile", MACOS, AARCH64) == Ok({
-	arch: AARCH64,
-	args: ["run", "nix", "moo"],
-	os: MACOS,
-})
+expect match Examples.invocation_for_header(["task", "moo", "nix"], "Kaifile", MACOS, AARCH64) {
+	Ok(invocation) => invocation.arch == AARCH64 and invocation.args == ["run", "nix", "moo"] and invocation.os == MACOS
+	Err(_) => Bool.False
+}
 
-expect Examples.invocation_for_header(["unknown"], "Kaifile", LINUX, X64) == Err(
-	UnsupportedExampleHeader({ header: ["unknown"], path: "Kaifile" }),
-)
+expect match Examples.invocation_for_header(["unknown"], "Kaifile", LINUX, X64) {
+	Err(UnsupportedExampleHeader({ header, path })) => header == ["unknown"] and path == "Kaifile"
+	Ok(_) => Bool.False
+}

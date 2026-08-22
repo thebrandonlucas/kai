@@ -1,5 +1,5 @@
 app [main!] {
-	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.21.0-rc4/FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn.tar.zst",
+	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.22.0/F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL.tar.zst",
 }
 
 import pf.Cmd
@@ -33,9 +33,9 @@ import "../plugins/std/implementations/UpdateNix.roc" as update_nix_source : Str
 import "../plugins/std/implementations/WorkflowNix.roc" as workflow_nix_source : Str
 import "VERSION" as version_source : Str
 
-platform_name = "FvCh4vdqm3nBY6DWEfZ8RuGCVfjuMY43HA8KSNk9qVDn"
+platform_name = "F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL"
 
-platform_url = "https://github.com/roc-lang/basic-cli/releases/download/0.21.0-rc4/${platform_name}.tar.zst"
+platform_url = "https://github.com/roc-lang/basic-cli/releases/download/0.22.0/${platform_name}.tar.zst"
 
 print_usage! : {} => Try({}, _)
 print_usage! = |_| {
