@@ -1,0 +1,10 @@
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  outputs = { nixpkgs, ... }: {
+    devShells."{{system}}".default = nixpkgs.legacyPackages."{{system}}".mkShell {
+      packages = [
+              nixpkgs."legacyPackages"."{{system}}"."cowsay"
+      ];
+    };
+  };
+}

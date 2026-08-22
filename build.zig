@@ -175,6 +175,7 @@ pub fn build(b: *std.Build) void {
     const build_devtool = b.addSystemCommand(&.{ "roc", "build" });
     build_devtool.addFileArg(b.path("devtool/main.roc"));
     build_devtool.addFileInput(b.path("devtool/Cli.roc"));
+    build_devtool.addFileInput(b.path("devtool/Kaifiles.roc"));
     build_devtool.addFileInput(b.path("devtool/GitHub.roc"));
     build_devtool.addFileInput(b.path("devtool/PrepareRelease.roc"));
     build_devtool.addFileInput(b.path("devtool/Release.roc"));
@@ -215,6 +216,13 @@ pub fn build(b: *std.Build) void {
     test_examples.addFileArg(examples_devtool);
     test_examples.addArg("examples/kaifiles");
     test_examples_step.dependOn(&test_examples.step);
+
+    const kaifiles_step = b.step(
+        "kaifiles",
+        "Run every Kaifile and compare its generated outputs",
+    );
+    const run_kaifiles = addDevtoolCommand(b, devtool, "kaifiles", &.{});
+    kaifiles_step.dependOn(&run_kaifiles.step);
 
     const build_fuzz = b.addSystemCommand(&.{ "roc", "build", "--fuzz" });
     build_fuzz.addFileArg(b.path("fuzz/Config.roc"));
