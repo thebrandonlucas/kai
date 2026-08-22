@@ -1,6 +1,6 @@
 package
 	[Build, Shell, Task, Update, Workflow]
 	{
-		kai: "../../../xkai-bin/package.roc",
-		parser: "../../../xkai-bin/parser/main.roc",
+		kai: "../../../xkai/package.roc",
+		parser: "../../../xkai/parser/main.roc",
 	}

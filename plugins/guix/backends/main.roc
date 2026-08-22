@@ -1,5 +1,5 @@
 package
 	[Guix]
 	{
-		kai: "../../../xkai-bin/package.roc",
+		kai: "../../../xkai/package.roc",
 	}
