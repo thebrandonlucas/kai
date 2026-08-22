@@ -72,6 +72,7 @@ CustomPlugin := [].{
 							Ok(message) => Ok(
 								Plugin.RenderResult.{
 									actions: [],
+									artifacts: [],
 									outputs: [{ name: "message", text: message }],
 									requests: [],
 									requested_packages: [],

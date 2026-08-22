@@ -29,6 +29,7 @@ ShellGuix := [].{
 						command: GuixBackend.backend.name,
 					}),
 				],
+				artifacts: [],
 				outputs: [],
 				requests: [],
 				requested_packages: pkgs,

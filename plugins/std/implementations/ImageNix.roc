@@ -39,6 +39,19 @@ ImageNix := [].{
 					ImageNix.render_module(config.pkgs, config.users, config.services),
 					metadata,
 				),
+				artifacts: [
+					{
+						attributes: [
+							{ key: "backend", value: NixBackend.backend.name },
+							{ key: "format", value: "qcow2" },
+							{ key: "target.architecture", value: config.target_architecture },
+							{ key: "target.system", value: config.target_system },
+						],
+						kind: "kai.machine.image/v1",
+						name: config.name,
+						path: NixBackend.image_file_path(config.name),
+					},
+				],
 				outputs: [],
 				requests: [],
 				requested_packages: config.pkgs,

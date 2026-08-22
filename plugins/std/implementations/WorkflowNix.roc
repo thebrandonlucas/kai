@@ -26,6 +26,7 @@ WorkflowNix := [].{
 			Ok(
 				Plugin.RenderResult.{
 					actions: [],
+					artifacts: [],
 					outputs: [],
 					requests,
 					requested_packages: [],

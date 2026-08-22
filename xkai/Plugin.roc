@@ -677,10 +677,30 @@ Plugin := [].{
 		),
 	]
 
+	ArtifactAttribute := {
+		key : Str,
+		value : Str,
+	}.{
+		encoder_for : _
+		parser_for : _
+	}
+
+	Artifact := {
+		attributes : List(ArtifactAttribute),
+		kind : Str,
+		name : Str,
+		path : Str,
+	}.{
+		encoder_for : _
+		parser_for : _
+	}
+
 	RenderContext := {
 		args : List(Str),
 		config : Body.Configuration,
 		config_block : [NoConfigBlock, SelectedConfigBlock(LocatedConfigBlock)],
+		dependencies_resolved : Bool,
+		dependency_artifacts : List(Artifact),
 		host_arch : HostArch,
 		host_os : HostOs,
 		project_config : List(ProjectConfigEntry),
@@ -714,8 +734,20 @@ Plugin := [].{
 		status : Str,
 	}
 
+	same_plan_requests : List(PlanRequest), List(PlanRequest) -> Bool
+	same_plan_requests = |left, right|
+		match (left, right) {
+			([], []) => Bool.True
+			([left_first, .. as left_rest], [right_first, .. as right_rest]) =>
+				left_first.args == right_first.args and
+					left_first.status == right_first.status and
+						Plugin.same_plan_requests(left_rest, right_rest)
+			_ => Bool.False
+		}
+
 	RenderResult := {
 		actions : List(Action),
+		artifacts : List(Artifact),
 		outputs : List(RenderedOutput),
 		requests : List(PlanRequest),
 		requested_packages : List(Str),
@@ -760,6 +792,8 @@ Plugin := [].{
 						args: context.args,
 						config: context.config,
 						config_block: context.config_block,
+						dependencies_resolved: context.dependencies_resolved,
+						dependency_artifacts: context.dependency_artifacts,
 						host_arch: context.host_arch,
 						host_os: context.host_os,
 						project_config: context.project_config,
@@ -941,6 +975,7 @@ Plugin := [].{
 
 	Plan := {
 		actions : List(Action),
+		artifacts : List(Artifact),
 		backend : Backend,
 		command : Str,
 		plugin : Str,
@@ -1020,6 +1055,8 @@ Plugin := [].{
 						args: config_selection.args,
 						config: parsed.config,
 						config_block: parsed.config_block,
+						dependencies_resolved: Bool.False,
+						dependency_artifacts: [],
 						host_arch: arch,
 						host_os: os,
 						project_config,
@@ -1029,41 +1066,67 @@ Plugin := [].{
 					validated_context = Plugin.validate_render_context(context, implementation.validator) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
 					renderer = implementation.renderer
-					rendered = renderer(validated_context) ? |diagnostic|
-						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
-					base_plan = Plugin.lower(implementation, rendered, plugin_definition.name, backend_selection.backend) ? |diagnostic|
+					initial_render = renderer(validated_context) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
 					requested = Plugin.plan_requests(
 						registry,
 						config_text,
-						rendered.requests,
+						initial_render.requests,
 						os,
 						arch,
 						[args].concat(ancestors),
 						depth + 1,
 					)?
+					rendered = if initial_render.requests.is_empty() {
+						initial_render
+					} else {
+						with_dependencies = renderer(
+							Plugin.RenderContext.{
+								args: validated_context.args,
+								config: validated_context.config,
+								config_block: validated_context.config_block,
+								dependencies_resolved: Bool.True,
+								dependency_artifacts: requested.artifacts,
+								host_arch: validated_context.host_arch,
+								host_os: validated_context.host_os,
+								project_config: validated_context.project_config,
+								related_config: validated_context.related_config,
+								target: validated_context.target,
+							},
+						) ? |diagnostic|
+							PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
+						if Plugin.same_plan_requests(with_dependencies.requests, initial_render.requests) {
+							with_dependencies
+						} else {
+							return Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plan requests changed after dependencies resolved")))
+						}
+					}
+					base_plan = Plugin.lower(implementation, rendered, plugin_definition.name, backend_selection.backend) ? |diagnostic|
+						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
 					Ok(
 						Plugin.Plan.{
-							actions: base_plan.actions.concat(requested.actions),
+							actions: requested.actions.concat(base_plan.actions),
+							artifacts: requested.artifacts.concat(base_plan.artifacts),
 							backend: base_plan.backend,
 							command: base_plan.command,
 							plugin: base_plan.plugin,
-							requested_packages: base_plan.requested_packages.concat(requested.requested_packages),
+							requested_packages: requested.requested_packages.concat(base_plan.requested_packages),
 						},
 					)
 				}
 			}
 		}
 
-	plan_requests : List(Definition), Str, List(PlanRequest), HostOs, HostArch, List(List(Str)), U64 -> Try({ actions : List(Action), requested_packages : List(Str) }, Error)
+	plan_requests : List(Definition), Str, List(PlanRequest), HostOs, HostArch, List(List(Str)), U64 -> Try({ actions : List(Action), artifacts : List(Artifact), requested_packages : List(Str) }, Error)
 	plan_requests = |registry, config_text, requests, os, arch, ancestors, depth|
 		match requests {
-			[] => Ok({ actions: [], requested_packages: [] })
+			[] => Ok({ actions: [], artifacts: [], requested_packages: [] })
 			[first, .. as rest] => {
 				child = Plugin.plan_registry_nested(registry, config_text, first.args, os, arch, ancestors, depth)?
 				remaining = Plugin.plan_requests(registry, config_text, rest, os, arch, ancestors, depth)?
 				Ok({
 					actions: [PrintLine(first.status)].concat(child.actions).concat(remaining.actions),
+					artifacts: child.artifacts.concat(remaining.artifacts),
 					requested_packages: child.requested_packages.concat(remaining.requested_packages),
 				})
 			}
@@ -1197,6 +1260,7 @@ Plugin := [].{
 		Ok(
 			Plugin.Plan.{
 				actions: actions.concat(rendered.actions),
+				artifacts: rendered.artifacts,
 				backend,
 				command: implementation.command,
 				plugin,
