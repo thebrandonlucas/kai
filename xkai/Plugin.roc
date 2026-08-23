@@ -1076,6 +1076,9 @@ Plugin := [].{
 						arch,
 						[args].concat(ancestors),
 						depth + 1,
+						plugin_definition.name,
+						command.name,
+						backend_selection.backend.name,
 					)?
 					rendered = if initial_render.requests.is_empty() {
 						initial_render
@@ -1117,13 +1120,17 @@ Plugin := [].{
 			}
 		}
 
-	plan_requests : List(Definition), Str, List(PlanRequest), HostOs, HostArch, List(List(Str)), U64 -> Try({ actions : List(Action), artifacts : List(Artifact), requested_packages : List(Str) }, Error)
-	plan_requests = |registry, config_text, requests, os, arch, ancestors, depth|
+	plan_requests : List(Definition), Str, List(PlanRequest), HostOs, HostArch, List(List(Str)), U64, Str, Str, Str -> Try({ actions : List(Action), artifacts : List(Artifact), requested_packages : List(Str) }, Error)
+	plan_requests = |registry, config_text, requests, os, arch, ancestors, depth, plugin, command, backend|
 		match requests {
 			[] => Ok({ actions: [], artifacts: [], requested_packages: [] })
 			[first, .. as rest] => {
-				child = Plugin.plan_registry_nested(registry, config_text, first.args, os, arch, ancestors, depth)?
-				remaining = Plugin.plan_requests(registry, config_text, rest, os, arch, ancestors, depth)?
+				child = Plugin.plan_registry_nested(registry, config_text, first.args, os, arch, ancestors, depth) ? |error|
+					match error {
+						UnknownCommand => PlanningFailed(Plugin.failure(plugin, command, backend, None, "plan request refers to unknown command '${first.args.first() ?? ""}'"))
+						PlanningFailed(diagnostic) => PlanningFailed(diagnostic)
+					}
+				remaining = Plugin.plan_requests(registry, config_text, rest, os, arch, ancestors, depth, plugin, command, backend)?
 				Ok({
 					actions: [PrintLine(first.status)].concat(child.actions).concat(remaining.actions),
 					artifacts: child.artifacts.concat(remaining.artifacts),

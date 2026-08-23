@@ -52,17 +52,17 @@ WorkflowNix := [].{
 	parse_step : Str -> Try(Plugin.PlanRequest, [InvalidWorkflowStep])
 	parse_step = |step|
 		match WorkflowNix.words(step) {
-			[operation, name] if operation == "run" or operation == "build" => Ok({
-				args: [operation, name],
-				status: "workflow: ${operation} ${name}",
+			[] => Err(InvalidWorkflowStep)
+			args => Ok({
+				args,
+				status: "workflow: ${Str.join_with(args, " ")}",
 			})
-			_ => Err(InvalidWorkflowStep)
 		}
 
 	invalid_step : U64, Str -> Plugin.RendererDiagnostic
 	invalid_step = |index, step| {
 		byte_offset: None,
-		message: "workflow step ${U64.to_str(index)} is invalid: '${step}'; expected 'run <name>' or 'build <name>'",
+		message: "workflow step ${U64.to_str(index)} is invalid: '${step}'; expected a command and optional arguments",
 	}
 
 	words : Str -> List(Str)
