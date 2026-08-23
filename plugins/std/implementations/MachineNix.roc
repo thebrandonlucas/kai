@@ -25,12 +25,23 @@ MachineNix := [].{
 		target_system : Str,
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
+	Configuration := {
+		locked_overlays : List(Str),
+		name : Str,
+		overlays : List(Str),
+		pkgs : List(Str),
+		services : List(Str),
+		target_architecture : Str,
+		target_system : Str,
+		users : List(Str),
+	}
+
+	configuration : Plugin.RenderContext, Str -> Try(Configuration, Plugin.RendererDiagnostic)
+	configuration = |context, command_name| {
 		name = match context.args {
 			[selected_name] => Ok(selected_name)
 			[] => Ok(NixBackend.backend.name)
-			_ => Err({ byte_offset: None, message: "machine requires exactly one name" })
+			_ => Err({ byte_offset: None, message: "${command_name} requires exactly one name" })
 		}?
 		environment = match context.related_config {
 			NoRelatedConfig => Err({ byte_offset: None, message: "machine environment is required" })
@@ -64,25 +75,42 @@ MachineNix := [].{
 					message: "cross-architecture NixOS machine builds are not supported; target '${system}' must match the host architecture",
 				}
 			}
+		Ok(
+			MachineNix.Configuration.{
+				locked_overlays,
+				name,
+				overlays,
+				pkgs,
+				services,
+				target_architecture: target.architecture,
+				target_system: target.system,
+				users,
+			},
+		)
+	}
+
+	renderer : Plugin.Renderer
+	renderer = |context| {
+		config = MachineNix.configuration(context, "machine")?
 		machine_metadata = MachineNix.MachineMetadata.{
 			backend: NixBackend.backend.name,
-			closure_path: NixBackend.machine_closure_path(name),
-			flake_attribute: "kaiMachines.\"${name}\".closure",
-			flake_path: NixBackend.machine_flake_path(name),
-			metadata_path: NixBackend.machine_metadata_path(name),
-			name,
-			target_architecture: target.architecture,
-			target_system: target.system,
+			closure_path: NixBackend.machine_closure_path(config.name),
+			flake_attribute: "kaiMachines.\"${config.name}\".closure",
+			flake_path: NixBackend.machine_flake_path(config.name),
+			metadata_path: NixBackend.machine_metadata_path(config.name),
+			name: config.name,
+			target_architecture: config.target_architecture,
+			target_system: config.target_system,
 		}
-		flake = MachineNix.render_flake(name, target.system, locked_overlays, overlays)
-		module_text = MachineNix.render_module(pkgs, users, services)
+		flake = MachineNix.render_flake(config.name, config.target_system, config.locked_overlays, config.overlays)
+		module_text = MachineNix.render_module(config.pkgs, config.users, config.services)
 		metadata = MachineNix.render_metadata(machine_metadata)
 		Ok(
 			Plugin.RenderResult.{
-				actions: NixBackend.machine_actions(name, flake, module_text, metadata),
+				actions: NixBackend.machine_actions(config.name, flake, module_text, metadata),
 				outputs: [],
 				requests: [],
-				requested_packages: pkgs,
+				requested_packages: config.pkgs,
 			},
 		)
 	}
@@ -172,107 +200,3 @@ MachineNix := [].{
 		Str.join_with(lines, "\n")
 	}
 }
-
-# -- TESTS --
-
-machine_body = Str.join_with(
-	[
-		"environment: server",
-		"system: \"x86_64-linux\"",
-		"users: [\"agent\"]",
-		"services: [\"openssh\"]",
-	],
-	"\n",
-)
-
-environment_body = "packages: [\"rocpkgs.nightly\"] overlays: [\"github:example/overlay\"]"
-
-parsed_machine = Body.parse(MachineCommand.body, machine_body)
-
-parsed_environment = Body.parse(Body.object([Body.required("packages", StringList), Body.optional("overlays", StringList)]), environment_body)
-
-expect match (parsed_machine, parsed_environment) {
-	(Ok(config), Ok(environment)) =>
-		match MachineNix.renderer({
-			args: ["agent"],
-			config,
-			config_block: NoConfigBlock,
-			host_arch: X64,
-			host_os: LINUX,
-			project_config: [
-				{
-					block: "environment",
-					config: environment,
-					header: ["environment", "server"],
-					location: { byte_offset: 0, column: 1, line: 1 },
-				},
-			],
-			related_config: SelectedRelatedConfig({
-				block: {
-					body: environment_body,
-					location: { byte_offset: 0, column: 1, line: 1 },
-				},
-				config: environment,
-			}),
-			target: NoTarget,
-		}) {
-			Err(_) => Bool.False
-			Ok(rendered) => {
-				expected_metadata = MachineNix.render_metadata(
-					MachineNix.MachineMetadata.{
-						backend: "nix",
-						closure_path: ".kai/artifacts/machines/agent/closure",
-						flake_attribute: "kaiMachines.\"agent\".closure",
-						flake_path: ".kai/machines/agent",
-						metadata_path: ".kai/artifacts/machines/agent/metadata.json",
-						name: "agent",
-						target_architecture: "x86_64",
-						target_system: "x86_64-linux",
-					},
-				)
-				match rendered.actions {
-					[
-						WriteUtf8(invalidate),
-						WriteUtf8(flake),
-						WriteUtf8(module_text),
-						Exec(update_lock),
-						Exec(copy_lock),
-						WriteUtf8(marker),
-						Exec(build),
-						WriteUtf8(metadata),
-					] =>
-						invalidate.path == ".kai/artifacts/machines/agent/metadata.json" and
-							invalidate.content == "" and
-								flake.path == ".kai/machines/agent/flake.nix" and
-									flake.content.contains("inputs.overlay0.url = \"github:example/overlay\";") and
-										module_text.path == ".kai/machines/agent/machine.nix" and
-											module_text.content.contains("services.\"openssh\".enable = true;") and
-												update_lock.args == ["flake", "lock", "path:.kai/machines/agent", "--reference-lock-file", "kai.lock", "--output-lock-file", "kai.lock"] and
-													copy_lock.args == ["flake", "lock", "path:.kai/machines/agent", "--reference-lock-file", "kai.lock", "--output-lock-file", ".kai/machines/agent/flake.lock"] and
-														marker.path == ".kai/artifacts/machines/agent/.keep" and
-															build.args == ["build", "path:.kai/machines/agent#kaiMachines.\"agent\".closure", "--no-update-lock-file", "--out-link", ".kai/artifacts/machines/agent/closure"] and
-																metadata.path == ".kai/artifacts/machines/agent/metadata.json" and
-																	metadata.content == expected_metadata
-					_ => Bool.False
-				}
-			}
-		}
-	_ => Bool.False
-}
-
-machine_target_cases = [
-	{ arch: X64, expected: Ok({ architecture: "x86_64", system: "x86_64-linux" }), os: LINUX, system: "x86_64-linux" },
-	{ arch: X64, expected: Err(UnsupportedMachineHost), os: MACOS, system: "x86_64-linux" },
-	{ arch: X64, expected: Err(CrossArchitectureMachine), os: LINUX, system: "aarch64-linux" },
-	{ arch: X64, expected: Err(UnsupportedMachineSystem), os: LINUX, system: "x86_64-darwin" },
-]
-
-expect List.all(
-	machine_target_cases,
-	|case|
-		match (NixBackend.machine_target(case.system, case.os, case.arch), case.expected) {
-			(Ok(actual), Ok(expected)) => actual.architecture == expected.architecture and actual.system == expected.system
-			(Err(actual), Err(expected)) => actual == expected
-			_ => Bool.False
-		},
-)

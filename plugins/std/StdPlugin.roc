@@ -1,12 +1,14 @@
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Build as BuildCommand
+import commands.Image as ImageCommand
 import commands.Machine as MachineCommand
 import commands.Shell as ShellCommand
 import commands.Task as TaskCommand
 import commands.Update as UpdateCommand
 import commands.Workflow as WorkflowCommand
 import implementations.BuildNix
+import implementations.ImageNix
 import implementations.MachineNix
 import implementations.ShellNix
 import implementations.TaskNix
@@ -53,6 +55,7 @@ StdPlugin := [].{
 	commands : List(Plugin.Command)
 	commands = [
 		BuildCommand.command,
+		ImageCommand.command,
 		MachineCommand.command,
 		ShellCommand.command,
 		TaskCommand.command,
@@ -69,6 +72,7 @@ StdPlugin := [].{
 	implementations : List(Plugin.Implementation)
 	implementations = [
 		BuildNix.implementation,
+		ImageNix.implementation,
 		MachineNix.implementation,
 		ShellNix.implementation,
 		TaskNix.implementation,
