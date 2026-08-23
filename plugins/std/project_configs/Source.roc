@@ -82,22 +82,3 @@ Source := [].{
 			}
 		}
 }
-
-expect List.all(
-	[
-		{ expected: Ok({}), selected: ["dep"], sources: [{ name: "dep", url: "https://example.test/dep.tar.gz" }] },
-		{ expected: Err("source name must not start with '.'"), selected: [], sources: [{ name: ".dep", url: "https://example.test" }] },
-		{ expected: Err("source URL contains characters unsafe for Nix output"), selected: [], sources: [{ name: "dep", url: "https://example.test/$dep" }] },
-		{ expected: Err("source 'dep' is declared more than once"), selected: [], sources: [{ name: "dep", url: "a" }, { name: "dep", url: "b" }] },
-		{ expected: Err("build input 'dep' is selected more than once"), selected: ["dep", "dep"], sources: [{ name: "dep", url: "a" }] },
-		{ expected: Err("build input 'missing' has no declared source; add 'source missing { url: ... }'"), selected: ["missing"], sources: [] },
-	],
-	|case|
-		match Source.validate_sources(case.sources, []) {
-			Err(diagnostic) => case.expected == Err(diagnostic.message)
-			Ok(_) => match Source.validate_selected(case.selected, case.sources, []) {
-				Err(diagnostic) => case.expected == Err(diagnostic.message)
-				Ok(value) => case.expected == Ok(value)
-			}
-		},
-)

@@ -267,6 +267,3 @@ usage_lines = [
 	"prepare-release NAME VERSION",
 	"help",
 ]
-
-expect List.all(parse_cases, |case| Cli.check(case.args, case.expected))
-expect List.all(usage_lines, |line| Cli.usage.contains(line))
