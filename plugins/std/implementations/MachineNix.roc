@@ -108,6 +108,18 @@ MachineNix := [].{
 		Ok(
 			Plugin.RenderResult.{
 				actions: NixBackend.machine_actions(config.name, flake, module_text, metadata),
+				artifacts: [
+					{
+						attributes: [
+							{ key: "backend", value: NixBackend.backend.name },
+							{ key: "target.architecture", value: config.target_architecture },
+							{ key: "target.system", value: config.target_system },
+						],
+						kind: "kai.machine.closure/v1",
+						name: config.name,
+						path: NixBackend.machine_closure_path(config.name),
+					},
+				],
 				outputs: [],
 				requests: [],
 				requested_packages: config.pkgs,

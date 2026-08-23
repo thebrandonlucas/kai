@@ -19,6 +19,7 @@ UpdateNix := [].{
 		Ok(
 			Plugin.RenderResult.{
 				actions: [],
+				artifacts: [],
 				outputs: [{ name: "flake", text: NixBackend.render_update_flake(overlays, sources) }],
 				requests: [],
 				requested_packages: [],

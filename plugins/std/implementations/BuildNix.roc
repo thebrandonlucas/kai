@@ -53,6 +53,7 @@ BuildNix := [].{
 		Ok(
 			Plugin.RenderResult.{
 				actions: NixBackend.build_artifact_actions(name),
+				artifacts: [],
 				outputs: [
 					{ name: "flake", text: flake },
 					{ name: "build_nix", text: BuildNix.nix_expression },

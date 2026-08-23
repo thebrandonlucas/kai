@@ -58,6 +58,7 @@ EnvironmentNix := [].{
 		Ok(
 			Plugin.RenderResult.{
 				actions: [],
+				artifacts: [],
 				outputs: [{ name: "flake", text: flake }],
 				requests: [],
 				requested_packages: pkgs,

@@ -11,6 +11,7 @@ SplitLocal := [].{
 		renderer: |_| Ok(
 			Plugin.RenderResult.{
 				actions: [],
+				artifacts: [],
 				outputs: [{ name: "message", text: "split plugin worked" }],
 				requests: [],
 				requested_packages: [],
