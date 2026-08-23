@@ -29,6 +29,8 @@ BuildNix := [].{
 			message: "validated build configuration is missing 'run'",
 		}
 		run_failures = Plugin.validate_string_list(run, BuildCommand.run_rules)
+		inputs = Plugin.validated_strings(context.config, BuildCommand.inputs_field)?
+		EnvironmentNix.validate_source_inputs(context, inputs)?
 		output = Body.get_string(context.config, "output") ? |_| {
 			byte_offset: None,
 			message: "validated build configuration is missing 'output'",
@@ -56,7 +58,7 @@ BuildNix := [].{
 					{ name: "build_nix", text: BuildNix.nix_expression },
 					{
 						name: "build_json",
-						text: Json.to_str({ name, output, pkgs, run, system: target.system }),
+						text: Json.to_str({ inputs, name, output, pkgs, run, system: target.system }),
 					},
 				],
 				requests: [],
@@ -79,12 +81,17 @@ BuildNix := [].{
 			"      pkgs;",
 			"  source = pkgs.nix-gitignore.gitignoreFilterRecursiveSource",
 			"    (_: _: true) \".git\\n.kai\" ../.;",
+			"  inputLinks = lib.concatMapStringsSep \"\\n\" (name:",
+			Str.join_with(["    \"ln -s -- ", BuildNix.nix_interpolation("lib.escapeShellArg (toString (builtins.getAttr name flake.kaiSources))"), " .kai/inputs/", BuildNix.nix_interpolation("lib.escapeShellArg name"), "\""], ""),
+			"  ) config.inputs;",
 			"in",
 			"pkgs.runCommand (\"kai-build-\" + config.name)",
 			"  { nativeBuildInputs = map resolvePackage config.pkgs; }",
 			"  ''",
 			Str.join_with(["    cp -R ", BuildNix.nix_interpolation("source"), "/. ."], ""),
 			"    chmod -R u+w .",
+			"    mkdir -p .kai/inputs",
+			Str.join_with(["    ", BuildNix.nix_interpolation("inputLinks")], ""),
 			Str.join_with(["    artifact=", BuildNix.nix_interpolation("lib.escapeShellArg config.output")], ""),
 			"    rm -rf -- \"$artifact\"",
 			Str.join_with(["    ", BuildNix.nix_interpolation("lib.escapeShellArgs config.run")], ""),

@@ -55,17 +55,24 @@ Nix := [].{
 			ranges: [{ max: Bytes.tilde, min: Bytes.exclamation_mark }],
 		})
 
-	render_dev_shell : { export_legacy_packages : Bool, locked_overlays : List(Str), overlays : List(Str), pkgs : List(Str), system : Str } -> Str
-	render_dev_shell = |{ export_legacy_packages, locked_overlays, overlays, pkgs, system }|
+	render_dev_shell = |{ export_legacy_packages, locked_overlays, overlays, pkgs, sources, system }|
 		if locked_overlays.is_empty() {
-			Nix.render_dev_shell_without_overlays(pkgs, system, export_legacy_packages)
+			Nix.render_dev_shell_without_overlays(pkgs, sources, system, export_legacy_packages)
 		} else {
-			Nix.render_dev_shell_with_overlays(pkgs, locked_overlays, overlays, system)
+			Nix.render_dev_shell_with_overlays(pkgs, locked_overlays, overlays, sources, system)
 		}
 
 	input_lines : List(Str) -> List(Str)
 	input_lines = |overlays|
 		overlays.map_with_index(|overlay, index| "  inputs.overlay${U64.to_str(index)}.url = \"${overlay}\";")
+
+	source_input_lines = |sources|
+		sources.map(
+			|source| "  inputs.\"kai-source-${source.name}\".url = \"${source.url}\";\n  inputs.\"kai-source-${source.name}\".flake = false;",
+		)
+
+	source_attribute = |sources|
+		"kaiSources = { ${Str.join_with(sources.map(|source| "\"${source.name}\" = inputs.\"kai-source-${source.name}\";"), " ")} };"
 
 	overlay_name : List(Str), Str, U64 -> Str
 	overlay_name = |overlays, selected, index|
@@ -79,11 +86,11 @@ Nix := [].{
 				}
 			}
 
-	render_update_flake : List(Str) -> Str
-	render_update_flake = |overlays|
+	render_update_flake = |overlays, sources|
 		Str.join_with(
 			["{", "  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";"]
 				.concat(Nix.input_lines(overlays))
+				.concat(Nix.source_input_lines(sources))
 				.concat(["  outputs = _: {};", "}"]),
 			"\n",
 		)
@@ -93,8 +100,7 @@ Nix := [].{
 		Str.join_with(path.split_on(".").map(|part| "\"${part}\""), ".")
 
 	# Render a flake containing a dev shell backed directly by nixpkgs.
-	render_dev_shell_without_overlays : List(Str), Str, Bool -> Str
-	render_dev_shell_without_overlays = |pkgs, system, export_legacy_packages| {
+	render_dev_shell_without_overlays = |pkgs, sources, system, export_legacy_packages| {
 		package_lines = pkgs.map(
 			|pkg| "              nixpkgs.\"legacyPackages\".\"${system}\".${Nix.render_attributes(pkg)}",
 		)
@@ -106,8 +112,10 @@ Nix := [].{
 		lines = [
 			"{",
 			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-			"  outputs = { nixpkgs, ... }: {",
-		].concat(legacy_lines).concat([
+		].concat(Nix.source_input_lines(sources)).concat([
+			"  outputs = inputs@{ nixpkgs, ... }: {",
+			"    ${Nix.source_attribute(sources)}",
+		]).concat(legacy_lines).concat([
 			"    devShells.\"${system}\".default = nixpkgs.legacyPackages.\"${system}\".mkShell {",
 			"      packages = [",
 		]).concat(package_lines).concat([
@@ -120,8 +128,7 @@ Nix := [].{
 	}
 
 	# Render a flake containing a dev shell with additional flake overlays.
-	render_dev_shell_with_overlays : List(Str), List(Str), List(Str), Str -> Str
-	render_dev_shell_with_overlays = |pkgs, locked_overlays, overlays, system| {
+	render_dev_shell_with_overlays = |pkgs, locked_overlays, overlays, sources, system| {
 		overlay_names = locked_overlays.map_with_index(|_, index| "overlay${U64.to_str(index)}")
 		overlay_lines = overlays.map(|overlay| "          ${Nix.overlay_name(locked_overlays, overlay, 0)}.overlays.default")
 		package_lines = pkgs.map(
@@ -131,8 +138,8 @@ Nix := [].{
 		lines = [
 			"{",
 			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-		].concat(Nix.input_lines(locked_overlays)).concat([
-			"  outputs = { ${outputs_args}, ... }:",
+		].concat(Nix.input_lines(locked_overlays)).concat(Nix.source_input_lines(sources)).concat([
+			"  outputs = inputs@{ ${outputs_args}, ... }:",
 			"    let",
 			"      pkgs = import nixpkgs {",
 			"        system = \"${system}\";",
@@ -141,6 +148,7 @@ Nix := [].{
 			"        ];",
 			"      };",
 			"    in {",
+			"      ${Nix.source_attribute(sources)}",
 			"      legacyPackages.\"${system}\" = pkgs;",
 			"      devShells.\"${system}\".default = pkgs.mkShell {",
 			"        packages = [",

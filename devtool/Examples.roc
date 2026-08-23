@@ -1,6 +1,7 @@
 import pf.Path
 import pf.Stdout
 
+import parser.Body
 import parser.Config
 import kai.Plugin
 import std.StdPlugin
@@ -74,15 +75,18 @@ Examples := [].{
 		match blocks {
 			[] => Ok([])
 			[first, .. as rest] => {
-				current_result = if allow_hosts {
-					match first.header {
-						["on", "linux"] => Examples.nested_invocations(first, path, LINUX, X64)
-						["on", "macos"] => Examples.nested_invocations(first, path, MACOS, AARCH64)
-						["on", host] => Err(UnsupportedExampleHost({ host, path }))
-						_ => Examples.invocation_for_header(first.header, path, os, arch).map_ok(|invocation| [invocation])
+				current_result = match first.header {
+					["source", _] | ["source", _, _] => Ok([])
+					_ => if allow_hosts {
+						match first.header {
+							["on", "linux"] => Examples.nested_invocations(first, path, LINUX, X64)
+							["on", "macos"] => Examples.nested_invocations(first, path, MACOS, AARCH64)
+							["on", host] => Err(UnsupportedExampleHost({ host, path }))
+							_ => Examples.invocation_for_header(first.header, path, os, arch).map_ok(|invocation| [invocation])
+						}
+					} else {
+						Examples.invocation_for_header(first.header, path, os, arch).map_ok(|invocation| [invocation])
 					}
-				} else {
-					Examples.invocation_for_header(first.header, path, os, arch).map_ok(|invocation| [invocation])
 				}
 				current = current_result?
 				remaining = Examples.collect_blocks(rest, path, os, arch, allow_hosts)?
@@ -116,6 +120,14 @@ Examples := [].{
 		}?
 		Ok({ arch, args, os })
 	}
+
+	written_content = |actions, path|
+		match actions {
+			[] => ""
+			[WriteUtf8({ content, path: written_path }), .. as rest] =>
+				if written_path == path content else Examples.written_content(rest, path)
+			[_, .. as rest] => Examples.written_content(rest, path)
+		}
 
 	check_invocations : Str, Str, List(Examples.Invocation) -> Try({}, _)
 	check_invocations = |source, path, remaining_invocations|
@@ -158,4 +170,62 @@ expect match Examples.invocation_for_header(["task", "moo", "nix"], "Kaifile", M
 expect match Examples.invocation_for_header(["unknown"], "Kaifile", LINUX, X64) {
 	Err(UnsupportedExampleHeader({ header, path })) => header == ["unknown"] and path == "Kaifile"
 	Ok(_) => Bool.False
+}
+
+expect match Config.scan("source dep { url: \"https://example.test/dep\" }\nshell { packages: [] }") {
+	Ok(blocks) => match Examples.invocations(blocks, "Kaifile") {
+		Ok([invocation]) => invocation.arch == X64 and invocation.args == ["shell"] and invocation.os == LINUX
+		_ => Bool.False
+	}
+	Err(_) => Bool.False
+}
+
+expect match Plugin.plan_registry(
+	[StdPlugin.plugin],
+	"source basic-cli {}\nshell { packages: [] }",
+	["shell"],
+	LINUX,
+	X64,
+) {
+	Err(PlanningFailed(diagnostic)) => diagnostic.message == "missing required field 'url'"
+	_ => Bool.False
+}
+
+expect match Plugin.validate_definition({
+	..StdPlugin.plugin,
+	project_configs: [
+		{
+			block: "environment",
+			body: Body.object([Body.required("url", String)]),
+			kind: NamedProjectConfig,
+		},
+	],
+}) {
+	Err(diagnostic) =>
+		diagnostic.message == "named config block 'environment' has conflicting body shapes" and diagnostic.plugin == "std"
+	Ok(_) => Bool.False
+}
+
+source_config = "source dep { url: \"https://example.test/dep\" }\nsource unused { url: \"https://example.test/unused\" }\nshell { packages: [] }\nenvironment dev { packages: [] }\ntask check { environment: \"dev\"\nrun: [\"echo\"] }\nbuild app { environment: dev\ninputs: [\"dep\"]\nrun: [\"touch\", \"app\"]\noutput: \"app\" }"
+
+expect List.all(
+	[["shell"], ["run", "check"], ["build", "app"], ["update"]],
+	|args|
+		match Plugin.plan_registry([StdPlugin.plugin], source_config, args, LINUX, X64) {
+			Ok(plan) => {
+				flake = Examples.written_content(plan.actions, ".kai/flake.nix")
+				flake.contains("inputs.\"kai-source-dep\".flake = false;") and flake.contains("kai-source-unused")
+			}
+			Err(_) => Bool.False
+		},
+)
+
+expect match Plugin.plan_registry([StdPlugin.plugin], source_config, ["build", "app"], LINUX, X64) {
+	Ok(plan) => {
+		flake = Examples.written_content(plan.actions, ".kai/flake.nix")
+		json = Examples.written_content(plan.actions, ".kai/build.json")
+		nix = Examples.written_content(plan.actions, ".kai/build.nix")
+		flake.contains("kaiSources") and json.contains("\"inputs\":[\"dep\"]") and nix.contains(".kai/inputs/")
+	}
+	Err(_) => Bool.False
 }

@@ -3,9 +3,12 @@ import parser.Bytes
 import kai.Plugin
 
 Build := [].{
+	inputs_field = Body.optional("inputs", StringList)
+
 	body : Body.Shape
 	body = Body.object([
 		Body.required("environment", Identifier),
+		inputs_field,
 		Body.required("run", StringList),
 		Body.required("output", String),
 	])
