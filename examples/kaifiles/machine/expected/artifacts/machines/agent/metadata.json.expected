@@ -1,0 +1,1 @@
+{"backend":"nix","closure_path":".kai/artifacts/machines/agent/closure","flake_attribute":"kaiMachines.\"agent\".closure","flake_path":".kai/machines/agent","kind":"machine","metadata_path":".kai/artifacts/machines/agent/metadata.json","name":"agent","schema":1,"target_architecture":"x86_64","target_system":"x86_64-linux"}
