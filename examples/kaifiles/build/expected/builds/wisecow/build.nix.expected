@@ -8,13 +8,18 @@ let
       (throw ("Kai build package '" + name + "' was not found"))
       pkgs;
   source = pkgs.nix-gitignore.gitignoreFilterRecursiveSource
-    (_: _: true) ".git\n.kai" ../.;
+    (_: _: true) ".git\n.kai" ../../../.;
+  inputLinks = lib.concatMapStringsSep "\n" (name:
+    "ln -s -- ${lib.escapeShellArg (toString (builtins.getAttr name flake.kaiSources))} .kai/inputs/${lib.escapeShellArg name}"
+  ) config.inputs;
 in
 pkgs.runCommand ("kai-build-" + config.name)
   { nativeBuildInputs = map resolvePackage config.pkgs; }
   ''
     cp -R ${source}/. .
     chmod -R u+w .
+    mkdir -p .kai/inputs
+    ${inputLinks}
     artifact=${lib.escapeShellArg config.output}
     rm -rf -- "$artifact"
     ${lib.escapeShellArgs config.run}

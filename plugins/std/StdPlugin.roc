@@ -4,6 +4,8 @@ import commands.Build as BuildCommand
 import commands.Compose as ComposeCommand
 import commands.Image as ImageCommand
 import commands.Machine as MachineCommand
+import commands.Secret as SecretCommand
+import commands.Service as ServiceCommand
 import commands.Shell as ShellCommand
 import commands.Task as TaskCommand
 import commands.Update as UpdateCommand
@@ -12,6 +14,7 @@ import implementations.BuildNix
 import implementations.ComposeNix
 import implementations.ImageNix
 import implementations.MachineNix
+import implementations.ServiceNix
 import implementations.ShellNix
 import implementations.TaskNix
 import implementations.UpdateNix
@@ -60,6 +63,7 @@ StdPlugin := [].{
 		ComposeCommand.command,
 		ImageCommand.command,
 		MachineCommand.command,
+		ServiceCommand.command,
 		ShellCommand.command,
 		TaskCommand.command,
 		UpdateCommand.command,
@@ -67,7 +71,7 @@ StdPlugin := [].{
 	]
 
 	project_configs : List(Plugin.ProjectConfigDescriptor)
-	project_configs = [Source.descriptor]
+	project_configs = [SecretCommand.descriptor, Source.descriptor]
 
 	backends : List(Plugin.Backend)
 	backends = [NixBackend.backend]
@@ -78,6 +82,7 @@ StdPlugin := [].{
 		ComposeNix.implementation,
 		ImageNix.implementation,
 		MachineNix.implementation,
+		ServiceNix.implementation,
 		ShellNix.implementation,
 		TaskNix.implementation,
 		UpdateNix.implementation,

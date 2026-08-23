@@ -16,6 +16,12 @@ ImageNix := [].{
 	renderer : Plugin.Renderer
 	renderer = |context| {
 		config = MachineNix.configuration(context, "image")?
+		requests = MachineNix.service_requests(config.generated_services, "image")
+		if !requests.is_empty() and !context.dependencies_resolved {
+			return Ok({ actions: [], artifacts: [], outputs: [], requests, requested_packages: config.pkgs })
+		}
+		services = MachineNix.resolve_services(context.dependency_artifacts, config.generated_services, config.target_system)?
+		native_services = config.services.keep_if(|service| !config.generated_services.contains(service))
 		schema : U64
 		schema = 1
 		metadata = Json.to_str({
@@ -35,9 +41,10 @@ ImageNix := [].{
 			Plugin.RenderResult.{
 				actions: NixBackend.image_actions(
 					config.name,
-					ImageNix.render_flake(config.name, config.target_system, config.locked_overlays, config.overlays),
-					ImageNix.render_module(config.pkgs, config.users, config.services),
+					ImageNix.render_flake(config.name, config.target_system, config.locked_overlays, config.overlays, services),
+					ImageNix.render_module(config.pkgs, config.users, native_services),
 					metadata,
+					services,
 				),
 				artifacts: [
 					{
@@ -53,14 +60,14 @@ ImageNix := [].{
 					},
 				],
 				outputs: [],
-				requests: [],
+				requests,
 				requested_packages: config.pkgs,
 			},
 		)
 	}
 
-	render_flake : Str, Str, List(Str), List(Str) -> Str
-	render_flake = |name, system, locked_overlays, overlays| {
+	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
+	render_flake = |name, system, locked_overlays, overlays, services| {
 		overlay_names = locked_overlays.map_with_index(|_, index| "overlay${U64.to_str(index)}")
 		overlay_lines = overlays.map(|overlay| "          ${NixBackend.overlay_name(locked_overlays, overlay, 0)}.overlays.default")
 		outputs_args = Str.join_with(["nixpkgs"].concat(overlay_names), ", ")
@@ -89,6 +96,7 @@ ImageNix := [].{
 			"            image.baseName = \"${name}\";",
 			"          })",
 			"          ./machine.nix",
+		]).concat(MachineNix.service_module_lines(services)).concat([
 			"        ];",
 			"      };",
 			"    in {",

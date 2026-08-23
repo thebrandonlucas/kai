@@ -1,1 +1,0 @@
-{"name":"wisecow","output":"wisecow","pkgs":["cowsay","fortune"],"run":["sh","-c","printf '#!%s\\n%s | %s\\n' \"$(command -v sh)\" \"$(command -v fortune)\" \"$(command -v cowsay)\" > wisecow && chmod +x wisecow"],"system":"{{system}}"}
