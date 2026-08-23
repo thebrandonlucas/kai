@@ -563,6 +563,7 @@ Plugin := [].{
 						})
 					} else {
 						located = Plugin.project_block_location(first, scope)
+						Plugin.validate_project_descriptor_shapes(matching, located)?
 						parsed = Plugin.parse_project_descriptors(matching, first.header, located)?
 						Plugin.collect_project_config(
 							rest,
@@ -609,6 +610,21 @@ Plugin := [].{
 				}
 			}
 		}
+
+	validate_project_descriptor_shapes : List(ProjectConfigDescriptor), LocatedConfigBlock -> Try({}, SelectorDiagnostic)
+	validate_project_descriptor_shapes = |descriptors, block|
+		match descriptors {
+			[] => Ok({})
+			[first, .. as rest] =>
+				if List.all(rest, |descriptor| Plugin.same_body_shape(first.body, descriptor.body)) {
+					Ok({})
+				} else {
+					Err({
+						location: At(block.location),
+						message: "project config block '${first.block}' has conflicting body shapes across plugins",
+					})
+				}
+			}
 
 	matching_project_descriptors : List(ProjectConfigDescriptor), List(Str), Str -> List(ProjectConfigDescriptor)
 	matching_project_descriptors = |descriptors, header, backend|
@@ -1014,10 +1030,10 @@ Plugin := [].{
 				} else {
 					implementation = Plugin.find_implementation(plugin_definition.implementations, command.name, backend_selection.backend.name) ? |_|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plugin has no implementation for selected backend"))
-					project_commands = Plugin.effective_commands(registry, command.name)
+					project_commands = Plugin.effective_commands(registry)
 					project_descriptors = Plugin.append_config_descriptors(
 						Plugin.config_descriptors(project_commands),
-						plugin_definition.project_configs,
+						Plugin.effective_project_configs(registry),
 					)
 					project_config = Plugin.build_project_config(config_text, project_descriptors, backend_selection.backend.name) ? |diagnostic|
 						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, diagnostic.location, diagnostic.message))
@@ -1139,19 +1155,30 @@ Plugin := [].{
 			}
 		}
 
-	effective_commands : List(Definition), Str -> List(Command)
-	effective_commands = |registry, owner_command|
-		Plugin.find_effective_commands(registry, owner_command, [])
+	effective_commands : List(Definition) -> List(Command)
+	effective_commands = |registry| Plugin.find_effective_commands(registry, [])
 
-	find_effective_commands : List(Definition), Str, List(Str) -> List(Command)
-	find_effective_commands = |registry, owner_command, shadowed|
+	find_effective_commands : List(Definition), List(Str) -> List(Command)
+	find_effective_commands = |registry, shadowed|
+		match registry {
+			[] => []
+			[first, .. as rest] => {
+				effective = first.commands.keep_if(|command| !shadowed.contains(command.name))
+				effective.concat(
+					Plugin.find_effective_commands(
+						rest,
+						shadowed.concat(first.commands.map(|command| command.name)),
+					),
+				)
+			}
+		}
+
+	effective_project_configs : List(Definition) -> List(ProjectConfigDescriptor)
+	effective_project_configs = |registry|
 		match registry {
 			[] => []
 			[first, .. as rest] =>
-				match Plugin.find_command(first.commands, owner_command) {
-					Ok(_) => first.commands.keep_if(|command| !shadowed.contains(command.name))
-					Err(NotFound) => Plugin.find_effective_commands(rest, owner_command, shadowed.concat(first.commands.map(|command| command.name)))
-				}
+				Plugin.append_config_descriptors(first.project_configs, Plugin.effective_project_configs(rest))
 			}
 
 	find_owner : List(Definition), Str -> Try({ command : Command, definition : Definition }, [UnknownCommand])

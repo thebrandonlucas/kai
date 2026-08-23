@@ -56,6 +56,10 @@ Bytes := [].{
 	period : U8
 	period = 46
 
+	# `/` separates artifact path segments.
+	forward_slash : U8
+	forward_slash = 47
+
 	# `~` ends the printable ASCII range.
 	tilde : U8
 	tilde = 126

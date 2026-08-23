@@ -161,6 +161,24 @@ Nix := [].{
 		Str.join_with(lines, "\n")
 	}
 
+	artifact_path_rules : List(Plugin.TextRule)
+	artifact_path_rules = [
+		NonemptyText("artifact path must not be empty"),
+		ForbiddenPathSegments({ message: "artifact path must not contain '.' or '..' segments", segments: [".", ".."] }),
+		AllBytes({
+			allowed: [
+				AsciiUppercase,
+				AsciiLowercase,
+				AsciiDigit,
+				ExactByte(Bytes.period),
+				ExactByte(Bytes.underscore),
+				ExactByte(Bytes.hyphen),
+				ExactByte(Bytes.forward_slash),
+			],
+			message: "artifact path may contain only ASCII letters, digits, '/', '.', '_', and '-'",
+		}),
+	]
+
 	package_rules : List(Plugin.StringListRule)
 	package_rules = [
 		AllStrings(NonemptyText("shell package names must not be empty")),
@@ -215,12 +233,6 @@ Nix := [].{
 		command: backend.name,
 	})
 
-	build_output_templates : List(Plugin.ActionTemplate)
-	build_output_templates = [
-		WriteConfigUtf8({ output: "build_nix", path: ".kai/build.nix" }),
-		WriteConfigUtf8({ output: "build_json", path: ".kai/build.json" }),
-	]
-
 	update_lock_templates : List(Plugin.ActionTemplate)
 	update_lock_templates = [
 		Exec({
@@ -250,21 +262,85 @@ Nix := [].{
 		}),
 	]
 
-	build_artifact_actions : Str -> List(Plugin.Action)
-	build_artifact_actions = |name|
+	build_artifact_path : Str -> Str
+	build_artifact_path = |name| ".kai/artifacts/builds/${name}"
+
+	build_flake_path : Str -> Str
+	build_flake_path = |name| ".kai/builds/${name}"
+
+	build_artifact_actions : Str, Str, Str, Str -> List(Plugin.Action)
+	build_artifact_actions = |name, flake, build_nix, build_json| {
+		flake_path = Nix.build_flake_path(name)
 		[
-			WriteUtf8({ content: "", path: ".kai/artifacts/.keep" }),
+			WriteUtf8({ content: flake, path: "${flake_path}/flake.nix" }),
+			WriteUtf8({ content: build_nix, path: "${flake_path}/build.nix" }),
+			WriteUtf8({ content: build_json, path: "${flake_path}/build.json" }),
+			Exec({
+				args: [
+					"flake",
+					"lock",
+					"path:${flake_path}",
+					"--reference-lock-file",
+					"kai.lock",
+					"--output-lock-file",
+					"kai.lock",
+				],
+				command: backend.name,
+			}),
+			Exec({
+				args: [
+					"flake",
+					"lock",
+					"path:${flake_path}",
+					"--reference-lock-file",
+					"kai.lock",
+					"--output-lock-file",
+					"${flake_path}/flake.lock",
+				],
+				command: backend.name,
+			}),
+			WriteUtf8({ content: "", path: ".kai/artifacts/builds/.keep" }),
 			Exec({
 				args: [
 					"build",
 					"--file",
-					".kai/build.nix",
+					"${flake_path}/build.nix",
 					"--out-link",
-					".kai/artifacts/${name}",
+					Nix.build_artifact_path(name),
 				],
 				command: backend.name,
 			}),
 		]
+	}
+
+	service_artifact_path : Str -> Str
+	service_artifact_path = |name| ".kai/artifacts/.services/${name}"
+
+	service_actions : Str, Str, Str, Str -> List(Plugin.Action)
+	service_actions = |name, build_artifact, module_text, expression| {
+		source_path = ".kai/services/${name}"
+		artifact_path = "${source_path}/artifact"
+		[
+			WriteUtf8({ content: module_text, path: "${source_path}/module.nix" }),
+			WriteUtf8({ content: expression, path: "${source_path}/default.nix" }),
+			Exec({ args: ["-rf", "--", artifact_path], command: "rm" }),
+			Exec({
+				args: ["--recursive", "--dereference", "--preserve=mode", "--", build_artifact, artifact_path],
+				command: "cp",
+			}),
+			WriteUtf8({ content: "", path: ".kai/artifacts/.services/.keep" }),
+			Exec({
+				args: [
+					"build",
+					"--file",
+					"${source_path}/default.nix",
+					"--out-link",
+					Nix.service_artifact_path(name),
+				],
+				command: backend.name,
+			}),
+		]
+	}
 
 	machine_closure_path : Str -> Str
 	machine_closure_path = |name| ".kai/artifacts/machines/${name}/closure"
@@ -275,8 +351,25 @@ Nix := [].{
 	machine_metadata_path : Str -> Str
 	machine_metadata_path = |name| ".kai/artifacts/machines/${name}/metadata.json"
 
-	machine_actions : Str, Str, Str, Str -> List(Plugin.Action)
-	machine_actions = |name, flake, module_text, metadata| {
+	service_copy_actions : Str, List(Plugin.Artifact) -> List(Plugin.Action)
+	service_copy_actions = |flake_path, services| {
+		service_path = "${flake_path}/services"
+		[
+			Exec({ args: ["-rf", service_path], command: "rm" }),
+			Exec({ args: ["-p", service_path], command: "mkdir" }),
+		].concat(
+			services.map(
+				|service|
+					Exec({
+						args: ["-RH", "--preserve=mode", "--", service.path, "${service_path}/${service.name}"],
+						command: "cp",
+					}),
+			),
+		).concat([Exec({ args: ["-R", "u+w", "--", service_path], command: "chmod" })])
+	}
+
+	machine_actions : Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.Action)
+	machine_actions = |name, flake, module_text, metadata, services| {
 		flake_path = Nix.machine_flake_path(name)
 		metadata_path = Nix.machine_metadata_path(name)
 		[
@@ -284,6 +377,7 @@ Nix := [].{
 			WriteUtf8({ content: "", path: metadata_path }),
 			WriteUtf8({ content: flake, path: "${flake_path}/flake.nix" }),
 			WriteUtf8({ content: module_text, path: "${flake_path}/machine.nix" }),
+		].concat(Nix.service_copy_actions(flake_path, services)).concat([
 			Exec({
 				args: [
 					"flake",
@@ -320,7 +414,7 @@ Nix := [].{
 				command: backend.name,
 			}),
 			WriteUtf8({ content: metadata, path: metadata_path }),
-		]
+		])
 	}
 
 	image_output_path : Str -> Str
@@ -335,14 +429,15 @@ Nix := [].{
 	image_metadata_path : Str -> Str
 	image_metadata_path = |name| ".kai/artifacts/images/${name}/metadata.json"
 
-	image_actions : Str, Str, Str, Str -> List(Plugin.Action)
-	image_actions = |name, flake, module_text, metadata| {
+	image_actions : Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.Action)
+	image_actions = |name, flake, module_text, metadata, services| {
 		flake_path = Nix.image_flake_path(name)
 		metadata_path = Nix.image_metadata_path(name)
 		[
 			WriteUtf8({ content: "", path: metadata_path }),
 			WriteUtf8({ content: flake, path: "${flake_path}/flake.nix" }),
 			WriteUtf8({ content: module_text, path: "${flake_path}/machine.nix" }),
+		].concat(Nix.service_copy_actions(flake_path, services)).concat([
 			Exec({
 				args: [
 					"flake",
@@ -379,7 +474,7 @@ Nix := [].{
 				command: backend.name,
 			}),
 			WriteUtf8({ content: metadata, path: metadata_path }),
-		]
+		])
 	}
 
 	develop_command_actions : List(Str) -> List(Plugin.Action)

@@ -7,7 +7,7 @@ import EnvironmentNix
 BuildNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [NixBackend.flake_template].concat(NixBackend.lock_templates).concat(NixBackend.build_output_templates),
+		actions: [],
 		backend: NixBackend.backend.name,
 		command: BuildCommand.command.name,
 		renderer: BuildNix.renderer,
@@ -50,18 +50,24 @@ BuildNix := [].{
 		target = NixBackend.target(context.host_os, context.host_arch) ? |_|
 			{ byte_offset: None, message: "unsupported build platform" }
 		flake = EnvironmentNix.render_flake(context, pkgs, overlays, Bool.True, "unsupported build platform")?
+		build_nix = BuildNix.nix_expression
+		build_json = Json.to_str({ inputs, name, output, pkgs, run, system: target.system })
 		Ok(
 			Plugin.RenderResult.{
-				actions: NixBackend.build_artifact_actions(name),
-				artifacts: [],
-				outputs: [
-					{ name: "flake", text: flake },
-					{ name: "build_nix", text: BuildNix.nix_expression },
+				actions: NixBackend.build_artifact_actions(name, flake, build_nix, build_json),
+				artifacts: [
 					{
-						name: "build_json",
-						text: Json.to_str({ inputs, name, output, pkgs, run, system: target.system }),
+						attributes: [
+							{ key: "backend", value: NixBackend.backend.name },
+							{ key: "nix.pkgs-flake", value: NixBackend.build_flake_path(name) },
+							{ key: "target.system", value: target.system },
+						],
+						kind: "kai.build/v1",
+						name,
+						path: NixBackend.build_artifact_path(name),
 					},
 				],
+				outputs: [],
 				requests: [],
 				requested_packages: pkgs,
 			},
@@ -81,7 +87,7 @@ BuildNix := [].{
 			"      (throw (\"Kai build package '\" + name + \"' was not found\"))",
 			"      pkgs;",
 			"  source = pkgs.nix-gitignore.gitignoreFilterRecursiveSource",
-			"    (_: _: true) \".git\\n.kai\" ../.;",
+			"    (_: _: true) \".git\\n.kai\" ../../../.;",
 			"  inputLinks = lib.concatMapStringsSep \"\\n\" (name:",
 			Str.join_with(["    \"ln -s -- ", BuildNix.nix_interpolation("lib.escapeShellArg (toString (builtins.getAttr name flake.kaiSources))"), " .kai/inputs/", BuildNix.nix_interpolation("lib.escapeShellArg name"), "\""], ""),
 			"  ) config.inputs;",
