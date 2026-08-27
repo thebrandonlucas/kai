@@ -1,25 +1,4 @@
 # Standard plugin definition for Kai's built-in Nix commands.
-import kai.Plugin
-import backends.Nix as NixBackend
-import commands.Build as BuildCommand
-import commands.Image as ImageCommand
-import commands.Machine as MachineCommand
-import commands.Secret as SecretCommand
-import commands.Service as ServiceCommand
-import commands.Shell as ShellCommand
-import commands.Task as TaskCommand
-import commands.Update as UpdateCommand
-import commands.Workflow as WorkflowCommand
-import implementations.BuildNix
-import implementations.ImageNix
-import implementations.MachineNix
-import implementations.ServiceNix
-import implementations.ShellNix
-import implementations.TaskNix
-import implementations.UpdateNix
-import implementations.WorkflowNix
-import project_configs.Source
-
 ## `StdPlugin` is the standard plugin shipped for most `kai` users.
 ##
 ## It aims to wrap `nix` commands into easy-to-use pieces that match primary
@@ -44,6 +23,27 @@ import project_configs.Source
 # The individual commands/backends are like ingredients to a recipe:
 # you can use any combination you like, but certain dishes require certain
 # ingredients.
+
+import kai.Plugin
+import backends.Nix as NixBackend
+import commands.Build as BuildCommand
+import commands.Image as ImageCommand
+import commands.Machine as MachineCommand
+import commands.Secret as SecretCommand
+import commands.Service as ServiceCommand
+import commands.Shell as ShellCommand
+import commands.Task as TaskCommand
+import commands.Update as UpdateCommand
+import commands.Workflow as WorkflowCommand
+import implementations.BuildNix
+import implementations.ImageNix
+import implementations.MachineNix
+import implementations.ServiceNix
+import implementations.ShellNix
+import implementations.TaskNix
+import implementations.UpdateNix
+import implementations.WorkflowNix
+import project_configs.Source
 
 StdPlugin := [].{
 	plugin : Plugin.Definition
