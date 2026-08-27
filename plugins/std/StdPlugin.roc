@@ -46,6 +46,7 @@ import implementations.WorkflowNix
 import project_configs.Source
 
 StdPlugin := [].{
+	# Plugins come with a portable plugin definition
 	plugin : Plugin.Definition
 	plugin = Plugin.Definition.{
 		backends,
@@ -58,12 +59,15 @@ StdPlugin := [].{
 	name = "std"
 	commands : List(Plugin.Command)
 	commands = [
+		# Build an artifact / executable like `nix build`
 		BuildCommand.command,
+		#
 		ImageCommand.command,
 		MachineCommand.command,
 		ServiceCommand.command,
 		ShellCommand.command,
 		TaskCommand.command,
+		# Updates the lock file
 		UpdateCommand.command,
 		WorkflowCommand.command,
 	]

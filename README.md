@@ -16,27 +16,46 @@ Read [here]() for more.
 
 ### Installation
 
-The easiest install is via:
-
-```sh
-curl https://kai.com/install.sh
-```
-
-Or on [Nix]():
+Temporary Nix installation:
 ```sh
 # Try it out from the latest `master` branch without manually installing
 nix run github:thebrandonlucas/kai -- version
 
 # Add it to a shell
-nix shell kai
+nix shell github:thebrandonlucas/kai
+kai version
 ```
 
-Or on [Guix]():
-```sh
-guix shell kai
+For a permanent NixOS install, add Kai as a flake input and pass it to your system configuration:
+
+```nix
+# flake.nix
+{
+  inputs.kai.url = "github:thebrandonlucas/kai";
+
+  outputs = inputs@{ nixpkgs, ... }: {
+    nixosConfigurations.your-host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      specialArgs = { inherit inputs; };
+      modules = [ ./configuration.nix ];
+    };
+  };
+}
 ```
 
-Or direct download [latest release]().
+Then add the package:
+
+```nix
+# configuration.nix
+{ inputs, pkgs, ... }:
+{
+  environment.systemPackages = [
+    inputs.kai.packages.${pkgs.stdenv.hostPlatform.system}.default
+  ];
+}
+```
+
+Or direct download [latest release](https://github.com/thebrandonlucas/kai/releases).
 
 ### Build locally
 
