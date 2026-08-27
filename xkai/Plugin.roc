@@ -154,9 +154,9 @@ Plugin := [].{
 			allowed,
 			|matcher|
 				match matcher {
-					AsciiUppercase => byte >= 65 and byte <= 90
-					AsciiLowercase => byte >= 97 and byte <= 122
-					AsciiDigit => byte >= 48 and byte <= 57
+					AsciiUppercase => byte >= 'A' and byte <= 'Z'
+					AsciiLowercase => byte >= 'a' and byte <= 'z'
+					AsciiDigit => byte >= '0' and byte <= '9'
 					ExactByte(expected) => byte == expected
 				},
 		)
@@ -2314,7 +2314,7 @@ Plugin := [].{
 				column: location.column,
 				line: location.line,
 			}
-		} else if (bytes.get(index) ?? 0) == 10 {
+		} else if (bytes.get(index) ?? 0) == '\n' {
 			Plugin.translate_bytes(
 				bytes,
 				target,

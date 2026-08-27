@@ -267,12 +267,12 @@ Assembly := [].{
 		match name.to_utf8() {
 			[] => Bool.False
 			[first, .. as rest] =>
-				first >= 65 and first <= 90 and List.all(
+				first >= 'A' and first <= 'Z' and List.all(
 					rest,
 					|byte|
-						(byte >= 65 and byte <= 90) or
-							(byte >= 97 and byte <= 122) or
-								(byte >= 48 and byte <= 57) or byte == 95,
+						(byte >= 'A' and byte <= 'Z') or
+							(byte >= 'a' and byte <= 'z') or
+								(byte >= '0' and byte <= '9') or byte == '_',
 				)
 			}
 	}

@@ -81,8 +81,8 @@ Machine := [].{
 			[] => Bool.False
 		}
 
-	ascii_lower = |byte| byte >= 97 and byte <= 122
-	ascii_digit = |byte| byte >= 48 and byte <= 57
+	ascii_lower = |byte| byte >= 'a' and byte <= 'z'
+	ascii_digit = |byte| byte >= '0' and byte <= '9'
 
 	has_duplicates : List(Str) -> Bool
 	has_duplicates = |values|
