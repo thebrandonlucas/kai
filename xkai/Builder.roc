@@ -1,3 +1,4 @@
+# TODO: comment
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -23,7 +24,9 @@ Builder := [].{
 			[first, .. as rest] => {
 				remaining = Builder.roc_files!(rest)?
 				filename = (Path.filename(first) ?? first).display()
-				if Path.is_file!(first)? and filename.ends_with(".roc") and filename != "main.roc" {
+				if Path.is_file!(first)? and
+					filename.ends_with(".roc") and
+						filename != "main.roc" {
 					Ok([{ filename, path: first }].concat(remaining))
 				} else {
 					Ok(remaining)
@@ -84,7 +87,10 @@ Builder := [].{
 		}
 
 	write_source! = |stage, source| {
-		Builder.ensure_directories!(stage, source.destination.split_on("/").drop_last(1))?
+		Builder.ensure_directories!(
+			stage,
+			source.destination.split_on("/").drop_last(1),
+		)?
 		Path.write_utf8!(Path.join(stage, source.destination), source.contents)
 	}
 
@@ -96,16 +102,25 @@ Builder := [].{
 		Path.write_utf8!(app_path, plan.app_source)?
 		Cmd.exec!(
 			OsStr.utf8("roc"),
-			["build", Path.display(app_path), "--opt=size", "--output=${output_name}"].map(OsStr.utf8),
+			[
+				"build",
+				Path.display(app_path),
+				"--opt=size",
+				"--output=${output_name}",
+			].map(OsStr.utf8),
 		)?
 		Cmd.exec!(OsStr.utf8("llvm-strip"), [Path.to_os_str(output_path)])?
-		Cmd.exec!(Path.to_os_str(output_path), [OsStr.utf8("--xkai-validate-registry")])?
+		Cmd.exec!(
+			Path.to_os_str(output_path),
+			[OsStr.utf8("--xkai-validate-registry")],
+		)?
 		Ok({})
 	}
 
 	build! = |plugin_paths, profile| {
 		plugins = Builder.load_plugins!(plugin_paths)?
-		plan = Assembly.assemble(profile, plugins) ? |problem| InvalidAssembly(problem)
+		plan = Assembly.assemble(profile, plugins) ? |problem|
+			InvalidAssembly(problem)
 		seed = Random.seed_u64!()?
 		stage = Path.join(Env.temp_dir!(), "xkai-${U64.to_str(seed)}")
 		cwd = Env.cwd!()?

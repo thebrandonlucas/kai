@@ -1,3 +1,4 @@
+# `command` definition for Guix
 import parser.Body
 import kai.Kaifile
 import kai.Plugin
@@ -21,7 +22,10 @@ Shell := [].{
 	command : Plugin.Command
 	command = Plugin.Command.{
 		call: Plugin.call("shell", [Plugin.optional_argument("environment")]),
-		config: DirectOrNamedConfig({ lookup: QualifiedOnly, named: environment_block }),
+		config: DirectOrNamedConfig({
+			lookup: QualifiedOnly,
+			named: environment_block,
+		}),
 		config_block: RequiredConfigBlock(block),
 	}
 }

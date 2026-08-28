@@ -1,4 +1,4 @@
-# - Backends define backend capabilities, validation constraints, rendering, and execution primitives.
+# Nix backend capability definitions
 import kai.Plugin
 
 Nix := [].{
@@ -32,7 +32,18 @@ Nix := [].{
 
 	MachineTarget := { architecture : Str, system : Str }
 
-	machine_target : Str, Plugin.HostOs, Plugin.HostArch -> Try(MachineTarget, [CrossArchitectureMachine, UnsupportedMachineHost, UnsupportedMachineSystem])
+	machine_target :
+		Str,
+		Plugin.HostOs,
+		Plugin.HostArch ->
+			Try(
+				MachineTarget,
+				[
+					CrossArchitectureMachine,
+					UnsupportedMachineHost,
+					UnsupportedMachineSystem,
+				],
+			)
 	machine_target = |system, os, arch|
 		match (system, os, arch) {
 			("x86_64-linux", LINUX, X64) => Ok({ architecture: "x86_64", system })
@@ -54,24 +65,59 @@ Nix := [].{
 			ranges: [{ max: '~', min: '!' }],
 		})
 
-	render_dev_shell = |{ export_legacy_packages, locked_overlays, overlays, pkgs, sources, system }|
-		if locked_overlays.is_empty() {
-			Nix.render_dev_shell_without_overlays(pkgs, sources, system, export_legacy_packages)
+	render_dev_shell = |options|
+		if options.locked_overlays.is_empty() {
+			Nix.render_dev_shell_without_overlays(
+				options.pkgs,
+				options.sources,
+				options.system,
+				options.export_legacy_packages,
+			)
 		} else {
-			Nix.render_dev_shell_with_overlays(pkgs, locked_overlays, overlays, sources, system)
+			Nix.render_dev_shell_with_overlays(
+				options.pkgs,
+				options.locked_overlays,
+				options.overlays,
+				options.sources,
+				options.system,
+			)
 		}
 
 	input_lines : List(Str) -> List(Str)
 	input_lines = |overlays|
-		overlays.map_with_index(|overlay, index| "  inputs.overlay${U64.to_str(index)}.url = \"${overlay}\";")
+		overlays.map_with_index(
+			|overlay, index|
+				Str.join_with(
+					[
+						"  inputs.overlay${U64.to_str(index)}.url = \"",
+						overlay,
+						"\";",
+					],
+					"",
+				),
+		)
 
 	source_input_lines = |sources|
 		sources.map(
-			|source| "  inputs.\"kai-source-${source.name}\".url = \"${source.url}\";\n  inputs.\"kai-source-${source.name}\".flake = false;",
+			|source|
+				Str.join_with(
+					[
+						"  inputs.\"kai-source-${source.name}\".url = \"${source.url}\";\n",
+						"  inputs.\"kai-source-${source.name}\".flake = false;",
+					],
+					"",
+				),
 		)
 
-	source_attribute = |sources|
-		"kaiSources = { ${Str.join_with(sources.map(|source| "\"${source.name}\" = inputs.\"kai-source-${source.name}\";"), " ")} };"
+	source_attribute = |sources| {
+		attributes = sources.map(
+			|source| "\"${source.name}\" = inputs.\"kai-source-${source.name}\";",
+		)
+		Str.join_with(
+			["kaiSources = { ", Str.join_with(attributes, " "), " };"],
+			"",
+		)
+	}
 
 	overlay_name : List(Str), Str, U64 -> Str
 	overlay_name = |overlays, selected, index|
@@ -99,11 +145,18 @@ Nix := [].{
 		Str.join_with(path.split_on(".").map(|part| "\"${part}\""), ".")
 
 	# Render a flake containing a dev shell backed directly by nixpkgs.
-	render_dev_shell_without_overlays = |pkgs, sources, system, export_legacy_packages| {
+	render_dev_shell_without_overlays = |pkgs, sources, system, legacy| {
 		package_lines = pkgs.map(
-			|pkg| "              nixpkgs.\"legacyPackages\".\"${system}\".${Nix.render_attributes(pkg)}",
+			|pkg|
+				Str.join_with(
+					[
+						"              nixpkgs.\"legacyPackages\".\"${system}\".",
+						Nix.render_attributes(pkg),
+					],
+					"",
+				),
 		)
-		legacy_lines = if export_legacy_packages {
+		legacy_lines = if legacy {
 			["    legacyPackages.\"${system}\" = nixpkgs.legacyPackages.\"${system}\";"]
 		} else {
 			[]
@@ -115,7 +168,13 @@ Nix := [].{
 			"  outputs = inputs@{ nixpkgs, ... }: {",
 			"    ${Nix.source_attribute(sources)}",
 		]).concat(legacy_lines).concat([
-			"    devShells.\"${system}\".default = nixpkgs.legacyPackages.\"${system}\".mkShell {",
+			Str.join_with(
+				[
+					"    devShells.\"${system}\".default = ",
+					"nixpkgs.legacyPackages.\"${system}\".mkShell {",
+				],
+				"",
+			),
 			"      packages = [",
 		]).concat(package_lines).concat([
 			"      ];",
@@ -127,9 +186,21 @@ Nix := [].{
 	}
 
 	# Render a flake containing a dev shell with additional flake overlays.
-	render_dev_shell_with_overlays = |pkgs, locked_overlays, overlays, sources, system| {
-		overlay_names = locked_overlays.map_with_index(|_, index| "overlay${U64.to_str(index)}")
-		overlay_lines = overlays.map(|overlay| "          ${Nix.overlay_name(locked_overlays, overlay, 0)}.overlays.default")
+	render_dev_shell_with_overlays = |pkgs, locked, overlays, sources, system| {
+		overlay_names = locked.map_with_index(
+			|_, index| "overlay${U64.to_str(index)}",
+		)
+		overlay_lines = overlays.map(
+			|overlay|
+				Str.join_with(
+					[
+						"          ",
+						Nix.overlay_name(locked, overlay, 0),
+						".overlays.default",
+					],
+					"",
+				),
+		)
 		package_lines = pkgs.map(
 			|pkg| "              pkgs.${Nix.render_attributes(pkg)}",
 		)
@@ -137,13 +208,16 @@ Nix := [].{
 		lines = [
 			"{",
 			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-		].concat(Nix.input_lines(locked_overlays)).concat(Nix.source_input_lines(sources)).concat([
-			"  outputs = inputs@{ ${outputs_args}, ... }:",
-			"    let",
-			"      pkgs = import nixpkgs {",
-			"        system = \"${system}\";",
-			"        overlays = [",
-		]).concat(overlay_lines).concat([
+		]
+			.concat(Nix.input_lines(locked))
+			.concat(Nix.source_input_lines(sources))
+			.concat([
+				"  outputs = inputs@{ ${outputs_args}, ... }:",
+				"    let",
+				"      pkgs = import nixpkgs {",
+				"        system = \"${system}\";",
+				"        overlays = [",
+			]).concat(overlay_lines).concat([
 			"        ];",
 			"      };",
 			"    in {",
@@ -163,7 +237,10 @@ Nix := [].{
 	artifact_path_rules : List(Plugin.TextRule)
 	artifact_path_rules = [
 		NonemptyText("artifact path must not be empty"),
-		ForbiddenPathSegments({ message: "artifact path must not contain '.' or '..' segments", segments: [".", ".."] }),
+		ForbiddenPathSegments({
+			message: "artifact path must not contain '.' or '..' segments",
+			segments: [".", ".."],
+		}),
 		AllBytes({
 			allowed: [
 				AsciiUppercase,
@@ -174,21 +251,57 @@ Nix := [].{
 				ExactByte('-'),
 				ExactByte('/'),
 			],
-			message: "artifact path may contain only ASCII letters, digits, '/', '.', '_', and '-'",
+			message: Str.join_with(
+				[
+					"artifact path may contain only ASCII letters, digits, ",
+					"'/', '.', '_', and '-'",
+				],
+				"",
+			),
 		}),
 	]
 
 	package_rules : List(Plugin.StringListRule)
 	package_rules = [
 		AllStrings(NonemptyText("shell package names must not be empty")),
-		AllStrings(DotSeparatedNonemptySegments("shell package attribute paths must not contain empty segments")),
-		AllStrings(safe_string_rule("shell package attribute paths contain characters unsafe for Nix output")),
+		AllStrings(
+			DotSeparatedNonemptySegments(
+				Str.join_with(
+					[
+						"shell package attribute paths must not contain ",
+						"empty segments",
+					],
+					"",
+				),
+			),
+		),
+		AllStrings(
+			safe_string_rule(
+				Str.join_with(
+					[
+						"shell package attribute paths contain characters ",
+						"unsafe for Nix output",
+					],
+					"",
+				),
+			),
+		),
 	]
 
 	overlay_rules : List(Plugin.StringListRule)
 	overlay_rules = [
 		AllStrings(NonemptyText("shell overlay references must not be empty")),
-		AllStrings(safe_string_rule("shell overlay references contain characters unsafe for Nix output")),
+		AllStrings(
+			safe_string_rule(
+				Str.join_with(
+					[
+						"shell overlay references contain characters unsafe ",
+						"for Nix output",
+					],
+					"",
+				),
+			),
+		),
 	]
 
 	flake_template : Plugin.ActionTemplate
@@ -324,7 +437,14 @@ Nix := [].{
 			WriteUtf8({ content: expression, path: "${source_path}/default.nix" }),
 			Exec({ args: ["-rf", "--", artifact_path], command: "rm" }),
 			Exec({
-				args: ["--recursive", "--dereference", "--preserve=mode", "--", build_artifact, artifact_path],
+				args: [
+					"--recursive",
+					"--dereference",
+					"--preserve=mode",
+					"--",
+					build_artifact,
+					artifact_path,
+				],
 				command: "cp",
 			}),
 			WriteUtf8({ content: "", path: ".kai/artifacts/.services/.keep" }),
@@ -360,14 +480,26 @@ Nix := [].{
 			services.map(
 				|service|
 					Exec({
-						args: ["-RH", "--preserve=mode", "--", service.path, "${service_path}/${service.name}"],
+						args: [
+							"-RH",
+							"--preserve=mode",
+							"--",
+							service.path,
+							"${service_path}/${service.name}",
+						],
 						command: "cp",
 					}),
 			),
-		).concat([Exec({ args: ["-R", "u+w", "--", service_path], command: "chmod" })])
+		).concat([
+			Exec({
+				args: ["-R", "u+w", "--", service_path],
+				command: "chmod",
+			}),
+		])
 	}
 
-	machine_actions : Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.Action)
+	machine_actions :
+		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.Action)
 	machine_actions = |name, flake, module_text, metadata, services| {
 		flake_path = Nix.machine_flake_path(name)
 		metadata_path = Nix.machine_metadata_path(name)
@@ -428,7 +560,8 @@ Nix := [].{
 	image_metadata_path : Str -> Str
 	image_metadata_path = |name| ".kai/artifacts/images/${name}/metadata.json"
 
-	image_actions : Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.Action)
+	image_actions :
+		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.Action)
 	image_actions = |name, flake, module_text, metadata, services| {
 		flake_path = Nix.image_flake_path(name)
 		metadata_path = Nix.image_metadata_path(name)

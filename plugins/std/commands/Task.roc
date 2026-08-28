@@ -1,3 +1,7 @@
+# Shared `command` interface for defining tasks the user can run.
+#
+# These can be anything e.g. commands you would run in the shell.
+# They pair naturally with workflows to run tasks in series i.e for CI.
 import parser.Body
 import kai.Kaifile
 import kai.Plugin
@@ -28,7 +32,10 @@ Task := [].{
 	environment_block : Plugin.KaifileBlock
 	environment_block = Kaifile.named_block({
 		header: "environment <environment>",
-		fields: [Body.required("packages", StringList), Body.optional("overlays", StringList)],
+		fields: [
+			Body.required("packages", StringList),
+			Body.optional("overlays", StringList),
+		],
 		name_rules: [],
 	})
 

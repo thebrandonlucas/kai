@@ -1,3 +1,4 @@
+# TODO: comment
 import "Executor.roc" as executor_source : Str
 import "Kaifile.roc" as kaifile_source : Str
 import "package.roc" as package_source : Str
@@ -10,7 +11,13 @@ import "VERSION" as version_source : Str
 RuntimeBundle := [].{
 	platform_name = "F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL"
 
-	platform_url = "https://github.com/roc-lang/basic-cli/releases/download/0.22.0/${RuntimeBundle.platform_name}.tar.zst"
+	platform_url = Str.join_with(
+		[
+			"https://github.com/roc-lang/basic-cli/releases/download/0.22.0",
+			"${RuntimeBundle.platform_name}.tar.zst",
+		],
+		"/",
+	)
 
 	source_bundle = {
 		app_dependencies: [{ name: "kai", path: "./package.roc" }],

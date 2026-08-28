@@ -1,3 +1,4 @@
+# Implementation of the `split` command with the `local` backend
 import kai.Plugin
 import backends.Local
 import commands.SplitCommand
@@ -5,7 +6,12 @@ import commands.SplitCommand
 SplitLocal := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [WriteConfigUtf8({ output: "message", path: "split-plugin-output.txt" })],
+		actions: [
+			WriteConfigUtf8({
+				output: "message",
+				path: "split-plugin-output.txt",
+			}),
+		],
 		backend: Local.backend.name,
 		command: SplitCommand.command.call.name,
 		renderer: |_| Ok(

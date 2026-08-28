@@ -1,6 +1,12 @@
 # Pure command-line parsing for Kai's private development tool.
 Cli := [].{
-	Command := [BuildRelease, Help, Kaifiles, PrepareRelease({ name : Str, version : Str })].{
+	Command := [
+		BuildRelease,
+		Help,
+		Kaifiles,
+		PrepareRelease({ name : Str, version : Str }),
+		Tidy(List(Str)),
+	].{
 		is_eq : Command, Command -> Bool
 		is_eq = |left, right|
 			match (left, right) {
@@ -9,11 +15,16 @@ Cli := [].{
 				(Kaifiles, Kaifiles) => Bool.True
 				(PrepareRelease(left_args), PrepareRelease(right_args))
 					=> left_args == right_args
+				(Tidy(left_paths), Tidy(right_paths)) => left_paths == right_paths
 				_ => Bool.False
 			}
 	}
 
-	Error := [ArgumentsNotAllowed(Str), ExpectedArguments(Str), UnknownCommand(Str)].{
+	Error := [
+		ArgumentsNotAllowed(Str),
+		ExpectedArguments(Str),
+		UnknownCommand(Str),
+	].{
 		is_eq : Error, Error -> Bool
 		is_eq = |left, right|
 			match (left, right) {
@@ -28,7 +39,19 @@ Cli := [].{
 	}
 
 	usage : Str
-	usage = "Usage: kai-devtool <command> [arguments]\n\nCommands:\n  build-release\n  kaifiles\n  prepare-release NAME VERSION\n  help"
+	usage = Str.join_with(
+		[
+			"Usage: kai-devtool <command> [arguments]",
+			"",
+			"Commands:",
+			"  build-release",
+			"  kaifiles",
+			"  prepare-release NAME VERSION",
+			"  tidy [ROC_FILE...]",
+			"  help",
+		],
+		"\n",
+	)
 
 	parse : List(Str) -> Try(Command, Error)
 	parse = |args|
@@ -38,6 +61,7 @@ Cli := [].{
 			["build-release"] => Ok(BuildRelease)
 			["kaifiles"] => Ok(Kaifiles)
 			["prepare-release", name, version] => Ok(PrepareRelease({ name, version }))
+			["tidy", .. as paths] => Ok(Tidy(paths))
 			[first, ..] =>
 				match first {
 					"help" => Err(ArgumentsNotAllowed(first))

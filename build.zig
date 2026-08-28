@@ -179,6 +179,7 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileInput(b.path("devtool/GitHub.roc"));
     build_devtool.addFileInput(b.path("devtool/PrepareRelease.roc"));
     build_devtool.addFileInput(b.path("devtool/Release.roc"));
+    build_devtool.addFileInput(b.path("devtool/Tidy.roc"));
     build_devtool.addArg("--opt=dev");
     const devtool = build_devtool.addPrefixedOutputFileArg("--output=", "kai-devtool");
 
@@ -263,10 +264,18 @@ pub fn build(b: *std.Build) void {
     publish_release_step.dependOn(&publish_release.step);
 
     // All static checks (Roc and Zig).
+    const tidy_step = b.step(
+        "tidy",
+        "Check Roc source invariants",
+    );
+    const tidy_check = addDevtoolCommand(b, devtool, "tidy", &.{});
+    tidy_step.dependOn(&tidy_check.step);
+
     const check_step = b.step(
         "check",
         "Run formatting and static checks",
     );
+    check_step.dependOn(tidy_step);
     const roc_fmt = addFilesCommand(
         b,
         &.{ "roc", "fmt", "--check" },

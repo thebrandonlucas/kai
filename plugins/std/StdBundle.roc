@@ -1,3 +1,4 @@
+# Bundles the standard plugin sources for generated Kai runtimes.
 import "StdPlugin.roc" as std_plugin_source : Str
 import "backends/Nix.roc" as nix_backend_source : Str
 import "commands/Build.roc" as build_command_source : Str
@@ -15,16 +16,20 @@ import "implementations/ImageNix.roc" as image_nix_source : Str
 import "implementations/MachineNix.roc" as machine_nix_source : Str
 import "implementations/ServiceNix.roc" as service_nix_source : Str
 import "implementations/ShellNix.roc" as shell_nix_source : Str
-import "implementations/ShellNixValidation.roc" as shell_nix_validation_source : Str
+import "implementations/ShellNixValidation.roc" as shell_validation_source : Str
 import "implementations/TaskNix.roc" as task_nix_source : Str
 import "implementations/UpdateNix.roc" as update_nix_source : Str
 import "implementations/WorkflowNix.roc" as workflow_nix_source : Str
-import "project_configs/Source.roc" as source_project_config_source : Str
+import "project_configs/Source.roc" as source_config_source : Str
 
 StdBundle := [].{
 	package_source = |modules, dependencies| {
-		dependency_source = dependencies.map(|dependency| "${dependency.name}: \"${dependency.path}\"")
-		"package [${Str.join_with(modules, ", ")}] { ${Str.join_with(dependency_source, ", ")} }\n"
+		dependency_sources = dependencies.map(
+			|dependency| "${dependency.name}: \"${dependency.path}\"",
+		)
+		module_list = Str.join_with(modules, ", ")
+		dependency_list = Str.join_with(dependency_sources, ", ")
+		"package [${module_list}] { ${dependency_list} }\n"
 	}
 
 	source_bundle = {
@@ -60,7 +65,17 @@ StdBundle := [].{
 			{
 				destination: "std/commands/main.roc",
 				contents: StdBundle.package_source(
-					["Build", "Image", "Machine", "Secret", "Service", "Shell", "Task", "Update", "Workflow"],
+					[
+						"Build",
+						"Image",
+						"Machine",
+						"Secret",
+						"Service",
+						"Shell",
+						"Task",
+						"Update",
+						"Workflow",
+					],
 					[
 						{ name: "kai", path: "../../package.roc" },
 						{ name: "parser", path: "../../parser/main.roc" },
@@ -69,13 +84,22 @@ StdBundle := [].{
 			},
 			{ destination: "std/commands/Build.roc", contents: build_command_source },
 			{ destination: "std/commands/Image.roc", contents: image_command_source },
-			{ destination: "std/commands/Machine.roc", contents: machine_command_source },
+			{
+				destination: "std/commands/Machine.roc",
+				contents: machine_command_source,
+			},
 			{ destination: "std/commands/Secret.roc", contents: secret_command_source },
-			{ destination: "std/commands/Service.roc", contents: service_command_source },
+			{
+				destination: "std/commands/Service.roc",
+				contents: service_command_source,
+			},
 			{ destination: "std/commands/Shell.roc", contents: shell_command_source },
 			{ destination: "std/commands/Task.roc", contents: task_command_source },
 			{ destination: "std/commands/Update.roc", contents: update_command_source },
-			{ destination: "std/commands/Workflow.roc", contents: workflow_command_source },
+			{
+				destination: "std/commands/Workflow.roc",
+				contents: workflow_command_source,
+			},
 			{
 				destination: "std/project_configs/main.roc",
 				contents: StdBundle.package_source(
@@ -86,11 +110,25 @@ StdBundle := [].{
 					],
 				),
 			},
-			{ destination: "std/project_configs/Source.roc", contents: source_project_config_source },
+			{
+				destination: "std/project_configs/Source.roc",
+				contents: source_config_source,
+			},
 			{
 				destination: "std/implementations/main.roc",
 				contents: StdBundle.package_source(
-					["BuildNix", "EnvironmentNix", "ImageNix", "MachineNix", "ServiceNix", "ShellNix", "ShellNixValidation", "TaskNix", "UpdateNix", "WorkflowNix"],
+					[
+						"BuildNix",
+						"EnvironmentNix",
+						"ImageNix",
+						"MachineNix",
+						"ServiceNix",
+						"ShellNix",
+						"ShellNixValidation",
+						"TaskNix",
+						"UpdateNix",
+						"WorkflowNix",
+					],
 					[
 						{ name: "backends", path: "../backends/main.roc" },
 						{ name: "commands", path: "../commands/main.roc" },
@@ -100,16 +138,46 @@ StdBundle := [].{
 					],
 				),
 			},
-			{ destination: "std/implementations/BuildNix.roc", contents: build_nix_source },
-			{ destination: "std/implementations/EnvironmentNix.roc", contents: environment_nix_source },
-			{ destination: "std/implementations/ImageNix.roc", contents: image_nix_source },
-			{ destination: "std/implementations/MachineNix.roc", contents: machine_nix_source },
-			{ destination: "std/implementations/ServiceNix.roc", contents: service_nix_source },
-			{ destination: "std/implementations/ShellNix.roc", contents: shell_nix_source },
-			{ destination: "std/implementations/ShellNixValidation.roc", contents: shell_nix_validation_source },
-			{ destination: "std/implementations/TaskNix.roc", contents: task_nix_source },
-			{ destination: "std/implementations/UpdateNix.roc", contents: update_nix_source },
-			{ destination: "std/implementations/WorkflowNix.roc", contents: workflow_nix_source },
+			{
+				destination: "std/implementations/BuildNix.roc",
+				contents: build_nix_source,
+			},
+			{
+				destination: "std/implementations/EnvironmentNix.roc",
+				contents: environment_nix_source,
+			},
+			{
+				destination: "std/implementations/ImageNix.roc",
+				contents: image_nix_source,
+			},
+			{
+				destination: "std/implementations/MachineNix.roc",
+				contents: machine_nix_source,
+			},
+			{
+				destination: "std/implementations/ServiceNix.roc",
+				contents: service_nix_source,
+			},
+			{
+				destination: "std/implementations/ShellNix.roc",
+				contents: shell_nix_source,
+			},
+			{
+				destination: "std/implementations/ShellNixValidation.roc",
+				contents: shell_validation_source,
+			},
+			{
+				destination: "std/implementations/TaskNix.roc",
+				contents: task_nix_source,
+			},
+			{
+				destination: "std/implementations/UpdateNix.roc",
+				contents: update_nix_source,
+			},
+			{
+				destination: "std/implementations/WorkflowNix.roc",
+				contents: workflow_nix_source,
+			},
 		],
 	}
 

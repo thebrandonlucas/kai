@@ -1,3 +1,4 @@
+# Parse config headers
 Config := [].{
 	Location := {
 		byte_offset : U64,
@@ -35,7 +36,12 @@ Config := [].{
 	select_exact : List(Block), List(Str) -> Try(Selection, SelectionError)
 	select_exact = |blocks, header| Config.select_next(blocks, header, Missing)
 
-	select_next : List(Block), List(Str), Selection -> Try(Selection, SelectionError)
+	select_next : List(Block),
+	List(Str),
+	Selection -> Try(
+		Selection,
+		SelectionError,
+	)
 	select_next = |blocks, header, found|
 		match blocks {
 			[] => Ok(found)
@@ -195,7 +201,8 @@ Config := [].{
 		}
 
 	fail : DiagnosticKind, List(U8), U64 -> Try(a, Diagnostic)
-	fail = |kind, bytes, index| Err({ kind, location: Config.location(bytes, index) })
+	fail = |kind, bytes, index|
+		Err({ kind, location: Config.location(bytes, index) })
 
 	slice : List(U8), U64, U64 -> Str
 	slice = |bytes, start, end| Str.from_utf8(

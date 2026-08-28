@@ -1,3 +1,4 @@
+# An implementation for defining nix machine services.
 import parser.Body
 import kai.Plugin
 import backends.Nix as NixBackend
@@ -22,18 +23,35 @@ ServiceNix := [].{
 			_ => Err({ byte_offset: None, message: "service requires exactly one name" })
 		}?
 		artifact_name = Body.get_string(context.config, "artifact") ? |_|
-			{ byte_offset: None, message: "validated service configuration is missing 'artifact'" }
+			{
+				byte_offset: None,
+				message: "validated service configuration is missing 'artifact'",
+			}
 		secrets = Body.get_strings(context.config, "secrets") ? |_|
-			{ byte_offset: None, message: "validated service configuration is missing 'secrets'" }
+			{
+				byte_offset: None,
+				message: "validated service configuration is missing 'secrets'",
+			}
 		restart = Body.get_string(context.config, "restart") ? |_|
-			{ byte_offset: None, message: "validated service configuration is missing 'restart'" }
+			{
+				byte_offset: None,
+				message: "validated service configuration is missing 'restart'",
+			}
 		failures = ServiceCommand.name_failures(name)
-			.concat(Plugin.validate_text(artifact_name, BuildCommand.artifact_name_rules))
+			.concat(
+				Plugin.validate_text(
+					artifact_name,
+					BuildCommand.artifact_name_rules,
+				),
+			)
 			.concat(ServiceCommand.secret_failures(secrets))
 			.concat(ServiceCommand.restart_failures(restart))
 		Plugin.renderer_validation(failures)?
 		if context.host_os != LINUX {
-			Err({ byte_offset: None, message: "NixOS service modules are supported only on Linux" })
+			Err({
+				byte_offset: None,
+				message: "NixOS service modules are supported only on Linux",
+			})
 		} else {
 			ServiceNix.validate_secrets(context, secrets)?
 			requests = ServiceNix.requests(artifact_name)
@@ -46,7 +64,12 @@ ServiceNix := [].{
 				expression = ServiceNix.render_expression(name, pkgs_flake, target.system)
 				Ok(
 					Plugin.RenderResult.{
-						actions: NixBackend.service_actions(name, build.path, module_text, expression),
+						actions: NixBackend.service_actions(
+							name,
+							build.path,
+							module_text,
+							expression,
+						),
 						artifacts: [
 							{
 								attributes: [
@@ -87,12 +110,32 @@ ServiceNix := [].{
 			},
 		]
 
-	find_build : List(Plugin.Artifact), Str -> Try(Plugin.Artifact, Plugin.RendererDiagnostic)
+	find_build :
+		List(Plugin.Artifact), Str -> Try(Plugin.Artifact, Plugin.RendererDiagnostic)
 	find_build = |artifacts, name|
-		match artifacts.keep_if(|artifact| artifact.kind == "kai.build/v1" and artifact.name == name) {
+		match artifacts.keep_if(|artifact|
+			artifact.kind == "kai.build/v1" and artifact.name == name) {
 			[build] => Ok(build)
-			[] => Err({ byte_offset: None, message: "build '${name}' did not produce a kai.build/v1 artifact" })
-			_ => Err({ byte_offset: None, message: "build '${name}' produced multiple kai.build/v1 artifacts" })
+			[] => Err({
+				byte_offset: None,
+				message: Str.join_with(
+					[
+						"build '${name}' did not produce a ",
+						"kai.build/v1 artifact",
+					],
+					"",
+				),
+			})
+			_ => Err({
+				byte_offset: None,
+				message: Str.join_with(
+					[
+						"build '${name}' produced multiple ",
+						"kai.build/v1 artifacts",
+					],
+					"",
+				),
+			})
 		}
 
 	validate_build : Plugin.Artifact, Str -> Try(Str, Plugin.RendererDiagnostic)
@@ -100,30 +143,56 @@ ServiceNix := [].{
 		backend = ServiceNix.attribute(build.attributes, "backend")?
 		build_system = ServiceNix.attribute(build.attributes, "target.system")?
 		pkgs_flake = ServiceNix.attribute(build.attributes, "nix.pkgs-flake")?
-		path_failures = Plugin.validate_text(build.path, NixBackend.artifact_path_rules)
-		flake_failures = Plugin.validate_text(pkgs_flake, NixBackend.artifact_path_rules)
+		path_failures = Plugin.validate_text(
+			build.path,
+			NixBackend.artifact_path_rules,
+		)
+		flake_failures = Plugin.validate_text(
+			pkgs_flake,
+			NixBackend.artifact_path_rules,
+		)
 		failures = if backend == NixBackend.backend.name {
 			path_failures
 		} else {
-			["build artifact backend must be '${NixBackend.backend.name}'"].concat(path_failures)
+			[
+				Str.join_with(
+					[
+						"build artifact backend must be '",
+						NixBackend.backend.name,
+						"'",
+					],
+					"",
+				),
+			].concat(path_failures)
 		}
 		system_failures = if build_system == system {
 			[]
 		} else {
 			["build artifact targets '${build_system}', expected '${system}'"]
 		}
-		Plugin.renderer_validation(system_failures.concat(failures).concat(flake_failures))?
+		Plugin.renderer_validation(
+			system_failures.concat(failures).concat(flake_failures),
+		)?
 		Ok(pkgs_flake)
 	}
 
-	attribute : List(Plugin.ArtifactAttribute), Str -> Try(Str, Plugin.RendererDiagnostic)
+	attribute :
+		List(Plugin.ArtifactAttribute), Str -> Try(Str, Plugin.RendererDiagnostic)
 	attribute = |attributes, key|
 		match attributes {
-			[] => Err({ byte_offset: None, message: "artifact is missing required '${key}' attribute" })
-			[first, .. as rest] => if first.key == key Ok(first.value) else ServiceNix.attribute(rest, key)
+			[] => Err({
+				byte_offset: None,
+				message: "artifact is missing required '${key}' attribute",
+			})
+			[first, .. as rest] => if first.key == key {
+				Ok(first.value)
+			} else {
+				ServiceNix.attribute(rest, key)
+			}
 		}
 
-	validate_secrets : Plugin.RenderContext, List(Str) -> Try({}, Plugin.RendererDiagnostic)
+	validate_secrets :
+		Plugin.RenderContext, List(Str) -> Try({}, Plugin.RendererDiagnostic)
 	validate_secrets = |context, names|
 		match names {
 			[] => Ok({})
@@ -136,18 +205,28 @@ ServiceNix := [].{
 							_ => Bool.False
 						},
 				)
-				qualified = matches.keep_if(|entry| entry.header == ["secret", first, NixBackend.backend.name])
+				qualified = matches.keep_if(|entry|
+					entry.header == ["secret", first, NixBackend.backend.name])
 				entry = match qualified {
 					[selected] => Ok(selected)
 					[] =>
 						match matches.keep_if(|candidate| candidate.header == ["secret", first]) {
 							[selected] => Ok(selected)
-							_ => Err({ byte_offset: None, message: "service references missing secret '${first}'" })
+							_ => Err({
+								byte_offset: None,
+								message: "service references missing secret '${first}'",
+							})
 						}
-					_ => Err({ byte_offset: None, message: "service references ambiguous secret '${first}'" })
+					_ => Err({
+						byte_offset: None,
+						message: "service references ambiguous secret '${first}'",
+					})
 				}?
 				provision = Body.get_string(entry.config, "provision") ? |_|
-					{ byte_offset: None, message: "validated secret '${first}' is missing 'provision'" }
+					{
+						byte_offset: None,
+						message: "validated secret '${first}' is missing 'provision'",
+					}
 				Plugin.renderer_validation(SecretCommand.provision_failures(provision))?
 				ServiceNix.validate_secrets(context, rest)
 			}
@@ -155,7 +234,11 @@ ServiceNix := [].{
 
 	render_expression : Str, Str, Str -> Str
 	render_expression = |name, pkgs_flake_path, system| {
-		pkgs_flake = if pkgs_flake_path.starts_with("/") pkgs_flake_path else "../../../${pkgs_flake_path}"
+		pkgs_flake = if pkgs_flake_path.starts_with("/") {
+			pkgs_flake_path
+		} else {
+			"../../../${pkgs_flake_path}"
+		}
 		Str.join_with(
 			[
 				"let",
@@ -164,8 +247,22 @@ ServiceNix := [].{
 				"in",
 				"pkgs.runCommand \"kai-service-${name}\" {} ''",
 				"  mkdir -p \"$out\"",
-				"  cp -- ${ServiceNix.nix_interpolation("./module.nix")} \"$out/default.nix\"",
-				"  cp --recursive --no-dereference --preserve=mode ${ServiceNix.nix_interpolation("./artifact")} \"$out/artifact\"",
+				Str.join_with(
+					[
+						"  cp -- ",
+						ServiceNix.nix_interpolation("./module.nix"),
+						" \"$out/default.nix\"",
+					],
+					"",
+				),
+				Str.join_with(
+					[
+						"  cp --recursive --no-dereference --preserve=mode ",
+						ServiceNix.nix_interpolation("./artifact"),
+						" \"$out/artifact\"",
+					],
+					"",
+				),
 				"  if [ ! -f \"$out/artifact\" ] || [ ! -x \"$out/artifact\" ]; then",
 				"    echo \"Kai service artifact must be an executable file\" >&2",
 				"    exit 1",
@@ -178,7 +275,8 @@ ServiceNix := [].{
 
 	render_module : Str, List(Str), Str -> Str
 	render_module = |name, secrets, restart| {
-		credential_lines = secrets.map(|secret| "        \"${secret}:/run/kai/secrets/${secret}\"")
+		credential_lines = secrets.map(|secret|
+			"        \"${secret}:/run/kai/secrets/${secret}\"")
 		Str.join_with(
 			[
 				"{ ... }:",

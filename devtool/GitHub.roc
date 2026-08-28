@@ -15,7 +15,11 @@ GitHub := [].{
 	}
 	PublicationState : {
 		release : [FoundRelease(RemoteRelease), NoRelease],
-		tag : [AnnotatedTag({ name : Str, target_commit : Str }), LightweightTag(Str), NoTag],
+		tag : [
+			AnnotatedTag({ name : Str, target_commit : Str }),
+			LightweightTag(Str),
+			NoTag,
+		],
 	}
 	Decision : [
 		AlreadyPublished,
@@ -25,7 +29,12 @@ GitHub := [].{
 	]
 	Collision : [
 		LocalAssetsMismatch({ actual : List(ExpectedAsset), expected : List(Str) }),
-		PublishedAssetsMismatch({ actual : List(Asset), expected : List(ExpectedAsset) }),
+		PublishedAssetsMismatch(
+			{
+				actual : List(Asset),
+				expected : List(ExpectedAsset),
+			},
+		),
 		ReleaseNameMismatch,
 		ReleasePrereleaseMismatch,
 		ReleaseTagMismatch({ actual : Str, expected : Str }),
@@ -43,10 +52,16 @@ GitHub := [].{
 		target_commitish : Str,
 	}
 
-	validate_release_identity : Release.MergedRelease, RemoteRelease -> Try({}, Collision)
+	validate_release_identity :
+		Release.MergedRelease, RemoteRelease -> Try({}, Collision)
 	validate_release_identity = |release, remote|
 		if remote.tag_name != release.tag_name {
-			Err(ReleaseTagMismatch({ actual: remote.tag_name, expected: release.tag_name }))
+			Err(
+				ReleaseTagMismatch({
+					actual: remote.tag_name,
+					expected: release.tag_name,
+				}),
+			)
 		} else if remote.name != Ok(release.name) {
 			Err(ReleaseNameMismatch)
 		} else if remote.prerelease {
@@ -68,29 +83,57 @@ GitHub := [].{
 				),
 		)
 
-	decide : Release.MergedRelease, List(ExpectedAsset), PublicationState -> Try(Decision, Collision)
+	decide :
+		Release.MergedRelease,
+		List(ExpectedAsset),
+		PublicationState ->
+			Try(
+				Decision,
+				Collision,
+			)
 	decide = |release, expected_assets, state| {
 		expected_names = expected_assets.map(|asset| asset.name)
 		if !Release.is_exact_inventory(expected_names, release.assets) {
-			Err(LocalAssetsMismatch({ actual: expected_assets, expected: release.assets }))
+			Err(
+				LocalAssetsMismatch({
+					actual: expected_assets,
+					expected: release.assets,
+				}),
+			)
 		} else {
 			match (state.tag, state.release) {
 				(NoTag, NoRelease) => Ok(StartFresh)
 				(NoTag, FoundRelease(_)) => Err(ReleaseWithoutTag)
 				(LightweightTag(_), _) => Err(UnexpectedLightweightTag)
 				(AnnotatedTag(tag), _) if tag.target_commit != release.target_commit =>
-					Err(TagTargetMismatch({ actual: tag.target_commit, expected: release.target_commit }))
+					Err(
+						TagTargetMismatch({
+							actual: tag.target_commit,
+							expected: release.target_commit,
+						}),
+					)
 				(AnnotatedTag(tag), _) if tag.name != release.name =>
 					Err(TagAnnotationMismatch({ actual: tag.name, expected: release.name }))
 				(AnnotatedTag(_), NoRelease) => Ok(CreateDraft)
 				(AnnotatedTag(_), FoundRelease(remote)) => {
 					GitHub.validate_release_identity(release, remote)?
 					if remote.draft {
-						Ok(ResumeDraft({ assets: remote.assets, id: remote.id, upload_url: remote.upload_url }))
+						Ok(
+							ResumeDraft({
+								assets: remote.assets,
+								id: remote.id,
+								upload_url: remote.upload_url,
+							}),
+						)
 					} else if GitHub.has_published_assets(remote.assets, expected_assets) {
 						Ok(AlreadyPublished)
 					} else {
-						Err(PublishedAssetsMismatch({ actual: remote.assets, expected: expected_assets }))
+						Err(
+							PublishedAssetsMismatch({
+								actual: remote.assets,
+								expected: expected_assets,
+							}),
+						)
 					}
 				}
 			}
@@ -108,7 +151,8 @@ GitHub := [].{
 	}
 
 	create_release_json : Release.MergedRelease -> Str
-	create_release_json = |release| Json.to_str(GitHub.create_release_request(release))
+	create_release_json = |release|
+		Json.to_str(GitHub.create_release_request(release))
 
 	publish_release_json : Str
 	publish_release_json = Json.to_str({ draft: Bool.False })
@@ -126,7 +170,11 @@ GitHub := [].{
 ## -- TESTS --
 
 release = {
-	assets: ["SHA256SUMS", "kai-0.0.3-aarch64-linux.tar.gz", "kai-0.0.3-x86_64-linux.tar.gz"],
+	assets: [
+		"SHA256SUMS",
+		"kai-0.0.3-aarch64-linux.tar.gz",
+		"kai-0.0.3-x86_64-linux.tar.gz",
+	],
 	name: "μοριων \"blue\" \\ path 🚀",
 	tag_name: "v0.0.3",
 	target_commit: "0123456789abcdef0123456789abcdef01234567",
@@ -141,8 +189,18 @@ expected_assets = [
 
 uploaded_assets = [
 	{ digest: Ok("sha256:aaa"), id: 1, name: "SHA256SUMS", state: "uploaded" },
-	{ digest: Ok("sha256:bbb"), id: 2, name: "kai-0.0.3-aarch64-linux.tar.gz", state: "uploaded" },
-	{ digest: Ok("sha256:ccc"), id: 3, name: "kai-0.0.3-x86_64-linux.tar.gz", state: "uploaded" },
+	{
+		digest: Ok("sha256:bbb"),
+		id: 2,
+		name: "kai-0.0.3-aarch64-linux.tar.gz",
+		state: "uploaded",
+	},
+	{
+		digest: Ok("sha256:ccc"),
+		id: 3,
+		name: "kai-0.0.3-x86_64-linux.tar.gz",
+		state: "uploaded",
+	},
 ]
 
 remote = {
@@ -155,4 +213,7 @@ remote = {
 	upload_url: "https://uploads.github.test/releases/42/assets{?name,label}",
 }
 
-matching_tag = AnnotatedTag({ name: release.name, target_commit: release.target_commit })
+matching_tag = AnnotatedTag({
+	name: release.name,
+	target_commit: release.target_commit,
+})

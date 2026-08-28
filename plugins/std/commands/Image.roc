@@ -1,3 +1,4 @@
+# Shared `command` interface for building machine images.
 import kai.Plugin
 import Machine
 

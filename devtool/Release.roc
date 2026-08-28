@@ -30,7 +30,9 @@ Release := [].{
 	is_semver = |version|
 		match version.split_on(".") {
 			[major, minor, patch] =>
-				Release.is_number(major) and Release.is_number(minor) and Release.is_number(patch)
+				Release.is_number(major) and
+					Release.is_number(minor) and
+						Release.is_number(patch)
 			_ => Bool.False
 		}
 
@@ -76,7 +78,10 @@ Release := [].{
 			Err(InvalidVersion)
 		} else {
 			match (left.split_on("."), right.split_on(".")) {
-				([left_major, left_minor, left_patch], [right_major, right_minor, right_patch]) => {
+				(
+					[left_major, left_minor, left_patch],
+					[right_major, right_minor, right_patch],
+				) => {
 					major = Release.component_order(left_major, right_major)
 					minor = Release.component_order(left_minor, right_minor)
 					Ok(
@@ -129,17 +134,33 @@ Release := [].{
 		}
 	}
 
-	parse_github_origin : Str -> Try({ owner : Str, repository : Str }, [UnsupportedOrigin])
+	parse_github_origin :
+		Str -> Try({ owner : Str, repository : Str }, [UnsupportedOrigin])
 	parse_github_origin = |origin| {
 		https_prefix = "https://github.com/"
 		ssh_prefix = "ssh://git@github.com/"
 		scp_prefix = "git@github.com:"
 		if origin.starts_with(https_prefix) {
-			Release.parse_repo_path(Str.join_with(origin.split_on(https_prefix).drop_first(1), https_prefix))
+			Release.parse_repo_path(
+				Str.join_with(
+					origin.split_on(https_prefix).drop_first(1),
+					https_prefix,
+				),
+			)
 		} else if origin.starts_with(ssh_prefix) {
-			Release.parse_repo_path(Str.join_with(origin.split_on(ssh_prefix).drop_first(1), ssh_prefix))
+			Release.parse_repo_path(
+				Str.join_with(
+					origin.split_on(ssh_prefix).drop_first(1),
+					ssh_prefix,
+				),
+			)
 		} else if origin.starts_with(scp_prefix) {
-			Release.parse_repo_path(Str.join_with(origin.split_on(scp_prefix).drop_first(1), scp_prefix))
+			Release.parse_repo_path(
+				Str.join_with(
+					origin.split_on(scp_prefix).drop_first(1),
+					scp_prefix,
+				),
+			)
 		} else {
 			Err(UnsupportedOrigin)
 		}
@@ -162,8 +183,10 @@ Release := [].{
 		left_repo = Release.parse_github_origin(left)?
 		right_repo = Release.parse_github_origin(right)?
 		Ok(
-			Release.ascii_lower(left_repo.owner) == Release.ascii_lower(right_repo.owner) and
-				Release.ascii_lower(left_repo.repository) == Release.ascii_lower(right_repo.repository),
+			Release.ascii_lower(left_repo.owner) ==
+				Release.ascii_lower(right_repo.owner) and
+				Release.ascii_lower(left_repo.repository) ==
+					Release.ascii_lower(right_repo.repository),
 		)
 	}
 
@@ -176,7 +199,16 @@ Release := [].{
 				Ok(found) => found
 				Err(UnsupportedOrigin) => return Err(UnsupportedOrigin)
 			}
-			Ok("https://github.com/${repository.owner}/${repository.repository}/compare/master...release%2Fv${version}?expand=1")
+			Ok(
+				Str.join_with(
+					[
+						"https://github.com/${repository.owner}/",
+						"${repository.repository}/compare/master...",
+						"release%2Fv${version}?expand=1",
+					],
+					"",
+				),
+			)
 		}
 	}
 
@@ -184,7 +216,10 @@ Release := [].{
 		bytes = Str.to_utf8(commit)
 		(bytes.len() == 40 or bytes.len() == 64) and List.all(
 			bytes,
-			|byte| (byte >= '0' and byte <= '9') or (byte >= 'a' and byte <= 'f') or (byte >= 'A' and byte <= 'F'),
+			|byte|
+				(byte >= '0' and byte <= '9') or
+					(byte >= 'a' and byte <= 'f') or
+						(byte >= 'A' and byte <= 'F'),
 		)
 	}
 
@@ -196,7 +231,12 @@ Release := [].{
 		} else if !Release.is_semver(input.canonical_version) {
 			Err(InvalidPublicationVersion(input.canonical_version))
 		} else if input.manifest_version != input.canonical_version {
-			Err(PublicationManifestMismatch({ canonical: input.canonical_version, manifest: input.manifest_version }))
+			Err(
+				PublicationManifestMismatch({
+					canonical: input.canonical_version,
+					manifest: input.manifest_version,
+				}),
+			)
 		} else if input.branch_name != "master" {
 			Err(UnexpectedPublicationBranch(input.branch_name))
 		} else if !input.branch_contains_target {
@@ -204,7 +244,12 @@ Release := [].{
 		} else if !Release.is_commit_id(input.target_commit) {
 			Err(InvalidPublicationTarget(input.target_commit))
 		} else if input.tag_name != expected_tag {
-			Err(PublicationTagMismatch({ actual: input.tag_name, expected: expected_tag }))
+			Err(
+				PublicationTagMismatch({
+					actual: input.tag_name,
+					expected: expected_tag,
+				}),
+			)
 		} else {
 			Ok({
 				assets: Release.inventory(input.canonical_version),
@@ -231,9 +276,20 @@ Release := [].{
 					List.all(files, |file| Release.release_files.contains(file))
 	}
 
-	manifest_version : Str -> Try(Str, [DuplicateManifestVersion, InvalidManifestVersion, MissingManifestVersion])
+	manifest_version :
+		Str ->
+			Try(
+				Str,
+				[
+					DuplicateManifestVersion,
+					InvalidManifestVersion,
+					MissingManifestVersion,
+				],
+			)
 	manifest_version = |manifest|
-		match manifest.split_on("\n").keep_if(|line| line.trim().starts_with(".version =")) {
+		match manifest.split_on("\n").keep_if(
+			|line| line.trim().starts_with(".version ="),
+		) {
 			[] => Err(MissingManifestVersion)
 			[line] =>
 				match Release.version_line(line) {
@@ -246,11 +302,27 @@ Release := [].{
 	version_line : Str -> Try(Str, [InvalidVersionLine])
 	version_line = |line|
 		match line.trim().split_on("\"") {
-			[before, version, after] if before.trim() == ".version =" and after.trim() == "," => Ok(version)
+			[before, version, after] =>
+				if before.trim() == ".version =" and after.trim() == "," {
+					Ok(version)
+				} else {
+					Err(InvalidVersionLine)
+				}
 			_ => Err(InvalidVersionLine)
 		}
 
-	rewrite_manifest : Str, Str -> Try(Str, [DuplicateManifestVersion, InvalidManifestVersion, InvalidVersion, MissingManifestVersion])
+	rewrite_manifest :
+		Str,
+		Str ->
+			Try(
+				Str,
+				[
+					DuplicateManifestVersion,
+					InvalidManifestVersion,
+					InvalidVersion,
+					MissingManifestVersion,
+				],
+			)
 	rewrite_manifest = |manifest, version| {
 		if !Release.is_semver(version) {
 			Err(InvalidVersion)
@@ -298,7 +370,8 @@ Release := [].{
 
 	is_exact_inventory : List(Str), List(Str) -> Bool
 	is_exact_inventory = |actual, expected|
-		actual.len() == expected.len() and List.all(expected, |name| actual.contains(name))
+		actual.len() == expected.len() and
+			List.all(expected, |name| actual.contains(name))
 
 	is_release_workspace : Str -> Bool
 	is_release_workspace = |name| name.starts_with(".release-build.")
@@ -308,4 +381,17 @@ Release := [].{
 
 valid_versions = ["0.0.0", "0.0.2", "1.20.300", "18446744073709551616.2.3"]
 
-invalid_versions = ["", "1", "1.2", "1.2.3.4", "01.2.3", "1.02.3", "1.2.03", "1.-2.3", "1.2.x", "1.2.3-alpha", " 1.2.3", "1.2.3\n"]
+invalid_versions = [
+	"",
+	"1",
+	"1.2",
+	"1.2.3.4",
+	"01.2.3",
+	"1.02.3",
+	"1.2.03",
+	"1.-2.3",
+	"1.2.x",
+	"1.2.3-alpha",
+	" 1.2.3",
+	"1.2.3\n",
+]

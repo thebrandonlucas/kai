@@ -1,3 +1,4 @@
+# Definitions for supported underlying Guix commands
 import kai.Plugin
 
 Guix := [].{
@@ -23,6 +24,17 @@ Guix := [].{
 	package_rules = [
 		NonemptyStringList("shell requires at least one package specification"),
 		AllStrings(NonemptyText("shell package specifications must not be empty")),
-		AllStrings(DisallowedPrefix({ message: "shell package specifications must not begin with '-'", prefix: "-" })),
+		AllStrings(
+			DisallowedPrefix({
+				message: Str.join_with(
+					[
+						"shell package specifications must not ",
+						"begin with '-'",
+					],
+					"",
+				),
+				prefix: "-",
+			}),
+		),
 	]
 }

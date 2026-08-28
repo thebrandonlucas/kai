@@ -10,10 +10,25 @@ Kaifile := [].{
 	}
 
 	block : { fields : List(Body.Field), header : Str } -> Block(rule)
-	block = |{ fields, header }| { fields, header, kind: DirectBlockHeader, name_rules: [] }
+	block = |{ fields, header }| {
+		fields,
+		header,
+		kind: DirectBlockHeader,
+		name_rules: [],
+	}
 
-	named_block : { fields : List(Body.Field), header : Str, name_rules : List(rule) } -> Block(rule)
-	named_block = |{ fields, header, name_rules }| { fields, header, kind: NamedBlockHeader, name_rules }
+	named_block :
+		{
+			fields : List(Body.Field),
+			header : Str,
+			name_rules : List(rule),
+		} -> Block(rule)
+	named_block = |{ fields, header, name_rules }| {
+		fields,
+		header,
+		kind: NamedBlockHeader,
+		name_rules,
+	}
 
 	body : Block(rule) -> Body.Shape
 	body = |schema| Body.object(schema.fields)
@@ -29,14 +44,19 @@ Kaifile := [].{
 		tokens = Kaifile.header_tokens(schema.header)
 		valid = match (schema.kind, tokens) {
 			(DirectBlockHeader, [literal]) => Kaifile.valid_name(literal)
-			(NamedBlockHeader, [literal, slot]) => Kaifile.valid_name(literal) and Kaifile.valid_slot(slot)
+			(NamedBlockHeader, [literal, slot]) =>
+				Kaifile.valid_name(literal) and Kaifile.valid_slot(slot)
 			_ => Bool.False
 		}
 		if valid {
 			Ok({})
 		} else {
 			kind = if schema.kind == NamedBlockHeader "named" else "direct"
-			expected = if schema.kind == NamedBlockHeader "one literal token followed by one '<slot>' token" else "one literal token"
+			expected = if schema.kind == NamedBlockHeader {
+				"one literal token followed by one '<slot>' token"
+			} else {
+				"one literal token"
+			}
 			Err("${kind} Kaifile block header '${schema.header}' must be ${expected}")
 		}
 	}
@@ -89,5 +109,6 @@ Kaifile := [].{
 											byte != '>',
 		)
 
-	is_whitespace = |byte| byte == ' ' or byte == '\t' or byte == '\n' or byte == '\r'
+	is_whitespace = |byte|
+		byte == ' ' or byte == '\t' or byte == '\n' or byte == '\r'
 }

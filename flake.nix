@@ -66,8 +66,8 @@
           roc;
 
       basicCliName = "F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL";
-      basicCliUrl =
-        "https://github.com/roc-lang/basic-cli/releases/download/0.22.0/" + "${basicCliName}.tar.zst";
+      basicCliBaseUrl = "https://github.com/roc-lang/basic-cli/releases/download/0.22.0";
+      basicCliUrl = basicCliBaseUrl + "/${basicCliName}.tar.zst";
 
       rocHttpName = "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS";
       rocHttpUrl = "https://github.com/roc-lang/http/releases/download/1.0.0/" + "${rocHttpName}.tar.zst";
@@ -129,8 +129,11 @@
 
             substituteInPlace ${localSource} \
               --replace-fail \
-              "${basicCliUrl}" \
-              "$PWD/${basicCliName}/main.roc"
+              "${basicCliBaseUrl}" \
+              "$PWD" \
+              --replace-fail \
+              "${basicCliName}.tar.zst" \
+              "${basicCliName}/main.roc"
 
             roc build \
               ${localSource} \

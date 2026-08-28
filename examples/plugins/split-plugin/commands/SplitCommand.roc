@@ -1,3 +1,4 @@
+# Example `command` interface provided by the split plugin.
 import kai.Kaifile
 import kai.Plugin
 

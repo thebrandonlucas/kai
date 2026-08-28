@@ -1,3 +1,4 @@
+# An implementation for running workflows via nix
 import parser.Body
 import kai.Plugin
 import backends.Nix as NixBackend
@@ -20,7 +21,10 @@ WorkflowNix := [].{
 			message: "validated workflow configuration is missing 'steps'",
 		}
 		if steps.is_empty() {
-			Err({ byte_offset: None, message: "workflow must contain at least one step" })
+			Err({
+				byte_offset: None,
+				message: "workflow must contain at least one step",
+			})
 		} else {
 			requests = WorkflowNix.parse_steps(steps)?
 			Ok(
@@ -35,15 +39,18 @@ WorkflowNix := [].{
 		}
 	}
 
-	parse_steps : List(Str) -> Try(List(Plugin.PlanRequest), Plugin.RendererDiagnostic)
+	parse_steps :
+		List(Str) -> Try(List(Plugin.PlanRequest), Plugin.RendererDiagnostic)
 	parse_steps = |steps| WorkflowNix.parse_steps_from(steps, 1)
 
-	parse_steps_from : List(Str), U64 -> Try(List(Plugin.PlanRequest), Plugin.RendererDiagnostic)
+	parse_steps_from :
+		List(Str), U64 -> Try(List(Plugin.PlanRequest), Plugin.RendererDiagnostic)
 	parse_steps_from = |steps, index|
 		match steps {
 			[] => Ok([])
 			[first, .. as rest] => {
-				request = WorkflowNix.parse_step(first) ? |_| WorkflowNix.invalid_step(index, first)
+				request = WorkflowNix.parse_step(first) ? |_|
+					WorkflowNix.invalid_step(index, first)
 				remaining = WorkflowNix.parse_steps_from(rest, index + 1)?
 				Ok([request].concat(remaining))
 			}
@@ -62,7 +69,13 @@ WorkflowNix := [].{
 	invalid_step : U64, Str -> Plugin.RendererDiagnostic
 	invalid_step = |index, step| {
 		byte_offset: None,
-		message: "workflow step ${U64.to_str(index)} is invalid: '${step}'; expected a command and optional arguments",
+		message: Str.join_with(
+			[
+				"workflow step ${U64.to_str(index)} is invalid: '${step}'; ",
+				"expected a command and optional arguments",
+			],
+			"",
+		),
 	}
 
 	words : Str -> List(Str)
