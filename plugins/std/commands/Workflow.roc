@@ -10,10 +10,9 @@ Workflow := [].{
 
 	command : Plugin.Command
 	command = Plugin.Command.{
-		argument_policy: AllowArguments,
 		body,
+		call: Plugin.call("workflow", [Plugin.required_argument("workflow")]),
 		config: NamedConfig({ lookup: QualifiedThenUnqualified, name_rules }),
 		config_block: RequiredConfigBlock("workflow"),
-		name: "workflow",
 	}
 }

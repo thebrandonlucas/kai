@@ -4,10 +4,9 @@ import kai.Plugin
 SplitCommand := [].{
 	command : Plugin.Command
 	command = Plugin.Command.{
-		argument_policy: NoArguments,
 		body: Body.object([]),
+		call: Plugin.call("split-command", []),
 		config: DirectConfig(QualifiedThenUnqualified),
 		config_block: OptionalConfigBlock("split"),
-		name: "split-command",
 	}
 }

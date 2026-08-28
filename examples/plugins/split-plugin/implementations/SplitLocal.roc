@@ -7,7 +7,7 @@ SplitLocal := [].{
 	implementation = Plugin.Implementation.{
 		actions: [WriteConfigUtf8({ output: "message", path: "split-plugin-output.txt" })],
 		backend: Local.backend.name,
-		command: SplitCommand.command.name,
+		command: SplitCommand.command.call.name,
 		renderer: |_| Ok(
 			Plugin.RenderResult.{
 				actions: [],

@@ -69,8 +69,8 @@ Machine := [].{
 
 	command : Plugin.Command
 	command = Plugin.Command.{
-		argument_policy: AllowArguments,
 		body,
+		call: Plugin.call("machine", [Plugin.required_argument("machine")]),
 		config: NamedWithRelatedConfig({
 			lookup: QualifiedThenUnqualified,
 			name_rules,
@@ -82,6 +82,5 @@ Machine := [].{
 			related_field: "environment",
 		}),
 		config_block: RequiredConfigBlock("machine"),
-		name: "machine",
 	}
 }

@@ -46,10 +46,9 @@ Service := [].{
 
 	command : Plugin.Command
 	command = Plugin.Command.{
-		argument_policy: AllowArguments,
 		body,
+		call: Plugin.call("service", [Plugin.required_argument("service")]),
 		config: NamedConfig({ lookup: QualifiedThenUnqualified, name_rules }),
 		config_block: RequiredConfigBlock("service"),
-		name: "service",
 	}
 }

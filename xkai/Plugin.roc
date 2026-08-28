@@ -152,7 +152,21 @@ Plugin := [].{
 			Err({ byte_offset: None, message: Plugin.validation_message(failures) })
 		}
 
-	ArgumentPolicy : [AllowArguments, NoArguments]
+	CommandArgument : [OptionalArgument(Str), RequiredArgument(Str)]
+
+	CommandCall := {
+		arguments : List(CommandArgument),
+		name : Str,
+	}
+
+	call : Str, List(CommandArgument) -> CommandCall
+	call = |name, arguments| { arguments, name }
+
+	required_argument : Str -> CommandArgument
+	required_argument = |name| RequiredArgument(name)
+
+	optional_argument : Str -> CommandArgument
+	optional_argument = |name| OptionalArgument(name)
 
 	ConfigBlockRequirement : [OptionalConfigBlock(Str), RequiredConfigBlock(Str)]
 
@@ -188,11 +202,10 @@ Plugin := [].{
 	}
 
 	Command := {
-		argument_policy : ArgumentPolicy,
 		body : Body.Shape,
+		call : CommandCall,
 		config : ConfigMetadata,
 		config_block : ConfigBlockRequirement,
-		name : Str,
 	}
 
 	DeterminateSystemKind : [Custom, Guix, Nix]
@@ -302,12 +315,12 @@ Plugin := [].{
 								}
 							}
 					[name] => Plugin.select_named_config(config_text, block, name, backend_choice, os, lookup, name_rules)
-					_ => Err({ location: None, message: "${command.name} accepts at most one config name" })
+					_ => Err({ location: None, message: "${command.call.name} accepts at most one config name" })
 				}
 			NamedConfig({ lookup, name_rules }) =>
 				match args {
 					[name] => Plugin.select_named_config(config_text, block_name, name, backend_choice, os, lookup, name_rules)
-					_ => Err({ location: None, message: "${command.name} requires exactly one config name" })
+					_ => Err({ location: None, message: "${command.call.name} requires exactly one config name" })
 				}
 			NamedWithRelatedConfig({ lookup, name_rules, related_block, related_body, related_field }) =>
 				match args {
@@ -320,7 +333,7 @@ Plugin := [].{
 						related = Plugin.select_required_named_block(config_text, related_block, related_name, backend_choice, os, lookup)?
 						Ok(SelectedWithRelated({ block, body: command.body, related_block: related, related_body }))
 					}
-					_ => Err({ location: None, message: "${command.name} requires exactly one config name" })
+					_ => Err({ location: None, message: "${command.call.name} requires exactly one config name" })
 				}
 			}
 	}
@@ -407,6 +420,23 @@ Plugin := [].{
 					_ => { args, backend_choice }
 				}
 			DirectConfig(_) | DirectOrNamedConfig(_) => { args, backend_choice }
+		}
+
+	validate_call_arguments : CommandCall, List(Str) -> Try({}, Str)
+	validate_call_arguments = |command_call, args|
+		match command_call.arguments {
+			[] => if args.is_empty() Ok({}) else Err("command does not accept arguments")
+			[OptionalArgument(name)] =>
+				match args {
+					[] | [_] => Ok({})
+					_ => Err("${command_call.name} accepts at most one ${name} argument")
+				}
+			[RequiredArgument(name)] =>
+				match args {
+					[_] => Ok({})
+					_ => Err("${command_call.name} requires exactly one ${name} argument")
+				}
+			_ => Err("command declares unsupported arguments")
 		}
 
 	select_named_config : Str, Str, Str, BackendChoice, HostOs, BackendLookup, List(TextRule) -> Try(ConfigSelection, SelectorDiagnostic)
@@ -893,6 +923,7 @@ Plugin := [].{
 		} else if definition.implementations.is_empty() {
 			Plugin.registry_failure(definition.name, "must define at least one implementation")
 		} else {
+			Plugin.validate_command_calls(definition.commands, definition.name)?
 			Plugin.validate_config_descriptors(definition.commands, definition.project_configs, definition.name)?
 			Plugin.validate_implementation_references(definition.implementations, definition)?
 			match definition.backends {
@@ -903,6 +934,23 @@ Plugin := [].{
 				}
 			}
 		}
+
+	validate_command_calls : List(Command), Str -> Try({}, RegistryDiagnostic)
+	validate_command_calls = |commands, plugin|
+		match commands {
+			[] => Ok({})
+			[first, .. as rest] =>
+				match first.call.arguments {
+					[] => Plugin.validate_command_calls(rest, plugin)
+					[OptionalArgument(name)] | [RequiredArgument(name)] =>
+						if name.is_empty() {
+							Plugin.registry_failure(plugin, "command '${first.call.name}' argument name must not be empty")
+						} else {
+							Plugin.validate_command_calls(rest, plugin)
+						}
+					_ => Plugin.registry_failure(plugin, "command '${first.call.name}' must declare at most one argument")
+				}
+			}
 
 	validate_config_descriptors : List(Command), List(ProjectConfigDescriptor), Str -> Try({}, RegistryDiagnostic)
 	validate_config_descriptors = |commands, standalone_descriptors, plugin|
@@ -961,9 +1009,9 @@ Plugin := [].{
 		match commands {
 			[] => Ok({})
 			[first, .. as rest] =>
-				match Plugin.find_implementation(implementations, first.name, default_backend) {
+				match Plugin.find_implementation(implementations, first.call.name, default_backend) {
 					Ok(_) => Plugin.validate_default_implementations(rest, default_backend, implementations, plugin)
-					Err(NotFound) => Plugin.registry_failure(plugin, "command '${first.name}' has no implementation for default backend '${default_backend}'")
+					Err(NotFound) => Plugin.registry_failure(plugin, "command '${first.call.name}' has no implementation for default backend '${default_backend}'")
 				}
 			}
 
@@ -1018,48 +1066,48 @@ Plugin := [].{
 				plugin_definition = owner.definition
 				command = owner.command
 				backend_selection = Plugin.select_backend(plugin_definition.backends, command_args) ? |backend_name|
-					PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_name, None, "plugin command refers to unknown backend '${backend_name}'"))
+					PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_name, None, "plugin command refers to unknown backend '${backend_name}'"))
 				config_selection = Plugin.normalize_command_backend(command.config, backend_selection.choice, backend_selection.args)
 
 				if List.any(ancestors, |ancestor| ancestor == args) {
-					Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plan request cycle detected")))
+					Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, None, "plan request cycle detected")))
 				} else if depth >= 64 {
-					Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plan request nesting exceeds 64 levels")))
-				} else if command.argument_policy == NoArguments and !backend_selection.args.is_empty() {
-					Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "command does not accept arguments")))
+					Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, None, "plan request nesting exceeds 64 levels")))
 				} else {
-					implementation = Plugin.find_implementation(plugin_definition.implementations, command.name, backend_selection.backend.name) ? |_|
-						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plugin has no implementation for selected backend"))
+					Plugin.validate_call_arguments(command.call, config_selection.args) ? |message|
+						PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, None, message))
+					implementation = Plugin.find_implementation(plugin_definition.implementations, command.call.name, backend_selection.backend.name) ? |_|
+						PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, None, "plugin has no implementation for selected backend"))
 					project_commands = Plugin.effective_commands(registry)
 					project_descriptors = Plugin.append_config_descriptors(
 						Plugin.config_descriptors(project_commands),
 						Plugin.effective_project_configs(registry),
 					)
 					project_config = Plugin.build_project_config(config_text, project_descriptors, backend_selection.backend.name) ? |diagnostic|
-						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, diagnostic.location, diagnostic.message))
+						PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, diagnostic.location, diagnostic.message))
 					selection = Plugin.select_config(config_text, command, config_selection.backend_choice, config_selection.args, os, arch) ? |diagnostic|
-						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, diagnostic.location, diagnostic.message))
+						PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, diagnostic.location, diagnostic.message))
 					parsed = match selection {
 						Missing =>
 							match command.config_block {
-								RequiredConfigBlock(name) => Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "missing required config block '${name}'")))
+								RequiredConfigBlock(name) => Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, None, "missing required config block '${name}'")))
 								OptionalConfigBlock(_) => Ok({ config: Body.empty, config_block: NoConfigBlock, related_config: NoRelatedConfig })
 							}
 						Selected(block) => {
 							config = Body.parse(command.body, block.body) ? |diagnostic|
-								PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, At(Plugin.translate_location(block, diagnostic.byte_offset)), Body.describe(diagnostic)))
+								PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, At(Plugin.translate_location(block, diagnostic.byte_offset)), Body.describe(diagnostic)))
 							Ok({ config, config_block: SelectedConfigBlock(block), related_config: NoRelatedConfig })
 						}
 						SelectedWithBody({ block, body }) => {
 							config = Body.parse(body, block.body) ? |diagnostic|
-								PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, At(Plugin.translate_location(block, diagnostic.byte_offset)), Body.describe(diagnostic)))
+								PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, At(Plugin.translate_location(block, diagnostic.byte_offset)), Body.describe(diagnostic)))
 							Ok({ config, config_block: SelectedConfigBlock(block), related_config: NoRelatedConfig })
 						}
 						SelectedWithRelated({ block, body, related_block, related_body }) => {
 							config = Body.parse(body, block.body) ? |diagnostic|
-								PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, At(Plugin.translate_location(block, diagnostic.byte_offset)), Body.describe(diagnostic)))
+								PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, At(Plugin.translate_location(block, diagnostic.byte_offset)), Body.describe(diagnostic)))
 							related = Body.parse(related_body, related_block.body) ? |diagnostic|
-								PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, At(Plugin.translate_location(related_block, diagnostic.byte_offset)), Body.describe(diagnostic)))
+								PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, At(Plugin.translate_location(related_block, diagnostic.byte_offset)), Body.describe(diagnostic)))
 							Ok({
 								config,
 								config_block: SelectedConfigBlock(block),
@@ -1080,10 +1128,10 @@ Plugin := [].{
 						target: NoTarget,
 					}
 					validated_context = Plugin.validate_render_context(context, implementation.validator) ? |diagnostic|
-						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
+						PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
 					renderer = implementation.renderer
 					initial_render = renderer(validated_context) ? |diagnostic|
-						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
+						PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
 					requested = Plugin.plan_requests(
 						registry,
 						config_text,
@@ -1093,7 +1141,7 @@ Plugin := [].{
 						[args].concat(ancestors),
 						depth + 1,
 						plugin_definition.name,
-						command.name,
+						command.call.name,
 						backend_selection.backend.name,
 					)?
 					rendered = if initial_render.requests.is_empty() {
@@ -1113,15 +1161,15 @@ Plugin := [].{
 								target: validated_context.target,
 							},
 						) ? |diagnostic|
-							PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
+							PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
 						if Plugin.same_plan_requests(with_dependencies.requests, initial_render.requests) {
 							with_dependencies
 						} else {
-							return Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, None, "plan requests changed after dependencies resolved")))
+							return Err(PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, None, "plan requests changed after dependencies resolved")))
 						}
 					}
 					base_plan = Plugin.lower(implementation, rendered, plugin_definition.name, backend_selection.backend) ? |diagnostic|
-						PlanningFailed(Plugin.failure(plugin_definition.name, command.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
+						PlanningFailed(Plugin.failure(plugin_definition.name, command.call.name, backend_selection.backend.name, Plugin.renderer_location(selection, diagnostic.byte_offset), diagnostic.message))
 					Ok(
 						Plugin.Plan.{
 							actions: requested.actions.concat(base_plan.actions),
@@ -1163,11 +1211,11 @@ Plugin := [].{
 		match registry {
 			[] => []
 			[first, .. as rest] => {
-				effective = first.commands.keep_if(|command| !shadowed.contains(command.name))
+				effective = first.commands.keep_if(|command| !shadowed.contains(command.call.name))
 				effective.concat(
 					Plugin.find_effective_commands(
 						rest,
-						shadowed.concat(first.commands.map(|command| command.name)),
+						shadowed.concat(first.commands.map(|command| command.call.name)),
 					),
 				)
 			}
@@ -1197,7 +1245,7 @@ Plugin := [].{
 		match commands {
 			[] => Err(NotFound)
 			[first, .. as rest] =>
-				if first.name == name {
+				if first.call.name == name {
 					Ok(first)
 				} else {
 					Plugin.find_command(rest, name)
