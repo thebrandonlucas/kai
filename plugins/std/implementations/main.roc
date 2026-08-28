@@ -6,7 +6,6 @@ package
 		MachineNix,
 		ServiceNix,
 		ShellNix,
-		ShellNixValidation,
 		TaskNix,
 		UpdateNix,
 		WorkflowNix,
