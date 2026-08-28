@@ -24,11 +24,10 @@ CustomPlugin := [].{
 	})
 
 	command : Plugin.Command
-	command = Plugin.Command.{
+	command = Plugin.command({
 		call: Plugin.call("custom-write", []),
-		config: DirectConfig(QualifiedThenUnqualified),
-		config_block: RequiredConfigBlock(block),
-	}
+		kaifile: block,
+	})
 
 	commands : List(Plugin.Command)
 	commands = [command]

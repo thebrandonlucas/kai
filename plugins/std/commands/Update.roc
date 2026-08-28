@@ -7,9 +7,9 @@ Update := [].{
 	block = Kaifile.block({ header: "update", fields: [] })
 
 	command : Plugin.Command
-	command = Plugin.Command.{
+	command = Plugin.command_with_backend_blocks({
+		backend_blocks: RequireBackendSpecific,
 		call: Plugin.call("update", []),
-		config: DirectConfig(QualifiedOnly),
-		config_block: OptionalConfigBlock(block),
-	}
+		kaifile: Kaifile.optional(block),
+	})
 }

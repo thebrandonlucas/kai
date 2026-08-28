@@ -20,12 +20,13 @@ Shell := [].{
 	})
 
 	command : Plugin.Command
-	command = Plugin.Command.{
+	command = Plugin.command_with_backend_blocks({
+		backend_blocks: RequireBackendSpecific,
 		call: Plugin.call("shell", [Plugin.optional_argument("environment")]),
-		config: DirectOrNamedConfig({
-			lookup: QualifiedOnly,
-			named: environment_block,
+		kaifile: Kaifile.by_optional_argument({
+			argument: "environment",
+			when_omitted: block,
+			when_provided: environment_block,
 		}),
-		config_block: RequiredConfigBlock(block),
-	}
+	})
 }
