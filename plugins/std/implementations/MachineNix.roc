@@ -3,6 +3,7 @@ import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Machine as MachineCommand
+import configs.MachineConfig
 import EnvironmentNix
 
 MachineNix := [].{
@@ -69,10 +70,10 @@ MachineNix := [].{
 			}
 		users = MachineNix.optional_strings(context.config, "users")?
 		services = MachineNix.optional_strings(context.config, "services")?
-		failures = Plugin.validate_text(name, MachineCommand.name_rules)
+		failures = Plugin.validate_text(name, MachineConfig.name_rules)
 			.concat(Plugin.validate_string_list(pkgs, NixBackend.package_rules))
-			.concat(MachineCommand.user_failures(users))
-			.concat(MachineCommand.service_failures(services))
+			.concat(MachineConfig.user_failures(users))
+			.concat(MachineConfig.service_failures(services))
 		Plugin.renderer_validation(failures)?
 		target = NixBackend.machine_target(
 			system,

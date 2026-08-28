@@ -2,6 +2,7 @@
 import "StdPlugin.roc" as std_plugin_source : Str
 import "backends/Nix.roc" as nix_backend_source : Str
 import "configs/EnvironmentConfig.roc" as environment_config_source : Str
+import "configs/MachineConfig.roc" as machine_config_source : Str
 import "commands/Build.roc" as build_command_source : Str
 import "commands/Image.roc" as image_command_source : Str
 import "commands/Machine.roc" as machine_command_source : Str
@@ -65,7 +66,7 @@ StdBundle := [].{
 			{
 				destination: "std/configs/main.roc",
 				contents: StdBundle.package_source(
-					["EnvironmentConfig"],
+					["EnvironmentConfig", "MachineConfig"],
 					[
 						{ name: "kai", path: "../../package.roc" },
 						{ name: "parser", path: "../../parser/main.roc" },
@@ -75,6 +76,10 @@ StdBundle := [].{
 			{
 				destination: "std/configs/EnvironmentConfig.roc",
 				contents: environment_config_source,
+			},
+			{
+				destination: "std/configs/MachineConfig.roc",
+				contents: machine_config_source,
 			},
 			{
 				destination: "std/commands/main.roc",
