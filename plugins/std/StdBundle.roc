@@ -16,7 +16,6 @@ import "implementations/ImageNix.roc" as image_nix_source : Str
 import "implementations/MachineNix.roc" as machine_nix_source : Str
 import "implementations/ServiceNix.roc" as service_nix_source : Str
 import "implementations/ShellNix.roc" as shell_nix_source : Str
-import "implementations/ShellNixValidation.roc" as shell_validation_source : Str
 import "implementations/TaskNix.roc" as task_nix_source : Str
 import "implementations/UpdateNix.roc" as update_nix_source : Str
 import "implementations/WorkflowNix.roc" as workflow_nix_source : Str
@@ -124,7 +123,6 @@ StdBundle := [].{
 						"MachineNix",
 						"ServiceNix",
 						"ShellNix",
-						"ShellNixValidation",
 						"TaskNix",
 						"UpdateNix",
 						"WorkflowNix",
@@ -161,10 +159,6 @@ StdBundle := [].{
 			{
 				destination: "std/implementations/ShellNix.roc",
 				contents: shell_nix_source,
-			},
-			{
-				destination: "std/implementations/ShellNixValidation.roc",
-				contents: shell_validation_source,
 			},
 			{
 				destination: "std/implementations/TaskNix.roc",

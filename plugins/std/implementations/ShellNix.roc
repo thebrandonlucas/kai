@@ -3,7 +3,6 @@ import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Shell as ShellCommand
 import EnvironmentNix
-import ShellNixValidation
 
 ShellNix := [].{
 	shell_nix_actions = [NixBackend.flake_template]
@@ -14,7 +13,15 @@ ShellNix := [].{
 		actions: shell_nix_actions,
 		backend: NixBackend.backend.name,
 		command: ShellCommand.command.call.name,
-		validator: ShellNixValidation.validator,
+		validator: Validate({
+			string_lists: [
+				{
+					field: ShellCommand.packages_field,
+					rules: NixBackend.package_rules,
+				},
+			],
+			target: NoTargetValidation,
+		}),
 		renderer: ShellNix.renderer,
 	}
 
