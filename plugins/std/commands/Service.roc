@@ -1,14 +1,13 @@
 # Shared `command` interface for working with machine services
-import parser.Fields
 import kai.Kaifile
 import kai.Plugin
 import Secret
 
 Service := [].{
 	fields = [
-		Fields.required("artifact", String),
-		Fields.required("secrets", StringList),
-		Fields.required("restart", Identifier),
+		Kaifile.required("artifact", String),
+		Kaifile.required("secrets", StringList),
+		Kaifile.required("restart", Identifier),
 	]
 
 	name_rules : List(Plugin.TextRule)

@@ -20,7 +20,7 @@ CustomPlugin := [].{
 	block : Plugin.KaifileBlock
 	block = Kaifile.block({
 		header: "custom",
-		fields: [Fields.required("message", String)],
+		fields: [Kaifile.required("message", String)],
 	})
 
 	command : Plugin.Command

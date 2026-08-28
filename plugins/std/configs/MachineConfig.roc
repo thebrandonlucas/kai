@@ -1,14 +1,14 @@
 # Shared configuration schema and validation for machines.
-import parser.Fields
 import kai.Kaifile
 import kai.Plugin
+import EnvironmentConfig
 
 MachineConfig := [].{
 	fields = [
-		Fields.required("environment", Identifier),
-		Fields.required("system", String),
-		Fields.optional("users", StringList),
-		Fields.optional("services", StringList),
+		Kaifile.required_reference("environment", EnvironmentConfig.block),
+		Kaifile.required("system", String),
+		Kaifile.optional("users", StringList),
+		Kaifile.optional("services", StringList),
 	]
 
 	name_rules : List(Plugin.TextRule)

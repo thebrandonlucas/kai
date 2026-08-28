@@ -197,6 +197,7 @@ Plugin := [].{
 	optional_argument = |name| OptionalArgument(name)
 
 	KaifileBlock : Kaifile.Block(TextRule)
+	KaifileField : Kaifile.Field(TextRule)
 
 	ConfigBlockRequirement : [
 		OptionalConfigBlock(KaifileBlock),
@@ -260,9 +261,18 @@ Plugin := [].{
 		match kaifile.selection {
 			RequiredBlock =>
 				if Kaifile.is_named(kaifile) {
+					config = match Kaifile.references(kaifile) {
+						[reference, ..] =>
+							NamedWithRelatedConfig({
+								lookup,
+								related: Kaifile.from_reference_target(reference.target),
+								related_field: reference.field.name,
+							})
+						[] => NamedConfig({ lookup: lookup })
+					}
 					Plugin.Command.{
 						call: command_call,
-						config: NamedConfig({ lookup: lookup }),
+						config,
 						config_block: RequiredConfigBlock(kaifile),
 					}
 				} else {
@@ -1143,7 +1153,7 @@ Plugin := [].{
 	}
 
 	StringListValidation := {
-		field : Fields.Field,
+		field : KaifileField,
 		rules : List(StringListRule),
 	}
 
@@ -1266,11 +1276,12 @@ Plugin := [].{
 		}
 
 	validated_strings : Fields.Configuration,
-	Fields.Field -> Try(
+	KaifileField -> Try(
 		List(Str),
 		RendererDiagnostic,
 	)
-	validated_strings = |config, field|
+	validated_strings = |config, declared_field| {
+		field = Kaifile.parser_field(declared_field)
 		match Fields.get_strings(config, field.name) {
 			Ok(values) => Ok(values)
 			Err(MissingField(_)) if field.presence == Optional => Ok([])
@@ -1285,6 +1296,7 @@ Plugin := [].{
 				),
 			})
 		}
+	}
 
 	validated_target : RenderContext -> Try(Str, RendererDiagnostic)
 	validated_target = |context|
@@ -1490,6 +1502,7 @@ Plugin := [].{
 						)
 					}
 				}?
+				Plugin.validate_command_references(first, plugin)?
 				Plugin.validate_command_schemas(rest, plugin)
 			}
 		}
@@ -1514,6 +1527,152 @@ Plugin := [].{
 			)
 		}
 	}
+
+	validate_command_references : Command, Str -> Try({}, RegistryDiagnostic)
+	validate_command_references = |selected_command, plugin| {
+		primary = Plugin.config_block_schema(selected_command.config_block)
+		match selected_command.config {
+			DirectConfig(_) | NamedConfig(_) =>
+				Plugin.validate_no_reference_fields(
+					primary,
+					selected_command.call.name,
+					plugin,
+				)
+			DirectOrNamedConfig({ argument: _, lookup: _, named }) => {
+				Plugin.validate_no_reference_fields(
+					primary,
+					selected_command.call.name,
+					plugin,
+				)?
+				Plugin.validate_no_reference_fields(
+					named,
+					selected_command.call.name,
+					plugin,
+				)
+			}
+			NamedWithRelatedConfig({ lookup: _, related, related_field }) =>
+				match selected_command.config_block {
+					OptionalConfigBlock(_) =>
+						Plugin.registry_failure(
+							plugin,
+							"reference fields require a required Kaifile block",
+						)
+					RequiredConfigBlock(_) =>
+						Plugin.validate_reference_relationship(
+							primary,
+							related,
+							related_field,
+							selected_command.call.name,
+							plugin,
+						)
+					}
+			}
+	}
+
+	validate_no_reference_fields :
+		KaifileBlock, Str, Str -> Try({}, RegistryDiagnostic)
+	validate_no_reference_fields = |schema, command_name, plugin|
+		match Kaifile.references(schema) {
+			[] => Ok({})
+			[_] =>
+				Plugin.registry_failure(
+					plugin,
+					Str.join_with(
+						[
+							"command '${command_name}' reference fields require",
+							"a required named Kaifile block",
+						],
+						" ",
+					),
+				)
+			_ => Plugin.reference_count_failure(command_name, plugin)
+		}
+
+	validate_reference_relationship :
+		KaifileBlock,
+		KaifileBlock,
+		Str,
+		Str,
+		Str -> Try(
+			{},
+			RegistryDiagnostic,
+		)
+	validate_reference_relationship =
+		|primary, related, related_field, command_name, plugin|
+			match Kaifile.references(primary) {
+				[reference] => {
+					field = reference.field
+					target = Kaifile.from_reference_target(reference.target)
+					if field.presence != Required {
+						Plugin.registry_failure(
+							plugin,
+							"reference field '${field.name}' must be required",
+						)
+					} else if field.value != Identifier and field.value != String {
+						Plugin.registry_failure(
+							plugin,
+							Str.join_with(
+								[
+									"reference field '${field.name}' must use",
+									"identifier or quoted string syntax",
+								],
+								" ",
+							),
+						)
+					} else if !Kaifile.is_named(target) {
+						Plugin.registry_failure(
+							plugin,
+							Str.join_with(
+								[
+									"reference field '${field.name}' must target",
+									"a named Kaifile block schema",
+								],
+								" ",
+							),
+						)
+					} else if reference.target.reference_count > 0 {
+						Plugin.registry_failure(
+							plugin,
+							Str.join_with(
+								[
+									"reference field '${field.name}' target must not",
+									"contain reference fields",
+								],
+								" ",
+							),
+						)
+					} else if
+						field.name != related_field or
+							!Plugin.same_config_descriptor(target, related)
+							{
+								Plugin.registry_failure(
+									plugin,
+									"command '${command_name}' reference metadata does not match",
+								)
+							} else {
+								Ok({})
+							}
+				}
+				[] =>
+					Plugin.registry_failure(
+						plugin,
+						"command '${command_name}' must declare its reference field",
+					)
+				_ => Plugin.reference_count_failure(command_name, plugin)
+			}
+
+	reference_count_failure : Str, Str -> Try({}, RegistryDiagnostic)
+	reference_count_failure = |command_name, plugin|
+		Plugin.registry_failure(
+			plugin,
+			Str.join_with(
+				[
+					"command '${command_name}' Kaifile block may declare",
+					"at most one reference field",
+				],
+				" ",
+			),
+		)
 
 	validate_required_schema_argument :
 		CommandCall, KaifileBlock, Str -> Try({}, RegistryDiagnostic)

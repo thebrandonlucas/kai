@@ -2,11 +2,34 @@
 import parser.Fields
 
 Kaifile := [].{
-	BlockSchema(name_rule) : {
+	ReferenceTarget(name_rule) := {
 		fields : List(Fields.Field),
 		header : Str,
 		kind : [DirectBlockHeader, NamedBlockHeader],
 		name_rules : List(name_rule),
+		reference_count : U64,
+	}
+
+	Field(name_rule) : [
+		ReferenceField(
+			{
+				field : Fields.Field,
+				target : ReferenceTarget(name_rule),
+			},
+		),
+		ValueField(Fields.Field),
+	]
+
+	BlockSchema(name_rule) : {
+		fields : List(Field(name_rule)),
+		header : Str,
+		kind : [DirectBlockHeader, NamedBlockHeader],
+		name_rules : List(name_rule),
+	}
+
+	Reference(name_rule) := {
+		field : Fields.Field,
+		target : ReferenceTarget(name_rule),
 	}
 
 	Block(name_rule) : {
@@ -20,7 +43,53 @@ Kaifile := [].{
 		],
 	}
 
-	block : { fields : List(Fields.Field), header : Str } -> Block(rule)
+	required : Str, Fields.ValueShape -> Field(rule)
+	required = |name, value| ValueField(Fields.required(name, value))
+
+	optional : Str, Fields.ValueShape -> Field(rule)
+	optional = |name, value| ValueField(Fields.optional(name, value))
+
+	required_reference : Str, Block(rule) -> Field(rule)
+	required_reference = |name, target|
+		ReferenceField({
+			field: Fields.required(name, Identifier),
+			target: Kaifile.reference_target(target),
+		})
+
+	required_quoted_reference : Str, Block(rule) -> Field(rule)
+	required_quoted_reference = |name, target|
+		ReferenceField({
+			field: Fields.required(name, String),
+			target: Kaifile.reference_target(target),
+		})
+
+	parser_field : Field(rule) -> Fields.Field
+	parser_field = |field|
+		match field {
+			ReferenceField(reference) => reference.field
+			ValueField(value_field) => value_field
+		}
+
+	references : Block(rule) -> List(Reference(rule))
+	references = |schema_block|
+		Kaifile.collect_references(schema_block.schema.fields, [])
+
+	collect_references : List(Field(rule)),
+	List(Reference(rule)) -> List(
+		Reference(rule),
+	)
+	collect_references = |fields, collected|
+		match fields {
+			[] => collected
+			[first, .. as rest] =>
+				match first {
+					ReferenceField(reference) =>
+						Kaifile.collect_references(rest, collected.append(reference))
+					ValueField(_) => Kaifile.collect_references(rest, collected)
+				}
+			}
+
+	block : { fields : List(Field(rule)), header : Str } -> Block(rule)
 	block = |{ fields, header }| {
 		schema: {
 			fields,
@@ -33,7 +102,7 @@ Kaifile := [].{
 
 	named_block :
 		{
-			fields : List(Fields.Field),
+			fields : List(Field(rule)),
 			header : Str,
 			name_rules : List(rule),
 		} -> Block(rule)
@@ -42,8 +111,8 @@ Kaifile := [].{
 		selection: RequiredBlock,
 	}
 
-	optional : Block(rule) -> Block(rule)
-	optional = |schema_block| {
+	optional_block : Block(rule) -> Block(rule)
+	optional_block = |schema_block| {
 		schema: schema_block.schema,
 		selection: OptionalBlock,
 	}
@@ -65,8 +134,29 @@ Kaifile := [].{
 	from_schema : BlockSchema(rule) -> Block(rule)
 	from_schema = |schema| { schema, selection: RequiredBlock }
 
+	from_reference_target : ReferenceTarget(rule) -> Block(rule)
+	from_reference_target = |target| {
+		schema: {
+			fields: target.fields.map(|field| ValueField(field)),
+			header: target.header,
+			kind: target.kind,
+			name_rules: target.name_rules,
+		},
+		selection: RequiredBlock,
+	}
+
+	reference_target : Block(rule) -> ReferenceTarget(rule)
+	reference_target = |target| {
+		fields: target.schema.fields.map(Kaifile.parser_field),
+		header: target.schema.header,
+		kind: target.schema.kind,
+		name_rules: target.schema.name_rules,
+		reference_count: Kaifile.references(target).len(),
+	}
+
 	body : Block(rule) -> Fields.Shape
-	body = |schema_block| Fields.object(schema_block.schema.fields)
+	body = |schema_block|
+		Fields.object(schema_block.schema.fields.map(Kaifile.parser_field))
 
 	block_name : Block(rule) -> Str
 	block_name = |schema_block|

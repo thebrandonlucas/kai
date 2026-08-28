@@ -1,14 +1,13 @@
 # Shared configuration schema for developer environments.
-import parser.Fields
 import kai.Kaifile
 import kai.Plugin
 
 EnvironmentConfig := [].{
-	packages_field : Fields.Field
-	packages_field = Fields.required("packages", StringList)
+	packages_field : Plugin.KaifileField
+	packages_field = Kaifile.required("packages", StringList)
 
-	overlays_field : Fields.Field
-	overlays_field = Fields.optional("overlays", StringList)
+	overlays_field : Plugin.KaifileField
+	overlays_field = Kaifile.optional("overlays", StringList)
 
 	fields = [packages_field, overlays_field]
 

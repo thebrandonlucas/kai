@@ -2,7 +2,6 @@
 #
 # These are very useful for running a series of `task`s in certain
 # `environments`.
-import parser.Fields
 import kai.Kaifile
 import kai.Plugin
 
@@ -13,7 +12,7 @@ Workflow := [].{
 	block : Plugin.KaifileBlock
 	block = Kaifile.named_block({
 		header: "workflow <workflow>",
-		fields: [Fields.required("steps", StringList)],
+		fields: [Kaifile.required("steps", StringList)],
 		name_rules,
 	})
 
