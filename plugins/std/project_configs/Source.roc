@@ -1,5 +1,4 @@
 import parser.Body
-import parser.Bytes
 import kai.Plugin
 
 Source := [].{
@@ -20,7 +19,7 @@ Source := [].{
 		NonemptyText("source name must not be empty"),
 		DisallowedPrefix({ message: "source name must not start with '.'", prefix: "." }),
 		AllBytes({
-			allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte(Bytes.period), ExactByte(Bytes.underscore), ExactByte(Bytes.hyphen)],
+			allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte('.'), ExactByte('_'), ExactByte('-')],
 			message: "source name may contain only ASCII letters, digits, '.', '_', and '-'",
 		}),
 	]
@@ -29,9 +28,9 @@ Source := [].{
 	url_rules = [
 		NonemptyText("source URL must not be empty"),
 		BytesInRanges({
-			excluded: [Bytes.double_quote, Bytes.dollar_sign, Bytes.backslash],
+			excluded: ['"', '$', '\\'],
 			message: "source URL contains characters unsafe for Nix output",
-			ranges: [{ max: Bytes.tilde, min: Bytes.exclamation_mark }],
+			ranges: [{ max: '~', min: '!' }],
 		}),
 	]
 

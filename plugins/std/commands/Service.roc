@@ -1,5 +1,4 @@
 import parser.Body
-import parser.Bytes
 import kai.Plugin
 import Secret
 
@@ -15,7 +14,7 @@ Service := [].{
 	name_rules = [
 		NonemptyText("service name must not be empty"),
 		AllBytes({
-			allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte(Bytes.underscore), ExactByte(Bytes.hyphen)],
+			allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte('_'), ExactByte('-')],
 			message: "service name may contain only ASCII letters, digits, '_', and '-'",
 		}),
 	]

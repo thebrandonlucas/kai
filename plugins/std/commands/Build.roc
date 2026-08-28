@@ -1,5 +1,4 @@
 import parser.Body
-import parser.Bytes
 import kai.Plugin
 
 Build := [].{
@@ -18,7 +17,7 @@ Build := [].{
 		NonemptyText("artifact name must not be empty"),
 		DisallowedPrefix({ message: "artifact name must not start with '.'", prefix: "." }),
 		AllBytes({
-			allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte(Bytes.period), ExactByte(Bytes.underscore), ExactByte(Bytes.hyphen)],
+			allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte('.'), ExactByte('_'), ExactByte('-')],
 			message: "artifact name may contain only ASCII letters, digits, '.', '_', and '-'",
 		}),
 	]

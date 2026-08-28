@@ -1,5 +1,3 @@
-import Bytes
-
 Body := [].{
 
 	ValueShape : [Identifier, String, StringList]
@@ -103,7 +101,7 @@ Body := [].{
 				})
 			} else {
 				colon_index = Body.skip_trivia(bytes, name_result.rest)
-				if Body.byte_at(bytes, colon_index) != Bytes.colon {
+				if Body.byte_at(bytes, colon_index) != ':' {
 					Err({
 						byte_offset: colon_index,
 						kind: InvalidSyntax("expected ':' after field '${name}'"),
@@ -140,7 +138,7 @@ Body := [].{
 				Ok({ rest: parsed.rest, value: StringValue(parsed.value) })
 			}
 			String =>
-				if Body.byte_at(bytes, index) != Bytes.double_quote {
+				if Body.byte_at(bytes, index) != '"' {
 					Err({
 						byte_offset: index,
 						kind: WrongType({
@@ -153,7 +151,7 @@ Body := [].{
 					Ok({ rest: parsed.rest, value: StringValue(parsed.value) })
 				}
 			StringList =>
-				if Body.byte_at(bytes, index) != Bytes.open_square_bracket {
+				if Body.byte_at(bytes, index) != '[' {
 					Err({
 						byte_offset: index,
 						kind: WrongType({
@@ -212,22 +210,22 @@ Body := [].{
 				byte_offset: start,
 				kind: InvalidSyntax("unterminated list in field '${field_name}'"),
 			})
-		} else if byte == Bytes.close_square_bracket and allow_end {
+		} else if byte == ']' and allow_end {
 			Ok({ rest: start + 1, values })
-		} else if byte == Bytes.close_square_bracket {
+		} else if byte == ']' {
 			Err({
 				byte_offset: start,
 				kind: InvalidSyntax("expected a string after ',' in field '${field_name}'"),
 			})
-		} else if byte != Bytes.double_quote {
+		} else if byte != '"' {
 			Err({ byte_offset: start, kind: WrongListItem(field_name) })
 		} else {
 			parsed = Body.parse_string(bytes, start)?
 			next = Body.skip_trivia(bytes, parsed.rest)
 			next_byte = Body.byte_at(bytes, next)
-			if next_byte == Bytes.comma {
+			if next_byte == ',' {
 				Body.parse_string_list(bytes, next + 1, field_name, values.append(parsed.value), Bool.False)
-			} else if next_byte == Bytes.close_square_bracket {
+			} else if next_byte == ']' {
 				Ok({ rest: next + 1, values: values.append(parsed.value) })
 			} else {
 				Err({ byte_offset: next, kind: InvalidSyntax("expected ',' or ']' in field '${field_name}'") })
@@ -254,9 +252,9 @@ Body := [].{
 			byte = Body.byte_at(bytes, index)
 			if escaped {
 				Body.find_string_end(bytes, index + 1, Bool.False)
-			} else if byte == Bytes.backslash {
+			} else if byte == '\\' {
 				Body.find_string_end(bytes, index + 1, Bool.True)
-			} else if byte == Bytes.double_quote {
+			} else if byte == '"' {
 				Ok(index)
 			} else {
 				Body.find_string_end(bytes, index + 1, Bool.False)
@@ -291,7 +289,7 @@ Body := [].{
 			byte = Body.byte_at(bytes, index)
 			if Body.is_whitespace(byte) {
 				Body.skip_trivia(bytes, index + 1)
-			} else if byte == Bytes.hash {
+			} else if byte == '#' {
 				Body.skip_trivia(bytes, Body.skip_comment(bytes, index + 1))
 			} else {
 				index
@@ -300,7 +298,7 @@ Body := [].{
 
 	skip_comment : List(U8), U64 -> U64
 	skip_comment = |bytes, index|
-		if index >= bytes.len() or Body.byte_at(bytes, index) == Bytes.line_feed {
+		if index >= bytes.len() or Body.byte_at(bytes, index) == '\n' {
 			index
 		} else {
 			Body.skip_comment(bytes, index + 1)
@@ -308,28 +306,28 @@ Body := [].{
 
 	is_whitespace : U8 -> Bool
 	is_whitespace = |byte|
-		byte == Bytes.space or
-			byte == Bytes.horizontal_tab or
-				byte == Bytes.line_feed or
-					byte == Bytes.carriage_return
+		byte == ' ' or
+			byte == '\t' or
+				byte == '\n' or
+					byte == '\r'
 
 	is_name_start : U8 -> Bool
 	is_name_start = |byte|
-		(byte >= Bytes.uppercase_a and byte <= Bytes.uppercase_z) or
-			(byte >= Bytes.lowercase_a and byte <= Bytes.lowercase_z) or
-				byte == Bytes.underscore
+		(byte >= 'A' and byte <= 'Z') or
+			(byte >= 'a' and byte <= 'z') or
+				byte == '_'
 
 	is_name_continue : U8 -> Bool
 	is_name_continue = |byte|
 		Body.is_name_start(byte) or
-			(byte >= Bytes.digit_zero and byte <= Bytes.digit_nine)
+			(byte >= '0' and byte <= '9')
 
 	is_identifier_continue : U8 -> Bool
 	is_identifier_continue = |byte|
-		Body.is_name_continue(byte) or byte == Bytes.hyphen or byte == Bytes.period
+		Body.is_name_continue(byte) or byte == '-' or byte == '.'
 
 	byte_at : List(U8), U64 -> U8
-	byte_at = |bytes, index| bytes.get(index) ?? Bytes.nul
+	byte_at = |bytes, index| bytes.get(index) ?? 0
 
 	find_field : List(Field), Str -> Try(Field, [NotFound])
 	find_field = |fields, name|

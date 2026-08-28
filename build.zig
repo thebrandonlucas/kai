@@ -228,7 +228,6 @@ pub fn build(b: *std.Build) void {
     build_fuzz.addFileArg(b.path("fuzz/Config.roc"));
     build_fuzz.addFileInput(b.path("xkai/parser/main.roc"));
     build_fuzz.addFileInput(b.path("xkai/parser/Config.roc"));
-    build_fuzz.addFileInput(b.path("xkai/parser/Bytes.roc"));
     const fuzz_executable = build_fuzz.addPrefixedOutputFileArg(
         "--output=",
         "kai-config-fuzz",
