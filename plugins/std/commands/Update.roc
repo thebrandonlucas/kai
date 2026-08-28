@@ -10,6 +10,6 @@ Update := [].{
 	command = Plugin.command_with_backend_blocks({
 		backend_blocks: RequireBackendSpecific,
 		call: Plugin.call("update", []),
-		kaifile: Kaifile.optional(block),
+		kaifile: Kaifile.optional_block(block),
 	})
 }

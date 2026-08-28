@@ -1,17 +1,16 @@
 # Shared interface for `build` artifact/executable commands
-import parser.Fields
 import kai.Kaifile
 import kai.Plugin
 import configs.EnvironmentConfig
 
 Build := [].{
-	inputs_field = Fields.optional("inputs", StringList)
+	inputs_field = Kaifile.optional("inputs", StringList)
 
 	fields = [
-		Fields.required("environment", Identifier),
+		Kaifile.required_reference("environment", EnvironmentConfig.block),
 		inputs_field,
-		Fields.required("run", StringList),
-		Fields.required("output", String),
+		Kaifile.required("run", StringList),
+		Kaifile.required("output", String),
 	]
 
 	artifact_name_rules : List(Plugin.TextRule)
@@ -68,13 +67,8 @@ Build := [].{
 	})
 
 	command : Plugin.Command
-	command = Plugin.Command.{
+	command = Plugin.command({
 		call: Plugin.call("build", [Plugin.required_argument("artifact")]),
-		config: NamedWithRelatedConfig({
-			lookup: QualifiedThenUnqualified,
-			related: EnvironmentConfig.block,
-			related_field: "environment",
-		}),
-		config_block: RequiredConfigBlock(block),
-	}
+		kaifile: block,
+	})
 }

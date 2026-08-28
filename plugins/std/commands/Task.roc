@@ -2,15 +2,14 @@
 #
 # These can be anything e.g. commands you would run in the shell.
 # They pair naturally with workflows to run tasks in series i.e for CI.
-import parser.Fields
 import kai.Kaifile
 import kai.Plugin
 import configs.EnvironmentConfig
 
 Task := [].{
 	fields = [
-		Fields.required("environment", String),
-		Fields.required("run", StringList),
+		Kaifile.required_quoted_reference("environment", EnvironmentConfig.block),
+		Kaifile.required("run", StringList),
 	]
 
 	name_rules : List(Plugin.TextRule)
@@ -31,13 +30,9 @@ Task := [].{
 	block = Kaifile.named_block({ header: "task <task>", fields, name_rules })
 
 	command : Plugin.Command
-	command = Plugin.Command.{
+	command = Plugin.command_with_backend_blocks({
+		backend_blocks: RequireBackendSpecific,
 		call: Plugin.call("run", [Plugin.required_argument("task")]),
-		config: NamedWithRelatedConfig({
-			lookup: QualifiedOnly,
-			related: EnvironmentConfig.block,
-			related_field: "environment",
-		}),
-		config_block: RequiredConfigBlock(block),
-	}
+		kaifile: block,
+	})
 }
