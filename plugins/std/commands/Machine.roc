@@ -1,14 +1,14 @@
 import parser.Body
+import kai.Kaifile
 import kai.Plugin
 
 Machine := [].{
-	body : Body.Shape
-	body = Body.object([
+	fields = [
 		Body.required("environment", Identifier),
 		Body.required("system", String),
 		Body.optional("users", StringList),
 		Body.optional("services", StringList),
-	])
+	]
 
 	name_rules : List(Plugin.TextRule)
 	name_rules = [
@@ -67,20 +67,24 @@ Machine := [].{
 		invalid.concat(duplicates)
 	}
 
+	block : Plugin.KaifileBlock
+	block = Kaifile.named_block({ header: "machine <machine>", fields, name_rules })
+
+	environment_block : Plugin.KaifileBlock
+	environment_block = Kaifile.named_block({
+		header: "environment <environment>",
+		fields: [Body.required("packages", StringList), Body.optional("overlays", StringList)],
+		name_rules: [],
+	})
+
 	command : Plugin.Command
 	command = Plugin.Command.{
-		body,
 		call: Plugin.call("machine", [Plugin.required_argument("machine")]),
 		config: NamedWithRelatedConfig({
 			lookup: QualifiedThenUnqualified,
-			name_rules,
-			related_block: "environment",
-			related_body: Body.object([
-				Body.required("packages", StringList),
-				Body.optional("overlays", StringList),
-			]),
+			related: environment_block,
 			related_field: "environment",
 		}),
-		config_block: RequiredConfigBlock("machine"),
+		config_block: RequiredConfigBlock(block),
 	}
 }

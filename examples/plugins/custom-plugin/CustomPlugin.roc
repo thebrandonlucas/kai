@@ -11,22 +11,23 @@
 # "custom-plugin-output.txt" with the message "Hello from CustomPlugin!"
 
 import parser.Body
+import kai.Kaifile
 import kai.Plugin
 
 CustomPlugin := [].{
 	name = "custom"
 
+	block : Plugin.KaifileBlock
+	block = Kaifile.block({
+		header: "custom",
+		fields: [Body.required("message", String)],
+	})
+
 	command : Plugin.Command
 	command = Plugin.Command.{
-		body: Body.object([
-			Body.required(
-				"message",
-				String,
-			),
-		]),
 		call: Plugin.call("custom-write", []),
 		config: DirectConfig(QualifiedThenUnqualified),
-		config_block: RequiredConfigBlock("custom"),
+		config_block: RequiredConfigBlock(block),
 	}
 
 	commands : List(Plugin.Command)

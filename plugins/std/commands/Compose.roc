@@ -1,12 +1,14 @@
-import parser.Body
+import kai.Kaifile
 import kai.Plugin
 
 Compose := [].{
+	block : Plugin.KaifileBlock
+	block = Kaifile.block({ header: "compose", fields: [] })
+
 	command : Plugin.Command
 	command = Plugin.Command.{
-		body: Body.object([]),
 		call: Plugin.call("compose", [Plugin.required_argument("machine")]),
 		config: DirectConfig(QualifiedThenUnqualified),
-		config_block: OptionalConfigBlock("compose"),
+		config_block: OptionalConfigBlock(block),
 	}
 }

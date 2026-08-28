@@ -1,4 +1,5 @@
 import "Executor.roc" as executor_source : Str
+import "Kaifile.roc" as kaifile_source : Str
 import "package.roc" as package_source : Str
 import "parser/Body.roc" as body_source : Str
 import "parser/Config.roc" as config_source : Str
@@ -16,6 +17,7 @@ RuntimeBundle := [].{
 		app_imports: ["import Executor"],
 		files: [
 			{ destination: "Executor.roc", contents: executor_source },
+			{ destination: "Kaifile.roc", contents: kaifile_source },
 			{ destination: "package.roc", contents: package_source },
 			{ destination: "Plugin.roc", contents: plugin_source },
 			{ destination: "VERSION", contents: version_source },

@@ -1,12 +1,14 @@
-import parser.Body
+import kai.Kaifile
 import kai.Plugin
 
 SplitCommand := [].{
+	block : Plugin.KaifileBlock
+	block = Kaifile.block({ header: "split", fields: [] })
+
 	command : Plugin.Command
 	command = Plugin.Command.{
-		body: Body.object([]),
 		call: Plugin.call("split-command", []),
 		config: DirectConfig(QualifiedThenUnqualified),
-		config_block: OptionalConfigBlock("split"),
+		config_block: OptionalConfigBlock(block),
 	}
 }

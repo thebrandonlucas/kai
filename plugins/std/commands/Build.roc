@@ -1,16 +1,16 @@
 import parser.Body
+import kai.Kaifile
 import kai.Plugin
 
 Build := [].{
 	inputs_field = Body.optional("inputs", StringList)
 
-	body : Body.Shape
-	body = Body.object([
+	fields = [
 		Body.required("environment", Identifier),
 		inputs_field,
 		Body.required("run", StringList),
 		Body.required("output", String),
-	])
+	]
 
 	artifact_name_rules : List(Plugin.TextRule)
 	artifact_name_rules = [
@@ -42,20 +42,24 @@ Build := [].{
 	environment_rules = |artifact_name|
 		[NonemptyText("build '${artifact_name}' environment name must not be empty")]
 
+	block : Plugin.KaifileBlock
+	block = Kaifile.named_block({ header: "build <artifact>", fields, name_rules: artifact_name_rules })
+
+	environment_block : Plugin.KaifileBlock
+	environment_block = Kaifile.named_block({
+		header: "environment <environment>",
+		fields: [Body.required("packages", StringList), Body.optional("overlays", StringList)],
+		name_rules: [],
+	})
+
 	command : Plugin.Command
 	command = Plugin.Command.{
-		body,
 		call: Plugin.call("build", [Plugin.required_argument("artifact")]),
 		config: NamedWithRelatedConfig({
 			lookup: QualifiedThenUnqualified,
-			name_rules: artifact_name_rules,
-			related_block: "environment",
-			related_body: Body.object([
-				Body.required("packages", StringList),
-				Body.optional("overlays", StringList),
-			]),
+			related: environment_block,
 			related_field: "environment",
 		}),
-		config_block: RequiredConfigBlock("build"),
+		config_block: RequiredConfigBlock(block),
 	}
 }
