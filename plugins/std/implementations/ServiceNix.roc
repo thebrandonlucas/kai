@@ -1,5 +1,5 @@
 # An implementation for defining nix machine services.
-import parser.Body
+import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Build as BuildCommand
@@ -22,17 +22,17 @@ ServiceNix := [].{
 			[selected_name] => Ok(selected_name)
 			_ => Err({ byte_offset: None, message: "service requires exactly one name" })
 		}?
-		artifact_name = Body.get_string(context.config, "artifact") ? |_|
+		artifact_name = Fields.get_string(context.config, "artifact") ? |_|
 			{
 				byte_offset: None,
 				message: "validated service configuration is missing 'artifact'",
 			}
-		secrets = Body.get_strings(context.config, "secrets") ? |_|
+		secrets = Fields.get_strings(context.config, "secrets") ? |_|
 			{
 				byte_offset: None,
 				message: "validated service configuration is missing 'secrets'",
 			}
-		restart = Body.get_string(context.config, "restart") ? |_|
+		restart = Fields.get_string(context.config, "restart") ? |_|
 			{
 				byte_offset: None,
 				message: "validated service configuration is missing 'restart'",
@@ -222,7 +222,7 @@ ServiceNix := [].{
 						message: "service references ambiguous secret '${first}'",
 					})
 				}?
-				provision = Body.get_string(entry.config, "provision") ? |_|
+				provision = Fields.get_string(entry.config, "provision") ? |_|
 					{
 						byte_offset: None,
 						message: "validated secret '${first}' is missing 'provision'",

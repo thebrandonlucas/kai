@@ -1,9 +1,9 @@
 # Declarative schemas describe the Kaifile blocks consumed by plugin commands.
-import parser.Body
+import parser.Fields
 
 Kaifile := [].{
 	BlockSchema(name_rule) : {
-		fields : List(Body.Field),
+		fields : List(Fields.Field),
 		header : Str,
 		kind : [DirectBlockHeader, NamedBlockHeader],
 		name_rules : List(name_rule),
@@ -20,7 +20,7 @@ Kaifile := [].{
 		],
 	}
 
-	block : { fields : List(Body.Field), header : Str } -> Block(rule)
+	block : { fields : List(Fields.Field), header : Str } -> Block(rule)
 	block = |{ fields, header }| {
 		schema: {
 			fields,
@@ -33,7 +33,7 @@ Kaifile := [].{
 
 	named_block :
 		{
-			fields : List(Body.Field),
+			fields : List(Fields.Field),
 			header : Str,
 			name_rules : List(rule),
 		} -> Block(rule)
@@ -65,8 +65,8 @@ Kaifile := [].{
 	from_schema : BlockSchema(rule) -> Block(rule)
 	from_schema = |schema| { schema, selection: RequiredBlock }
 
-	body : Block(rule) -> Body.Shape
-	body = |schema_block| Body.object(schema_block.schema.fields)
+	body : Block(rule) -> Fields.Shape
+	body = |schema_block| Fields.object(schema_block.schema.fields)
 
 	block_name : Block(rule) -> Str
 	block_name = |schema_block|

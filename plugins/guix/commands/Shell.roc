@@ -1,11 +1,11 @@
 # `command` definition for Guix
-import parser.Body
+import parser.Fields
 import kai.Kaifile
 import kai.Plugin
 
 Shell := [].{
-	packages_field : Body.Field
-	packages_field = Body.required("packages", StringList)
+	packages_field : Fields.Field
+	packages_field = Fields.required("packages", StringList)
 
 	fields = [packages_field]
 

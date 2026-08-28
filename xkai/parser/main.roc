@@ -1,1 +1,1 @@
-package [Body, Config] {}
+package [Blocks, Fields] {}

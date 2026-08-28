@@ -1,5 +1,5 @@
-# Parse the body of a config block
-Body := [].{
+# Parse fields in a config block
+Fields := [].{
 
 	ValueShape : [Identifier, String, StringList]
 	Presence : [Optional, Required]
@@ -61,13 +61,13 @@ Body := [].{
 			Object(object_fields) => object_fields
 		}
 		bytes = body_text.to_utf8()
-		parsed = Body.parse_fields(
+		parsed = Fields.parse_fields(
 			bytes,
-			Body.skip_trivia(bytes, 0),
+			Fields.skip_trivia(bytes, 0),
 			fields,
 			[],
 		)?
-		Body.require_fields(
+		Fields.require_fields(
 			fields,
 			parsed.entries,
 			bytes.len(),
@@ -85,32 +85,32 @@ Body := [].{
 				Diagnostic,
 			)
 	parse_fields = |bytes, index, fields, entries| {
-		start = Body.skip_trivia(bytes, index)
+		start = Fields.skip_trivia(bytes, index)
 		if start >= bytes.len() {
 			Ok({ entries, rest: start })
 		} else {
-			name_result = Body.parse_name(bytes, start)?
+			name_result = Fields.parse_name(bytes, start)?
 			name = name_result.name
-			field = Body.find_field(fields, name) ? |_| {
+			field = Fields.find_field(fields, name) ? |_| {
 				byte_offset: start,
 				kind: UnknownField(name),
 			}
-			if Body.has_entry(entries, name) {
+			if Fields.has_entry(entries, name) {
 				Err({
 					byte_offset: start,
 					kind: DuplicateField(name),
 				})
 			} else {
-				colon_index = Body.skip_trivia(bytes, name_result.rest)
-				if Body.byte_at(bytes, colon_index) != ':' {
+				colon_index = Fields.skip_trivia(bytes, name_result.rest)
+				if Fields.byte_at(bytes, colon_index) != ':' {
 					Err({
 						byte_offset: colon_index,
 						kind: InvalidSyntax("expected ':' after field '${name}'"),
 					})
 				} else {
-					value_start = Body.skip_trivia(bytes, colon_index + 1)
-					parsed_value = Body.parse_value(bytes, value_start, field)?
-					Body.parse_fields(
+					value_start = Fields.skip_trivia(bytes, colon_index + 1)
+					parsed_value = Fields.parse_value(bytes, value_start, field)?
+					Fields.parse_fields(
 						bytes,
 						parsed_value.rest,
 						fields,
@@ -135,11 +135,11 @@ Body := [].{
 	parse_value = |bytes, index, field|
 		match field.value {
 			Identifier => {
-				parsed = Body.parse_identifier(bytes, index, field.name)?
+				parsed = Fields.parse_identifier(bytes, index, field.name)?
 				Ok({ rest: parsed.rest, value: StringValue(parsed.value) })
 			}
 			String =>
-				if Body.byte_at(bytes, index) != '"' {
+				if Fields.byte_at(bytes, index) != '"' {
 					Err({
 						byte_offset: index,
 						kind: WrongType({
@@ -148,11 +148,11 @@ Body := [].{
 						}),
 					})
 				} else {
-					parsed = Body.parse_string(bytes, index)?
+					parsed = Fields.parse_string(bytes, index)?
 					Ok({ rest: parsed.rest, value: StringValue(parsed.value) })
 				}
 			StringList =>
-				if Body.byte_at(bytes, index) != '[' {
+				if Fields.byte_at(bytes, index) != '[' {
 					Err({
 						byte_offset: index,
 						kind: WrongType({
@@ -161,7 +161,7 @@ Body := [].{
 						}),
 					})
 				} else {
-					parsed = Body.parse_string_list(
+					parsed = Fields.parse_string_list(
 						bytes,
 						index + 1,
 						field.name,
@@ -182,13 +182,13 @@ Body := [].{
 		Diagnostic,
 	)
 	parse_identifier = |bytes, start, field_name|
-		if !Body.is_name_start(Body.byte_at(bytes, start)) {
+		if !Fields.is_name_start(Fields.byte_at(bytes, start)) {
 			Err({
 				byte_offset: start,
 				kind: WrongType({ expected: Identifier, field: field_name }),
 			})
 		} else {
-			end = Body.find_identifier_end(bytes, start + 1)
+			end = Fields.find_identifier_end(bytes, start + 1)
 			value = Str.from_utf8(bytes.sublist({ start, len: end - start })) ?? ""
 			Ok({ rest: end, value })
 		}
@@ -196,8 +196,8 @@ Body := [].{
 	find_identifier_end : List(U8), U64 -> U64
 	find_identifier_end = |bytes, index|
 		if index < bytes.len() and
-			Body.is_identifier_continue(Body.byte_at(bytes, index)) {
-			Body.find_identifier_end(bytes, index + 1)
+			Fields.is_identifier_continue(Fields.byte_at(bytes, index)) {
+			Fields.find_identifier_end(bytes, index + 1)
 		} else {
 			index
 		}
@@ -213,8 +213,8 @@ Body := [].{
 				Diagnostic,
 			)
 	parse_string_list = |bytes, index, field_name, values, allow_end| {
-		start = Body.skip_trivia(bytes, index)
-		byte = Body.byte_at(bytes, start)
+		start = Fields.skip_trivia(bytes, index)
+		byte = Fields.byte_at(bytes, start)
 		if start >= bytes.len() {
 			Err({
 				byte_offset: start,
@@ -230,11 +230,11 @@ Body := [].{
 		} else if byte != '"' {
 			Err({ byte_offset: start, kind: WrongListItem(field_name) })
 		} else {
-			parsed = Body.parse_string(bytes, start)?
-			next = Body.skip_trivia(bytes, parsed.rest)
-			next_byte = Body.byte_at(bytes, next)
+			parsed = Fields.parse_string(bytes, start)?
+			next = Fields.skip_trivia(bytes, parsed.rest)
+			next_byte = Fields.byte_at(bytes, next)
 			if next_byte == ',' {
-				Body.parse_string_list(
+				Fields.parse_string_list(
 					bytes,
 					next + 1,
 					field_name,
@@ -256,7 +256,7 @@ Body := [].{
 
 	parse_string : List(U8), U64 -> Try({ rest : U64, value : Str }, Diagnostic)
 	parse_string = |bytes, start| {
-		end = Body.find_string_end(bytes, start + 1, Bool.False)?
+		end = Fields.find_string_end(bytes, start + 1, Bool.False)?
 		raw = Str.from_utf8(bytes.sublist({ start, len: end - start + 1 })) ?? ""
 		decoded = Json.parse(raw)
 		match decoded {
@@ -270,25 +270,25 @@ Body := [].{
 		if index >= bytes.len() {
 			Err({ byte_offset: index, kind: InvalidString("unterminated string") })
 		} else {
-			byte = Body.byte_at(bytes, index)
+			byte = Fields.byte_at(bytes, index)
 			if escaped {
-				Body.find_string_end(bytes, index + 1, Bool.False)
+				Fields.find_string_end(bytes, index + 1, Bool.False)
 			} else if byte == '\\' {
-				Body.find_string_end(bytes, index + 1, Bool.True)
+				Fields.find_string_end(bytes, index + 1, Bool.True)
 			} else if byte == '"' {
 				Ok(index)
 			} else {
-				Body.find_string_end(bytes, index + 1, Bool.False)
+				Fields.find_string_end(bytes, index + 1, Bool.False)
 			}
 		}
 
 	parse_name : List(U8), U64 -> Try({ name : Str, rest : U64 }, Diagnostic)
 	parse_name = |bytes, start| {
-		first = Body.byte_at(bytes, start)
-		if !Body.is_name_start(first) {
+		first = Fields.byte_at(bytes, start)
+		if !Fields.is_name_start(first) {
 			Err({ byte_offset: start, kind: InvalidSyntax("expected a field name") })
 		} else {
-			end = Body.find_name_end(bytes, start + 1)
+			end = Fields.find_name_end(bytes, start + 1)
 			name = Str.from_utf8(bytes.sublist({ start, len: end - start })) ?? ""
 			Ok({ name, rest: end })
 		}
@@ -296,8 +296,9 @@ Body := [].{
 
 	find_name_end : List(U8), U64 -> U64
 	find_name_end = |bytes, index|
-		if index < bytes.len() and Body.is_name_continue(Body.byte_at(bytes, index)) {
-			Body.find_name_end(bytes, index + 1)
+		if index < bytes.len() and
+			Fields.is_name_continue(Fields.byte_at(bytes, index)) {
+			Fields.find_name_end(bytes, index + 1)
 		} else {
 			index
 		}
@@ -307,11 +308,11 @@ Body := [].{
 		if index >= bytes.len() {
 			index
 		} else {
-			byte = Body.byte_at(bytes, index)
-			if Body.is_whitespace(byte) {
-				Body.skip_trivia(bytes, index + 1)
+			byte = Fields.byte_at(bytes, index)
+			if Fields.is_whitespace(byte) {
+				Fields.skip_trivia(bytes, index + 1)
 			} else if byte == '#' {
-				Body.skip_trivia(bytes, Body.skip_comment(bytes, index + 1))
+				Fields.skip_trivia(bytes, Fields.skip_comment(bytes, index + 1))
 			} else {
 				index
 			}
@@ -319,10 +320,10 @@ Body := [].{
 
 	skip_comment : List(U8), U64 -> U64
 	skip_comment = |bytes, index|
-		if index >= bytes.len() or Body.byte_at(bytes, index) == '\n' {
+		if index >= bytes.len() or Fields.byte_at(bytes, index) == '\n' {
 			index
 		} else {
-			Body.skip_comment(bytes, index + 1)
+			Fields.skip_comment(bytes, index + 1)
 		}
 
 	is_whitespace : U8 -> Bool
@@ -340,12 +341,12 @@ Body := [].{
 
 	is_name_continue : U8 -> Bool
 	is_name_continue = |byte|
-		Body.is_name_start(byte) or
+		Fields.is_name_start(byte) or
 			(byte >= '0' and byte <= '9')
 
 	is_identifier_continue : U8 -> Bool
 	is_identifier_continue = |byte|
-		Body.is_name_continue(byte) or byte == '-' or byte == '.'
+		Fields.is_name_continue(byte) or byte == '-' or byte == '.'
 
 	byte_at : List(U8), U64 -> U8
 	byte_at = |bytes, index| bytes.get(index) ?? 0
@@ -358,7 +359,7 @@ Body := [].{
 				if first.name == name {
 					Ok(first)
 				} else {
-					Body.find_field(rest, name)
+					Fields.find_field(rest, name)
 				}
 			}
 
@@ -366,7 +367,7 @@ Body := [].{
 	has_entry = |entries, name|
 		match entries {
 			[] => Bool.False
-			[first, .. as rest] => first.name == name or Body.has_entry(rest, name)
+			[first, .. as rest] => first.name == name or Fields.has_entry(rest, name)
 		}
 
 	require_fields : List(Field), List(Entry), U64 -> Try({}, Diagnostic)
@@ -374,10 +375,10 @@ Body := [].{
 		match fields {
 			[] => Ok({})
 			[first, .. as rest] =>
-				if first.presence == Required and !Body.has_entry(entries, first.name) {
+				if first.presence == Required and !Fields.has_entry(entries, first.name) {
 					Err({ byte_offset: end, kind: MissingField(first.name) })
 				} else {
-					Body.require_fields(rest, entries, end)
+					Fields.require_fields(rest, entries, end)
 				}
 			}
 
@@ -389,27 +390,27 @@ Body := [].{
 				if first.name == name {
 					Ok(first.value)
 				} else {
-					Body.find_entry(rest, name)
+					Fields.find_entry(rest, name)
 				}
 			}
 
 	get_string : Configuration, Str -> Try(Str, AccessError)
 	get_string = |Config(entries), name|
-		match Body.find_entry(entries, name)? {
+		match Fields.find_entry(entries, name)? {
 			StringValue(value) => Ok(value)
 			StringListValue(_) => Err(WrongType({ expected: String, field: name }))
 		}
 
 	get_strings : Configuration, Str -> Try(List(Str), AccessError)
 	get_strings = |Config(entries), name|
-		match Body.find_entry(entries, name)? {
+		match Fields.find_entry(entries, name)? {
 			StringListValue(values) => Ok(values)
 			StringValue(_) => Err(WrongType({ expected: StringList, field: name }))
 		}
 
 	maybe_string : Configuration, Str -> Try([None, Some(Str)], AccessError)
 	maybe_string = |Config(entries), name|
-		match Body.find_entry(entries, name) {
+		match Fields.find_entry(entries, name) {
 			Err(MissingField(_)) => Ok(None)
 			Err(WrongType(problem)) => Err(WrongType(problem))
 			Ok(StringValue(value)) => Ok(Some(value))
@@ -418,7 +419,7 @@ Body := [].{
 
 	maybe_strings : Configuration, Str -> Try([None, Some(List(Str))], AccessError)
 	maybe_strings = |Config(entries), name|
-		match Body.find_entry(entries, name) {
+		match Fields.find_entry(entries, name) {
 			Err(MissingField(_)) => Ok(None)
 			Err(WrongType(problem)) => Err(WrongType(problem))
 			Ok(StringListValue(values)) => Ok(Some(values))
@@ -437,7 +438,7 @@ Body := [].{
 			WrongType({ expected, field }) => Str.join_with(
 				[
 					"field '${field}' must be",
-					Body.shape_name(expected),
+					Fields.shape_name(expected),
 				],
 				" ",
 			)

@@ -1,15 +1,15 @@
 # Shared interface for defining and working with machines
-import parser.Body
+import parser.Fields
 import kai.Kaifile
 import kai.Plugin
 import configs.EnvironmentConfig
 
 Machine := [].{
 	fields = [
-		Body.required("environment", Identifier),
-		Body.required("system", String),
-		Body.optional("users", StringList),
-		Body.optional("services", StringList),
+		Fields.required("environment", Identifier),
+		Fields.required("system", String),
+		Fields.optional("users", StringList),
+		Fields.optional("services", StringList),
 	]
 
 	name_rules : List(Plugin.TextRule)

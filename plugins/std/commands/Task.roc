@@ -2,15 +2,15 @@
 #
 # These can be anything e.g. commands you would run in the shell.
 # They pair naturally with workflows to run tasks in series i.e for CI.
-import parser.Body
+import parser.Fields
 import kai.Kaifile
 import kai.Plugin
 import configs.EnvironmentConfig
 
 Task := [].{
 	fields = [
-		Body.required("environment", String),
-		Body.required("run", StringList),
+		Fields.required("environment", String),
+		Fields.required("run", StringList),
 	]
 
 	name_rules : List(Plugin.TextRule)

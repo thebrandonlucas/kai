@@ -1,5 +1,5 @@
 # Implements NixOS machine builds and service module integration.
-import parser.Body
+import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Machine as MachineCommand
@@ -55,14 +55,14 @@ MachineNix := [].{
 			})
 			SelectedRelatedConfig({ block: _, config }) => Ok(config)
 		}?
-		pkgs = Body.get_strings(environment, "packages") ? |_|
+		pkgs = Fields.get_strings(environment, "packages") ? |_|
 			{
 				byte_offset: None,
 				message: "validated machine environment is missing 'packages'",
 			}
 		overlays = EnvironmentNix.extract_overlays(environment)?
 		locked_overlays = EnvironmentNix.all_overlays(context)?
-		system = Body.get_string(context.config, "system") ? |_|
+		system = Fields.get_string(context.config, "system") ? |_|
 			{
 				byte_offset: None,
 				message: "validated machine configuration is missing 'system'",
@@ -340,9 +340,9 @@ MachineNix := [].{
 		services.map(|service| "          ./services/${service.name}")
 
 	optional_strings :
-		Body.Configuration, Str -> Try(List(Str), Plugin.RendererDiagnostic)
+		Fields.Configuration, Str -> Try(List(Str), Plugin.RendererDiagnostic)
 	optional_strings = |config, field|
-		match Body.maybe_strings(config, field) {
+		match Fields.maybe_strings(config, field) {
 			Ok(None) => Ok([])
 			Ok(Some(values)) => Ok(values)
 			Err(_) => Err({

@@ -1,5 +1,5 @@
 # An implementation for running workflows via nix
-import parser.Body
+import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Workflow as WorkflowCommand
@@ -16,7 +16,7 @@ WorkflowNix := [].{
 
 	renderer : Plugin.Renderer
 	renderer = |context| {
-		steps = Body.get_strings(context.config, "steps") ? |_| {
+		steps = Fields.get_strings(context.config, "steps") ? |_| {
 			byte_offset: None,
 			message: "validated workflow configuration is missing 'steps'",
 		}
@@ -95,7 +95,7 @@ WorkflowNix := [].{
 
 	skip_whitespace : List(U8), U64 -> U64
 	skip_whitespace = |bytes, index|
-		if index < bytes.len() and Body.is_whitespace(bytes.get(index) ?? 0) {
+		if index < bytes.len() and Fields.is_whitespace(bytes.get(index) ?? 0) {
 			WorkflowNix.skip_whitespace(bytes, index + 1)
 		} else {
 			index
@@ -103,7 +103,7 @@ WorkflowNix := [].{
 
 	find_word_end : List(U8), U64 -> U64
 	find_word_end = |bytes, index|
-		if index < bytes.len() and !Body.is_whitespace(bytes.get(index) ?? 0) {
+		if index < bytes.len() and !Fields.is_whitespace(bytes.get(index) ?? 0) {
 			WorkflowNix.find_word_end(bytes, index + 1)
 		} else {
 			index
