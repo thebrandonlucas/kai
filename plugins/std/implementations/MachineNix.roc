@@ -9,7 +9,7 @@ MachineNix := [].{
 	implementation = Plugin.Implementation.{
 		actions: [],
 		backend: NixBackend.backend.name,
-		command: MachineCommand.command.name,
+		command: MachineCommand.command.call.name,
 		renderer: MachineNix.renderer,
 		validator: NoValidation,
 	}
@@ -41,7 +41,6 @@ MachineNix := [].{
 	configuration = |context, command_name| {
 		name = match context.args {
 			[selected_name] => Ok(selected_name)
-			[] => Ok(NixBackend.backend.name)
 			_ => Err({ byte_offset: None, message: "${command_name} requires exactly one name" })
 		}?
 		environment = match context.related_config {

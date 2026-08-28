@@ -9,7 +9,7 @@ TaskNix := [].{
 	implementation = Plugin.Implementation.{
 		actions: [NixBackend.flake_template].concat(NixBackend.lock_templates),
 		backend: NixBackend.backend.name,
-		command: TaskCommand.command.name,
+		command: TaskCommand.command.call.name,
 		renderer: TaskNix.renderer,
 		validator: NoValidation,
 	}

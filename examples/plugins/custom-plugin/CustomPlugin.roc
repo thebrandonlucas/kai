@@ -16,21 +16,21 @@ import kai.Plugin
 CustomPlugin := [].{
 	name = "custom"
 
+	command : Plugin.Command
+	command = Plugin.Command.{
+		body: Body.object([
+			Body.required(
+				"message",
+				String,
+			),
+		]),
+		call: Plugin.call("custom-write", []),
+		config: DirectConfig(QualifiedThenUnqualified),
+		config_block: RequiredConfigBlock("custom"),
+	}
+
 	commands : List(Plugin.Command)
-	commands = [
-		Plugin.Command.{
-			argument_policy: NoArguments,
-			body: Body.object([
-				Body.required(
-					"message",
-					String,
-				),
-			]),
-			config: DirectConfig(QualifiedThenUnqualified),
-			config_block: RequiredConfigBlock("custom"),
-			name: "custom-write",
-		},
-	]
+	commands = [command]
 
 	backends : List(Plugin.Backend)
 	backends = [
@@ -56,7 +56,7 @@ CustomPlugin := [].{
 				}),
 			],
 			backend: "local",
-			command: "custom-write",
+			command: command.call.name,
 			renderer: |context|
 				match context.config_block {
 					NoConfigBlock => Err({

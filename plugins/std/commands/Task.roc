@@ -24,8 +24,8 @@ Task := [].{
 
 	command : Plugin.Command
 	command = Plugin.Command.{
-		argument_policy: AllowArguments,
 		body,
+		call: Plugin.call("run", [Plugin.required_argument("task")]),
 		config: NamedWithRelatedConfig({
 			lookup: QualifiedOnly,
 			name_rules,
@@ -37,6 +37,5 @@ Task := [].{
 			related_field: "environment",
 		}),
 		config_block: RequiredConfigBlock("task"),
-		name: "run",
 	}
 }

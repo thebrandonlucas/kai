@@ -7,7 +7,7 @@ ShellGuix := [].{
 	implementation = Plugin.Implementation.{
 		actions: [],
 		backend: GuixBackend.backend.name,
-		command: ShellCommand.command.name,
+		command: ShellCommand.command.call.name,
 		renderer: ShellGuix.renderer,
 		validator: Validate({
 			string_lists: [{ field: ShellCommand.packages_field, rules: GuixBackend.package_rules }],

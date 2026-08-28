@@ -7,7 +7,7 @@ ComposeNix := [].{
 	implementation = Plugin.Implementation.{
 		actions: [],
 		backend: NixBackend.backend.name,
-		command: ComposeCommand.command.name,
+		command: ComposeCommand.command.call.name,
 		renderer: ComposeNix.renderer,
 		validator: NoValidation,
 	}

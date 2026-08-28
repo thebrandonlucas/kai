@@ -44,8 +44,8 @@ Build := [].{
 
 	command : Plugin.Command
 	command = Plugin.Command.{
-		argument_policy: AllowArguments,
 		body,
+		call: Plugin.call("build", [Plugin.required_argument("artifact")]),
 		config: NamedWithRelatedConfig({
 			lookup: QualifiedThenUnqualified,
 			name_rules: artifact_name_rules,
@@ -57,6 +57,5 @@ Build := [].{
 			related_field: "environment",
 		}),
 		config_block: RequiredConfigBlock("build"),
-		name: "build",
 	}
 }

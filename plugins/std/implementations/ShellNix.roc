@@ -12,7 +12,7 @@ ShellNix := [].{
 	implementation = Plugin.Implementation.{
 		actions: shell_nix_actions,
 		backend: NixBackend.backend.name,
-		command: ShellCommand.command.name,
+		command: ShellCommand.command.call.name,
 		validator: ShellNixValidation.validator,
 		renderer: ShellNix.renderer,
 	}

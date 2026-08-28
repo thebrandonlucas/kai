@@ -5,8 +5,8 @@ import Machine
 Image := [].{
 	command : Plugin.Command
 	command = Plugin.Command.{
-		argument_policy: AllowArguments,
 		body: Machine.body,
+		call: Plugin.call("image", [Plugin.required_argument("machine")]),
 		config: NamedWithRelatedConfig({
 			lookup: QualifiedThenUnqualified,
 			name_rules: Machine.name_rules,
@@ -18,6 +18,5 @@ Image := [].{
 			related_field: "environment",
 		}),
 		config_block: RequiredConfigBlock("machine"),
-		name: "image",
 	}
 }

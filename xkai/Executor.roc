@@ -30,7 +30,7 @@ Executor := [].{
 	command_lines = |registry|
 		match registry {
 			[] => []
-			[first, .. as rest] => first.commands.map(|command| "  ${command.name}").concat(Executor.command_lines(rest))
+			[first, .. as rest] => first.commands.map(|command| "  ${command.call.name}").concat(Executor.command_lines(rest))
 		}
 
 	help : List(Plugin.Definition) -> Str

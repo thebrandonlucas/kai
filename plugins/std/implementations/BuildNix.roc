@@ -9,7 +9,7 @@ BuildNix := [].{
 	implementation = Plugin.Implementation.{
 		actions: [],
 		backend: NixBackend.backend.name,
-		command: BuildCommand.command.name,
+		command: BuildCommand.command.call.name,
 		renderer: BuildNix.renderer,
 		validator: NoValidation,
 	}
@@ -18,9 +18,6 @@ BuildNix := [].{
 	renderer = |context| {
 		name = match context.args {
 			[selected_name] => Ok(selected_name)
-			# `kai build nix` selects the Nix backend before the standard selector
-			# recognizes the colliding artifact name.
-			[] => Ok(NixBackend.backend.name)
 			_ => Err({ byte_offset: None, message: "build requires exactly one artifact name" })
 		}?
 		name_failures = Plugin.validate_text(name, BuildCommand.artifact_name_rules)

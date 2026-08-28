@@ -4,10 +4,9 @@ import kai.Plugin
 Update := [].{
 	command : Plugin.Command
 	command = Plugin.Command.{
-		argument_policy: NoArguments,
 		body: Body.object([]),
+		call: Plugin.call("update", []),
 		config: DirectConfig(QualifiedOnly),
 		config_block: OptionalConfigBlock("update"),
-		name: "update",
 	}
 }
