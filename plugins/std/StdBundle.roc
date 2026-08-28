@@ -3,6 +3,7 @@ import "StdPlugin.roc" as std_plugin_source : Str
 import "backends/Nix.roc" as nix_backend_source : Str
 import "configs/EnvironmentConfig.roc" as environment_config_source : Str
 import "commands/Build.roc" as build_command_source : Str
+import "commands/Deploy.roc" as deploy_command_source : Str
 import "commands/Image.roc" as image_command_source : Str
 import "commands/Machine.roc" as machine_command_source : Str
 import "commands/Secret.roc" as secret_command_source : Str
@@ -12,6 +13,7 @@ import "commands/Task.roc" as task_command_source : Str
 import "commands/Update.roc" as update_command_source : Str
 import "commands/Workflow.roc" as workflow_command_source : Str
 import "implementations/BuildNix.roc" as build_nix_source : Str
+import "implementations/DeployNix.roc" as deploy_nix_source : Str
 import "implementations/EnvironmentNix.roc" as environment_nix_source : Str
 import "implementations/ImageNix.roc" as image_nix_source : Str
 import "implementations/MachineNix.roc" as machine_nix_source : Str
@@ -81,6 +83,7 @@ StdBundle := [].{
 				contents: StdBundle.package_source(
 					[
 						"Build",
+						"Deploy",
 						"Image",
 						"Machine",
 						"Secret",
@@ -98,6 +101,7 @@ StdBundle := [].{
 				),
 			},
 			{ destination: "std/commands/Build.roc", contents: build_command_source },
+			{ destination: "std/commands/Deploy.roc", contents: deploy_command_source },
 			{ destination: "std/commands/Image.roc", contents: image_command_source },
 			{
 				destination: "std/commands/Machine.roc",
@@ -134,6 +138,7 @@ StdBundle := [].{
 				contents: StdBundle.package_source(
 					[
 						"BuildNix",
+						"DeployNix",
 						"EnvironmentNix",
 						"ImageNix",
 						"MachineNix",
@@ -156,6 +161,10 @@ StdBundle := [].{
 			{
 				destination: "std/implementations/BuildNix.roc",
 				contents: build_nix_source,
+			},
+			{
+				destination: "std/implementations/DeployNix.roc",
+				contents: deploy_nix_source,
 			},
 			{
 				destination: "std/implementations/EnvironmentNix.roc",

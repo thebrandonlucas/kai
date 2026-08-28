@@ -1,6 +1,7 @@
 package
 	[
 		BuildNix,
+		DeployNix,
 		EnvironmentNix,
 		ImageNix,
 		MachineNix,
