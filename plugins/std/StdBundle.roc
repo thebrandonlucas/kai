@@ -1,7 +1,6 @@
 import "StdPlugin.roc" as std_plugin_source : Str
 import "backends/Nix.roc" as nix_backend_source : Str
 import "commands/Build.roc" as build_command_source : Str
-import "commands/Compose.roc" as compose_command_source : Str
 import "commands/Image.roc" as image_command_source : Str
 import "commands/Machine.roc" as machine_command_source : Str
 import "commands/Secret.roc" as secret_command_source : Str
@@ -11,7 +10,6 @@ import "commands/Task.roc" as task_command_source : Str
 import "commands/Update.roc" as update_command_source : Str
 import "commands/Workflow.roc" as workflow_command_source : Str
 import "implementations/BuildNix.roc" as build_nix_source : Str
-import "implementations/ComposeNix.roc" as compose_nix_source : Str
 import "implementations/EnvironmentNix.roc" as environment_nix_source : Str
 import "implementations/ImageNix.roc" as image_nix_source : Str
 import "implementations/MachineNix.roc" as machine_nix_source : Str
@@ -62,7 +60,7 @@ StdBundle := [].{
 			{
 				destination: "std/commands/main.roc",
 				contents: StdBundle.package_source(
-					["Build", "Compose", "Image", "Machine", "Secret", "Service", "Shell", "Task", "Update", "Workflow"],
+					["Build", "Image", "Machine", "Secret", "Service", "Shell", "Task", "Update", "Workflow"],
 					[
 						{ name: "kai", path: "../../package.roc" },
 						{ name: "parser", path: "../../parser/main.roc" },
@@ -70,7 +68,6 @@ StdBundle := [].{
 				),
 			},
 			{ destination: "std/commands/Build.roc", contents: build_command_source },
-			{ destination: "std/commands/Compose.roc", contents: compose_command_source },
 			{ destination: "std/commands/Image.roc", contents: image_command_source },
 			{ destination: "std/commands/Machine.roc", contents: machine_command_source },
 			{ destination: "std/commands/Secret.roc", contents: secret_command_source },
@@ -93,7 +90,7 @@ StdBundle := [].{
 			{
 				destination: "std/implementations/main.roc",
 				contents: StdBundle.package_source(
-					["BuildNix", "ComposeNix", "EnvironmentNix", "ImageNix", "MachineNix", "ServiceNix", "ShellNix", "ShellNixValidation", "TaskNix", "UpdateNix", "WorkflowNix"],
+					["BuildNix", "EnvironmentNix", "ImageNix", "MachineNix", "ServiceNix", "ShellNix", "ShellNixValidation", "TaskNix", "UpdateNix", "WorkflowNix"],
 					[
 						{ name: "backends", path: "../backends/main.roc" },
 						{ name: "commands", path: "../commands/main.roc" },
@@ -104,7 +101,6 @@ StdBundle := [].{
 				),
 			},
 			{ destination: "std/implementations/BuildNix.roc", contents: build_nix_source },
-			{ destination: "std/implementations/ComposeNix.roc", contents: compose_nix_source },
 			{ destination: "std/implementations/EnvironmentNix.roc", contents: environment_nix_source },
 			{ destination: "std/implementations/ImageNix.roc", contents: image_nix_source },
 			{ destination: "std/implementations/MachineNix.roc", contents: machine_nix_source },
