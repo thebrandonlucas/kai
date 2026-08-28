@@ -1,10 +1,8 @@
 import parser.Body
+import kai.Kaifile
 import kai.Plugin
 
 Secret := [].{
-	body : Body.Shape
-	body = Body.object([Body.required("provision", Identifier)])
-
 	name_rules : List(Plugin.TextRule)
 	name_rules = [
 		NonemptyText("secret name must not be empty"),
@@ -24,6 +22,13 @@ Secret := [].{
 	provision_failures = |provision|
 		if provision == "runtime" [] else ["secret provision must be 'runtime'"]
 
+	block : Plugin.KaifileBlock
+	block = Kaifile.named_block({
+		header: "secret <secret>",
+		fields: [Body.required("provision", Identifier)],
+		name_rules,
+	})
+
 	descriptor : Plugin.ProjectConfigDescriptor
-	descriptor = { block: "secret", body, kind: NamedProjectConfig }
+	descriptor = block
 }

@@ -1,18 +1,9 @@
 import parser.Body
+import kai.Kaifile
 import kai.Plugin
 
 Source := [].{
 	Input := { name : Str, url : Str }
-
-	body : Body.Shape
-	body = Body.object([Body.required("url", String)])
-
-	descriptor : Plugin.ProjectConfigDescriptor
-	descriptor = {
-		block: "source",
-		body,
-		kind: NamedProjectConfig,
-	}
 
 	name_rules : List(Plugin.TextRule)
 	name_rules = [
@@ -23,6 +14,16 @@ Source := [].{
 			message: "source name may contain only ASCII letters, digits, '.', '_', and '-'",
 		}),
 	]
+
+	block : Plugin.KaifileBlock
+	block = Kaifile.named_block({
+		header: "source <source>",
+		fields: [Body.required("url", String)],
+		name_rules,
+	})
+
+	descriptor : Plugin.ProjectConfigDescriptor
+	descriptor = block
 
 	url_rules : List(Plugin.TextRule)
 	url_rules = [

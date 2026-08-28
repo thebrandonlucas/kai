@@ -1,1 +1,1 @@
-package [Plugin] { parser: "./parser/main.roc" }
+package [Kaifile, Plugin] { parser: "./parser/main.roc" }

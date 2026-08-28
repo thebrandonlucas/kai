@@ -1,14 +1,14 @@
 import parser.Body
+import kai.Kaifile
 import kai.Plugin
 import Secret
 
 Service := [].{
-	body : Body.Shape
-	body = Body.object([
+	fields = [
 		Body.required("artifact", String),
 		Body.required("secrets", StringList),
 		Body.required("restart", Identifier),
-	])
+	]
 
 	name_rules : List(Plugin.TextRule)
 	name_rules = [
@@ -44,11 +44,13 @@ Service := [].{
 	restart_failures = |restart|
 		if restart == "on-failure" [] else ["service restart must be 'on-failure'"]
 
+	block : Plugin.KaifileBlock
+	block = Kaifile.named_block({ header: "service <service>", fields, name_rules })
+
 	command : Plugin.Command
 	command = Plugin.Command.{
-		body,
 		call: Plugin.call("service", [Plugin.required_argument("service")]),
-		config: NamedConfig({ lookup: QualifiedThenUnqualified, name_rules }),
-		config_block: RequiredConfigBlock("service"),
+		config: NamedConfig({ lookup: QualifiedThenUnqualified }),
+		config_block: RequiredConfigBlock(block),
 	}
 }
