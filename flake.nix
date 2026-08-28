@@ -333,6 +333,7 @@
               pkgs.actionlint
               pkgs.coreutils
               pkgs.git
+              pkgs.jujutsu
               pkgs.gnutar
               pkgs.gzip
               pkgs.llvmPackages.bintools
