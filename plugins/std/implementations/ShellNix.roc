@@ -2,6 +2,7 @@
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Shell as ShellCommand
+import configs.EnvironmentConfig
 import EnvironmentNix
 
 ShellNix := [].{
@@ -16,7 +17,7 @@ ShellNix := [].{
 		validator: Validate({
 			string_lists: [
 				{
-					field: ShellCommand.packages_field,
+					field: EnvironmentConfig.packages_field,
 					rules: NixBackend.package_rules,
 				},
 			],
@@ -27,7 +28,10 @@ ShellNix := [].{
 
 	renderer : Plugin.Renderer
 	renderer = |context| {
-		pkgs = Plugin.validated_strings(context.config, ShellCommand.packages_field)?
+		pkgs = Plugin.validated_strings(
+			context.config,
+			EnvironmentConfig.packages_field,
+		)?
 		overlays = EnvironmentNix.extract_overlays(context.config)?
 		EnvironmentNix.render_result(
 			context,
