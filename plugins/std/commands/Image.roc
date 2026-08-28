@@ -1,7 +1,7 @@
 # Shared `command` interface for building machine images.
 import kai.Plugin
 import configs.EnvironmentConfig
-import Machine
+import configs.MachineConfig
 
 Image := [].{
 	command : Plugin.Command
@@ -12,6 +12,6 @@ Image := [].{
 			related: EnvironmentConfig.block,
 			related_field: "environment",
 		}),
-		config_block: RequiredConfigBlock(Machine.block),
+		config_block: RequiredConfigBlock(MachineConfig.block),
 	}
 }
