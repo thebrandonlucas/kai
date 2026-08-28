@@ -1,6 +1,5 @@
 # - Backends define backend capabilities, validation constraints, rendering, and execution primitives.
 import kai.Plugin
-import parser.Bytes
 
 Nix := [].{
 	backend : Plugin.Backend
@@ -50,9 +49,9 @@ Nix := [].{
 	safe_string_rule : Str -> Plugin.TextRule
 	safe_string_rule = |message|
 		BytesInRanges({
-			excluded: [Bytes.double_quote, Bytes.dollar_sign, Bytes.backslash],
+			excluded: ['"', '$', '\\'],
 			message,
-			ranges: [{ max: Bytes.tilde, min: Bytes.exclamation_mark }],
+			ranges: [{ max: '~', min: '!' }],
 		})
 
 	render_dev_shell = |{ export_legacy_packages, locked_overlays, overlays, pkgs, sources, system }|
@@ -170,10 +169,10 @@ Nix := [].{
 				AsciiUppercase,
 				AsciiLowercase,
 				AsciiDigit,
-				ExactByte(Bytes.period),
-				ExactByte(Bytes.underscore),
-				ExactByte(Bytes.hyphen),
-				ExactByte(Bytes.forward_slash),
+				ExactByte('.'),
+				ExactByte('_'),
+				ExactByte('-'),
+				ExactByte('/'),
 			],
 			message: "artifact path may contain only ASCII letters, digits, '/', '.', '_', and '-'",
 		}),

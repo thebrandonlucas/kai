@@ -1,6 +1,3 @@
-
-import Bytes
-
 Config := [].{
 	Location := {
 		byte_offset : U64,
@@ -66,9 +63,9 @@ Config := [].{
 			Ok(blocks)
 		} else {
 			byte = Config.byte_at(bytes, index)
-			if byte == Bytes.close_curly_brace {
+			if byte == '}' {
 				Config.fail(ExtraClosingBrace, bytes, index)
-			} else if byte == Bytes.open_curly_brace {
+			} else if byte == '{' {
 				Config.fail(EmptyHeader, bytes, index)
 			} else if !Config.is_name_byte(byte) {
 				Config.fail(MalformedHeader, bytes, index)
@@ -98,9 +95,9 @@ Config := [].{
 			Config.fail(MalformedHeader, bytes, index)
 		} else {
 			byte = Config.byte_at(bytes, index)
-			if byte == Bytes.open_curly_brace {
+			if byte == '{' {
 				Ok({ header, opening: index })
-			} else if byte == Bytes.close_curly_brace {
+			} else if byte == '}' {
 				Config.fail(ExtraClosingBrace, bytes, index)
 			} else if !Config.is_name_byte(byte) {
 				Config.fail(MalformedHeader, bytes, index)
@@ -118,16 +115,16 @@ Config := [].{
 			Config.fail(MissingClosingBrace, bytes, index)
 		} else {
 			byte = Config.byte_at(bytes, index)
-			if byte == Bytes.double_quote {
+			if byte == '"' {
 				rest = Config.scan_string(bytes, index + 1, index)?
 				Config.scan_body(bytes, rest, depth)
-			} else if byte == Bytes.hash {
+			} else if byte == '#' {
 				Config.scan_body(bytes, Config.skip_comment(bytes, index), depth)
-			} else if byte == Bytes.open_curly_brace {
+			} else if byte == '{' {
 				Config.scan_body(bytes, index + 1, depth + 1)
-			} else if byte == Bytes.close_curly_brace and depth == 1 {
+			} else if byte == '}' and depth == 1 {
 				Ok(index)
-			} else if byte == Bytes.close_curly_brace {
+			} else if byte == '}' {
 				Config.scan_body(bytes, index + 1, depth - 1)
 			} else {
 				Config.scan_body(bytes, index + 1, depth)
@@ -140,9 +137,9 @@ Config := [].{
 			Config.fail(UnterminatedString, bytes, opening)
 		} else {
 			byte = Config.byte_at(bytes, index)
-			if byte == Bytes.double_quote {
+			if byte == '"' {
 				Ok(index + 1)
-			} else if byte == Bytes.backslash {
+			} else if byte == '\\' {
 				if index + 1 >= bytes.len() {
 					Config.fail(UnterminatedString, bytes, opening)
 				} else {
@@ -169,7 +166,7 @@ Config := [].{
 			byte = Config.byte_at(bytes, index)
 			if Config.is_whitespace(byte) {
 				Config.skip_trivia(bytes, index + 1)
-			} else if byte == Bytes.hash {
+			} else if byte == '#' {
 				Config.skip_trivia(bytes, Config.skip_comment(bytes, index))
 			} else {
 				index
@@ -178,7 +175,7 @@ Config := [].{
 
 	skip_comment : List(U8), U64 -> U64
 	skip_comment = |bytes, index|
-		if index >= bytes.len() or Config.byte_at(bytes, index) == Bytes.line_feed {
+		if index >= bytes.len() or Config.byte_at(bytes, index) == '\n' {
 			index
 		} else {
 			Config.skip_comment(bytes, index + 1)
@@ -191,7 +188,7 @@ Config := [].{
 	find_location = |bytes, target, index, line, column|
 		if index >= target {
 			{ byte_offset: target, column, line }
-		} else if Config.byte_at(bytes, index) == Bytes.line_feed {
+		} else if Config.byte_at(bytes, index) == '\n' {
 			Config.find_location(bytes, target, index + 1, line + 1, 1)
 		} else {
 			Config.find_location(bytes, target, index + 1, line, column + 1)
@@ -206,21 +203,21 @@ Config := [].{
 	) ?? ""
 
 	byte_at : List(U8), U64 -> U8
-	byte_at = |bytes, index| bytes.get(index) ?? Bytes.nul
+	byte_at = |bytes, index| bytes.get(index) ?? 0
 
 	is_whitespace : U8 -> Bool
 	is_whitespace = |byte|
-		byte == Bytes.space or
-			byte == Bytes.horizontal_tab or
-				byte == Bytes.line_feed or
-					byte == Bytes.carriage_return
+		byte == ' ' or
+			byte == '\t' or
+				byte == '\n' or
+					byte == '\r'
 
 	is_name_byte : U8 -> Bool
 	is_name_byte = |byte|
 		!Config.is_whitespace(byte) and
-			byte != Bytes.nul and
-				byte != Bytes.double_quote and
-					byte != Bytes.hash and
-						byte != Bytes.open_curly_brace and
-							byte != Bytes.close_curly_brace
+			byte != 0 and
+				byte != '"' and
+					byte != '#' and
+						byte != '{' and
+							byte != '}'
 }

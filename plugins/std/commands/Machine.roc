@@ -1,5 +1,4 @@
 import parser.Body
-import parser.Bytes
 import kai.Plugin
 
 Machine := [].{
@@ -16,7 +15,7 @@ Machine := [].{
 		NonemptyText("machine name must not be empty"),
 		DisallowedPrefix({ message: "machine name must not start with '.'", prefix: "." }),
 		AllBytes({
-			allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte(Bytes.period), ExactByte(Bytes.underscore), ExactByte(Bytes.hyphen)],
+			allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte('.'), ExactByte('_'), ExactByte('-')],
 			message: "machine name may contain only ASCII letters, digits, '.', '_', and '-'",
 		}),
 	]
@@ -27,7 +26,7 @@ Machine := [].{
 		AllStrings(DotSeparatedNonemptySegments("machine service names must not contain empty segments")),
 		AllStrings(
 			AllBytes({
-				allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte(Bytes.period), ExactByte(Bytes.underscore), ExactByte(Bytes.hyphen)],
+				allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte('.'), ExactByte('_'), ExactByte('-')],
 				message: "machine service names may contain only ASCII letters, digits, '.', '_', and '-'",
 			}),
 		),
@@ -37,8 +36,8 @@ Machine := [].{
 	valid_user = |user|
 		match user.to_utf8() {
 			[first, .. as rest] =>
-				(Machine.ascii_lower(first) or first == Bytes.underscore) and
-					List.all(rest, |byte| Machine.ascii_lower(byte) or Machine.ascii_digit(byte) or byte == Bytes.underscore or byte == Bytes.hyphen)
+				(Machine.ascii_lower(first) or first == '_') and
+					List.all(rest, |byte| Machine.ascii_lower(byte) or Machine.ascii_digit(byte) or byte == '_' or byte == '-')
 			[] => Bool.False
 		}
 

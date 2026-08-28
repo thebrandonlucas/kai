@@ -1,5 +1,4 @@
 import parser.Body
-import parser.Bytes
 import kai.Plugin
 
 Secret := [].{
@@ -10,7 +9,7 @@ Secret := [].{
 	name_rules = [
 		NonemptyText("secret name must not be empty"),
 		AllBytes({
-			allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte(Bytes.underscore), ExactByte(Bytes.hyphen)],
+			allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte('_'), ExactByte('-')],
 			message: "secret name may contain only ASCII letters, digits, '_', and '-'",
 		}),
 	]
