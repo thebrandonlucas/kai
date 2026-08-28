@@ -10,7 +10,7 @@
 # `./kai custom-write` should create a file called
 # "custom-plugin-output.txt" with the message "Hello from CustomPlugin!"
 
-import parser.Body
+import parser.Fields
 import kai.Kaifile
 import kai.Plugin
 
@@ -20,7 +20,7 @@ CustomPlugin := [].{
 	block : Plugin.KaifileBlock
 	block = Kaifile.block({
 		header: "custom",
-		fields: [Body.required("message", String)],
+		fields: [Fields.required("message", String)],
 	})
 
 	command : Plugin.Command
@@ -64,7 +64,7 @@ CustomPlugin := [].{
 						message: "custom configuration is required",
 					})
 					SelectedConfigBlock({ body: _, location: _ }) =>
-						match Body.get_string(context.config, "message") {
+						match Fields.get_string(context.config, "message") {
 							Err(_) => Err({
 								byte_offset: None,
 								message: "validated custom configuration is missing 'message'",

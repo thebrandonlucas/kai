@@ -1,5 +1,5 @@
 # An implementation for defining how to run tasks via nix
-import parser.Body
+import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Task as TaskCommand
@@ -17,7 +17,7 @@ TaskNix := [].{
 
 	renderer : Plugin.Renderer
 	renderer = |context| {
-		run = Body.get_strings(context.config, "run") ? |_| {
+		run = Fields.get_strings(context.config, "run") ? |_| {
 			byte_offset: None,
 			message: "validated task configuration is missing 'run'",
 		}
@@ -31,7 +31,7 @@ TaskNix := [].{
 			})
 			SelectedRelatedConfig({ block: _, config }) => Ok(config)
 		}?
-		pkgs = Body.get_strings(environment, "packages") ? |_| {
+		pkgs = Fields.get_strings(environment, "packages") ? |_| {
 			byte_offset: None,
 			message: "validated environment configuration is missing 'packages'",
 		}

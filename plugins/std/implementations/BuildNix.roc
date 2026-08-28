@@ -1,5 +1,5 @@
 # Implements reproducible artifact builds with the Nix backend.
-import parser.Body
+import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Build as BuildCommand
@@ -25,14 +25,14 @@ BuildNix := [].{
 			})
 		}?
 		name_failures = Plugin.validate_text(name, BuildCommand.artifact_name_rules)
-		run = Body.get_strings(context.config, "run") ? |_| {
+		run = Fields.get_strings(context.config, "run") ? |_| {
 			byte_offset: None,
 			message: "validated build configuration is missing 'run'",
 		}
 		run_failures = Plugin.validate_string_list(run, BuildCommand.run_rules)
 		inputs = Plugin.validated_strings(context.config, BuildCommand.inputs_field)?
 		EnvironmentNix.validate_source_inputs(context, inputs)?
-		output = Body.get_string(context.config, "output") ? |_| {
+		output = Fields.get_string(context.config, "output") ? |_| {
 			byte_offset: None,
 			message: "validated build configuration is missing 'output'",
 		}
@@ -46,7 +46,7 @@ BuildNix := [].{
 			})
 			SelectedRelatedConfig({ block: _, config }) => Ok(config)
 		}?
-		pkgs = Body.get_strings(environment, "packages") ? |_| {
+		pkgs = Fields.get_strings(environment, "packages") ? |_| {
 			byte_offset: None,
 			message: "validated environment configuration is missing 'packages'",
 		}

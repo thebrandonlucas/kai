@@ -1,17 +1,17 @@
 # Shared interface for `build` artifact/executable commands
-import parser.Body
+import parser.Fields
 import kai.Kaifile
 import kai.Plugin
 import configs.EnvironmentConfig
 
 Build := [].{
-	inputs_field = Body.optional("inputs", StringList)
+	inputs_field = Fields.optional("inputs", StringList)
 
 	fields = [
-		Body.required("environment", Identifier),
+		Fields.required("environment", Identifier),
 		inputs_field,
-		Body.required("run", StringList),
-		Body.required("output", String),
+		Fields.required("run", StringList),
+		Fields.required("output", String),
 	]
 
 	artifact_name_rules : List(Plugin.TextRule)

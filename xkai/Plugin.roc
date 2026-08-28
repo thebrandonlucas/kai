@@ -1,6 +1,6 @@
 # Pure plugin model shared by plugins and the CLI.
-import parser.Body
-import parser.Config
+import parser.Fields
+import parser.Blocks
 import Kaifile
 
 Plugin := [].{
@@ -342,7 +342,7 @@ Plugin := [].{
 
 	ProjectConfigEntry := {
 		block : Str,
-		config : Body.Configuration,
+		config : Fields.Configuration,
 		header : List(Str),
 		location : SourceLocation,
 	}
@@ -352,13 +352,13 @@ Plugin := [].{
 	ConfigSelection : [
 		Missing,
 		Selected(LocatedConfigBlock),
-		SelectedWithBody({ block : LocatedConfigBlock, body : Body.Shape }),
+		SelectedWithBody({ block : LocatedConfigBlock, body : Fields.Shape }),
 		SelectedWithRelated(
 			{
 				block : LocatedConfigBlock,
-				body : Body.Shape,
+				body : Fields.Shape,
 				related_block : LocatedConfigBlock,
-				related_body : Body.Shape,
+				related_body : Fields.Shape,
 			},
 		),
 	]
@@ -488,7 +488,7 @@ Plugin := [].{
 						)?
 						body = Kaifile.body(primary)
 						config = Plugin.parse_selected_body(body, block)?
-						related_name = Body.get_string(config, related_field) ? |_|
+						related_name = Fields.get_string(config, related_field) ? |_|
 							{
 								location: None,
 								message: Str.join_with(
@@ -594,14 +594,14 @@ Plugin := [].{
 			Kaifile.is_named(left) == Kaifile.is_named(right) and
 				Plugin.same_body_shape(Kaifile.body(left), Kaifile.body(right))
 
-	same_body_shape : Body.Shape, Body.Shape -> Bool
+	same_body_shape : Fields.Shape, Fields.Shape -> Bool
 	same_body_shape = |left, right|
 		match (left, right) {
 			(Object(left_fields), Object(right_fields)) =>
 				Plugin.same_body_fields(left_fields, right_fields)
 			}
 
-	same_body_fields : List(Body.Field), List(Body.Field) -> Bool
+	same_body_fields : List(Fields.Field), List(Fields.Field) -> Bool
 	same_body_fields = |left, right|
 		match (left, right) {
 			([], []) => Bool.True
@@ -729,14 +729,17 @@ Plugin := [].{
 		}
 	}
 
-	parse_selected_body :
-		Body.Shape, LocatedConfigBlock -> Try(Body.Configuration, SelectorDiagnostic)
+	parse_selected_body : Fields.Shape,
+	LocatedConfigBlock -> Try(
+		Fields.Configuration,
+		SelectorDiagnostic,
+	)
 	parse_selected_body = |body, block|
-		match Body.parse(body, block.body) {
+		match Fields.parse(body, block.body) {
 			Ok(config) => Ok(config)
 			Err(diagnostic) => Err({
 				location: At(Plugin.translate_location(block, diagnostic.byte_offset)),
-				message: Body.describe(diagnostic),
+				message: Fields.describe(diagnostic),
 			})
 		}
 
@@ -755,7 +758,7 @@ Plugin := [].{
 			DefaultBackend(_) => header
 			ExplicitBackend(backend) => header.append(backend.name)
 		}
-		blocks = Config.scan(config_text) ? |diagnostic| {
+		blocks = Blocks.scan(config_text) ? |diagnostic| {
 			location: At(Plugin.source_location(diagnostic.location)),
 			message: "invalid plugin configuration",
 		}
@@ -767,7 +770,7 @@ Plugin := [].{
 		match host_section {
 			NoHostSection => Plugin.select_top_level(blocks, block_header)
 			HostSection(section) => {
-				host_selection = Config.select_exact(
+				host_selection = Blocks.select_exact(
 					blocks,
 					["on", section],
 				) ? |selection_error|
@@ -787,9 +790,9 @@ Plugin := [].{
 	}
 
 	select_top_level :
-		List(Config.Block), List(Str) -> Try(ConfigSelection, SelectorDiagnostic)
+		List(Blocks.Block), List(Str) -> Try(ConfigSelection, SelectorDiagnostic)
 	select_top_level = |blocks, header| {
-		selection = Config.select_exact(blocks, header) ? |selection_error|
+		selection = Blocks.select_exact(blocks, header) ? |selection_error|
 			Plugin.top_level_duplicate(
 				selection_error,
 				"duplicate command configuration",
@@ -806,13 +809,13 @@ Plugin := [].{
 	}
 
 	select_nested :
-		Config.Block, List(Str) -> Try(ConfigSelection, SelectorDiagnostic)
+		Blocks.Block, List(Str) -> Try(ConfigSelection, SelectorDiagnostic)
 	select_nested = |host, header| {
-		blocks = Config.scan(host.body) ? |diagnostic| {
+		blocks = Blocks.scan(host.body) ? |diagnostic| {
 			location: At(Plugin.nested_location(host, diagnostic.location)),
 			message: "invalid host configuration",
 		}
-		selection = Config.select_exact(blocks, header) ? |selection_error| {
+		selection = Blocks.select_exact(blocks, header) ? |selection_error| {
 			location = match selection_error {
 				DuplicateHeader({ first: _, header: _, second }) =>
 					At(Plugin.nested_location(host, second))
@@ -830,7 +833,7 @@ Plugin := [].{
 		}
 	}
 
-	top_level_duplicate : Config.SelectionError, Str -> SelectorDiagnostic
+	top_level_duplicate : Blocks.SelectionError, Str -> SelectorDiagnostic
 	top_level_duplicate = |selection_error, message| {
 		location = match selection_error {
 			DuplicateHeader({ first: _, header: _, second }) =>
@@ -839,14 +842,14 @@ Plugin := [].{
 		{ location, message }
 	}
 
-	nested_location : Config.Block, Config.Location -> SourceLocation
+	nested_location : Blocks.Block, Blocks.Location -> SourceLocation
 	nested_location = |host, location|
 		Plugin.translate_location(
 			{ body: host.body, location: Plugin.source_location(host.location) },
 			location.byte_offset,
 		)
 
-	source_location : Config.Location -> SourceLocation
+	source_location : Blocks.Location -> SourceLocation
 	source_location = |location| {
 		byte_offset: location.byte_offset,
 		column: location.column,
@@ -854,7 +857,7 @@ Plugin := [].{
 	}
 
 	ProjectConfigScope : [
-		HostProjectConfigScope(Config.Block),
+		HostProjectConfigScope(Blocks.Block),
 		TopLevelProjectConfigScope,
 	]
 
@@ -865,7 +868,7 @@ Plugin := [].{
 		SelectorDiagnostic,
 	)
 	build_project_config = |config_text, descriptors, backend| {
-		blocks = Config.scan(config_text) ? |diagnostic| {
+		blocks = Blocks.scan(config_text) ? |diagnostic| {
 			location: At(Plugin.source_location(diagnostic.location)),
 			message: "invalid plugin configuration",
 		}
@@ -881,7 +884,7 @@ Plugin := [].{
 	}
 
 	collect_project_config :
-		List(Config.Block),
+		List(Blocks.Block),
 		List(ProjectConfigDescriptor),
 		Str,
 		ProjectConfigScope,
@@ -931,7 +934,7 @@ Plugin := [].{
 							message: "duplicate host configuration",
 						})
 					} else {
-						nested = Config.scan(first.body) ? |diagnostic| {
+						nested = Blocks.scan(first.body) ? |diagnostic| {
 							location: At(Plugin.nested_location(first, diagnostic.location)),
 							message: "invalid host configuration",
 						}
@@ -1056,7 +1059,7 @@ Plugin := [].{
 	is_project_host_section = |header|
 		header == ["on", "linux"] or header == ["on", "macos"]
 
-	project_block_location : Config.Block, ProjectConfigScope -> LocatedConfigBlock
+	project_block_location : Blocks.Block, ProjectConfigScope -> LocatedConfigBlock
 	project_block_location = |block, scope|
 		match scope {
 			TopLevelProjectConfigScope => {
@@ -1080,9 +1083,9 @@ Plugin := [].{
 		match descriptors {
 			[] => Ok([])
 			[first, .. as rest] => {
-				config = Body.parse(Kaifile.body(first), block.body) ? |diagnostic| {
+				config = Fields.parse(Kaifile.body(first), block.body) ? |diagnostic| {
 					location: At(Plugin.translate_location(block, diagnostic.byte_offset)),
-					message: Body.describe(diagnostic),
+					message: Fields.describe(diagnostic),
 				}
 				remaining = Plugin.parse_project_descriptors(rest, header, block)?
 				Ok(
@@ -1103,7 +1106,7 @@ Plugin := [].{
 		SelectedRelatedConfig(
 			{
 				block : LocatedConfigBlock,
-				config : Body.Configuration,
+				config : Fields.Configuration,
 			},
 		),
 	]
@@ -1128,7 +1131,7 @@ Plugin := [].{
 
 	RenderContext := {
 		args : List(Str),
-		config : Body.Configuration,
+		config : Fields.Configuration,
 		config_block : [NoConfigBlock, SelectedConfigBlock(LocatedConfigBlock)],
 		dependencies_resolved : Bool,
 		dependency_artifacts : List(Artifact),
@@ -1140,7 +1143,7 @@ Plugin := [].{
 	}
 
 	StringListValidation := {
-		field : Body.Field,
+		field : Fields.Field,
 		rules : List(StringListRule),
 	}
 
@@ -1247,7 +1250,7 @@ Plugin := [].{
 		}
 
 	validate_string_list_fields :
-		Body.Configuration,
+		Fields.Configuration,
 		List(StringListValidation) -> Try(
 			List(Str),
 			RendererDiagnostic,
@@ -1262,13 +1265,13 @@ Plugin := [].{
 			}
 		}
 
-	validated_strings : Body.Configuration,
-	Body.Field -> Try(
+	validated_strings : Fields.Configuration,
+	Fields.Field -> Try(
 		List(Str),
 		RendererDiagnostic,
 	)
 	validated_strings = |config, field|
-		match Body.get_strings(config, field.name) {
+		match Fields.get_strings(config, field.name) {
 			Ok(values) => Ok(values)
 			Err(MissingField(_)) if field.presence == Optional => Ok([])
 			Err(_) => Err({
@@ -1883,13 +1886,13 @@ Plugin := [].{
 											),
 										)
 									OptionalConfigBlock(_) => Ok({
-										config: Body.empty,
+										config: Fields.empty,
 										config_block: NoConfigBlock,
 										related_config: NoRelatedConfig,
 									})
 								}
 							Selected(block) => {
-								config = Body.parse(
+								config = Fields.parse(
 									Kaifile.body(
 										Plugin.config_block_schema(
 											selected_command.config_block,
@@ -1904,7 +1907,7 @@ Plugin := [].{
 												diagnostic.byte_offset,
 											),
 										),
-										Body.describe(diagnostic),
+										Fields.describe(diagnostic),
 									)
 								Ok({
 									config,
@@ -1913,7 +1916,7 @@ Plugin := [].{
 								})
 							}
 							SelectedWithBody({ block, body }) => {
-								config = Body.parse(body, block.body) ? |diagnostic|
+								config = Fields.parse(body, block.body) ? |diagnostic|
 									fail(
 										At(
 											Plugin.translate_location(
@@ -1921,7 +1924,7 @@ Plugin := [].{
 												diagnostic.byte_offset,
 											),
 										),
-										Body.describe(diagnostic),
+										Fields.describe(diagnostic),
 									)
 								Ok({
 									config,
@@ -1937,7 +1940,7 @@ Plugin := [].{
 									related_body,
 								},
 							) => {
-								config = Body.parse(body, block.body) ? |diagnostic|
+								config = Fields.parse(body, block.body) ? |diagnostic|
 									fail(
 										At(
 											Plugin.translate_location(
@@ -1945,9 +1948,9 @@ Plugin := [].{
 												diagnostic.byte_offset,
 											),
 										),
-										Body.describe(diagnostic),
+										Fields.describe(diagnostic),
 									)
-								related = Body.parse(
+								related = Fields.parse(
 									related_body,
 									related_block.body,
 								) ? |diagnostic|
@@ -1958,7 +1961,7 @@ Plugin := [].{
 												diagnostic.byte_offset,
 											),
 										),
-										Body.describe(diagnostic),
+										Fields.describe(diagnostic),
 									)
 								Ok({
 									config,

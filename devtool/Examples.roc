@@ -2,8 +2,8 @@
 import pf.Path
 import pf.Stdout
 
-import parser.Body
-import parser.Config
+import parser.Fields
+import parser.Blocks
 import kai.Plugin
 import std.StdPlugin
 
@@ -60,7 +60,7 @@ Examples := [].{
 	check_file! = |kaifile| {
 		path = Path.display(kaifile)
 		source = Path.read_utf8!(kaifile)?
-		blocks = Config.scan(source) ? |diagnostic|
+		blocks = Blocks.scan(source) ? |diagnostic|
 			InvalidExampleConfig({ diagnostic: Str.inspect(diagnostic), path })
 		checks = Examples.invocations(blocks, path)?
 		if checks.is_empty() {
@@ -71,7 +71,7 @@ Examples := [].{
 		}
 	}
 
-	invocations : List(Config.Block), Str -> Try(List(Examples.Invocation), _)
+	invocations : List(Blocks.Block), Str -> Try(List(Examples.Invocation), _)
 	invocations = |blocks, path|
 		Examples.collect_blocks(
 			blocks,
@@ -82,7 +82,7 @@ Examples := [].{
 		)
 
 	collect_blocks :
-		List(Config.Block),
+		List(Blocks.Block),
 		Str,
 		Plugin.HostOs,
 		Plugin.HostArch,
@@ -130,7 +130,7 @@ Examples := [].{
 		}
 
 	nested_invocations = |host_block, path, os, arch| {
-		blocks = Config.scan(host_block.body) ? |diagnostic|
+		blocks = Blocks.scan(host_block.body) ? |diagnostic|
 			InvalidExampleHostConfig({ diagnostic: Str.inspect(diagnostic), path })
 		Examples.collect_blocks(blocks, path, os, arch, Bool.False)
 	}

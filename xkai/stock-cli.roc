@@ -10,7 +10,7 @@ app [main!] {
 
 import Executor
 import kai.Plugin
-import parser.Body
+import parser.Fields
 import std.StdPlugin
 
 registry = [StdPlugin.plugin]

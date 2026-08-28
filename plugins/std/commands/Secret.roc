@@ -1,6 +1,6 @@
 # Shared `command` interface for defining and working with environment
 # secrets.
-import parser.Body
+import parser.Fields
 import kai.Kaifile
 import kai.Plugin
 
@@ -37,7 +37,7 @@ Secret := [].{
 	block : Plugin.KaifileBlock
 	block = Kaifile.named_block({
 		header: "secret <secret>",
-		fields: [Body.required("provision", Identifier)],
+		fields: [Fields.required("provision", Identifier)],
 		name_rules,
 	})
 

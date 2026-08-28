@@ -1,5 +1,5 @@
-# Parse config headers
-Config := [].{
+# Scan config blocks
+Blocks := [].{
 	Location := {
 		byte_offset : U64,
 		column : U64,
@@ -31,10 +31,10 @@ Config := [].{
 	Diagnostic := { kind : DiagnosticKind, location : Location }
 
 	scan : Str -> Try(List(Block), Diagnostic)
-	scan = |source| Config.scan_blocks(source.to_utf8(), 0, [])
+	scan = |source| Blocks.scan_blocks(source.to_utf8(), 0, [])
 
 	select_exact : List(Block), List(Str) -> Try(Selection, SelectionError)
-	select_exact = |blocks, header| Config.select_next(blocks, header, Missing)
+	select_exact = |blocks, header| Blocks.select_next(blocks, header, Missing)
 
 	select_next : List(Block),
 	List(Str),
@@ -47,10 +47,10 @@ Config := [].{
 			[] => Ok(found)
 			[first, .. as rest] =>
 				if first.header != header {
-					Config.select_next(rest, header, found)
+					Blocks.select_next(rest, header, found)
 				} else {
 					match found {
-						Missing => Config.select_next(rest, header, Selected(first))
+						Missing => Blocks.select_next(rest, header, Selected(first))
 						Selected(previous) => Err(
 							DuplicateHeader({
 								first: previous.location,
@@ -64,27 +64,27 @@ Config := [].{
 
 	scan_blocks : List(U8), U64, List(Block) -> Try(List(Block), Diagnostic)
 	scan_blocks = |bytes, raw_index, blocks| {
-		index = Config.skip_trivia(bytes, raw_index)
+		index = Blocks.skip_trivia(bytes, raw_index)
 		if index >= bytes.len() {
 			Ok(blocks)
 		} else {
-			byte = Config.byte_at(bytes, index)
+			byte = Blocks.byte_at(bytes, index)
 			if byte == '}' {
-				Config.fail(ExtraClosingBrace, bytes, index)
+				Blocks.fail(ExtraClosingBrace, bytes, index)
 			} else if byte == '{' {
-				Config.fail(EmptyHeader, bytes, index)
-			} else if !Config.is_name_byte(byte) {
-				Config.fail(MalformedHeader, bytes, index)
+				Blocks.fail(EmptyHeader, bytes, index)
+			} else if !Blocks.is_name_byte(byte) {
+				Blocks.fail(MalformedHeader, bytes, index)
 			} else {
-				parsed = Config.scan_header(bytes, index, [])?
+				parsed = Blocks.scan_header(bytes, index, [])?
 				body_start = parsed.opening + 1
-				body_end = Config.scan_body(bytes, body_start, 1)?
+				body_end = Blocks.scan_body(bytes, body_start, 1)?
 				block = {
-					body: Config.slice(bytes, body_start, body_end),
+					body: Blocks.slice(bytes, body_start, body_end),
 					header: parsed.header,
-					location: Config.location(bytes, body_start),
+					location: Blocks.location(bytes, body_start),
 				}
-				Config.scan_blocks(bytes, body_end + 1, blocks.append(block))
+				Blocks.scan_blocks(bytes, body_end + 1, blocks.append(block))
 			}
 		}
 	}
@@ -96,21 +96,21 @@ Config := [].{
 		Diagnostic,
 	)
 	scan_header = |bytes, raw_index, header| {
-		index = Config.skip_trivia(bytes, raw_index)
+		index = Blocks.skip_trivia(bytes, raw_index)
 		if index >= bytes.len() {
-			Config.fail(MalformedHeader, bytes, index)
+			Blocks.fail(MalformedHeader, bytes, index)
 		} else {
-			byte = Config.byte_at(bytes, index)
+			byte = Blocks.byte_at(bytes, index)
 			if byte == '{' {
 				Ok({ header, opening: index })
 			} else if byte == '}' {
-				Config.fail(ExtraClosingBrace, bytes, index)
-			} else if !Config.is_name_byte(byte) {
-				Config.fail(MalformedHeader, bytes, index)
+				Blocks.fail(ExtraClosingBrace, bytes, index)
+			} else if !Blocks.is_name_byte(byte) {
+				Blocks.fail(MalformedHeader, bytes, index)
 			} else {
-				rest = Config.find_name_end(bytes, index + 1)
-				name = Config.slice(bytes, index, rest)
-				Config.scan_header(bytes, rest, header.append(name))
+				rest = Blocks.find_name_end(bytes, index + 1)
+				name = Blocks.slice(bytes, index, rest)
+				Blocks.scan_header(bytes, rest, header.append(name))
 			}
 		}
 	}
@@ -118,48 +118,48 @@ Config := [].{
 	scan_body : List(U8), U64, U64 -> Try(U64, Diagnostic)
 	scan_body = |bytes, index, depth|
 		if index >= bytes.len() {
-			Config.fail(MissingClosingBrace, bytes, index)
+			Blocks.fail(MissingClosingBrace, bytes, index)
 		} else {
-			byte = Config.byte_at(bytes, index)
+			byte = Blocks.byte_at(bytes, index)
 			if byte == '"' {
-				rest = Config.scan_string(bytes, index + 1, index)?
-				Config.scan_body(bytes, rest, depth)
+				rest = Blocks.scan_string(bytes, index + 1, index)?
+				Blocks.scan_body(bytes, rest, depth)
 			} else if byte == '#' {
-				Config.scan_body(bytes, Config.skip_comment(bytes, index), depth)
+				Blocks.scan_body(bytes, Blocks.skip_comment(bytes, index), depth)
 			} else if byte == '{' {
-				Config.scan_body(bytes, index + 1, depth + 1)
+				Blocks.scan_body(bytes, index + 1, depth + 1)
 			} else if byte == '}' and depth == 1 {
 				Ok(index)
 			} else if byte == '}' {
-				Config.scan_body(bytes, index + 1, depth - 1)
+				Blocks.scan_body(bytes, index + 1, depth - 1)
 			} else {
-				Config.scan_body(bytes, index + 1, depth)
+				Blocks.scan_body(bytes, index + 1, depth)
 			}
 		}
 
 	scan_string : List(U8), U64, U64 -> Try(U64, Diagnostic)
 	scan_string = |bytes, index, opening|
 		if index >= bytes.len() {
-			Config.fail(UnterminatedString, bytes, opening)
+			Blocks.fail(UnterminatedString, bytes, opening)
 		} else {
-			byte = Config.byte_at(bytes, index)
+			byte = Blocks.byte_at(bytes, index)
 			if byte == '"' {
 				Ok(index + 1)
 			} else if byte == '\\' {
 				if index + 1 >= bytes.len() {
-					Config.fail(UnterminatedString, bytes, opening)
+					Blocks.fail(UnterminatedString, bytes, opening)
 				} else {
-					Config.scan_string(bytes, index + 2, opening)
+					Blocks.scan_string(bytes, index + 2, opening)
 				}
 			} else {
-				Config.scan_string(bytes, index + 1, opening)
+				Blocks.scan_string(bytes, index + 1, opening)
 			}
 		}
 
 	find_name_end : List(U8), U64 -> U64
 	find_name_end = |bytes, index|
-		if index < bytes.len() and Config.is_name_byte(Config.byte_at(bytes, index)) {
-			Config.find_name_end(bytes, index + 1)
+		if index < bytes.len() and Blocks.is_name_byte(Blocks.byte_at(bytes, index)) {
+			Blocks.find_name_end(bytes, index + 1)
 		} else {
 			index
 		}
@@ -169,11 +169,11 @@ Config := [].{
 		if index >= bytes.len() {
 			index
 		} else {
-			byte = Config.byte_at(bytes, index)
-			if Config.is_whitespace(byte) {
-				Config.skip_trivia(bytes, index + 1)
+			byte = Blocks.byte_at(bytes, index)
+			if Blocks.is_whitespace(byte) {
+				Blocks.skip_trivia(bytes, index + 1)
 			} else if byte == '#' {
-				Config.skip_trivia(bytes, Config.skip_comment(bytes, index))
+				Blocks.skip_trivia(bytes, Blocks.skip_comment(bytes, index))
 			} else {
 				index
 			}
@@ -181,28 +181,28 @@ Config := [].{
 
 	skip_comment : List(U8), U64 -> U64
 	skip_comment = |bytes, index|
-		if index >= bytes.len() or Config.byte_at(bytes, index) == '\n' {
+		if index >= bytes.len() or Blocks.byte_at(bytes, index) == '\n' {
 			index
 		} else {
-			Config.skip_comment(bytes, index + 1)
+			Blocks.skip_comment(bytes, index + 1)
 		}
 
 	location : List(U8), U64 -> Location
-	location = |bytes, target| Config.find_location(bytes, target, 0, 1, 1)
+	location = |bytes, target| Blocks.find_location(bytes, target, 0, 1, 1)
 
 	find_location : List(U8), U64, U64, U64, U64 -> Location
 	find_location = |bytes, target, index, line, column|
 		if index >= target {
 			{ byte_offset: target, column, line }
-		} else if Config.byte_at(bytes, index) == '\n' {
-			Config.find_location(bytes, target, index + 1, line + 1, 1)
+		} else if Blocks.byte_at(bytes, index) == '\n' {
+			Blocks.find_location(bytes, target, index + 1, line + 1, 1)
 		} else {
-			Config.find_location(bytes, target, index + 1, line, column + 1)
+			Blocks.find_location(bytes, target, index + 1, line, column + 1)
 		}
 
 	fail : DiagnosticKind, List(U8), U64 -> Try(a, Diagnostic)
 	fail = |kind, bytes, index|
-		Err({ kind, location: Config.location(bytes, index) })
+		Err({ kind, location: Blocks.location(bytes, index) })
 
 	slice : List(U8), U64, U64 -> Str
 	slice = |bytes, start, end| Str.from_utf8(
@@ -221,7 +221,7 @@ Config := [].{
 
 	is_name_byte : U8 -> Bool
 	is_name_byte = |byte|
-		!Config.is_whitespace(byte) and
+		!Blocks.is_whitespace(byte) and
 			byte != 0 and
 				byte != '"' and
 					byte != '#' and

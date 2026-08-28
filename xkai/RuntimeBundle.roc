@@ -2,8 +2,8 @@
 import "Executor.roc" as executor_source : Str
 import "Kaifile.roc" as kaifile_source : Str
 import "package.roc" as package_source : Str
-import "parser/Body.roc" as body_source : Str
-import "parser/Config.roc" as config_source : Str
+import "parser/Fields.roc" as body_source : Str
+import "parser/Blocks.roc" as config_source : Str
 import "parser/main.roc" as parser_package_source : Str
 import "Plugin.roc" as plugin_source : Str
 import "VERSION" as version_source : Str
@@ -28,8 +28,8 @@ RuntimeBundle := [].{
 			{ destination: "package.roc", contents: package_source },
 			{ destination: "Plugin.roc", contents: plugin_source },
 			{ destination: "VERSION", contents: version_source },
-			{ destination: "parser/Body.roc", contents: body_source },
-			{ destination: "parser/Config.roc", contents: config_source },
+			{ destination: "parser/Fields.roc", contents: body_source },
+			{ destination: "parser/Blocks.roc", contents: config_source },
 			{ destination: "parser/main.roc", contents: parser_package_source },
 		],
 	}

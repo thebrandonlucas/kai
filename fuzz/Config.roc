@@ -4,11 +4,11 @@ app [target] {
 }
 
 import fuzz.Fuzz
-import parser.Config
+import parser.Blocks
 
 test : Str -> Fuzz.Outcome
 test = |input| {
-	_ = Config.scan(input)
+	_ = Blocks.scan(input)
 	Fuzz.keep
 }
 

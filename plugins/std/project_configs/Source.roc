@@ -1,5 +1,5 @@
 # Shared project configuration for declaring external flake sources.
-import parser.Body
+import parser.Fields
 import kai.Kaifile
 import kai.Plugin
 
@@ -35,7 +35,7 @@ Source := [].{
 	block : Plugin.KaifileBlock
 	block = Kaifile.named_block({
 		header: "source <source>",
-		fields: [Body.required("url", String)],
+		fields: [Fields.required("url", String)],
 		name_rules,
 	})
 
@@ -68,7 +68,7 @@ Source := [].{
 						message: "source declaration requires a name",
 					})
 				}?
-				url = Body.get_string(entry.config, "url") ? |_|
+				url = Fields.get_string(entry.config, "url") ? |_|
 					{
 						byte_offset: None,
 						message: "validated source '${name}' is missing 'url'",
