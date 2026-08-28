@@ -1,3 +1,4 @@
+# An implementation for building machine images with nix.
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Image as ImageCommand
@@ -18,10 +19,21 @@ ImageNix := [].{
 		config = MachineNix.configuration(context, "image")?
 		requests = MachineNix.service_requests(config.generated_services, "image")
 		if !requests.is_empty() and !context.dependencies_resolved {
-			return Ok({ actions: [], artifacts: [], outputs: [], requests, requested_packages: config.pkgs })
+			return Ok({
+				actions: [],
+				artifacts: [],
+				outputs: [],
+				requests,
+				requested_packages: config.pkgs,
+			})
 		}
-		services = MachineNix.resolve_services(context.dependency_artifacts, config.generated_services, config.target_system)?
-		native_services = config.services.keep_if(|service| !config.generated_services.contains(service))
+		services = MachineNix.resolve_services(
+			context.dependency_artifacts,
+			config.generated_services,
+			config.target_system,
+		)?
+		native_services = config.services.keep_if(|service|
+			!config.generated_services.contains(service))
 		schema : U64
 		schema = 1
 		metadata = Json.to_str({
@@ -41,8 +53,18 @@ ImageNix := [].{
 			Plugin.RenderResult.{
 				actions: NixBackend.image_actions(
 					config.name,
-					ImageNix.render_flake(config.name, config.target_system, config.locked_overlays, config.overlays, services),
-					ImageNix.render_module(config.pkgs, config.users, native_services),
+					ImageNix.render_flake(
+						config.name,
+						config.target_system,
+						config.locked_overlays,
+						config.overlays,
+						services,
+					),
+					ImageNix.render_module(
+						config.pkgs,
+						config.users,
+						native_services,
+					),
 					metadata,
 					services,
 				),
@@ -68,8 +90,19 @@ ImageNix := [].{
 
 	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
 	render_flake = |name, system, locked_overlays, overlays, services| {
-		overlay_names = locked_overlays.map_with_index(|_, index| "overlay${U64.to_str(index)}")
-		overlay_lines = overlays.map(|overlay| "          ${NixBackend.overlay_name(locked_overlays, overlay, 0)}.overlays.default")
+		overlay_names = locked_overlays.map_with_index(|_, index|
+			"overlay${U64.to_str(index)}")
+		overlay_lines = overlays.map(
+			|overlay|
+				Str.join_with(
+					[
+						"          ",
+						NixBackend.overlay_name(locked_overlays, overlay, 0),
+						".overlays.default",
+					],
+					"",
+				),
+		)
 		outputs_args = Str.join_with(["nixpkgs"].concat(overlay_names), ", ")
 		lines = [
 			"{",
@@ -116,9 +149,21 @@ ImageNix := [].{
 
 	render_module : List(Str), List(Str), List(Str) -> Str
 	render_module = |pkgs, users, services| {
-		package_lines = pkgs.map(|pkg| "    pkgs.${NixBackend.render_attributes(pkg)}")
-		user_lines = users.map(|user| "  users.users.\"${user}\".isNormalUser = true;")
-		service_lines = services.map(|service| "  services.${NixBackend.render_attributes(service)}.enable = true;")
+		package_lines = pkgs.map(|pkg|
+			"    pkgs.${NixBackend.render_attributes(pkg)}")
+		user_lines = users.map(|user|
+			"  users.users.\"${user}\".isNormalUser = true;")
+		service_lines = services.map(
+			|service|
+				Str.join_with(
+					[
+						"  services.",
+						NixBackend.render_attributes(service),
+						".enable = true;",
+					],
+					"",
+				),
+		)
 		lines = [
 			"{ pkgs, ... }:",
 			"{",

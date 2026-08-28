@@ -1,3 +1,4 @@
+# TODO: comment
 Assembly := [].{
 	SourceFile := { contents : Str, destination : Str }
 
@@ -42,12 +43,27 @@ Assembly := [].{
 
 	BuildPlan := { app_source : Str, files : List(Assembly.SourceFile) }
 
-	AssemblyProblem := [DuplicateDestination(Str), InvalidModuleFilename(Str), StageEscapingDestination(Str)]
+	AssemblyProblem := [
+		DuplicateDestination(Str),
+		InvalidModuleFilename(Str),
+		StageEscapingDestination(Str),
+	]
 
 	package_source : List(Str), List(Assembly.Dependency) -> Str
 	package_source = |modules, dependencies| {
-		dependency_source = dependencies.map(|dependency| "${dependency.name}: \"${dependency.path}\"")
-		"package [${Str.join_with(modules, ", ")}] { ${Str.join_with(dependency_source, ", ")} }\n"
+		dependency_source = dependencies.map(
+			|dependency| "${dependency.name}: \"${dependency.path}\"",
+		)
+		Str.join_with(
+			[
+				"package [",
+				Str.join_with(modules, ", "),
+				"] { ",
+				Str.join_with(dependency_source, ", "),
+				" }\n",
+			],
+			"",
+		)
 	}
 
 	bundle_files : List(Assembly.SourceBundle) -> List(Assembly.SourceFile)
@@ -61,17 +77,27 @@ Assembly := [].{
 	bundle_dependencies = |bundles|
 		match bundles {
 			[] => []
-			[first, .. as rest] => first.app_dependencies.concat(Assembly.bundle_dependencies(rest))
+			[first, .. as rest] => first.app_dependencies.concat(
+				Assembly.bundle_dependencies(rest),
+			)
 		}
 
 	bundle_imports : List(Assembly.SourceBundle) -> List(Str)
 	bundle_imports = |bundles|
 		match bundles {
 			[] => []
-			[first, .. as rest] => first.app_imports.concat(Assembly.bundle_imports(rest))
+			[first, .. as rest] => first.app_imports.concat(
+				Assembly.bundle_imports(rest),
+			)
 		}
 
-	component_files : Str, Str, List(Assembly.PluginSource), List(Assembly.Dependency) -> List(Assembly.SourceFile)
+	component_files :
+		Str,
+		Str,
+		List(Assembly.PluginSource),
+		List(Assembly.Dependency) -> List(
+			Assembly.SourceFile,
+		)
 	component_files = |package_name, component_name, files, dependencies| {
 		root = "${package_name}/${component_name}"
 		modules = files.map(|file| file.filename.drop_suffix(".roc"))
@@ -88,7 +114,12 @@ Assembly := [].{
 		])
 	}
 
-	plugin_files : Assembly.PluginInput, U64, Assembly.CustomDependencies -> List(Assembly.SourceFile)
+	plugin_files :
+		Assembly.PluginInput,
+		U64,
+		Assembly.CustomDependencies -> List(
+			Assembly.SourceFile,
+		)
 	plugin_files = |plugin, index, dependencies| {
 		package_name = "custom${U64.to_str(index)}"
 		package_dependencies = [
@@ -104,29 +135,71 @@ Assembly := [].{
 		[
 			{
 				destination: "${package_name}/main.roc",
-				contents: Assembly.package_source([plugin.module_name], package_dependencies),
+				contents: Assembly.package_source(
+					[plugin.module_name],
+					package_dependencies,
+				),
 			},
 			{
 				destination: "${package_name}/${plugin.filename}",
 				contents: plugin.contents,
 			},
 		]
-			.concat(Assembly.component_files(package_name, "commands", plugin.commands, dependencies.commands))
-			.concat(Assembly.component_files(package_name, "backends", plugin.backends, dependencies.backends))
-			.concat(Assembly.component_files(package_name, "implementations", plugin.implementations, implementation_dependencies))
+			.concat(
+				Assembly.component_files(
+					package_name,
+					"commands",
+					plugin.commands,
+					dependencies.commands,
+				),
+			)
+			.concat(
+				Assembly.component_files(
+					package_name,
+					"backends",
+					plugin.backends,
+					dependencies.backends,
+				),
+			)
+			.concat(
+				Assembly.component_files(
+					package_name,
+					"implementations",
+					plugin.implementations,
+					implementation_dependencies,
+				),
+			)
 	}
 
-	custom_files_from : List(Assembly.PluginInput), Assembly.CustomDependencies, U64 -> List(Assembly.SourceFile)
+	custom_files_from :
+		List(Assembly.PluginInput),
+		Assembly.CustomDependencies,
+		U64 -> List(
+			Assembly.SourceFile,
+		)
 	custom_files_from = |plugins, dependencies, index|
 		match plugins {
 			[] => []
-			[first, .. as rest] => Assembly.plugin_files(first, index, dependencies).concat(Assembly.custom_files_from(rest, dependencies, index + 1))
+			[first, .. as rest] => Assembly.plugin_files(
+				first,
+				index,
+				dependencies,
+			).concat(
+				Assembly.custom_files_from(rest, dependencies, index + 1),
+			)
 		}
 
-	make_custom_files : List(Assembly.PluginInput), Assembly.CustomDependencies -> List(Assembly.SourceFile)
-	make_custom_files = |plugins, dependencies| Assembly.custom_files_from(plugins, dependencies, 0)
+	make_custom_files :
+		List(Assembly.PluginInput),
+		Assembly.CustomDependencies -> List(
+			Assembly.SourceFile,
+		)
+	make_custom_files = |plugins, dependencies|
+		Assembly.custom_files_from(plugins, dependencies, 0)
 
-	make_custom_entries : List(Assembly.PluginInput) -> List(Assembly.RegistryEntry)
+	make_custom_entries : List(Assembly.PluginInput) -> List(
+		Assembly.RegistryEntry,
+	)
 	make_custom_entries = |plugins|
 		plugins.map_with_index(
 			|plugin, index| {
@@ -135,21 +208,40 @@ Assembly := [].{
 				{
 					app_dependency: { name: package_name, path: "./${package_name}/main.roc" },
 					import_line: "import ${package_name}.${plugin.module_name} as ${name}",
-					expression: "{ backends: ${name}.backends, commands: ${name}.commands, implementations: ${name}.implementations, name: ${name}.name, project_configs: [] }",
+					expression: Str.join_with(
+						[
+							"{ backends: ${name}.backends,",
+							"commands: ${name}.commands,",
+							"implementations: ${name}.implementations,",
+							"name: ${name}.name,",
+							"project_configs: [] }",
+						],
+						" ",
+					),
 				}
 			},
 		)
 
-	render_app : Str, List(Assembly.SourceBundle), List(Assembly.RegistryEntry), List(Assembly.RegistryEntry) -> Str
-	render_app = |platform_url, bundles, custom_registry_entries, fallback_entries| {
+	render_app :
+		Str,
+		List(Assembly.SourceBundle),
+		List(Assembly.RegistryEntry),
+		List(
+			Assembly.RegistryEntry,
+		) -> Str
+	render_app = |platform_url, bundles, custom_entries, fallback_entries| {
 		dependencies = Assembly.bundle_dependencies(bundles)
 			.concat(fallback_entries.map(|entry| entry.app_dependency))
-			.concat(custom_registry_entries.map(|entry| entry.app_dependency))
-		dependency_lines = dependencies.map(|dependency| "\t${dependency.name}: \"${dependency.path}\",")
+			.concat(custom_entries.map(|entry| entry.app_dependency))
+		dependency_lines = dependencies.map(
+			|dependency| "\t${dependency.name}: \"${dependency.path}\",",
+		)
 		import_lines = Assembly.bundle_imports(bundles)
 			.concat(fallback_entries.map(|entry| entry.import_line))
-			.concat(custom_registry_entries.map(|entry| entry.import_line))
-		registry_lines = custom_registry_entries.concat(fallback_entries).map(|entry| "\t${entry.expression},")
+			.concat(custom_entries.map(|entry| entry.import_line))
+		registry_lines = custom_entries.concat(fallback_entries).map(
+			|entry| "\t${entry.expression},",
+		)
 
 		Str.join_with(
 			[
@@ -195,7 +287,10 @@ Assembly := [].{
 		}
 	}
 
-	validate_plugin_sources : List(Assembly.PluginSource) -> Try({}, Assembly.AssemblyProblem)
+	validate_plugin_sources : List(Assembly.PluginSource) -> Try(
+		{},
+		Assembly.AssemblyProblem,
+	)
 	validate_plugin_sources = |sources|
 		match sources {
 			[] => Ok({})
@@ -205,7 +300,10 @@ Assembly := [].{
 			}
 		}
 
-	validate_plugins : List(Assembly.PluginInput) -> Try({}, Assembly.AssemblyProblem)
+	validate_plugins : List(Assembly.PluginInput) -> Try(
+		{},
+		Assembly.AssemblyProblem,
+	)
 	validate_plugins = |plugins|
 		match plugins {
 			[] => Ok({})
@@ -218,13 +316,20 @@ Assembly := [].{
 			}
 		}
 
-	validate_destinations : List(Assembly.SourceFile), List(Str) -> Try({}, Assembly.AssemblyProblem)
+	validate_destinations :
+		List(Assembly.SourceFile),
+		List(Str) -> Try(
+			{},
+			Assembly.AssemblyProblem,
+		)
 	validate_destinations = |files, seen|
 		match files {
 			[] => Ok({})
 			[first, .. as rest] => {
 				parts = first.destination.split_on("/")
-				if first.destination.is_empty() or first.destination.starts_with("/") or List.any(parts, |part| part == "..") {
+				if first.destination.is_empty() or
+					first.destination.starts_with("/") or
+						List.any(parts, |part| part == "..") {
 					Err(StageEscapingDestination(first.destination))
 				} else if seen.contains(first.destination) {
 					Err(DuplicateDestination(first.destination))
@@ -234,14 +339,34 @@ Assembly := [].{
 			}
 		}
 
-	assemble : Assembly.BuildProfile, List(Assembly.PluginInput) -> Try(Assembly.BuildPlan, Assembly.AssemblyProblem)
+	assemble :
+		Assembly.BuildProfile,
+		List(Assembly.PluginInput) -> Try(
+			Assembly.BuildPlan,
+			Assembly.AssemblyProblem,
+		)
 	assemble = |profile, plugins| {
 		Assembly.validate_plugins(plugins)?
-		assembled_custom_files = Assembly.make_custom_files(plugins, profile.custom_dependencies)
+		assembled_custom_files = Assembly.make_custom_files(
+			plugins,
+			profile.custom_dependencies,
+		)
 		assembled_custom_entries = Assembly.make_custom_entries(plugins)
-		assembled_app_source = Assembly.render_app(profile.platform_url, profile.bundles, assembled_custom_entries, profile.fallback_entries)
-		assembled_files = Assembly.bundle_files(profile.bundles).concat(assembled_custom_files)
-		Assembly.validate_destinations(assembled_files.concat([{ destination: "main.roc", contents: assembled_app_source }]), [])?
+		assembled_app_source = Assembly.render_app(
+			profile.platform_url,
+			profile.bundles,
+			assembled_custom_entries,
+			profile.fallback_entries,
+		)
+		assembled_files = Assembly.bundle_files(profile.bundles).concat(
+			assembled_custom_files,
+		)
+		Assembly.validate_destinations(
+			assembled_files.concat([
+				{ destination: "main.roc", contents: assembled_app_source },
+			]),
+			[],
+		)?
 		Ok({ app_source: assembled_app_source, files: assembled_files })
 	}
 }

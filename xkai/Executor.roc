@@ -30,8 +30,11 @@ Executor := [].{
 	command_lines = |registry|
 		match registry {
 			[] => []
-			[first, .. as rest] => first.commands.map(|command| "  ${command.call.name}").concat(Executor.command_lines(rest))
-		}
+			[first, .. as rest] =>
+				first.commands
+					.map(|command| "  ${command.call.name}")
+					.concat(Executor.command_lines(rest))
+			}
 
 	help : List(Plugin.Definition) -> Str
 	help = |registry|
@@ -63,7 +66,10 @@ Executor := [].{
 			["-f"] => Err(MissingKaifilePath)
 			["--file"] => Err(MissingKaifilePath)
 			["-f", kaifile, .. as command_args] => Ok({ args: command_args, kaifile })
-			["--file", kaifile, .. as command_args] => Ok({ args: command_args, kaifile })
+			["--file", kaifile, .. as command_args] => Ok({
+				args: command_args,
+				kaifile,
+			})
 			_ => Ok({ args, kaifile: "Kaifile" })
 		}
 
@@ -97,7 +103,13 @@ Executor := [].{
 								OTHER(name) => OTHER(name)
 								_ => OTHER("unsupported")
 							}
-							match Plugin.plan_registry(registry, config_text, invocation.args, host_os, host.arch) {
+							match Plugin.plan_registry(
+								registry,
+								config_text,
+								invocation.args,
+								host_os,
+								host.arch,
+							) {
 								Ok(selected_plan) => Executor.execute!(selected_plan)
 								Err(PlanningFailed(diagnostic)) => Err(PlanningFailed(diagnostic))
 								Err(UnknownCommand) => Err(UnknownCommand)

@@ -1,3 +1,4 @@
+# Standard plugin definition for Kai's built-in Nix commands.
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Build as BuildCommand

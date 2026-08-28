@@ -1,3 +1,7 @@
+# Shared `command` interface for defining/running `workflow`s.
+#
+# These are very useful for running a series of `task`s in certain
+# `environments`.
 import parser.Body
 import kai.Kaifile
 import kai.Plugin

@@ -1,3 +1,4 @@
+# Github API calls for automating release creation
 import pf.Http
 import pf.Path
 import pf.Url
@@ -25,7 +26,13 @@ GitHubApi := [].{
 		if actual == expected {
 			Ok(response)
 		} else {
-			Err(UnexpectedGitHubStatus({ actual, body: GitHubApi.response_body(response), expected }))
+			Err(
+				UnexpectedGitHubStatus({
+					actual,
+					body: GitHubApi.response_body(response),
+					expected,
+				}),
+			)
 		}
 	}
 
@@ -38,42 +45,98 @@ GitHubApi := [].{
 	}
 
 	require_repository! = |api, repository, token| {
-		url = Url.append_path_segments(api, ["repos", repository.owner, repository.repository])
+		url = Url.append_path_segments(
+			api,
+			["repos", repository.owner, repository.repository],
+		)
 		response = Http.send!(GitHubApi.request(GET, url, token))?
 		_ = GitHubApi.require_status(response, 200)?
 		Ok({})
 	}
 
 	release_url = |api, repository, tag|
-		Url.append_path_segments(api, ["repos", repository.owner, repository.repository, "releases", "tags", tag])
+		Url.append_path_segments(
+			api,
+			[
+				"repos",
+				repository.owner,
+				repository.repository,
+				"releases",
+				"tags",
+				tag,
+			],
+		)
 
 	releases_url = |api, repository|
-		Url.append_path_segments(api, ["repos", repository.owner, repository.repository, "releases"])
+		Url.append_path_segments(
+			api,
+			["repos", repository.owner, repository.repository, "releases"],
+		)
 
 	release_by_id_url = |api, repository, id|
-		Url.append_path_segments(api, ["repos", repository.owner, repository.repository, "releases", U64.to_str(id)])
+		Url.append_path_segments(
+			api,
+			[
+				"repos",
+				repository.owner,
+				repository.repository,
+				"releases",
+				U64.to_str(id),
+			],
+		)
 
 	get_release! = |api, repository, tag, token| {
-		response = Http.send!(GitHubApi.request(GET, GitHubApi.release_url(api, repository, tag), token))?
+		response = Http.send!(
+			GitHubApi.request(
+				GET,
+				GitHubApi.release_url(api, repository, tag),
+				token,
+			),
+		)?
 		match Response.status(response) {
 			200 => Ok(FoundRelease(GitHubApi.decode_release_response(response)?))
 			404 => Ok(NoRelease)
-			status => Err(UnexpectedGitHubStatus({ actual: status, body: GitHubApi.response_body(response), expected: 200 }))
+			status => Err(
+				UnexpectedGitHubStatus({
+					actual: status,
+					body: GitHubApi.response_body(response),
+					expected: 200,
+				}),
+			)
 		}
 	}
 
 	get_release_by_id! = |api, repository, id, token| {
-		response = Http.send!(GitHubApi.request(GET, GitHubApi.release_by_id_url(api, repository, id), token))?
+		response = Http.send!(
+			GitHubApi.request(
+				GET,
+				GitHubApi.release_by_id_url(api, repository, id),
+				token,
+			),
+		)?
 		match Response.status(response) {
 			200 => Ok(FoundRelease(GitHubApi.decode_release_response(response)?))
 			404 => Ok(NoRelease)
-			status => Err(UnexpectedGitHubStatus({ actual: status, body: GitHubApi.response_body(response), expected: 200 }))
+			status => Err(
+				UnexpectedGitHubStatus({
+					actual: status,
+					body: GitHubApi.response_body(response),
+					expected: 200,
+				}),
+			)
 		}
 	}
 
 	create_draft! = |api, repository, release, token| {
-		api_request = GitHubApi.request(POST, GitHubApi.releases_url(api, repository), token)
-		response = Http.send_json!(api_request, GitHub.create_release_request(release))?
+		api_request = GitHubApi.request(
+			POST,
+			GitHubApi.releases_url(api, repository),
+			token,
+		)
+		response = Http.send_json!(
+			api_request,
+			GitHub.create_release_request(release),
+		)?
 		_ = GitHubApi.require_status(response, 201)?
 		draft = GitHubApi.decode_release_response(response)?
 		GitHub.validate_release_identity(release, draft) ? ReleaseCollision
@@ -85,18 +148,36 @@ GitHubApi := [].{
 	}
 
 	delete_asset! = |api, repository, asset, token| {
-		url = Url.append_path_segments(api, ["repos", repository.owner, repository.repository, "releases", "assets", U64.to_str(asset.id)])
+		url = Url.append_path_segments(
+			api,
+			[
+				"repos",
+				repository.owner,
+				repository.repository,
+				"releases",
+				"assets",
+				U64.to_str(asset.id),
+			],
+		)
 		response = Http.send!(GitHubApi.request(DELETE, url, token))?
 		status = Response.status(response)
 		if status == 204 or status == 404 {
 			Ok({})
 		} else {
-			Err(UnexpectedGitHubStatus({ actual: status, body: GitHubApi.response_body(response), expected: 204 }))
+			Err(
+				UnexpectedGitHubStatus({
+					actual: status,
+					body: GitHubApi.response_body(response),
+					expected: 204,
+				}),
+			)
 		}
 	}
 
 	same_origin = |left, right|
-		Url.scheme(left) == Url.scheme(right) and Url.host(left) == Url.host(right) and Url.port(left) == Url.port(right)
+		Url.scheme(left) == Url.scheme(right) and
+			Url.host(left) == Url.host(right) and
+				Url.port(left) == Url.port(right)
 
 	upload_base = |api, template| {
 		raw = template.split_on("{").first() ?? template
@@ -127,14 +208,20 @@ GitHubApi := [].{
 
 	publish_draft! = |api, repository, id, release, expected_assets, token| {
 		url = GitHubApi.release_by_id_url(api, repository, id)
-		response = Http.send_json!(GitHubApi.request(PATCH, url, token), { draft: Bool.False })?
+		response = Http.send_json!(
+			GitHubApi.request(PATCH, url, token),
+			{ draft: Bool.False },
+		)?
 		_ = GitHubApi.require_status(response, 200)?
 		published = GitHubApi.decode_release_response(response)?
 		GitHub.validate_release_identity(release, published) ? ReleaseCollision
-		if published.draft or !GitHub.has_published_assets(published.assets, expected_assets) {
-			Err(PublishedReleaseMismatch)
-		} else {
-			Ok({})
-		}
+		if
+			published.draft or
+				!GitHub.has_published_assets(published.assets, expected_assets)
+				{
+					Err(PublishedReleaseMismatch)
+				} else {
+					Ok({})
+				}
 	}
 }

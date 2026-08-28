@@ -1,3 +1,4 @@
+# Effectful Kaifile discovery, parsing, and operations for running them
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -79,7 +80,11 @@ Kaifiles := [].{
 			.keep_if(|arg| !arg.is_empty())
 		expected_root = Path.join(directory, "expected")
 		platform_expected = Path.join(expected_root, platform_name)
-		expected_directory = if Path.is_dir!(platform_expected)? platform_expected else expected_root
+		expected_directory = if Path.is_dir!(platform_expected)? {
+			platform_expected
+		} else {
+			expected_root
+		}
 		expected_outputs = Kaifiles.expected_outputs!(expected_directory)?
 		if args.is_empty() {
 			Err(EmptyKaifileArguments(path))
@@ -87,7 +92,16 @@ Kaifiles := [].{
 			Err(EmptyExpectedOutputs(path))
 		} else {
 			workspace = Kaifiles.workspace!()?
-			result = Kaifiles.run_example!(binary, args, expected_outputs, fixture.kaifile, lock, path, system, workspace)
+			result = Kaifiles.run_example!(
+				binary,
+				args,
+				expected_outputs,
+				fixture.kaifile,
+				lock,
+				path,
+				system,
+				workspace,
+			)
 			Path.delete_all!(workspace)?
 			_ = result?
 			Stdout.line!("tested: ${path}")?
@@ -119,7 +133,16 @@ Kaifiles := [].{
 			}
 		}
 
-	run_example! = |binary, args, expected_outputs, kaifile, lock, path, system, workspace| {
+	run_example! = |
+		binary,
+		args,
+		expected_outputs,
+		kaifile,
+		lock,
+		path,
+		system,
+		workspace,
+	| {
 		Path.write_utf8!(Path.join(workspace, "Kaifile"), Path.read_utf8!(kaifile)?)?
 		Path.write_utf8!(Path.join(workspace, "kai.lock"), lock)?
 
@@ -133,8 +156,13 @@ Kaifiles := [].{
 			if !expected_output.relative.ends_with(".expected") {
 				return Err(ExpectedOutputSuffixRequired(expected_output.relative))
 			}
-			output_name = Str.from_utf8_lossy(expected_output.relative.to_utf8().drop_last(9))
-			expected = Str.join_with(Path.read_utf8!(expected_output.path)?.split_on("{{system}}"), system)
+			output_name = Str.from_utf8_lossy(
+				expected_output.relative.to_utf8().drop_last(9),
+			)
+			expected = Str.join_with(
+				Path.read_utf8!(expected_output.path)?.split_on("{{system}}"),
+				system,
+			)
 			actual_path = Path.join(Path.join(workspace, ".kai"), output_name)
 			actual = Path.read_utf8!(actual_path)?
 			if actual != expected {

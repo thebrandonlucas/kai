@@ -1,3 +1,4 @@
+# An implementation for updating the underlying `flake.nix` files
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Update as UpdateCommand
@@ -20,7 +21,12 @@ UpdateNix := [].{
 			Plugin.RenderResult.{
 				actions: [],
 				artifacts: [],
-				outputs: [{ name: "flake", text: NixBackend.render_update_flake(overlays, sources) }],
+				outputs: [
+					{
+						name: "flake",
+						text: NixBackend.render_update_flake(overlays, sources),
+					},
+				],
 				requests: [],
 				requested_packages: [],
 			},

@@ -1,3 +1,4 @@
+# Run Kaifile examples
 import pf.Path
 import pf.Stdout
 
@@ -36,11 +37,14 @@ Examples := [].{
 			Ok([])
 		} else if Path.is_dir!(path)? {
 			Examples.discover_entries!(Path.list!(path)?)
-		} else if Path.is_file!(path)? and Path.display(Path.filename(path) ?? path) == "Kaifile" {
-			Ok([path])
-		} else {
-			Ok([])
-		}
+		} else if
+			Path.is_file!(path)? and
+				Path.display(Path.filename(path) ?? path) == "Kaifile"
+				{
+					Ok([path])
+				} else {
+					Ok([])
+				}
 	}
 
 	discover_entries! = |entries|
@@ -68,9 +72,25 @@ Examples := [].{
 	}
 
 	invocations : List(Config.Block), Str -> Try(List(Examples.Invocation), _)
-	invocations = |blocks, path| Examples.collect_blocks(blocks, path, LINUX, X64, Bool.True)
+	invocations = |blocks, path|
+		Examples.collect_blocks(
+			blocks,
+			path,
+			LINUX,
+			X64,
+			Bool.True,
+		)
 
-	collect_blocks : List(Config.Block), Str, Plugin.HostOs, Plugin.HostArch, Bool -> Try(List(Examples.Invocation), _)
+	collect_blocks :
+		List(Config.Block),
+		Str,
+		Plugin.HostOs,
+		Plugin.HostArch,
+		Bool ->
+			Try(
+				List(Examples.Invocation),
+				_,
+			)
 	collect_blocks = |blocks, path, os, arch, allow_hosts|
 		match blocks {
 			[] => Ok([])
@@ -80,12 +100,27 @@ Examples := [].{
 					_ => if allow_hosts {
 						match first.header {
 							["on", "linux"] => Examples.nested_invocations(first, path, LINUX, X64)
-							["on", "macos"] => Examples.nested_invocations(first, path, MACOS, AARCH64)
+							["on", "macos"] => Examples.nested_invocations(
+								first,
+								path,
+								MACOS,
+								AARCH64,
+							)
 							["on", host] => Err(UnsupportedExampleHost({ host, path }))
-							_ => Examples.invocation_for_header(first.header, path, os, arch).map_ok(|invocation| [invocation])
+							_ => Examples.invocation_for_header(
+								first.header,
+								path,
+								os,
+								arch,
+							).map_ok(|invocation| [invocation])
 						}
 					} else {
-						Examples.invocation_for_header(first.header, path, os, arch).map_ok(|invocation| [invocation])
+						Examples.invocation_for_header(
+							first.header,
+							path,
+							os,
+							arch,
+						).map_ok(|invocation| [invocation])
 					}
 				}
 				current = current_result?
@@ -100,7 +135,8 @@ Examples := [].{
 		Examples.collect_blocks(blocks, path, os, arch, Bool.False)
 	}
 
-	invocation_for_header : List(Str), Str, Plugin.HostOs, Plugin.HostArch -> Try(Examples.Invocation, _)
+	invocation_for_header :
+		List(Str), Str, Plugin.HostOs, Plugin.HostArch -> Try(Examples.Invocation, _)
 	invocation_for_header = |header, path, os, arch| {
 		args = match header {
 			["shell"] => Ok(["shell"])

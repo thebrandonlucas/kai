@@ -1,3 +1,4 @@
+# Shared `command` interface for working with machine services
 import parser.Body
 import kai.Kaifile
 import kai.Plugin
@@ -14,22 +15,46 @@ Service := [].{
 	name_rules = [
 		NonemptyText("service name must not be empty"),
 		AllBytes({
-			allowed: [AsciiUppercase, AsciiLowercase, AsciiDigit, ExactByte('_'), ExactByte('-')],
+			allowed: [
+				AsciiUppercase,
+				AsciiLowercase,
+				AsciiDigit,
+				ExactByte('_'),
+				ExactByte('-'),
+			],
 			message: "service name may contain only ASCII letters, digits, '_', and '-'",
 		}),
 	]
 
 	name_failures : Str -> List(Str)
 	name_failures = |name| {
-		length_failures = if name.to_utf8().len() <= 128 [] else ["service name must be at most 128 bytes"]
+		length_failures = if name.to_utf8().len() <= 128 {
+			[]
+		} else {
+			["service name must be at most 128 bytes"]
+		}
 		Plugin.validate_text(name, Service.name_rules).concat(length_failures)
 	}
 
 	secret_failures : List(Str) -> List(Str)
 	secret_failures = |secrets| {
-		validation_failures = Plugin.validate_string_list(secrets, Secret.name_rules.map(|rule| AllStrings(rule)))
-		length_failures = if List.any(secrets, |secret| secret.to_utf8().len() > 128) ["secret name must be at most 128 bytes"] else []
-		duplicate_failures = if Service.has_duplicates(secrets) ["service secret references must not contain duplicates"] else []
+		validation_failures = Plugin.validate_string_list(
+			secrets,
+			Secret.name_rules.map(|rule| AllStrings(rule)),
+		)
+		length_failures = if List.any(
+			secrets,
+			|secret| secret.to_utf8().len() > 128,
+		) {
+			["secret name must be at most 128 bytes"]
+		} else {
+			[]
+		}
+		duplicate_failures = if Service.has_duplicates(secrets) {
+			["service secret references must not contain duplicates"]
+		} else {
+			[]
+		}
 		validation_failures.concat(length_failures).concat(duplicate_failures)
 	}
 
@@ -45,7 +70,11 @@ Service := [].{
 		if restart == "on-failure" [] else ["service restart must be 'on-failure'"]
 
 	block : Plugin.KaifileBlock
-	block = Kaifile.named_block({ header: "service <service>", fields, name_rules })
+	block = Kaifile.named_block({
+		header: "service <service>",
+		fields,
+		name_rules,
+	})
 
 	command : Plugin.Command
 	command = Plugin.Command.{

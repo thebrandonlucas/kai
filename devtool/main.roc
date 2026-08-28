@@ -1,5 +1,8 @@
+# kai repo devtool entry point
 app [main!] {
-	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.22.0/F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL.tar.zst",
+	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.22.0/${
+		""
+	}F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL.tar.zst",
 }
 
 import pf.Cmd
@@ -13,6 +16,7 @@ import Kaifiles
 import GitHub
 import PrepareRelease
 import Release
+import Tidy
 
 validate_metadata! = || {
 	version = Path.read_utf8!(Path.utf8("xkai/VERSION"))?
@@ -27,7 +31,12 @@ validate_metadata! = || {
 		if manifest_version == version {
 			Ok(version)
 		} else {
-			Err(ManifestVersionMismatch({ canonical: version, manifest: manifest_version }))
+			Err(
+				ManifestVersionMismatch({
+					canonical: version,
+					manifest: manifest_version,
+				}),
+			)
 		}
 	}
 }
@@ -53,15 +62,21 @@ require_release_host! = || {
 	host = Env.platform!()
 	match (host.os, host.arch) {
 		(LINUX, X64) => Ok({})
-		_ => Err(UnsupportedReleaseHost("build-release requires an x86_64 Linux host"))
+		_ => Err(
+			UnsupportedReleaseHost(
+				"build-release requires an x86_64 Linux host",
+			),
+		)
 	}
 }
 
 remove_stale_workspaces! = |root| {
 	for entry in Path.list!(root)? {
 		name = Path.display(Path.filename(entry) ?? entry)
-		if Release.is_release_workspace(name) and !Path.is_sym_link!(entry)? and Path.is_dir!(entry)? {
-			Path.delete_all!(entry)?
+		if Release.is_release_workspace(name) and !Path.is_sym_link!(entry)? {
+			if Path.is_dir!(entry)? {
+				Path.delete_all!(entry)?
+			}
 		}
 	}
 	Ok({})
@@ -131,7 +146,10 @@ directory_inventory! = |directory| {
 generate_checksums_here! = |dist, archive_names| {
 	output = Cmd.new_str("sha256sum").args_str(archive_names).exec_output!()?
 	Path.write_utf8!(Path.join(dist, "SHA256SUMS"), output.stdout_utf8)?
-	Cmd.exec!(OsStr.utf8("sha256sum"), [OsStr.utf8("-c"), OsStr.utf8("SHA256SUMS")])
+	Cmd.exec!(
+		OsStr.utf8("sha256sum"),
+		[OsStr.utf8("-c"), OsStr.utf8("SHA256SUMS")],
+	)
 }
 
 generate_checksums! = |root, dist, archive_names| {
@@ -163,7 +181,12 @@ build_release_stage! = |root, dist, workspace, version| {
 	archive_inventory = directory_inventory!(dist)?
 	expected_archives = Release.archive_inventory(version)
 	if !Release.is_exact_inventory(archive_inventory, expected_archives) {
-		Err(UnexpectedArtifactInventory({ actual: archive_inventory, expected: expected_archives }))
+		Err(
+			UnexpectedArtifactInventory({
+				actual: archive_inventory,
+				expected: expected_archives,
+			}),
+		)
 	} else {
 		Stdout.line!("Generating checksums...")?
 		generate_checksums!(root, dist, expected_archives)?
@@ -189,7 +212,12 @@ build_release! = || {
 	Path.create_dir!(dist)?
 
 	workspace_output = Cmd.new_str("mktemp")
-		.args([OsStr.utf8("-d"), OsStr.utf8("-p"), Path.to_os_str(root), OsStr.utf8(".release-build.XXXXXX")])
+		.args([
+			OsStr.utf8("-d"),
+			OsStr.utf8("-p"),
+			Path.to_os_str(root),
+			OsStr.utf8(".release-build.XXXXXX"),
+		])
 		.exec_output!()
 	match workspace_output {
 		Err(error) => {
@@ -230,7 +258,11 @@ main! = |args|
 		Ok(Cli.Command.Help) => Stdout.line!(Cli.usage)
 		Ok(Cli.Command.BuildRelease) => build_release!()
 		Ok(Cli.Command.Kaifiles) => Kaifiles.run!()
-		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(name, version)
+		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(
+			name,
+			version,
+		)
+		Ok(Cli.Command.Tidy(paths)) => Tidy.run!(paths)
 		Err(error) => Err(InvalidArguments(Cli.error_message(error)))
 	}
 
@@ -243,7 +275,12 @@ parse_cases = [
 	{ args: ["kaifiles"], expected: Ok(Cli.Command.Kaifiles) },
 	{
 		args: ["prepare-release", "μοριων", "0.0.3"],
-		expected: Ok(Cli.Command.PrepareRelease({ name: "μοριων", version: "0.0.3" })),
+		expected: Ok(
+			Cli.Command.PrepareRelease({
+				name: "μοριων",
+				version: "0.0.3",
+			}),
+		),
 	},
 	{
 		args: ["build-release", "extra"],
@@ -265,5 +302,6 @@ usage_lines = [
 	"build-release",
 	"kaifiles",
 	"prepare-release NAME VERSION",
+	"tidy ROC_FILE...",
 	"help",
 ]

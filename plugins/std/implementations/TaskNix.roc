@@ -1,3 +1,4 @@
+# An implementation for defining how to run tasks via nix
 import parser.Body
 import kai.Plugin
 import backends.Nix as NixBackend
@@ -20,18 +21,30 @@ TaskNix := [].{
 			byte_offset: None,
 			message: "validated task configuration is missing 'run'",
 		}
-		Plugin.renderer_validation(Plugin.validate_string_list(run, TaskCommand.run_rules("task")))?
+		Plugin.renderer_validation(
+			Plugin.validate_string_list(run, TaskCommand.run_rules("task")),
+		)?
 		environment = match context.related_config {
-			NoRelatedConfig => Err({ byte_offset: None, message: "task environment is required" })
+			NoRelatedConfig => Err({
+				byte_offset: None,
+				message: "task environment is required",
+			})
 			SelectedRelatedConfig({ block: _, config }) => Ok(config)
 		}?
 		pkgs = Body.get_strings(environment, "packages") ? |_| {
 			byte_offset: None,
 			message: "validated environment configuration is missing 'packages'",
 		}
-		Plugin.renderer_validation(Plugin.validate_string_list(pkgs, NixBackend.package_rules))?
+		Plugin.renderer_validation(
+			Plugin.validate_string_list(pkgs, NixBackend.package_rules),
+		)?
 		overlays = EnvironmentNix.extract_overlays(environment)?
-		result = EnvironmentNix.render_result(context, pkgs, overlays, "unsupported task platform")?
+		result = EnvironmentNix.render_result(
+			context,
+			pkgs,
+			overlays,
+			"unsupported task platform",
+		)?
 		Ok({ ..result, actions: NixBackend.develop_command_actions(run) })
 	}
 }

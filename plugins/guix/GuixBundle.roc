@@ -1,3 +1,5 @@
+# Package the GuixPlugin source code as data so xkai can compile it into a
+# standalone kai binary.
 import "GuixPlugin.roc" as guix_plugin_source : Str
 import "backends/Guix.roc" as guix_backend_source : Str
 import "commands/Shell.roc" as shell_command_source : Str
@@ -5,8 +7,17 @@ import "implementations/ShellGuix.roc" as shell_guix_source : Str
 
 GuixBundle := [].{
 	package_source = |modules, dependencies| {
-		dependency_source = dependencies.map(|dependency| "${dependency.name}: \"${dependency.path}\"")
-		"package [${Str.join_with(modules, ", ")}] { ${Str.join_with(dependency_source, ", ")} }\n"
+		dependency_source = dependencies.map(
+			|dependency| "${dependency.name}: \"${dependency.path}\"",
+		)
+		Str.join_with(
+			[
+				"package [${Str.join_with(modules, ", ")}] { ",
+				Str.join_with(dependency_source, ", "),
+				" }\n",
+			],
+			"",
+		)
 	}
 
 	source_bundle = {
@@ -56,7 +67,10 @@ GuixBundle := [].{
 					],
 				),
 			},
-			{ destination: "guix/implementations/ShellGuix.roc", contents: shell_guix_source },
+			{
+				destination: "guix/implementations/ShellGuix.roc",
+				contents: shell_guix_source,
+			},
 		],
 	}
 

@@ -1,3 +1,4 @@
+# Shared `command` interface for updating project dependencies.
 import kai.Kaifile
 import kai.Plugin
 

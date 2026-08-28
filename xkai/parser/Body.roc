@@ -1,3 +1,4 @@
+# Parse the body of a config block
 Body := [].{
 
 	ValueShape : [Identifier, String, StringList]
@@ -174,10 +175,18 @@ Body := [].{
 				}
 			}
 
-	parse_identifier : List(U8), U64, Str -> Try({ rest : U64, value : Str }, Diagnostic)
+	parse_identifier : List(U8),
+	U64,
+	Str -> Try(
+		{ rest : U64, value : Str },
+		Diagnostic,
+	)
 	parse_identifier = |bytes, start, field_name|
 		if !Body.is_name_start(Body.byte_at(bytes, start)) {
-			Err({ byte_offset: start, kind: WrongType({ expected: Identifier, field: field_name }) })
+			Err({
+				byte_offset: start,
+				kind: WrongType({ expected: Identifier, field: field_name }),
+			})
 		} else {
 			end = Body.find_identifier_end(bytes, start + 1)
 			value = Str.from_utf8(bytes.sublist({ start, len: end - start })) ?? ""
@@ -186,7 +195,8 @@ Body := [].{
 
 	find_identifier_end : List(U8), U64 -> U64
 	find_identifier_end = |bytes, index|
-		if index < bytes.len() and Body.is_identifier_continue(Body.byte_at(bytes, index)) {
+		if index < bytes.len() and
+			Body.is_identifier_continue(Body.byte_at(bytes, index)) {
 			Body.find_identifier_end(bytes, index + 1)
 		} else {
 			index
@@ -224,11 +234,22 @@ Body := [].{
 			next = Body.skip_trivia(bytes, parsed.rest)
 			next_byte = Body.byte_at(bytes, next)
 			if next_byte == ',' {
-				Body.parse_string_list(bytes, next + 1, field_name, values.append(parsed.value), Bool.False)
+				Body.parse_string_list(
+					bytes,
+					next + 1,
+					field_name,
+					values.append(parsed.value),
+					Bool.False,
+				)
 			} else if next_byte == ']' {
 				Ok({ rest: next + 1, values: values.append(parsed.value) })
 			} else {
-				Err({ byte_offset: next, kind: InvalidSyntax("expected ',' or ']' in field '${field_name}'") })
+				Err({
+					byte_offset: next,
+					kind: InvalidSyntax(
+						"expected ',' or ']' in field '${field_name}'",
+					),
+				})
 			}
 		}
 	}
@@ -413,7 +434,13 @@ Body := [].{
 			MissingField(name) => "missing required field '${name}'"
 			UnknownField(name) => "unknown field '${name}'"
 			WrongListItem(field) => "items in field '${field}' must be strings"
-			WrongType({ expected, field }) => "field '${field}' must be ${Body.shape_name(expected)}"
+			WrongType({ expected, field }) => Str.join_with(
+				[
+					"field '${field}' must be",
+					Body.shape_name(expected),
+				],
+				" ",
+			)
 		}
 
 	shape_name : ValueShape -> Str

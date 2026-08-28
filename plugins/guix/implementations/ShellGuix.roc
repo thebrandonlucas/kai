@@ -1,3 +1,4 @@
+# An implementation of the `shell` command in Guix
 import kai.Plugin
 import backends.Guix as GuixBackend
 import commands.Shell as ShellCommand
@@ -10,7 +11,12 @@ ShellGuix := [].{
 		command: ShellCommand.command.call.name,
 		renderer: ShellGuix.renderer,
 		validator: Validate({
-			string_lists: [{ field: ShellCommand.packages_field, rules: GuixBackend.package_rules }],
+			string_lists: [
+				{
+					field: ShellCommand.packages_field,
+					rules: GuixBackend.package_rules,
+				},
+			],
 			target: SupportedTargets({
 				message: "unsupported Guix shell platform",
 				supported: GuixBackend.supported_targets,
