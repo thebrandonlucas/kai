@@ -39,13 +39,7 @@ BuildNix := [].{
 		output_failures = Plugin.validate_text(output, BuildCommand.output_rules)
 		failures = name_failures.concat(run_failures).concat(output_failures)
 		Plugin.renderer_validation(failures)?
-		environment = match context.related_config {
-			NoRelatedConfig => Err({
-				byte_offset: None,
-				message: "build environment is required",
-			})
-			SelectedRelatedConfig({ block: _, config }) => Ok(config)
-		}?
+		environment = Plugin.reference_config(context, "environment")?
 		pkgs = Fields.get_strings(environment, "packages") ? |_| {
 			byte_offset: None,
 			message: "validated environment configuration is missing 'packages'",
