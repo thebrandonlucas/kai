@@ -18,9 +18,8 @@ Workflow := [].{
 	})
 
 	command : Plugin.Command
-	command = Plugin.Command.{
+	command = Plugin.command({
 		call: Plugin.call("workflow", [Plugin.required_argument("workflow")]),
-		config: NamedConfig({ lookup: QualifiedThenUnqualified }),
-		config_block: RequiredConfigBlock(block),
-	}
+		kaifile: block,
+	})
 }

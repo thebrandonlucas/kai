@@ -2,19 +2,33 @@
 import parser.Body
 
 Kaifile := [].{
-	Block(name_rule) : {
+	BlockSchema(name_rule) : {
 		fields : List(Body.Field),
 		header : Str,
 		kind : [DirectBlockHeader, NamedBlockHeader],
 		name_rules : List(name_rule),
 	}
 
+	Block(name_rule) : {
+		schema : BlockSchema(name_rule),
+		selection : [
+			ByOptionalArgument(
+				{ argument : Str, when_provided : BlockSchema(name_rule) },
+			),
+			OptionalBlock,
+			RequiredBlock,
+		],
+	}
+
 	block : { fields : List(Body.Field), header : Str } -> Block(rule)
 	block = |{ fields, header }| {
-		fields,
-		header,
-		kind: DirectBlockHeader,
-		name_rules: [],
+		schema: {
+			fields,
+			header,
+			kind: DirectBlockHeader,
+			name_rules: [],
+		},
+		selection: RequiredBlock,
 	}
 
 	named_block :
@@ -24,23 +38,62 @@ Kaifile := [].{
 			name_rules : List(rule),
 		} -> Block(rule)
 	named_block = |{ fields, header, name_rules }| {
-		fields,
-		header,
-		kind: NamedBlockHeader,
-		name_rules,
+		schema: { fields, header, kind: NamedBlockHeader, name_rules },
+		selection: RequiredBlock,
 	}
 
+	optional : Block(rule) -> Block(rule)
+	optional = |schema_block| {
+		schema: schema_block.schema,
+		selection: OptionalBlock,
+	}
+
+	by_optional_argument :
+		{
+			argument : Str,
+			when_omitted : Block(rule),
+			when_provided : Block(rule),
+		} -> Block(rule)
+	by_optional_argument = |{ argument, when_omitted, when_provided }| {
+		schema: when_omitted.schema,
+		selection: ByOptionalArgument({
+			argument,
+			when_provided: when_provided.schema,
+		}),
+	}
+
+	from_schema : BlockSchema(rule) -> Block(rule)
+	from_schema = |schema| { schema, selection: RequiredBlock }
+
 	body : Block(rule) -> Body.Shape
-	body = |schema| Body.object(schema.fields)
+	body = |schema_block| Body.object(schema_block.schema.fields)
 
 	block_name : Block(rule) -> Str
-	block_name = |schema| Kaifile.header_tokens(schema.header).first() ?? ""
+	block_name = |schema_block|
+		Kaifile.header_tokens(schema_block.schema.header).first() ?? ""
+
+	header_argument : Block(rule) -> [HeaderArgument(Str), NoHeaderArgument]
+	header_argument = |schema_block|
+		match Kaifile.header_tokens(schema_block.schema.header) {
+			[_, slot] => {
+				bytes = slot.to_utf8()
+				name = Str.from_utf8(
+					bytes.sublist({ start: 1, len: bytes.len() - 2 }),
+				) ?? ""
+				HeaderArgument(name)
+			}
+			_ => NoHeaderArgument
+		}
 
 	is_named : Block(rule) -> Bool
-	is_named = |schema| schema.kind == NamedBlockHeader
+	is_named = |schema_block| schema_block.schema.kind == NamedBlockHeader
+
+	name_rules : Block(rule) -> List(rule)
+	name_rules = |schema_block| schema_block.schema.name_rules
 
 	validate_header : Block(rule) -> Try({}, Str)
-	validate_header = |schema| {
+	validate_header = |schema_block| {
+		schema = schema_block.schema
 		tokens = Kaifile.header_tokens(schema.header)
 		valid = match (schema.kind, tokens) {
 			(DirectBlockHeader, [literal]) => Kaifile.valid_name(literal)

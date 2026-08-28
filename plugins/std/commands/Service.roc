@@ -77,9 +77,8 @@ Service := [].{
 	})
 
 	command : Plugin.Command
-	command = Plugin.Command.{
+	command = Plugin.command({
 		call: Plugin.call("service", [Plugin.required_argument("service")]),
-		config: NamedConfig({ lookup: QualifiedThenUnqualified }),
-		config_block: RequiredConfigBlock(block),
-	}
+		kaifile: block,
+	})
 }
