@@ -2,12 +2,12 @@
 # the Nix backend.
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Shell as ShellCommand
+import configs.EnvironmentConfig
 import project_configs.Source
 
 EnvironmentNix := [].{
 	extract_overlays = |config|
-		Plugin.validated_strings(config, ShellCommand.overlays_field)
+		Plugin.validated_strings(config, EnvironmentConfig.overlays_field)
 
 	collect_overlays = |entries, collected|
 		match entries {

@@ -5,6 +5,7 @@
 import parser.Body
 import kai.Kaifile
 import kai.Plugin
+import configs.EnvironmentConfig
 
 Task := [].{
 	fields = [
@@ -29,22 +30,12 @@ Task := [].{
 	block : Plugin.KaifileBlock
 	block = Kaifile.named_block({ header: "task <task>", fields, name_rules })
 
-	environment_block : Plugin.KaifileBlock
-	environment_block = Kaifile.named_block({
-		header: "environment <environment>",
-		fields: [
-			Body.required("packages", StringList),
-			Body.optional("overlays", StringList),
-		],
-		name_rules: [],
-	})
-
 	command : Plugin.Command
 	command = Plugin.Command.{
 		call: Plugin.call("run", [Plugin.required_argument("task")]),
 		config: NamedWithRelatedConfig({
 			lookup: QualifiedOnly,
-			related: environment_block,
+			related: EnvironmentConfig.block,
 			related_field: "environment",
 		}),
 		config_block: RequiredConfigBlock(block),

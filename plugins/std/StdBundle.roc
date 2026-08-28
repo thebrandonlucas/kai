@@ -1,6 +1,7 @@
 # Bundles the standard plugin sources for generated Kai runtimes.
 import "StdPlugin.roc" as std_plugin_source : Str
 import "backends/Nix.roc" as nix_backend_source : Str
+import "configs/EnvironmentConfig.roc" as environment_config_source : Str
 import "commands/Build.roc" as build_command_source : Str
 import "commands/Image.roc" as image_command_source : Str
 import "commands/Machine.roc" as machine_command_source : Str
@@ -62,6 +63,20 @@ StdBundle := [].{
 			},
 			{ destination: "std/backends/Nix.roc", contents: nix_backend_source },
 			{
+				destination: "std/configs/main.roc",
+				contents: StdBundle.package_source(
+					["EnvironmentConfig"],
+					[
+						{ name: "kai", path: "../../package.roc" },
+						{ name: "parser", path: "../../parser/main.roc" },
+					],
+				),
+			},
+			{
+				destination: "std/configs/EnvironmentConfig.roc",
+				contents: environment_config_source,
+			},
+			{
 				destination: "std/commands/main.roc",
 				contents: StdBundle.package_source(
 					[
@@ -76,6 +91,7 @@ StdBundle := [].{
 						"Workflow",
 					],
 					[
+						{ name: "configs", path: "../configs/main.roc" },
 						{ name: "kai", path: "../../package.roc" },
 						{ name: "parser", path: "../../parser/main.roc" },
 					],
@@ -130,6 +146,7 @@ StdBundle := [].{
 					[
 						{ name: "backends", path: "../backends/main.roc" },
 						{ name: "commands", path: "../commands/main.roc" },
+						{ name: "configs", path: "../configs/main.roc" },
 						{ name: "kai", path: "../../package.roc" },
 						{ name: "parser", path: "../../parser/main.roc" },
 						{ name: "project_configs", path: "../project_configs/main.roc" },

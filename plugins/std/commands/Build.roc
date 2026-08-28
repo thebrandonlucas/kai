@@ -2,6 +2,7 @@
 import parser.Body
 import kai.Kaifile
 import kai.Plugin
+import configs.EnvironmentConfig
 
 Build := [].{
 	inputs_field = Body.optional("inputs", StringList)
@@ -66,22 +67,12 @@ Build := [].{
 		name_rules: artifact_name_rules,
 	})
 
-	environment_block : Plugin.KaifileBlock
-	environment_block = Kaifile.named_block({
-		header: "environment <environment>",
-		fields: [
-			Body.required("packages", StringList),
-			Body.optional("overlays", StringList),
-		],
-		name_rules: [],
-	})
-
 	command : Plugin.Command
 	command = Plugin.Command.{
 		call: Plugin.call("build", [Plugin.required_argument("artifact")]),
 		config: NamedWithRelatedConfig({
 			lookup: QualifiedThenUnqualified,
-			related: environment_block,
+			related: EnvironmentConfig.block,
 			related_field: "environment",
 		}),
 		config_block: RequiredConfigBlock(block),
