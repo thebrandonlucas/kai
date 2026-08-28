@@ -1,1 +1,0 @@
-{"artifact":{"attributes":[{"key":"backend","value":"nix"},{"key":"format","value":"qcow2"},{"key":"target.architecture","value":"x86_64"},{"key":"target.system","value":"x86_64-linux"}],"kind":"kai.machine.image/v1","name":"agent","path":".kai/artifacts/images/agent/result/agent.qcow2"},"schema":1}
