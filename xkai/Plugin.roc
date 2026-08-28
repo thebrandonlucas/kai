@@ -367,6 +367,7 @@ Plugin := [].{
 			{
 				block : LocatedConfigBlock,
 				body : Fields.Shape,
+				reference_field : Str,
 				related_block : LocatedConfigBlock,
 				related_body : Fields.Shape,
 			},
@@ -522,6 +523,7 @@ Plugin := [].{
 							SelectedWithRelated({
 								block,
 								body,
+								reference_field: related_field,
 								related_block,
 								related_body: Kaifile.body(related),
 							}),
@@ -1115,8 +1117,8 @@ Plugin := [].{
 		NoRelatedConfig,
 		SelectedRelatedConfig(
 			{
-				block : LocatedConfigBlock,
 				config : Fields.Configuration,
+				field : Str,
 			},
 		),
 	]
@@ -1222,6 +1224,31 @@ Plugin := [].{
 	project_configs : RenderContext, List(Str) -> List(ProjectConfigEntry)
 	project_configs = |context, block_names|
 		context.project_config.keep_if(|entry| block_names.contains(entry.block))
+
+	reference_config :
+		RenderContext, Str -> Try(Fields.Configuration, RendererDiagnostic)
+	reference_config = |context, field|
+		match context.related_config {
+			NoRelatedConfig => Err({
+				byte_offset: None,
+				message: "validated configuration has no reference field '${field}'",
+			})
+			SelectedRelatedConfig({ config, field: selected_field }) =>
+				if selected_field == field {
+					Ok(config)
+				} else {
+					Err({
+						byte_offset: None,
+						message: Str.join_with(
+							[
+								"validated configuration reference field",
+								"'${selected_field}' does not match '${field}'",
+							],
+							" ",
+						),
+					})
+				}
+			}
 
 	validate_render_context : RenderContext,
 	Validator -> Try(
@@ -2095,6 +2122,7 @@ Plugin := [].{
 								{
 									block,
 									body,
+									reference_field,
 									related_block,
 									related_body,
 								},
@@ -2126,8 +2154,8 @@ Plugin := [].{
 									config,
 									config_block: SelectedConfigBlock(block),
 									related_config: SelectedRelatedConfig({
-										block: related_block,
 										config: related,
+										field: reference_field,
 									}),
 								})
 							}
@@ -2447,6 +2475,7 @@ Plugin := [].{
 					{
 						block,
 						body: _,
+						reference_field: _,
 						related_block: _,
 						related_body: _,
 					},

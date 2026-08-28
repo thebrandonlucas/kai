@@ -24,13 +24,7 @@ TaskNix := [].{
 		Plugin.renderer_validation(
 			Plugin.validate_string_list(run, TaskCommand.run_rules("task")),
 		)?
-		environment = match context.related_config {
-			NoRelatedConfig => Err({
-				byte_offset: None,
-				message: "task environment is required",
-			})
-			SelectedRelatedConfig({ block: _, config }) => Ok(config)
-		}?
+		environment = Plugin.reference_config(context, "environment")?
 		pkgs = Fields.get_strings(environment, "packages") ? |_| {
 			byte_offset: None,
 			message: "validated environment configuration is missing 'packages'",

@@ -49,13 +49,7 @@ MachineNix := [].{
 				message: "${command_name} requires exactly one name",
 			})
 		}?
-		environment = match context.related_config {
-			NoRelatedConfig => Err({
-				byte_offset: None,
-				message: "machine environment is required",
-			})
-			SelectedRelatedConfig({ block: _, config }) => Ok(config)
-		}?
+		environment = Plugin.reference_config(context, "environment")?
 		pkgs = Fields.get_strings(environment, "packages") ? |_|
 			{
 				byte_offset: None,
