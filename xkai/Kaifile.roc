@@ -5,7 +5,7 @@ Kaifile := [].{
 	ReferenceTarget(name_rule) := {
 		fields : List(Fields.Field),
 		header : Str,
-		kind : [DirectBlockHeader, NamedBlockHeader],
+		kind : [NamedBlockHeader, UnnamedBlockHeader],
 		name_rules : List(name_rule),
 		reference_count : U64,
 	}
@@ -23,7 +23,7 @@ Kaifile := [].{
 	BlockSchema(name_rule) : {
 		fields : List(Field(name_rule)),
 		header : Str,
-		kind : [DirectBlockHeader, NamedBlockHeader],
+		kind : [NamedBlockHeader, UnnamedBlockHeader],
 		name_rules : List(name_rule),
 	}
 
@@ -89,12 +89,12 @@ Kaifile := [].{
 				}
 			}
 
-	block : { fields : List(Field(rule)), header : Str } -> Block(rule)
-	block = |{ fields, header }| {
+	unnamed_block : { fields : List(Field(rule)), header : Str } -> Block(rule)
+	unnamed_block = |{ fields, header }| {
 		schema: {
 			fields,
 			header,
-			kind: DirectBlockHeader,
+			kind: UnnamedBlockHeader,
 			name_rules: [],
 		},
 		selection: RequiredBlock,
@@ -186,7 +186,7 @@ Kaifile := [].{
 		schema = schema_block.schema
 		tokens = Kaifile.header_tokens(schema.header)
 		valid = match (schema.kind, tokens) {
-			(DirectBlockHeader, [literal]) => Kaifile.valid_name(literal)
+			(UnnamedBlockHeader, [literal]) => Kaifile.valid_name(literal)
 			(NamedBlockHeader, [literal, slot]) =>
 				Kaifile.valid_name(literal) and Kaifile.valid_slot(slot)
 			_ => Bool.False
@@ -194,7 +194,7 @@ Kaifile := [].{
 		if valid {
 			Ok({})
 		} else {
-			kind = if schema.kind == NamedBlockHeader "named" else "direct"
+			kind = if schema.kind == NamedBlockHeader "named" else "unnamed"
 			expected = if schema.kind == NamedBlockHeader {
 				"one literal token followed by one '<slot>' token"
 			} else {

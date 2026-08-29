@@ -9,7 +9,10 @@ import configs.EnvironmentConfig
 # b) what the corresponding Kaifile will look like from it
 Shell := [].{
 	block : Plugin.KaifileBlock
-	block = Kaifile.block({ header: "shell", fields: EnvironmentConfig.fields })
+	block = Kaifile.unnamed_block({
+		header: "shell",
+		fields: EnvironmentConfig.fields,
+	})
 
 	command : Plugin.Command
 	command = Plugin.command("shell", [Plugin.optional_argument("environment")])

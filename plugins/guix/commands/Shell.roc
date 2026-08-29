@@ -9,7 +9,7 @@ Shell := [].{
 	fields = [packages_field]
 
 	block : Plugin.KaifileBlock
-	block = Kaifile.block({ header: "shell", fields })
+	block = Kaifile.unnamed_block({ header: "shell", fields })
 
 	environment_block : Plugin.KaifileBlock
 	environment_block = Kaifile.named_block({

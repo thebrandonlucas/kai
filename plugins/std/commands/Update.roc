@@ -4,7 +4,7 @@ import kai.Plugin
 
 Update := [].{
 	block : Plugin.KaifileBlock
-	block = Kaifile.block({ header: "update", fields: [] })
+	block = Kaifile.unnamed_block({ header: "update", fields: [] })
 
 	command : Plugin.Command
 	command = Plugin.command("update", [])

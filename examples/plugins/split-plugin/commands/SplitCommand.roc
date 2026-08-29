@@ -4,7 +4,7 @@ import kai.Plugin
 
 SplitCommand := [].{
 	block : Plugin.KaifileBlock
-	block = Kaifile.block({ header: "split", fields: [] })
+	block = Kaifile.unnamed_block({ header: "split", fields: [] })
 
 	command : Plugin.Command
 	command = Plugin.command("split-command", [])

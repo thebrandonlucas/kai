@@ -1048,19 +1048,19 @@ Plugin := [].{
 				)
 			[block, name] =>
 				if name == backend {
-					direct = descriptors.keep_if(
+					unnamed = descriptors.keep_if(
 						|descriptor|
 							Kaifile.block_name(descriptor) == block and
 								!Kaifile.is_named(descriptor),
 					)
-					if direct.is_empty() {
+					if unnamed.is_empty() {
 						descriptors.keep_if(
 							|descriptor|
 								Kaifile.block_name(descriptor) == block and
 									Kaifile.is_named(descriptor),
 						)
 					} else {
-						direct
+						unnamed
 					}
 				} else {
 					descriptors.keep_if(
@@ -1558,7 +1558,7 @@ Plugin := [].{
 		if Kaifile.is_named(schema) == expected_named {
 			Ok({})
 		} else {
-			expected = if expected_named "named" else "direct"
+			expected = if expected_named "named" else "unnamed"
 			Plugin.registry_failure(
 				plugin,
 				Str.join_with(
@@ -1825,7 +1825,7 @@ Plugin := [].{
 								Kaifile.body(first),
 							)
 						{
-							kind = if Kaifile.is_named(descriptor) "named" else "direct"
+							kind = if Kaifile.is_named(descriptor) "named" else "unnamed"
 							Plugin.registry_failure(
 								plugin,
 								Str.join_with(

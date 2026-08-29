@@ -18,7 +18,7 @@ CustomPlugin := [].{
 	name = "custom"
 
 	block : Plugin.KaifileBlock
-	block = Kaifile.block({
+	block = Kaifile.unnamed_block({
 		header: "custom",
 		fields: [Kaifile.required("message", String)],
 	})
