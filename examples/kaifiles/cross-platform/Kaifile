@@ -1,6 +1,14 @@
 # Any command can be configured differently on each host!
 #
 # If you run `kai shell` on this, Kai selects the matching host block.
+nixpkgs default {
+  url: "github:NixOS/nixpkgs/nixos-unstable"
+}
+
+nixpkgs x86_64-darwin {
+  url: "github:NixOS/nixpkgs/nixpkgs-26.05-darwin"
+}
+
 on linux {
   shell {
     packages: ["cowsay", "fortune"]

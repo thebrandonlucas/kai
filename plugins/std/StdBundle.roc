@@ -21,6 +21,7 @@ import "implementations/ShellNix.roc" as shell_nix_source : Str
 import "implementations/TaskNix.roc" as task_nix_source : Str
 import "implementations/UpdateNix.roc" as update_nix_source : Str
 import "implementations/WorkflowNix.roc" as workflow_nix_source : Str
+import "project_configs/Nixpkgs.roc" as nixpkgs_config_source : Str
 import "project_configs/Source.roc" as source_config_source : Str
 
 StdBundle := [].{
@@ -123,12 +124,16 @@ StdBundle := [].{
 			{
 				destination: "std/project_configs/main.roc",
 				contents: StdBundle.package_source(
-					["Source"],
+					["Nixpkgs", "Source"],
 					[
 						{ name: "kai", path: "../../package.roc" },
 						{ name: "parser", path: "../../parser/main.roc" },
 					],
 				),
+			},
+			{
+				destination: "std/project_configs/Nixpkgs.roc",
+				contents: nixpkgs_config_source,
 			},
 			{
 				destination: "std/project_configs/Source.roc",

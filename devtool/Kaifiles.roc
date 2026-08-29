@@ -159,9 +159,13 @@ Kaifiles := [].{
 			output_name = Str.from_utf8_lossy(
 				expected_output.relative.to_utf8().drop_last(9),
 			)
-			expected = Str.join_with(
+			expected_with_system = Str.join_with(
 				Path.read_utf8!(expected_output.path)?.split_on("{{system}}"),
 				system,
+			)
+			expected = Str.join_with(
+				expected_with_system.split_on("{{nixpkgs}}"),
+				Kaifiles.nixpkgs(system),
 			)
 			actual_path = Path.join(Path.join(workspace, ".kai"), output_name)
 			actual = Path.read_utf8!(actual_path)?
@@ -200,5 +204,12 @@ Kaifiles := [].{
 			{ arch: X64, os: MACOS } => Ok("x86_64-darwin")
 			{ arch: AARCH64, os: MACOS } => Ok("aarch64-darwin")
 			_ => Err(UnsupportedKaifilePlatform)
+		}
+
+	nixpkgs = |target_system|
+		if target_system == "x86_64-darwin" {
+			"github:NixOS/nixpkgs/nixpkgs-26.05-darwin"
+		} else {
+			"github:NixOS/nixpkgs/nixos-unstable"
 		}
 }

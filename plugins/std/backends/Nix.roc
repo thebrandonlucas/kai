@@ -30,6 +30,8 @@ Nix := [].{
 		Ok({ system: system })
 	}
 
+	nixpkgs_input = |url| "  inputs.nixpkgs.url = \"${url}\";"
+
 	MachineTarget := { architecture : Str, system : Str }
 
 	machine_target :
@@ -69,6 +71,7 @@ Nix := [].{
 		if options.locked_overlays.is_empty() {
 			Nix.render_dev_shell_without_overlays(
 				options.pkgs,
+				options.nixpkgs,
 				options.sources,
 				options.system,
 				options.export_legacy_packages,
@@ -76,6 +79,7 @@ Nix := [].{
 		} else {
 			Nix.render_dev_shell_with_overlays(
 				options.pkgs,
+				options.nixpkgs,
 				options.locked_overlays,
 				options.overlays,
 				options.sources,
@@ -131,9 +135,9 @@ Nix := [].{
 				}
 			}
 
-	render_update_flake = |overlays, sources|
+	render_update_flake = |overlays, sources, nixpkgs|
 		Str.join_with(
-			["{", "  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";"]
+			["{", Nix.nixpkgs_input(nixpkgs)]
 				.concat(Nix.input_lines(overlays))
 				.concat(Nix.source_input_lines(sources))
 				.concat(["  outputs = _: {};", "}"]),
@@ -145,7 +149,7 @@ Nix := [].{
 		Str.join_with(path.split_on(".").map(|part| "\"${part}\""), ".")
 
 	# Render a flake containing a dev shell backed directly by nixpkgs.
-	render_dev_shell_without_overlays = |pkgs, sources, system, legacy| {
+	render_dev_shell_without_overlays = |pkgs, nixpkgs, sources, system, legacy| {
 		package_lines = pkgs.map(
 			|pkg|
 				Str.join_with(
@@ -161,13 +165,12 @@ Nix := [].{
 		} else {
 			[]
 		}
-		lines = [
-			"{",
-			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-		].concat(Nix.source_input_lines(sources)).concat([
-			"  outputs = inputs@{ nixpkgs, ... }: {",
-			"    ${Nix.source_attribute(sources)}",
-		]).concat(legacy_lines).concat([
+		lines = ["{", Nix.nixpkgs_input(nixpkgs)]
+			.concat(Nix.source_input_lines(sources))
+			.concat([
+				"  outputs = inputs@{ nixpkgs, ... }: {",
+				"    ${Nix.source_attribute(sources)}",
+			]).concat(legacy_lines).concat([
 			Str.join_with(
 				[
 					"    devShells.\"${system}\".default = ",
@@ -186,7 +189,14 @@ Nix := [].{
 	}
 
 	# Render a flake containing a dev shell with additional flake overlays.
-	render_dev_shell_with_overlays = |pkgs, locked, overlays, sources, system| {
+	render_dev_shell_with_overlays = |
+		pkgs,
+		nixpkgs,
+		locked,
+		overlays,
+		sources,
+		system,
+	| {
 		overlay_names = locked.map_with_index(
 			|_, index| "overlay${U64.to_str(index)}",
 		)
@@ -205,10 +215,7 @@ Nix := [].{
 			|pkg| "              pkgs.${Nix.render_attributes(pkg)}",
 		)
 		outputs_args = Str.join_with(["nixpkgs"].concat(overlay_names), ", ")
-		lines = [
-			"{",
-			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-		]
+		lines = ["{", Nix.nixpkgs_input(nixpkgs)]
 			.concat(Nix.input_lines(locked))
 			.concat(Nix.source_input_lines(sources))
 			.concat([

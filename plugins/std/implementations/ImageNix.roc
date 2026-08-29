@@ -56,6 +56,7 @@ ImageNix := [].{
 					ImageNix.render_flake(
 						config.name,
 						config.target_system,
+						config.nixpkgs,
 						config.locked_overlays,
 						config.overlays,
 						services,
@@ -88,8 +89,16 @@ ImageNix := [].{
 		)
 	}
 
-	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
-	render_flake = |name, system, locked_overlays, overlays, services| {
+	render_flake :
+		Str, Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
+	render_flake = |
+		name,
+		system,
+		nixpkgs,
+		locked_overlays,
+		overlays,
+		services,
+	| {
 		overlay_names = locked_overlays.map_with_index(|_, index|
 			"overlay${U64.to_str(index)}")
 		overlay_lines = overlays.map(
@@ -104,17 +113,16 @@ ImageNix := [].{
 				),
 		)
 		outputs_args = Str.join_with(["nixpkgs"].concat(overlay_names), ", ")
-		lines = [
-			"{",
-			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-		].concat(NixBackend.input_lines(locked_overlays)).concat([
-			"  outputs = { ${outputs_args}, ... }:",
-			"    let",
-			"      system = \"${system}\";",
-			"      pkgs = import nixpkgs {",
-			"        inherit system;",
-			"        overlays = [",
-		]).concat(overlay_lines).concat([
+		lines = ["{", NixBackend.nixpkgs_input(nixpkgs)]
+			.concat(NixBackend.input_lines(locked_overlays))
+			.concat([
+				"  outputs = { ${outputs_args}, ... }:",
+				"    let",
+				"      system = \"${system}\";",
+				"      pkgs = import nixpkgs {",
+				"        inherit system;",
+				"        overlays = [",
+			]).concat(overlay_lines).concat([
 			"        ];",
 			"      };",
 			"      machine = nixpkgs.lib.nixosSystem {",
