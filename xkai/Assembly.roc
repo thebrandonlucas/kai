@@ -208,16 +208,7 @@ Assembly := [].{
 				{
 					app_dependency: { name: package_name, path: "./${package_name}/main.roc" },
 					import_line: "import ${package_name}.${plugin.module_name} as ${name}",
-					expression: Str.join_with(
-						[
-							"{ backends: ${name}.backends,",
-							"commands: ${name}.commands,",
-							"implementations: ${name}.implementations,",
-							"name: ${name}.name,",
-							"project_configs: [] }",
-						],
-						" ",
-					),
+					expression: "${name}.plugin",
 				}
 			},
 		)

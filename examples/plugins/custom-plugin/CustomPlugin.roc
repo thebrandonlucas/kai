@@ -15,6 +15,15 @@ import kai.Kaifile
 import kai.Plugin
 
 CustomPlugin := [].{
+	plugin : Plugin.Definition
+	plugin = Plugin.Definition.{
+		backends,
+		commands,
+		implementations,
+		name,
+		project_configs: [],
+	}
+
 	name = "custom"
 
 	block : Plugin.KaifileBlock

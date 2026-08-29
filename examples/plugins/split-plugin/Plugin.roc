@@ -5,6 +5,15 @@ import commands.SplitCommand
 import implementations.SplitLocal
 
 Plugin := [].{
+	plugin : PluginApi.Definition
+	plugin = PluginApi.Definition.{
+		backends,
+		commands,
+		implementations,
+		name,
+		project_configs: [],
+	}
+
 	name = "split"
 
 	commands : List(PluginApi.CommandBlockSelection)
