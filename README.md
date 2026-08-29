@@ -47,7 +47,7 @@ The design is heavily inspired by [`caddy`](https://caddyserver.com/). `caddy`'s
 
 It is a masterclass in tool design.
 
-Thus Kai uses a similar architecture. The stock `kai` binary includes `StdPlugin`, which reads `Kaifile` and provides the default commands and Nix backend. For example:
+Thus Kai uses a similar architecture. The standard `kai` binary includes `StdPlugin`, which reads `Kaifile` and provides the default commands and Nix backend. For example:
 
 ```kai
 on linux {
@@ -86,11 +86,11 @@ Other than `nix develop` anytime you want a shell or `direnv allow` once, we hav
 Build outputs include:
 
 - `zig-out/ci/*`: development/CI executables discovered from Roc app roots
-- `result/bin/kai`: stock Kai, Nix-wrapped with `nix` on `PATH`
+- `result/bin/kai`: standard Kai, Nix-wrapped with `nix` on `PATH`
 - `result/bin/xkai`: the plugin builder, Nix-wrapped with Roc on `PATH`
 - `kai-<version>-<system>.tar.gz`: portable Kai CLI release archive
 
-The stock `kai` executable does not require Roc at runtime. Release archives contain the raw portable executable, so `nix` must already be available to use the standard shell backend. `xkai` requires Roc because it compiles the selected plugins into a new executable.
+The standard `kai` executable does not require Roc at runtime. Release archives contain the raw portable executable, so `nix` must already be available to use the standard shell backend. `xkai` requires Roc because it compiles the selected plugins into a new executable.
 
 ## Releases
 

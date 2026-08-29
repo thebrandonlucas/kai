@@ -35,7 +35,7 @@ Kaifiles := [].{
 
 	build_kai! = |root, workspace| {
 		binary = Path.join(workspace, "kai")
-		source = Path.join(root, "xkai/stock-cli.roc")
+		source = Path.join(root, "xkai/standard-cli.roc")
 		output = "--output=${Path.display(binary)}"
 		_ = Cmd.new_str("roc")
 			.args([
