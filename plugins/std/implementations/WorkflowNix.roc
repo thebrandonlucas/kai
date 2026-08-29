@@ -9,7 +9,7 @@ WorkflowNix := [].{
 	implementation = Plugin.Implementation.{
 		actions: [],
 		backend: NixBackend.backend.name,
-		command: WorkflowCommand.command.call.name,
+		command: WorkflowCommand.command.name,
 		renderer: WorkflowNix.renderer,
 		validator: NoValidation,
 	}

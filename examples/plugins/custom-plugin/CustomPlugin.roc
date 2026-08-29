@@ -24,13 +24,13 @@ CustomPlugin := [].{
 	})
 
 	command : Plugin.Command
-	command = Plugin.command({
-		call: Plugin.call("custom-write", []),
-		kaifile: block,
-	})
+	command = Plugin.command("custom-write", [])
 
-	commands : List(Plugin.Command)
-	commands = [command]
+	selection : Plugin.CommandBlockSelection
+	selection = Plugin.command_block_selection({ command, kaifile: block })
+
+	commands : List(Plugin.CommandBlockSelection)
+	commands = [selection]
 
 	backends : List(Plugin.Backend)
 	backends = [
@@ -56,7 +56,7 @@ CustomPlugin := [].{
 				}),
 			],
 			backend: "local",
-			command: command.call.name,
+			command: command.name,
 			renderer: |context|
 				match context.config_block {
 					NoConfigBlock => Err({

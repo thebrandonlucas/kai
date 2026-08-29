@@ -17,8 +17,8 @@ Workflow := [].{
 	})
 
 	command : Plugin.Command
-	command = Plugin.command({
-		call: Plugin.call("workflow", [Plugin.required_argument("workflow")]),
-		kaifile: block,
-	})
+	command = Plugin.command("workflow", [Plugin.required_argument("workflow")])
+
+	selection : Plugin.CommandBlockSelection
+	selection = Plugin.command_block_selection({ command, kaifile: block })
 }

@@ -30,9 +30,12 @@ Task := [].{
 	block = Kaifile.named_block({ header: "task <task>", fields, name_rules })
 
 	command : Plugin.Command
-	command = Plugin.command_with_backend_blocks({
+	command = Plugin.command("run", [Plugin.required_argument("task")])
+
+	selection : Plugin.CommandBlockSelection
+	selection = Plugin.command_block_selection_with_backend_blocks({
 		backend_blocks: RequireBackendSpecific,
-		call: Plugin.call("run", [Plugin.required_argument("task")]),
+		command,
 		kaifile: block,
 	})
 }

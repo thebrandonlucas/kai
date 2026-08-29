@@ -8,7 +8,7 @@ UpdateNix := [].{
 	implementation = Plugin.Implementation.{
 		actions: [NixBackend.flake_template].concat(NixBackend.update_lock_templates),
 		backend: NixBackend.backend.name,
-		command: UpdateCommand.command.call.name,
+		command: UpdateCommand.command.name,
 		renderer: UpdateNix.renderer,
 		validator: NoValidation,
 	}

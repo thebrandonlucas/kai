@@ -11,7 +11,7 @@ ServiceNix := [].{
 	implementation = Plugin.Implementation.{
 		actions: [],
 		backend: NixBackend.backend.name,
-		command: ServiceCommand.command.call.name,
+		command: ServiceCommand.command.name,
 		renderer: ServiceNix.renderer,
 		validator: NoValidation,
 	}

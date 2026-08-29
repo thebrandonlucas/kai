@@ -7,9 +7,12 @@ Update := [].{
 	block = Kaifile.block({ header: "update", fields: [] })
 
 	command : Plugin.Command
-	command = Plugin.command_with_backend_blocks({
+	command = Plugin.command("update", [])
+
+	selection : Plugin.CommandBlockSelection
+	selection = Plugin.command_block_selection_with_backend_blocks({
 		backend_blocks: RequireBackendSpecific,
-		call: Plugin.call("update", []),
+		command,
 		kaifile: Kaifile.optional_block(block),
 	})
 }

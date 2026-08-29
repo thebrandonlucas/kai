@@ -32,7 +32,7 @@ Executor := [].{
 			[] => []
 			[first, .. as rest] =>
 				first.commands
-					.map(|command| "  ${command.call.name}")
+					.map(|selection| "  ${selection.command.name}")
 					.concat(Executor.command_lines(rest))
 			}
 

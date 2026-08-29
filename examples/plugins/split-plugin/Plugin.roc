@@ -7,8 +7,8 @@ import implementations.SplitLocal
 Plugin := [].{
 	name = "split"
 
-	commands : List(PluginApi.Command)
-	commands = [SplitCommand.command]
+	commands : List(PluginApi.CommandBlockSelection)
+	commands = [SplitCommand.selection]
 
 	backends : List(PluginApi.Backend)
 	backends = [Local.backend]

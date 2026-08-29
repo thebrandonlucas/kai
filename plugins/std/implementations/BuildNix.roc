@@ -10,7 +10,7 @@ BuildNix := [].{
 	implementation = Plugin.Implementation.{
 		actions: [],
 		backend: NixBackend.backend.name,
-		command: BuildCommand.command.call.name,
+		command: BuildCommand.command.name,
 		renderer: BuildNix.renderer,
 		validator: NoValidation,
 	}

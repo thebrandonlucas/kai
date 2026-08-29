@@ -13,7 +13,7 @@ SplitLocal := [].{
 			}),
 		],
 		backend: Local.backend.name,
-		command: SplitCommand.command.call.name,
+		command: SplitCommand.command.name,
 		renderer: |_| Ok(
 			Plugin.RenderResult.{
 				actions: [],

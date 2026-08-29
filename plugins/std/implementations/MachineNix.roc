@@ -11,7 +11,7 @@ MachineNix := [].{
 	implementation = Plugin.Implementation.{
 		actions: [],
 		backend: NixBackend.backend.name,
-		command: MachineCommand.command.call.name,
+		command: MachineCommand.command.name,
 		renderer: MachineNix.renderer,
 		validator: NoValidation,
 	}

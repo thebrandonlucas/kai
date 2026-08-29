@@ -7,8 +7,11 @@ SplitCommand := [].{
 	block = Kaifile.block({ header: "split", fields: [] })
 
 	command : Plugin.Command
-	command = Plugin.command({
-		call: Plugin.call("split-command", []),
+	command = Plugin.command("split-command", [])
+
+	selection : Plugin.CommandBlockSelection
+	selection = Plugin.command_block_selection({
+		command,
 		kaifile: Kaifile.optional_block(block),
 	})
 }

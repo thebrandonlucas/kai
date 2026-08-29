@@ -182,13 +182,13 @@ Plugin := [].{
 
 	CommandArgument : [OptionalArgument(Str), RequiredArgument(Str)]
 
-	CommandCall := {
+	Command := {
 		arguments : List(CommandArgument),
 		name : Str,
 	}
 
-	call : Str, List(CommandArgument) -> CommandCall
-	call = |name, arguments| { arguments, name }
+	command : Str, List(CommandArgument) -> Command
+	command = |name, arguments| { arguments, name }
 
 	required_argument : Str -> CommandArgument
 	required_argument = |name| RequiredArgument(name)
@@ -227,37 +227,43 @@ Plugin := [].{
 
 	ProjectConfigDescriptor : KaifileBlock
 
-	Command := {
-		call : CommandCall,
+	CommandBlockSelection := {
+		command : Command,
 		config : ConfigMetadata,
 		config_block : ConfigBlockRequirement,
 	}
 
 	BackendBlocks : [RequireBackendSpecific]
 
-	command : { call : CommandCall, kaifile : KaifileBlock } -> Command
-	command = |declaration|
-		Plugin.lower_command(
-			declaration.call,
+	command_block_selection :
+		{ command : Command, kaifile : KaifileBlock } -> CommandBlockSelection
+	command_block_selection = |declaration|
+		Plugin.lower_command_block_selection(
+			declaration.command,
 			declaration.kaifile,
 			QualifiedThenUnqualified,
 		)
 
-	command_with_backend_blocks :
+	command_block_selection_with_backend_blocks :
 		{
 			backend_blocks : BackendBlocks,
-			call : CommandCall,
+			command : Command,
 			kaifile : KaifileBlock,
-		} -> Command
-	command_with_backend_blocks = |declaration| {
+		} -> CommandBlockSelection
+	command_block_selection_with_backend_blocks = |declaration| {
 		lookup = match declaration.backend_blocks {
 			RequireBackendSpecific => QualifiedOnly
 		}
-		Plugin.lower_command(declaration.call, declaration.kaifile, lookup)
+		Plugin.lower_command_block_selection(
+			declaration.command,
+			declaration.kaifile,
+			lookup,
+		)
 	}
 
-	lower_command : CommandCall, KaifileBlock, BackendLookup -> Command
-	lower_command = |command_call, kaifile, lookup|
+	lower_command_block_selection :
+		Command, KaifileBlock, BackendLookup -> CommandBlockSelection
+	lower_command_block_selection = |declared_command, kaifile, lookup|
 		match kaifile.selection {
 			RequiredBlock =>
 				if Kaifile.is_named(kaifile) {
@@ -270,27 +276,27 @@ Plugin := [].{
 							})
 						[] => NamedConfig({ lookup: lookup })
 					}
-					Plugin.Command.{
-						call: command_call,
+					Plugin.CommandBlockSelection.{
+						command: declared_command,
 						config,
 						config_block: RequiredConfigBlock(kaifile),
 					}
 				} else {
-					Plugin.Command.{
-						call: command_call,
+					Plugin.CommandBlockSelection.{
+						command: declared_command,
 						config: DirectConfig(lookup),
 						config_block: RequiredConfigBlock(kaifile),
 					}
 				}
 			OptionalBlock =>
-				Plugin.Command.{
-					call: command_call,
+				Plugin.CommandBlockSelection.{
+					command: declared_command,
 					config: DirectConfig(lookup),
 					config_block: OptionalConfigBlock(kaifile),
 				}
 			ByOptionalArgument({ argument, when_provided }) =>
-				Plugin.Command.{
-					call: command_call,
+				Plugin.CommandBlockSelection.{
+					command: declared_command,
 					config: DirectOrNamedConfig({
 						argument,
 						lookup,
@@ -381,7 +387,7 @@ Plugin := [].{
 
 	ConfigSelector :
 		Str,
-		Command,
+		CommandBlockSelection,
 		BackendChoice,
 		List(Str),
 		HostOs,
@@ -403,7 +409,7 @@ Plugin := [].{
 	select_config = |config_text, selected_command, backend_choice, args, os, _| {
 		primary = Plugin.config_block_schema(selected_command.config_block)
 		block_name = Kaifile.block_name(primary)
-		call_name = selected_command.call.name
+		command_name = selected_command.command.name
 		match selected_command.config {
 			DirectConfig(lookup) =>
 				Plugin.select_with_backend_fallback(
@@ -463,7 +469,7 @@ Plugin := [].{
 						)
 					_ => Err({
 						location: None,
-						message: "${call_name} accepts at most one config name",
+						message: "${command_name} accepts at most one config name",
 					})
 				}
 			}
@@ -480,7 +486,7 @@ Plugin := [].{
 						)
 					_ => Err({
 						location: None,
-						message: "${call_name} requires exactly one config name",
+						message: "${command_name} requires exactly one config name",
 					})
 				}
 			NamedWithRelatedConfig({ lookup, related, related_field }) =>
@@ -531,7 +537,7 @@ Plugin := [].{
 					}
 					_ => Err({
 						location: None,
-						message: "${call_name} requires exactly one config name",
+						message: "${command_name} requires exactly one config name",
 					})
 				}
 			}
@@ -548,11 +554,15 @@ Plugin := [].{
 	config_block_name = |requirement|
 		Kaifile.block_name(Plugin.config_block_schema(requirement))
 
-	config_descriptors : List(Command) -> List(ProjectConfigDescriptor)
+	config_descriptors :
+		List(CommandBlockSelection) -> List(ProjectConfigDescriptor)
 	config_descriptors = |commands| Plugin.collect_config_descriptors(commands, [])
 
 	collect_config_descriptors :
-		List(Command), List(ProjectConfigDescriptor) -> List(ProjectConfigDescriptor)
+		List(CommandBlockSelection),
+		List(ProjectConfigDescriptor) -> List(
+			ProjectConfigDescriptor,
+		)
 	collect_config_descriptors = |commands, descriptors|
 		match commands {
 			[] => descriptors
@@ -565,7 +575,8 @@ Plugin := [].{
 			}
 		}
 
-	command_config_descriptors : Command -> List(ProjectConfigDescriptor)
+	command_config_descriptors :
+		CommandBlockSelection -> List(ProjectConfigDescriptor)
 	command_config_descriptors = |selected_command| {
 		primary = Plugin.config_block_schema(selected_command.config_block)
 		match selected_command.config {
@@ -645,19 +656,23 @@ Plugin := [].{
 			DirectConfig(_) | DirectOrNamedConfig(_) => { args, backend_choice }
 		}
 
-	validate_call_arguments : CommandCall, List(Str) -> Try({}, Str)
-	validate_call_arguments = |command_call, args|
-		match command_call.arguments {
+	validate_command_arguments : Command, List(Str) -> Try({}, Str)
+	validate_command_arguments = |declared_command, args|
+		match declared_command.arguments {
 			[] => if args.is_empty() Ok({}) else Err("command does not accept arguments")
 			[OptionalArgument(name)] =>
 				match args {
 					[] | [_] => Ok({})
-					_ => Err("${command_call.name} accepts at most one ${name} argument")
+					_ => Err(
+						"${declared_command.name} accepts at most one ${name} argument",
+					)
 				}
 			[RequiredArgument(name)] =>
 				match args {
 					[_] => Ok({})
-					_ => Err("${command_call.name} requires exactly one ${name} argument")
+					_ => Err(
+						"${declared_command.name} requires exactly one ${name} argument",
+					)
 				}
 			_ => Err("command declares unsupported arguments")
 		}
@@ -1354,7 +1369,7 @@ Plugin := [].{
 
 	Definition := {
 		backends : List(Backend),
-		commands : List(Command),
+		commands : List(CommandBlockSelection),
 		implementations : List(Implementation),
 		name : Str,
 		project_configs : List(ProjectConfigDescriptor),
@@ -1387,7 +1402,7 @@ Plugin := [].{
 				"must define at least one implementation",
 			)
 		} else {
-			Plugin.validate_command_calls(definition.commands, definition.name)?
+			Plugin.validate_commands(definition.commands, definition.name)?
 			Plugin.validate_command_schemas(definition.commands, definition.name)?
 			Plugin.validate_config_descriptors(
 				definition.commands,
@@ -1420,34 +1435,35 @@ Plugin := [].{
 			}
 		}
 
-	validate_command_calls : List(Command), Str -> Try({}, RegistryDiagnostic)
-	validate_command_calls = |commands, plugin|
+	validate_commands :
+		List(CommandBlockSelection), Str -> Try({}, RegistryDiagnostic)
+	validate_commands = |commands, plugin|
 		match commands {
 			[] => Ok({})
 			[first, .. as rest] =>
-				match first.call.arguments {
-					[] => Plugin.validate_command_calls(rest, plugin)
+				match first.command.arguments {
+					[] => Plugin.validate_commands(rest, plugin)
 					[OptionalArgument(name)] | [RequiredArgument(name)] =>
 						if name.is_empty() {
 							Plugin.registry_failure(
 								plugin,
 								Str.join_with(
 									[
-										"command '${first.call.name}' argument",
+										"command '${first.command.name}' argument",
 										"name must not be empty",
 									],
 									" ",
 								),
 							)
 						} else {
-							Plugin.validate_command_calls(rest, plugin)
+							Plugin.validate_commands(rest, plugin)
 						}
 					_ =>
 						Plugin.registry_failure(
 							plugin,
 							Str.join_with(
 								[
-									"command '${first.call.name}' must declare",
+									"command '${first.command.name}' must declare",
 									"at most one argument",
 								],
 								" ",
@@ -1456,7 +1472,8 @@ Plugin := [].{
 					}
 			}
 
-	validate_command_schemas : List(Command), Str -> Try({}, RegistryDiagnostic)
+	validate_command_schemas :
+		List(CommandBlockSelection), Str -> Try({}, RegistryDiagnostic)
 	validate_command_schemas = |commands, plugin|
 		match commands {
 			[] => Ok({})
@@ -1467,24 +1484,24 @@ Plugin := [].{
 						Plugin.validate_schema_kind(
 							primary,
 							Bool.False,
-							first.call.name,
+							first.command.name,
 							plugin,
 						)
 					DirectOrNamedConfig({ argument, lookup: _, named }) => {
 						Plugin.validate_schema_kind(
 							primary,
 							Bool.False,
-							first.call.name,
+							first.command.name,
 							plugin,
 						)?
 						Plugin.validate_schema_kind(
 							named,
 							Bool.True,
-							first.call.name,
+							first.command.name,
 							plugin,
 						)?
 						Plugin.validate_optional_schema_argument(
-							first.call,
+							first.command,
 							argument,
 							named,
 							plugin,
@@ -1494,11 +1511,11 @@ Plugin := [].{
 						Plugin.validate_schema_kind(
 							primary,
 							Bool.True,
-							first.call.name,
+							first.command.name,
 							plugin,
 						)?
 						Plugin.validate_required_schema_argument(
-							first.call,
+							first.command,
 							primary,
 							plugin,
 						)
@@ -1513,17 +1530,17 @@ Plugin := [].{
 						Plugin.validate_schema_kind(
 							primary,
 							Bool.True,
-							first.call.name,
+							first.command.name,
 							plugin,
 						)?
 						Plugin.validate_schema_kind(
 							related,
 							Bool.True,
-							first.call.name,
+							first.command.name,
 							plugin,
 						)?
 						Plugin.validate_required_schema_argument(
-							first.call,
+							first.command,
 							primary,
 							plugin,
 						)
@@ -1555,25 +1572,26 @@ Plugin := [].{
 		}
 	}
 
-	validate_command_references : Command, Str -> Try({}, RegistryDiagnostic)
+	validate_command_references :
+		CommandBlockSelection, Str -> Try({}, RegistryDiagnostic)
 	validate_command_references = |selected_command, plugin| {
 		primary = Plugin.config_block_schema(selected_command.config_block)
 		match selected_command.config {
 			DirectConfig(_) | NamedConfig(_) =>
 				Plugin.validate_no_reference_fields(
 					primary,
-					selected_command.call.name,
+					selected_command.command.name,
 					plugin,
 				)
 			DirectOrNamedConfig({ argument: _, lookup: _, named }) => {
 				Plugin.validate_no_reference_fields(
 					primary,
-					selected_command.call.name,
+					selected_command.command.name,
 					plugin,
 				)?
 				Plugin.validate_no_reference_fields(
 					named,
-					selected_command.call.name,
+					selected_command.command.name,
 					plugin,
 				)
 			}
@@ -1589,7 +1607,7 @@ Plugin := [].{
 							primary,
 							related,
 							related_field,
-							selected_command.call.name,
+							selected_command.command.name,
 							plugin,
 						)
 					}
@@ -1702,9 +1720,9 @@ Plugin := [].{
 		)
 
 	validate_required_schema_argument :
-		CommandCall, KaifileBlock, Str -> Try({}, RegistryDiagnostic)
-	validate_required_schema_argument = |call_shape, schema, plugin|
-		match (call_shape.arguments, Kaifile.header_argument(schema)) {
+		Command, KaifileBlock, Str -> Try({}, RegistryDiagnostic)
+	validate_required_schema_argument = |declared_command, schema, plugin|
+		match (declared_command.arguments, Kaifile.header_argument(schema)) {
 			([RequiredArgument(argument)], HeaderArgument(slot)) if argument == slot =>
 				Ok({})
 			_ =>
@@ -1712,7 +1730,7 @@ Plugin := [].{
 					plugin,
 					Str.join_with(
 						[
-							"command '${call_shape.name}' must declare one required",
+							"command '${declared_command.name}' must declare one required",
 							"argument matching its Kaifile header slot",
 						],
 						" ",
@@ -1721,21 +1739,21 @@ Plugin := [].{
 			}
 
 	validate_optional_schema_argument :
-		CommandCall, Str, KaifileBlock, Str -> Try({}, RegistryDiagnostic)
+		Command, Str, KaifileBlock, Str -> Try({}, RegistryDiagnostic)
 	validate_optional_schema_argument =
-		|call_shape, selected_argument, schema, plugin| {
+		|declared_command, selected_argument, schema, plugin| {
 			failure = |_|
 				Plugin.registry_failure(
 					plugin,
 					Str.join_with(
 						[
-							"command '${call_shape.name}' must use one optional",
+							"command '${declared_command.name}' must use one optional",
 							"argument matching its Kaifile header slot",
 						],
 						" ",
 					),
 				)
-			match (call_shape.arguments, Kaifile.header_argument(schema)) {
+			match (declared_command.arguments, Kaifile.header_argument(schema)) {
 				([OptionalArgument(argument)], HeaderArgument(slot)) =>
 					if argument == selected_argument and argument == slot {
 						Ok({})
@@ -1747,7 +1765,7 @@ Plugin := [].{
 		}
 
 	validate_config_descriptors :
-		List(Command),
+		List(CommandBlockSelection),
 		List(ProjectConfigDescriptor),
 		Str -> Try(
 			{},
@@ -1761,7 +1779,7 @@ Plugin := [].{
 			plugin,
 		)
 
-	config_descriptors_without_deduplication : List(Command) -> List(
+	config_descriptors_without_deduplication : List(CommandBlockSelection) -> List(
 		ProjectConfigDescriptor,
 	)
 	config_descriptors_without_deduplication = |commands|
@@ -1864,7 +1882,7 @@ Plugin := [].{
 			}
 
 	validate_default_implementations :
-		List(Command),
+		List(CommandBlockSelection),
 		Str,
 		List(Implementation),
 		Str -> Try(
@@ -1877,7 +1895,7 @@ Plugin := [].{
 			[first, .. as rest] =>
 				match Plugin.find_implementation(
 					implementations,
-					first.call.name,
+					first.command.name,
 					backend,
 				) {
 					Ok(_) =>
@@ -1892,7 +1910,7 @@ Plugin := [].{
 							plugin,
 							Str.join_with(
 								[
-									"command '${first.call.name}' has no",
+									"command '${first.command.name}' has no",
 									"implementation for default backend",
 									"'${backend}'",
 								],
@@ -1980,7 +1998,7 @@ Plugin := [].{
 					plugin_definition = owner.definition
 					selected_command = owner.command
 					plugin = plugin_definition.name
-					call_name = selected_command.call.name
+					selected_command_name = selected_command.command.name
 					backend_selection = Plugin.select_backend(
 						plugin_definition.backends,
 						command_args,
@@ -1988,7 +2006,7 @@ Plugin := [].{
 						PlanningFailed(
 							Plugin.failure(
 								plugin,
-								call_name,
+								selected_command_name,
 								backend_name,
 								None,
 								Str.join_with(
@@ -2010,7 +2028,7 @@ Plugin := [].{
 						PlanningFailed(
 							Plugin.failure(
 								plugin,
-								call_name,
+								selected_command_name,
 								backend.name,
 								location,
 								message,
@@ -2022,13 +2040,13 @@ Plugin := [].{
 					} else if depth >= 64 {
 						Err(fail(None, "plan request nesting exceeds 64 levels"))
 					} else {
-						Plugin.validate_call_arguments(
-							selected_command.call,
+						Plugin.validate_command_arguments(
+							selected_command.command,
 							config_selection.args,
 						) ? |message| fail(None, message)
 						implementation = Plugin.find_implementation(
 							plugin_definition.implementations,
-							call_name,
+							selected_command_name,
 							backend.name,
 						) ? |_|
 							fail(
@@ -2196,7 +2214,7 @@ Plugin := [].{
 							[args].concat(ancestors),
 							depth + 1,
 							plugin,
-							call_name,
+							selected_command_name,
 							backend.name,
 						)?
 						rendered = if initial_render.requests.is_empty() {
@@ -2331,22 +2349,23 @@ Plugin := [].{
 			}
 		}
 
-	effective_commands : List(Definition) -> List(Command)
+	effective_commands : List(Definition) -> List(CommandBlockSelection)
 	effective_commands = |registry| Plugin.find_effective_commands(registry, [])
 
-	find_effective_commands : List(Definition), List(Str) -> List(Command)
+	find_effective_commands :
+		List(Definition), List(Str) -> List(CommandBlockSelection)
 	find_effective_commands = |registry, shadowed|
 		match registry {
 			[] => []
 			[first, .. as rest] => {
 				effective = first.commands.keep_if(
-					|candidate| !shadowed.contains(candidate.call.name),
+					|candidate| !shadowed.contains(candidate.command.name),
 				)
 				effective.concat(
 					Plugin.find_effective_commands(
 						rest,
 						shadowed.concat(
-							first.commands.map(|candidate| candidate.call.name),
+							first.commands.map(|candidate| candidate.command.name),
 						),
 					),
 				)
@@ -2366,7 +2385,7 @@ Plugin := [].{
 
 	find_owner : List(Definition),
 	Str -> Try(
-		{ command : Command, definition : Definition },
+		{ command : CommandBlockSelection, definition : Definition },
 		[UnknownCommand],
 	)
 	find_owner = |registry, command_name|
@@ -2382,12 +2401,13 @@ Plugin := [].{
 				}
 			}
 
-	find_command : List(Command), Str -> Try(Command, [NotFound])
+	find_command :
+		List(CommandBlockSelection), Str -> Try(CommandBlockSelection, [NotFound])
 	find_command = |commands, name|
 		match commands {
 			[] => Err(NotFound)
 			[first, .. as rest] =>
-				if first.call.name == name {
+				if first.command.name == name {
 					Ok(first)
 				} else {
 					Plugin.find_command(rest, name)

@@ -4,8 +4,11 @@ import configs.MachineConfig
 
 Image := [].{
 	command : Plugin.Command
-	command = Plugin.command({
-		call: Plugin.call("image", [Plugin.required_argument("machine")]),
+	command = Plugin.command("image", [Plugin.required_argument("machine")])
+
+	selection : Plugin.CommandBlockSelection
+	selection = Plugin.command_block_selection({
+		command,
 		kaifile: MachineConfig.block,
 	})
 }
