@@ -96,6 +96,7 @@ Examples := [].{
 			[] => Ok([])
 			[first, .. as rest] => {
 				current_result = match first.header {
+					["nixpkgs", _] | ["nixpkgs", _, _] => Ok([])
 					["source", _] | ["source", _, _] => Ok([])
 					_ => if allow_hosts {
 						match first.header {

@@ -3,6 +3,7 @@
 import kai.Plugin
 import backends.Nix as NixBackend
 import configs.EnvironmentConfig
+import project_configs.Nixpkgs
 import project_configs.Source
 
 EnvironmentNix := [].{
@@ -58,9 +59,11 @@ EnvironmentNix := [].{
 			sources = EnvironmentNix.all_sources(context)?
 			target = NixBackend.target(context.host_os, context.host_arch) ? |_|
 				{ byte_offset: None, message: unsupported_message }
+			nixpkgs = Nixpkgs.select(context, target.system)?
 			Ok(
 				NixBackend.render_dev_shell({
 					export_legacy_packages,
+					nixpkgs,
 					locked_overlays,
 					overlays,
 					pkgs,

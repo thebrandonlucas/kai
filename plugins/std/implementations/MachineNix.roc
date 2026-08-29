@@ -4,6 +4,7 @@ import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Machine as MachineCommand
 import configs.MachineConfig
+import project_configs.Nixpkgs
 import EnvironmentNix
 
 MachineNix := [].{
@@ -31,6 +32,7 @@ MachineNix := [].{
 		generated_services : List(Str),
 		locked_overlays : List(Str),
 		name : Str,
+		nixpkgs : Str,
 		overlays : List(Str),
 		pkgs : List(Str),
 		services : List(Str),
@@ -101,6 +103,7 @@ MachineNix := [].{
 					),
 				}
 			}
+		nixpkgs = Nixpkgs.select(context, target.system)?
 		generated_services = services.keep_if(
 			|service| MachineNix.has_service_declaration(context, service),
 		)
@@ -109,6 +112,7 @@ MachineNix := [].{
 				generated_services,
 				locked_overlays,
 				name,
+				nixpkgs,
 				overlays,
 				pkgs,
 				services,
@@ -156,6 +160,7 @@ MachineNix := [].{
 		flake = MachineNix.render_flake(
 			config.name,
 			config.target_system,
+			config.nixpkgs,
 			config.locked_overlays,
 			config.overlays,
 			services,
@@ -370,8 +375,16 @@ MachineNix := [].{
 		})
 	}
 
-	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
-	render_flake = |name, system, locked_overlays, overlays, services| {
+	render_flake :
+		Str, Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
+	render_flake = |
+		name,
+		system,
+		nixpkgs,
+		locked_overlays,
+		overlays,
+		services,
+	| {
 		overlay_names = locked_overlays.map_with_index(
 			|_, index| "overlay${U64.to_str(index)}",
 		)
@@ -382,17 +395,16 @@ MachineNix := [].{
 			},
 		)
 		outputs_args = Str.join_with(["nixpkgs"].concat(overlay_names), ", ")
-		lines = [
-			"{",
-			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-		].concat(NixBackend.input_lines(locked_overlays)).concat([
-			"  outputs = { ${outputs_args}, ... }:",
-			"    let",
-			"      system = \"${system}\";",
-			"      pkgs = import nixpkgs {",
-			"        inherit system;",
-			"        overlays = [",
-		]).concat(overlay_lines).concat([
+		lines = ["{", NixBackend.nixpkgs_input(nixpkgs)]
+			.concat(NixBackend.input_lines(locked_overlays))
+			.concat([
+				"  outputs = { ${outputs_args}, ... }:",
+				"    let",
+				"      system = \"${system}\";",
+				"      pkgs = import nixpkgs {",
+				"        inherit system;",
+				"        overlays = [",
+			]).concat(overlay_lines).concat([
 			"        ];",
 			"      };",
 			"      machine = nixpkgs.lib.nixosSystem {",

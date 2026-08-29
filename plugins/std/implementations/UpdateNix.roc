@@ -2,6 +2,7 @@
 import kai.Plugin
 import backends.Nix as NixBackend
 import commands.Update as UpdateCommand
+import project_configs.Nixpkgs
 import EnvironmentNix
 UpdateNix := [].{
 	implementation : Plugin.Implementation
@@ -17,6 +18,9 @@ UpdateNix := [].{
 	renderer = |context| {
 		overlays = EnvironmentNix.all_overlays(context)?
 		sources = EnvironmentNix.all_sources(context)?
+		target = NixBackend.target(context.host_os, context.host_arch) ? |_|
+			{ byte_offset: None, message: "unsupported update platform" }
+		nixpkgs = Nixpkgs.select(context, target.system)?
 		Ok(
 			Plugin.RenderResult.{
 				actions: [],
@@ -24,7 +28,11 @@ UpdateNix := [].{
 				outputs: [
 					{
 						name: "flake",
-						text: NixBackend.render_update_flake(overlays, sources),
+						text: NixBackend.render_update_flake(
+							overlays,
+							sources,
+							nixpkgs,
+						),
 					},
 				],
 				requests: [],
