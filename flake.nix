@@ -161,8 +161,8 @@
         pkgs: rocTarget:
         mkRocBinary pkgs rocTarget {
           pname = "kai";
-          source = "xkai/stock-cli.roc";
-          localSource = "xkai/stock-cli-local.roc";
+          source = "xkai/standard-cli.roc";
+          localSource = "xkai/standard-cli-local.roc";
           binaryName = "kai";
         };
 
