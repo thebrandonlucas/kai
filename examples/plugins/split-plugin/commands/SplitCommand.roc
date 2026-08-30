@@ -9,9 +9,9 @@ SplitCommand := [].{
 	command : Plugin.Command
 	command = Plugin.command("split-command", [])
 
-	selection : Plugin.CommandBlockSelection
-	selection = Plugin.command_block_selection({
+	command_schema : Plugin.CommandSchema
+	command_schema = Plugin.command_with_block({
 		command,
-		kaifile: Kaifile.optional_block(block),
+		block: Kaifile.optional_block(block),
 	})
 }

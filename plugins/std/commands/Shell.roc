@@ -17,11 +17,10 @@ Shell := [].{
 	command : Plugin.Command
 	command = Plugin.command("shell", [Plugin.optional_argument("environment")])
 
-	selection : Plugin.CommandBlockSelection
-	selection = Plugin.command_block_selection_with_backend_blocks({
-		backend_blocks: RequireBackendSpecific,
+	command_schema : Plugin.CommandSchema
+	command_schema = Plugin.command_with_required_backend_block({
 		command,
-		kaifile: Kaifile.by_optional_argument({
+		block: Kaifile.by_optional_argument({
 			argument: "environment",
 			when_omitted: block,
 			when_provided: EnvironmentConfig.block,

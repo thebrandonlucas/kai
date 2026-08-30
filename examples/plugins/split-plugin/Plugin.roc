@@ -16,8 +16,8 @@ Plugin := [].{
 
 	name = "split"
 
-	commands : List(PluginApi.CommandBlockSelection)
-	commands = [SplitCommand.selection]
+	commands : List(PluginApi.CommandSchema)
+	commands = [SplitCommand.command_schema]
 
 	backends : List(PluginApi.Backend)
 	backends = [Local.backend]

@@ -19,8 +19,8 @@ GuixPlugin := [].{
 	project_configs : List(Plugin.ProjectConfigDescriptor)
 	project_configs = []
 
-	commands : List(Plugin.CommandBlockSelection)
-	commands = [ShellCommand.selection]
+	commands : List(Plugin.CommandSchema)
+	commands = [ShellCommand.command_schema]
 
 	backends : List(Plugin.Backend)
 	backends = [GuixBackend.backend]

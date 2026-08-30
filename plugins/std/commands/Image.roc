@@ -6,9 +6,9 @@ Image := [].{
 	command : Plugin.Command
 	command = Plugin.command("image", [Plugin.required_argument("machine")])
 
-	selection : Plugin.CommandBlockSelection
-	selection = Plugin.command_block_selection({
+	command_schema : Plugin.CommandSchema
+	command_schema = Plugin.command_with_block({
 		command,
-		kaifile: MachineConfig.block,
+		block: MachineConfig.block,
 	})
 }

@@ -78,6 +78,6 @@ Service := [].{
 	command : Plugin.Command
 	command = Plugin.command("service", [Plugin.required_argument("service")])
 
-	selection : Plugin.CommandBlockSelection
-	selection = Plugin.command_block_selection({ command, kaifile: block })
+	command_schema : Plugin.CommandSchema
+	command_schema = Plugin.command_with_block({ command, block })
 }

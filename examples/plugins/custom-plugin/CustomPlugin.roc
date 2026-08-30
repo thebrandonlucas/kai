@@ -35,11 +35,11 @@ CustomPlugin := [].{
 	command : Plugin.Command
 	command = Plugin.command("custom-write", [])
 
-	selection : Plugin.CommandBlockSelection
-	selection = Plugin.command_block_selection({ command, kaifile: block })
+	command_schema : Plugin.CommandSchema
+	command_schema = Plugin.command_with_block({ command, block })
 
-	commands : List(Plugin.CommandBlockSelection)
-	commands = [selection]
+	commands : List(Plugin.CommandSchema)
+	commands = [command_schema]
 
 	backends : List(Plugin.Backend)
 	backends = [

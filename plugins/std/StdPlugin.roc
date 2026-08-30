@@ -56,16 +56,16 @@ StdPlugin := [].{
 	}
 
 	name = "std"
-	commands : List(Plugin.CommandBlockSelection)
+	commands : List(Plugin.CommandSchema)
 	commands = [
-		BuildCommand.selection,
-		ImageCommand.selection,
-		MachineCommand.selection,
-		ServiceCommand.selection,
-		ShellCommand.selection,
-		TaskCommand.selection,
-		UpdateCommand.selection,
-		WorkflowCommand.selection,
+		BuildCommand.command_schema,
+		ImageCommand.command_schema,
+		MachineCommand.command_schema,
+		ServiceCommand.command_schema,
+		ShellCommand.command_schema,
+		TaskCommand.command_schema,
+		UpdateCommand.command_schema,
+		WorkflowCommand.command_schema,
 	]
 
 	project_configs : List(Plugin.ProjectConfigDescriptor)

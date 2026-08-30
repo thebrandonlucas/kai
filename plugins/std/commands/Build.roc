@@ -69,6 +69,6 @@ Build := [].{
 	command : Plugin.Command
 	command = Plugin.command("build", [Plugin.required_argument("artifact")])
 
-	selection : Plugin.CommandBlockSelection
-	selection = Plugin.command_block_selection({ command, kaifile: block })
+	command_schema : Plugin.CommandSchema
+	command_schema = Plugin.command_with_block({ command, block })
 }

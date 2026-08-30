@@ -32,7 +32,10 @@ Executor := [].{
 			[] => []
 			[first, .. as rest] =>
 				first.commands
-					.map(|selection| "  ${selection.command.name}")
+					.map(
+						|command_schema|
+							"  ${Plugin.command_from_schema(command_schema).name}",
+					)
 					.concat(Executor.command_lines(rest))
 			}
 

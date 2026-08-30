@@ -32,10 +32,6 @@ Task := [].{
 	command : Plugin.Command
 	command = Plugin.command("run", [Plugin.required_argument("task")])
 
-	selection : Plugin.CommandBlockSelection
-	selection = Plugin.command_block_selection_with_backend_blocks({
-		backend_blocks: RequireBackendSpecific,
-		command,
-		kaifile: block,
-	})
+	command_schema : Plugin.CommandSchema
+	command_schema = Plugin.command_with_required_backend_block({ command, block })
 }
