@@ -197,7 +197,7 @@ ServiceNix := [].{
 		match names {
 			[] => Ok({})
 			[first, .. as rest] => {
-				entries = Plugin.project_configs(context, ["secret"])
+				entries = Plugin.blocks_of_kind(context, ["secret"])
 				matches = entries.keep_if(
 					|entry|
 						match entry.header {
@@ -222,7 +222,7 @@ ServiceNix := [].{
 						message: "service references ambiguous secret '${first}'",
 					})
 				}?
-				provision = Fields.get_string(entry.config, "provision") ? |_|
+				provision = Fields.get_string(entry.fields, "provision") ? |_|
 					{
 						byte_offset: None,
 						message: "validated secret '${first}' is missing 'provision'",

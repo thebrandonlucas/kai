@@ -13,7 +13,7 @@ EnvironmentNix := [].{
 		match entries {
 			[] => Ok(collected)
 			[first, .. as rest] => {
-				overlays = EnvironmentNix.extract_overlays(first.config)?
+				overlays = EnvironmentNix.extract_overlays(first.fields)?
 				EnvironmentNix.collect_overlays(
 					rest,
 					EnvironmentNix.append_unseen(overlays, collected),
@@ -36,7 +36,7 @@ EnvironmentNix := [].{
 			}
 
 	all_overlays = |context| {
-		entries = Plugin.project_configs(context, ["shell", "environment"])
+		entries = Plugin.blocks_of_kind(context, ["shell", "environment"])
 		overlays = EnvironmentNix.collect_overlays(entries, [])?
 		Plugin.renderer_validation(
 			Plugin.validate_string_list(overlays, NixBackend.overlay_rules),
@@ -45,7 +45,7 @@ EnvironmentNix := [].{
 	}
 
 	all_sources = |context|
-		Source.collect(Plugin.project_configs(context, ["source"]))
+		Source.collect(Plugin.blocks_of_kind(context, ["source"]))
 
 	validate_source_inputs = |context, selected| {
 		sources = EnvironmentNix.all_sources(context)?

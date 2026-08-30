@@ -50,7 +50,7 @@ Source := [].{
 	]
 
 	collect :
-		List(Plugin.ProjectConfigEntry) ->
+		List(Plugin.ParsedBlock) ->
 			Try(
 				List(Source.Input),
 				Plugin.RendererDiagnostic,
@@ -65,7 +65,7 @@ Source := [].{
 						message: "source declaration requires a name",
 					})
 				}?
-				url = Fields.get_string(entry.config, "url") ? |_|
+				url = Fields.get_string(entry.fields, "url") ? |_|
 					{
 						byte_offset: None,
 						message: "validated source '${name}' is missing 'url'",

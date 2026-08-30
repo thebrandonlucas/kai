@@ -200,7 +200,7 @@ MachineNix := [].{
 	has_service_declaration : Plugin.RenderContext, Str -> Bool
 	has_service_declaration = |context, name|
 		List.any(
-			Plugin.project_configs(context, ["service"]),
+			Plugin.blocks_of_kind(context, ["service"]),
 			|entry|
 				match entry.header {
 					["service", declared] => declared == name
@@ -335,7 +335,7 @@ MachineNix := [].{
 		services.map(|service| "          ./services/${service.name}")
 
 	optional_strings :
-		Fields.Configuration, Str -> Try(List(Str), Plugin.RendererDiagnostic)
+		Fields.ParsedFields, Str -> Try(List(Str), Plugin.RendererDiagnostic)
 	optional_strings = |config, field|
 		match Fields.maybe_strings(config, field) {
 			Ok(None) => Ok([])

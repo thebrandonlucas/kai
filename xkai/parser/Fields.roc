@@ -12,7 +12,7 @@ Fields := [].{
 
 	Value : [StringValue(Str), StringListValue(List(Str))]
 	Entry := { name : Str, value : Value }
-	Configuration : [Config(List(Entry))]
+	ParsedFields : [Config(List(Entry))]
 
 	DiagnosticKind : [
 		DuplicateField(Str),
@@ -52,10 +52,10 @@ Fields := [].{
 	optional : Str, ValueShape -> Field
 	optional = |name, value| { name, presence: Optional, value }
 
-	empty : Configuration
+	empty : ParsedFields
 	empty = Config([])
 
-	parse : Shape, Str -> Try(Configuration, Diagnostic)
+	parse : Shape, Str -> Try(ParsedFields, Diagnostic)
 	parse = |shape, body_text| {
 		fields = match shape {
 			Object(object_fields) => object_fields
@@ -394,21 +394,21 @@ Fields := [].{
 				}
 			}
 
-	get_string : Configuration, Str -> Try(Str, AccessError)
+	get_string : ParsedFields, Str -> Try(Str, AccessError)
 	get_string = |Config(entries), name|
 		match Fields.find_entry(entries, name)? {
 			StringValue(value) => Ok(value)
 			StringListValue(_) => Err(WrongType({ expected: String, field: name }))
 		}
 
-	get_strings : Configuration, Str -> Try(List(Str), AccessError)
+	get_strings : ParsedFields, Str -> Try(List(Str), AccessError)
 	get_strings = |Config(entries), name|
 		match Fields.find_entry(entries, name)? {
 			StringListValue(values) => Ok(values)
 			StringValue(_) => Err(WrongType({ expected: StringList, field: name }))
 		}
 
-	maybe_string : Configuration, Str -> Try([None, Some(Str)], AccessError)
+	maybe_string : ParsedFields, Str -> Try([None, Some(Str)], AccessError)
 	maybe_string = |Config(entries), name|
 		match Fields.find_entry(entries, name) {
 			Err(MissingField(_)) => Ok(None)
@@ -417,7 +417,7 @@ Fields := [].{
 			Ok(StringListValue(_)) => Err(WrongType({ expected: String, field: name }))
 		}
 
-	maybe_strings : Configuration, Str -> Try([None, Some(List(Str))], AccessError)
+	maybe_strings : ParsedFields, Str -> Try([None, Some(List(Str))], AccessError)
 	maybe_strings = |Config(entries), name|
 		match Fields.find_entry(entries, name) {
 			Err(MissingField(_)) => Ok(None)
