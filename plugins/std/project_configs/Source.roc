@@ -39,9 +39,6 @@ Source := [].{
 		name_rules,
 	})
 
-	descriptor : Plugin.ProjectConfigDescriptor
-	descriptor = block
-
 	url_rules : List(Plugin.TextRule)
 	url_rules = [
 		NonemptyText("source URL must not be empty"),

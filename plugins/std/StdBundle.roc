@@ -44,6 +44,7 @@ StdBundle := [].{
 					[
 						{ name: "backends", path: "./backends/main.roc" },
 						{ name: "commands", path: "./commands/main.roc" },
+						{ name: "configs", path: "./configs/main.roc" },
 						{ name: "implementations", path: "./implementations/main.roc" },
 						{ name: "kai", path: "../package.roc" },
 						{ name: "parser", path: "../parser/main.roc" },

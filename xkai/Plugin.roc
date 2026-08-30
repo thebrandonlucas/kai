@@ -214,6 +214,11 @@ Plugin := [].{
 
 	ProjectConfigDescriptor : KaifileBlock
 
+	Schema := {
+		blocks : List(KaifileBlock),
+		commands : List(CommandSchema),
+	}
+
 	command_only : Command -> CommandSchema
 	command_only = |declared_command| CommandOnly(declared_command)
 
@@ -491,44 +496,6 @@ Plugin := [].{
 				}
 			}
 		}
-
-	config_descriptors : List(CommandSchema) -> List(ProjectConfigDescriptor)
-	config_descriptors = |commands| Plugin.collect_config_descriptors(commands, [])
-
-	collect_config_descriptors :
-		List(CommandSchema),
-		List(ProjectConfigDescriptor) -> List(
-			ProjectConfigDescriptor,
-		)
-	collect_config_descriptors = |commands, descriptors|
-		match commands {
-			[] => descriptors
-			[first, .. as rest] => {
-				with_command = Plugin.append_config_descriptors(
-					descriptors,
-					Plugin.command_config_descriptors(first),
-				)
-				Plugin.collect_config_descriptors(rest, with_command)
-			}
-		}
-
-	command_config_descriptors : CommandSchema -> List(ProjectConfigDescriptor)
-	command_config_descriptors = |command_schema|
-		match command_schema {
-			CommandOnly(_) => []
-			CommandWithBlock({ block, command: _, explicit_backend_block: _ }) =>
-				match block.selection {
-					ByOptionalArgument({ argument: _, when_provided }) =>
-						[block, Kaifile.from_schema(when_provided)]
-					OptionalBlock => [block]
-					RequiredBlock =>
-						match Kaifile.references(block) {
-							[reference, ..] =>
-								[block, Kaifile.from_reference_target(reference.target)]
-							[] => [block]
-						}
-					}
-			}
 
 	append_config_descriptors :
 		List(ProjectConfigDescriptor),
@@ -1313,10 +1280,9 @@ Plugin := [].{
 
 	Definition := {
 		backends : List(Backend),
-		commands : List(CommandSchema),
 		implementations : List(Implementation),
 		name : Str,
-		project_configs : List(ProjectConfigDescriptor),
+		schema : Schema,
 	}
 
 	RegistryDiagnostic := {
@@ -1336,7 +1302,7 @@ Plugin := [].{
 
 	validate_definition : Definition -> Try({}, RegistryDiagnostic)
 	validate_definition = |definition|
-		if definition.commands.is_empty() {
+		if definition.schema.commands.is_empty() {
 			Plugin.registry_failure(definition.name, "must define at least one command")
 		} else if definition.backends.is_empty() {
 			Plugin.registry_failure(definition.name, "must define at least one backend")
@@ -1346,11 +1312,13 @@ Plugin := [].{
 				"must define at least one implementation",
 			)
 		} else {
-			Plugin.validate_commands(definition.commands, definition.name)?
-			Plugin.validate_command_schemas(definition.commands, definition.name)?
-			Plugin.validate_config_descriptors(
-				definition.commands,
-				definition.project_configs,
+			Plugin.validate_commands(definition.schema.commands, definition.name)?
+			Plugin.validate_command_schemas(
+				definition.schema.commands,
+				definition.name,
+			)?
+			Plugin.validate_config_descriptor_list(
+				definition.schema.blocks,
 				definition.name,
 			)?
 			Plugin.validate_implementation_references(
@@ -1365,7 +1333,7 @@ Plugin := [].{
 					)
 				[default_backend, ..] => {
 					Plugin.validate_default_implementations(
-						definition.commands,
+						definition.schema.commands,
 						default_backend.name,
 						definition.implementations,
 						definition.name,
@@ -1686,33 +1654,6 @@ Plugin := [].{
 			}
 		}
 
-	validate_config_descriptors :
-		List(CommandSchema),
-		List(ProjectConfigDescriptor),
-		Str -> Try(
-			{},
-			RegistryDiagnostic,
-		)
-	validate_config_descriptors = |commands, standalone_descriptors, plugin|
-		Plugin.validate_config_descriptor_list(
-			Plugin.config_descriptors_without_deduplication(commands).concat(
-				standalone_descriptors,
-			),
-			plugin,
-		)
-
-	config_descriptors_without_deduplication : List(CommandSchema) -> List(
-		ProjectConfigDescriptor,
-	)
-	config_descriptors_without_deduplication = |commands|
-		match commands {
-			[] => []
-			[first, .. as rest] =>
-				Plugin.command_config_descriptors(first).concat(
-					Plugin.config_descriptors_without_deduplication(rest),
-				)
-			}
-
 	validate_config_descriptor_list : List(ProjectConfigDescriptor),
 	Str -> Try(
 		{},
@@ -1773,7 +1714,7 @@ Plugin := [].{
 		match implementations {
 			[] => Ok({})
 			[first, .. as rest] =>
-				match Plugin.find_command(definition.commands, first.command) {
+				match Plugin.find_command(definition.schema.commands, first.command) {
 					Err(NotFound) =>
 						Plugin.registry_failure(
 							definition.name,
@@ -1978,14 +1919,9 @@ Plugin := [].{
 								None,
 								"plugin has no implementation for selected backend",
 							)
-						project_commands = Plugin.effective_commands(registry)
-						project_descriptors = Plugin.append_config_descriptors(
-							Plugin.config_descriptors(project_commands),
-							Plugin.effective_project_configs(registry),
-						)
 						project_config = Plugin.build_project_config(
 							config_text,
-							project_descriptors,
+							Plugin.accepted_blocks(registry),
 							backend.name,
 						) ? |diagnostic|
 							fail(diagnostic.location, diagnostic.message)
@@ -2291,40 +2227,14 @@ Plugin := [].{
 			}
 		}
 
-	effective_commands : List(Definition) -> List(CommandSchema)
-	effective_commands = |registry| Plugin.find_effective_commands(registry, [])
-
-	find_effective_commands :
-		List(Definition), List(Str) -> List(CommandSchema)
-	find_effective_commands = |registry, shadowed|
-		match registry {
-			[] => []
-			[first, .. as rest] => {
-				effective = first.commands.keep_if(
-					|candidate|
-						!shadowed.contains(Plugin.command_from_schema(candidate).name),
-				)
-				effective.concat(
-					Plugin.find_effective_commands(
-						rest,
-						shadowed.concat(
-							first.commands.map(
-								|candidate| Plugin.command_from_schema(candidate).name,
-							),
-						),
-					),
-				)
-			}
-		}
-
-	effective_project_configs : List(Definition) -> List(ProjectConfigDescriptor)
-	effective_project_configs = |registry|
+	accepted_blocks : List(Definition) -> List(ProjectConfigDescriptor)
+	accepted_blocks = |registry|
 		match registry {
 			[] => []
 			[first, .. as rest] =>
 				Plugin.append_config_descriptors(
-					first.project_configs,
-					Plugin.effective_project_configs(rest),
+					first.schema.blocks,
+					Plugin.accepted_blocks(rest),
 				)
 			}
 
@@ -2337,7 +2247,7 @@ Plugin := [].{
 		match registry {
 			[] => Err(UnknownCommand)
 			[first, .. as rest] =>
-				match Plugin.find_command(first.commands, command_name) {
+				match Plugin.find_command(first.schema.commands, command_name) {
 					Ok(found_command) => Ok({
 						command: found_command,
 						definition: first,

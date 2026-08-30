@@ -8,16 +8,18 @@ Plugin := [].{
 	plugin : PluginApi.Definition
 	plugin = PluginApi.Definition.{
 		backends,
-		commands,
 		implementations,
 		name,
-		project_configs: [],
+		schema,
 	}
 
 	name = "split"
 
-	commands : List(PluginApi.CommandSchema)
-	commands = [SplitCommand.command_schema]
+	schema : PluginApi.Schema
+	schema = {
+		blocks: [SplitCommand.block],
+		commands: [SplitCommand.command_schema],
+	}
 
 	backends : List(PluginApi.Backend)
 	backends = [Local.backend]

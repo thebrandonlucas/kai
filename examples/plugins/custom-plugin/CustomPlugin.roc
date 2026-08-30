@@ -18,10 +18,9 @@ CustomPlugin := [].{
 	plugin : Plugin.Definition
 	plugin = Plugin.Definition.{
 		backends,
-		commands,
 		implementations,
 		name,
-		project_configs: [],
+		schema,
 	}
 
 	name = "custom"
@@ -38,8 +37,8 @@ CustomPlugin := [].{
 	command_schema : Plugin.CommandSchema
 	command_schema = Plugin.command_with_block({ command, block })
 
-	commands : List(Plugin.CommandSchema)
-	commands = [command_schema]
+	schema : Plugin.Schema
+	schema = { blocks: [block], commands: [command_schema] }
 
 	backends : List(Plugin.Backend)
 	backends = [

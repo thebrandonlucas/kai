@@ -7,20 +7,19 @@ import implementations.ShellGuix
 GuixPlugin := [].{
 	plugin : Plugin.Definition
 	plugin = Plugin.Definition.{
-		commands,
 		backends,
 		implementations,
 		name,
-		project_configs,
+		schema,
 	}
 
 	name = "guix"
 
-	project_configs : List(Plugin.ProjectConfigDescriptor)
-	project_configs = []
-
-	commands : List(Plugin.CommandSchema)
-	commands = [ShellCommand.command_schema]
+	schema : Plugin.Schema
+	schema = {
+		blocks: [ShellCommand.block, ShellCommand.environment_block],
+		commands: [ShellCommand.command_schema],
+	}
 
 	backends : List(Plugin.Backend)
 	backends = [GuixBackend.backend]

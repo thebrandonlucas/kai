@@ -31,7 +31,7 @@ Executor := [].{
 		match registry {
 			[] => []
 			[first, .. as rest] =>
-				first.commands
+				first.schema.commands
 					.map(
 						|command_schema|
 							"  ${Plugin.command_from_schema(command_schema).name}",

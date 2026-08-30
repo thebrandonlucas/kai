@@ -10,6 +10,8 @@ import commands.Shell as ShellCommand
 import commands.Task as TaskCommand
 import commands.Update as UpdateCommand
 import commands.Workflow as WorkflowCommand
+import configs.EnvironmentConfig
+import configs.MachineConfig
 import implementations.BuildNix
 import implementations.ImageNix
 import implementations.MachineNix
@@ -49,27 +51,37 @@ StdPlugin := [].{
 	plugin : Plugin.Definition
 	plugin = Plugin.Definition.{
 		backends,
-		commands,
 		implementations,
 		name,
-		project_configs,
+		schema,
 	}
 
 	name = "std"
-	commands : List(Plugin.CommandSchema)
-	commands = [
-		BuildCommand.command_schema,
-		ImageCommand.command_schema,
-		MachineCommand.command_schema,
-		ServiceCommand.command_schema,
-		ShellCommand.command_schema,
-		TaskCommand.command_schema,
-		UpdateCommand.command_schema,
-		WorkflowCommand.command_schema,
-	]
 
-	project_configs : List(Plugin.ProjectConfigDescriptor)
-	project_configs = [SecretCommand.descriptor, Source.descriptor]
+	schema : Plugin.Schema
+	schema = {
+		blocks: [
+			BuildCommand.block,
+			EnvironmentConfig.block,
+			MachineConfig.block,
+			SecretCommand.block,
+			ServiceCommand.block,
+			ShellCommand.block,
+			Source.block,
+			TaskCommand.block,
+			WorkflowCommand.block,
+		],
+		commands: [
+			BuildCommand.command_schema,
+			ImageCommand.command_schema,
+			MachineCommand.command_schema,
+			ServiceCommand.command_schema,
+			ShellCommand.command_schema,
+			TaskCommand.command_schema,
+			UpdateCommand.command_schema,
+			WorkflowCommand.command_schema,
+		],
+	}
 
 	backends : List(Plugin.Backend)
 	backends = [NixBackend.backend]
