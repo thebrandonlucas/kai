@@ -10,7 +10,7 @@ ServiceNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: ServiceCommand.command.name,
+		command: ServiceCommand.command_syntax.name,
 		plan: ServiceNix.plan,
 		validator: NoValidation,
 	}

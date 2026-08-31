@@ -25,20 +25,20 @@ CustomPlugin := [].{
 
 	name = "custom"
 
-	block : Plugin.KaifileBlock
+	block : Plugin.Block
 	block = Kaifile.unnamed_block({
 		header: "custom",
 		fields: [Kaifile.required("message", String)],
 	})
 
-	command : Plugin.Command
-	command = Plugin.command("custom-write", [])
+	command_syntax : Plugin.CommandSyntax
+	command_syntax = Plugin.command_syntax("custom-write", [])
 
-	command_schema : Plugin.CommandSchema
-	command_schema = Plugin.command_with_block({ command, block })
+	command : Plugin.Command
+	command = Plugin.command_with_block({ syntax: command_syntax, block })
 
 	schema : Plugin.Schema
-	schema = { blocks: [block], commands: [command_schema] }
+	schema = { blocks: [block], commands: [command] }
 
 	backends : List(Plugin.Backend)
 	backends = [
@@ -58,7 +58,7 @@ CustomPlugin := [].{
 	implementations = [
 		Plugin.Implementation.{
 			backend: "local",
-			command: command.name,
+			command: command_syntax.name,
 			plan: |input|
 				match Fields.get_string(input.command_fields, "message") {
 					Err(_) => Err({

@@ -72,14 +72,14 @@ StdPlugin := [].{
 			WorkflowCommand.block,
 		],
 		commands: [
-			BuildCommand.command_schema,
-			ImageCommand.command_schema,
-			MachineCommand.command_schema,
-			ServiceCommand.command_schema,
-			ShellCommand.command_schema,
-			TaskCommand.command_schema,
-			UpdateCommand.command_schema,
-			WorkflowCommand.command_schema,
+			BuildCommand.command,
+			ImageCommand.command,
+			MachineCommand.command,
+			ServiceCommand.command,
+			ShellCommand.command,
+			TaskCommand.command,
+			UpdateCommand.command,
+			WorkflowCommand.command,
 		],
 	}
 

@@ -9,7 +9,7 @@ TaskNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: TaskCommand.command.name,
+		command: TaskCommand.command_syntax.name,
 		plan: TaskNix.plan,
 		validator: NoValidation,
 	}

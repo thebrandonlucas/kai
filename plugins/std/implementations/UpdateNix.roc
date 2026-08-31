@@ -7,7 +7,7 @@ UpdateNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: UpdateCommand.command.name,
+		command: UpdateCommand.command_syntax.name,
 		plan: UpdateNix.plan,
 		validator: NoValidation,
 	}

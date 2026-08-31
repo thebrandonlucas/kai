@@ -3,12 +3,15 @@ import kai.Plugin
 import MachineConfig
 
 Machine := [].{
-	command : Plugin.Command
-	command = Plugin.command("machine", [Plugin.required_argument("machine")])
+	command_syntax : Plugin.CommandSyntax
+	command_syntax = Plugin.command_syntax(
+		"machine",
+		[Plugin.required_argument("machine")],
+	)
 
-	command_schema : Plugin.CommandSchema
-	command_schema = Plugin.command_with_block({
-		command,
+	command : Plugin.Command
+	command = Plugin.command_with_block({
+		syntax: command_syntax,
 		block: MachineConfig.block,
 	})
 }

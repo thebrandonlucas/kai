@@ -68,16 +68,19 @@ Service := [].{
 	restart_failures = |restart|
 		if restart == "on-failure" [] else ["service restart must be 'on-failure'"]
 
-	block : Plugin.KaifileBlock
+	block : Plugin.Block
 	block = Kaifile.named_block({
 		header: "service <service>",
 		fields,
 		name_rules,
 	})
 
-	command : Plugin.Command
-	command = Plugin.command("service", [Plugin.required_argument("service")])
+	command_syntax : Plugin.CommandSyntax
+	command_syntax = Plugin.command_syntax(
+		"service",
+		[Plugin.required_argument("service")],
+	)
 
-	command_schema : Plugin.CommandSchema
-	command_schema = Plugin.command_with_block({ command, block })
+	command : Plugin.Command
+	command = Plugin.command_with_block({ syntax: command_syntax, block })
 }

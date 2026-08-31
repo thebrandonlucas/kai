@@ -7,7 +7,7 @@ SplitLocal := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: Local.backend.name,
-		command: SplitCommand.command.name,
+		command: SplitCommand.command_syntax.name,
 		plan: |_| Ok(
 			Plugin.CommandPlan.{
 				artifacts: [],

@@ -3,15 +3,15 @@ import kai.Kaifile
 import kai.Plugin
 
 SplitCommand := [].{
-	block : Plugin.KaifileBlock
+	block : Plugin.Block
 	block = Kaifile.unnamed_block({ header: "split", fields: [] })
 
-	command : Plugin.Command
-	command = Plugin.command("split-command", [])
+	command_syntax : Plugin.CommandSyntax
+	command_syntax = Plugin.command_syntax("split-command", [])
 
-	command_schema : Plugin.CommandSchema
-	command_schema = Plugin.command_with_block({
-		command,
+	command : Plugin.Command
+	command = Plugin.command_with_block({
+		syntax: command_syntax,
 		block: Kaifile.optional_block(block),
 	})
 }

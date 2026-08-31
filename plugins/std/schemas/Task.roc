@@ -26,12 +26,18 @@ Task := [].{
 	environment_rules = |task_name|
 		[NonemptyText("task '${task_name}' environment name must not be empty")]
 
-	block : Plugin.KaifileBlock
+	block : Plugin.Block
 	block = Kaifile.named_block({ header: "task <task>", fields, name_rules })
 
-	command : Plugin.Command
-	command = Plugin.command("run", [Plugin.required_argument("task")])
+	command_syntax : Plugin.CommandSyntax
+	command_syntax = Plugin.command_syntax(
+		"run",
+		[Plugin.required_argument("task")],
+	)
 
-	command_schema : Plugin.CommandSchema
-	command_schema = Plugin.command_with_required_backend_block({ command, block })
+	command : Plugin.Command
+	command = Plugin.command_with_required_backend_block({
+		syntax: command_syntax,
+		block,
+	})
 }

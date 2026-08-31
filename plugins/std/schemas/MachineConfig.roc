@@ -129,7 +129,7 @@ MachineConfig := [].{
 		invalid.concat(duplicates)
 	}
 
-	block : Plugin.KaifileBlock
+	block : Plugin.Block
 	block = Kaifile.named_block({
 		header: "machine <machine>",
 		fields,

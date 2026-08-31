@@ -18,7 +18,7 @@ Plugin := [].{
 	schema : PluginApi.Schema
 	schema = {
 		blocks: [SplitCommand.block],
-		commands: [SplitCommand.command_schema],
+		commands: [SplitCommand.command],
 	}
 
 	backends : List(PluginApi.Backend)

@@ -9,7 +9,7 @@ BuildNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: BuildCommand.command.name,
+		command: BuildCommand.command_syntax.name,
 		plan: BuildNix.plan,
 		validator: NoValidation,
 	}

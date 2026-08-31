@@ -59,16 +59,19 @@ Build := [].{
 	environment_rules = |artifact_name|
 		[NonemptyText("build '${artifact_name}' environment name must not be empty")]
 
-	block : Plugin.KaifileBlock
+	block : Plugin.Block
 	block = Kaifile.named_block({
 		header: "build <artifact>",
 		fields,
 		name_rules: artifact_name_rules,
 	})
 
-	command : Plugin.Command
-	command = Plugin.command("build", [Plugin.required_argument("artifact")])
+	command_syntax : Plugin.CommandSyntax
+	command_syntax = Plugin.command_syntax(
+		"build",
+		[Plugin.required_argument("artifact")],
+	)
 
-	command_schema : Plugin.CommandSchema
-	command_schema = Plugin.command_with_block({ command, block })
+	command : Plugin.Command
+	command = Plugin.command_with_block({ syntax: command_syntax, block })
 }

@@ -172,13 +172,13 @@ Plugin := [].{
 
 	CommandArgument : [OptionalArgument(Str), RequiredArgument(Str)]
 
-	Command := {
+	CommandSyntax := {
 		arguments : List(CommandArgument),
 		name : Str,
 	}
 
-	command : Str, List(CommandArgument) -> Command
-	command = |name, arguments| { arguments, name }
+	command_syntax : Str, List(CommandArgument) -> CommandSyntax
+	command_syntax = |name, arguments| { arguments, name }
 
 	required_argument : Str -> CommandArgument
 	required_argument = |name| RequiredArgument(name)
@@ -186,53 +186,53 @@ Plugin := [].{
 	optional_argument : Str -> CommandArgument
 	optional_argument = |name| OptionalArgument(name)
 
-	KaifileBlock : Kaifile.Block(TextRule)
+	Block : Kaifile.Block(TextRule)
 	KaifileField : Kaifile.Field(TextRule)
 
 	ExplicitBackendBlock : [RequireBackendBlock, TryBackendThenShared]
 
-	CommandSchema : [
-		CommandOnly(Command),
+	Command : [
+		CommandOnly(CommandSyntax),
 		CommandWithBlock(
 			{
-				block : KaifileBlock,
-				command : Command,
+				block : Block,
+				syntax : CommandSyntax,
 				explicit_backend_block : ExplicitBackendBlock,
 			},
 		),
 	]
 
 	Schema := {
-		blocks : List(KaifileBlock),
-		commands : List(CommandSchema),
+		blocks : List(Block),
+		commands : List(Command),
 	}
 
-	command_only : Command -> CommandSchema
+	command_only : CommandSyntax -> Command
 	command_only = |declared_command| CommandOnly(declared_command)
 
 	command_with_block :
-		{ block : KaifileBlock, command : Command } -> CommandSchema
+		{ block : Block, syntax : CommandSyntax } -> Command
 	command_with_block = |declaration|
 		CommandWithBlock({
 			block: declaration.block,
-			command: declaration.command,
+			syntax: declaration.syntax,
 			explicit_backend_block: TryBackendThenShared,
 		})
 
 	command_with_required_backend_block :
-		{ block : KaifileBlock, command : Command } -> CommandSchema
+		{ block : Block, syntax : CommandSyntax } -> Command
 	command_with_required_backend_block = |declaration|
 		CommandWithBlock({
 			block: declaration.block,
-			command: declaration.command,
+			syntax: declaration.syntax,
 			explicit_backend_block: RequireBackendBlock,
 		})
 
-	command_from_schema : CommandSchema -> Command
-	command_from_schema = |command_schema|
-		match command_schema {
+	syntax_from_command : Command -> CommandSyntax
+	syntax_from_command = |command|
+		match command {
 			CommandOnly(declared_command) => declared_command
-			CommandWithBlock(declaration) => declaration.command
+			CommandWithBlock(declaration) => declaration.syntax
 		}
 
 	DeterminateSystemKind : [Custom, Guix, Nix]
@@ -319,7 +319,7 @@ Plugin := [].{
 	BlockSelector :
 		Str,
 		List(ParsedBlock),
-		CommandSchema,
+		Command,
 		BackendChoice,
 		List(Str),
 		HostOs,
@@ -336,15 +336,15 @@ Plugin := [].{
 		plugin : Str,
 	}
 
-	# Select a Kaifile block from the command schema.
+	# Select a Kaifile block for the command.
 	select_command_block : BlockSelector
-	select_command_block = |text, blocks, schema, choice, args, os, _|
-		match schema {
+	select_command_block = |text, blocks, command, choice, args, os, _|
+		match command {
 			CommandOnly(_) => Ok(Missing)
 			CommandWithBlock(
 				{
 					block: primary,
-					command: declared_command,
+					syntax: declared_command,
 					explicit_backend_block,
 				},
 			) => {
@@ -495,12 +495,12 @@ Plugin := [].{
 			}
 		}
 
-	same_block_key : KaifileBlock, KaifileBlock -> Bool
+	same_block_key : Block, Block -> Bool
 	same_block_key = |left, right|
 		Kaifile.block_name(left) == Kaifile.block_name(right) and
 			Kaifile.is_named(left) == Kaifile.is_named(right)
 
-	compatible_blocks : KaifileBlock, KaifileBlock -> Bool
+	compatible_blocks : Block, Block -> Bool
 	compatible_blocks = |left, right|
 		Plugin.same_block_key(left, right) and
 			Plugin.same_body_shape(Kaifile.body(left), Kaifile.body(right))
@@ -525,15 +525,15 @@ Plugin := [].{
 		}
 
 	normalize_command_backend :
-		CommandSchema,
+		Command,
 		BackendChoice,
 		List(Str) -> {
 			args : List(Str),
 			backend_choice : BackendChoice,
 		}
-	normalize_command_backend = |command_schema, backend_choice, args|
-		match command_schema {
-			CommandWithBlock({ block, command: _, explicit_backend_block: _ }) =>
+	normalize_command_backend = |command, backend_choice, args|
+		match command {
+			CommandWithBlock({ block, syntax: _, explicit_backend_block: _ }) =>
 				match block.selection {
 					RequiredBlock if Kaifile.is_named(block) =>
 						match (backend_choice, args) {
@@ -548,7 +548,7 @@ Plugin := [].{
 			CommandOnly(_) => { args, backend_choice }
 		}
 
-	validate_command_arguments : Command, List(Str) -> Try({}, Str)
+	validate_command_arguments : CommandSyntax, List(Str) -> Try({}, Str)
 	validate_command_arguments = |declared_command, args|
 		match declared_command.arguments {
 			[] => if args.is_empty() Ok({}) else Err("command does not accept arguments")
@@ -571,7 +571,7 @@ Plugin := [].{
 
 	select_named_block :
 		Str,
-		KaifileBlock,
+		Block,
 		Str,
 		BackendChoice,
 		HostOs,
@@ -765,7 +765,7 @@ Plugin := [].{
 	BlockScope : [HostBlockScope(Blocks.Block), TopLevelBlockScope]
 
 	parse_kaifile_blocks : Str,
-	List(KaifileBlock),
+	List(Block),
 	Str -> Try(
 		List(ParsedBlock),
 		SelectorDiagnostic,
@@ -788,7 +788,7 @@ Plugin := [].{
 
 	collect_kaifile_blocks :
 		List(Blocks.Block),
-		List(KaifileBlock),
+		List(Block),
 		Str,
 		BlockScope,
 		Bool,
@@ -869,7 +869,7 @@ Plugin := [].{
 			}
 
 	find_block_schema :
-		List(KaifileBlock), List(Str), Str -> [None, Some(KaifileBlock)]
+		List(Block), List(Str), Str -> [None, Some(Block)]
 	find_block_schema = |blocks, header, backend|
 		match header {
 			[kind] => Plugin.find_block_of_kind(blocks, kind, Bool.False)
@@ -888,7 +888,7 @@ Plugin := [].{
 		}
 
 	find_block_of_kind :
-		List(KaifileBlock), Str, Bool -> [None, Some(KaifileBlock)]
+		List(Block), Str, Bool -> [None, Some(Block)]
 	find_block_of_kind = |blocks, kind, named|
 		match blocks {
 			[] => None
@@ -918,7 +918,7 @@ Plugin := [].{
 		}
 
 	parse_block :
-		KaifileBlock,
+		Block,
 		List(Str),
 		LocatedBlock -> Try(
 			ParsedBlock,
@@ -1222,8 +1222,11 @@ Plugin := [].{
 				definition.schema.blocks,
 				definition.name,
 			)?
-			Plugin.validate_commands(definition.schema.commands, definition.name)?
-			Plugin.validate_command_schemas(
+			Plugin.validate_command_syntaxes(
+				definition.schema.commands,
+				definition.name,
+			)?
+			Plugin.validate_commands(
 				definition.schema.commands,
 				definition.name,
 			)?
@@ -1258,14 +1261,14 @@ Plugin := [].{
 			}
 		}
 
-	validate_commands : List(CommandSchema), Str -> Try({}, RegistryDiagnostic)
-	validate_commands = |commands, plugin|
+	validate_command_syntaxes : List(Command), Str -> Try({}, RegistryDiagnostic)
+	validate_command_syntaxes = |commands, plugin|
 		match commands {
 			[] => Ok({})
 			[first, .. as rest] => {
-				declared_command = Plugin.command_from_schema(first)
+				declared_command = Plugin.syntax_from_command(first)
 				match declared_command.arguments {
-					[] => Plugin.validate_commands(rest, plugin)
+					[] => Plugin.validate_command_syntaxes(rest, plugin)
 					[OptionalArgument(name)] | [RequiredArgument(name)] =>
 						if name.is_empty() {
 							Plugin.registry_failure(
@@ -1279,7 +1282,7 @@ Plugin := [].{
 								),
 							)
 						} else {
-							Plugin.validate_commands(rest, plugin)
+							Plugin.validate_command_syntaxes(rest, plugin)
 						}
 					_ =>
 						Plugin.registry_failure(
@@ -1296,18 +1299,18 @@ Plugin := [].{
 			}
 		}
 
-	validate_command_schemas :
-		List(CommandSchema), Str -> Try({}, RegistryDiagnostic)
-	validate_command_schemas = |commands, plugin|
+	validate_commands :
+		List(Command), Str -> Try({}, RegistryDiagnostic)
+	validate_commands = |commands, plugin|
 		match commands {
 			[] => Ok({})
 			[first, .. as rest] => {
-				schema_validation = match first {
+				command_validation = match first {
 					CommandOnly(_) => Ok({})
 					CommandWithBlock(
 						{
 							block,
-							command: declared_command,
+							syntax: declared_command,
 							explicit_backend_block: _,
 						},
 					) =>
@@ -1359,14 +1362,14 @@ Plugin := [].{
 							}
 						}
 					}
-				schema_validation?
+				command_validation?
 				Plugin.validate_command_references(first, plugin)?
-				Plugin.validate_command_schemas(rest, plugin)
+				Plugin.validate_commands(rest, plugin)
 			}
 		}
 
 	validate_schema_kind :
-		KaifileBlock, Bool, Str, Str -> Try({}, RegistryDiagnostic)
+		Block, Bool, Str, Str -> Try({}, RegistryDiagnostic)
 	validate_schema_kind = |schema, expected_named, command_name, plugin| {
 		Kaifile.validate_header(schema) ? |message| { message, plugin }
 		if Kaifile.is_named(schema) == expected_named {
@@ -1387,14 +1390,14 @@ Plugin := [].{
 	}
 
 	validate_command_references :
-		CommandSchema, Str -> Try({}, RegistryDiagnostic)
-	validate_command_references = |command_schema, plugin|
-		match command_schema {
+		Command, Str -> Try({}, RegistryDiagnostic)
+	validate_command_references = |command, plugin|
+		match command {
 			CommandOnly(_) => Ok({})
 			CommandWithBlock(
 				{
 					block,
-					command: declared_command,
+					syntax: declared_command,
 					explicit_backend_block: _,
 				},
 			) =>
@@ -1432,7 +1435,7 @@ Plugin := [].{
 			}
 
 	validate_no_reference_fields :
-		KaifileBlock, Str, Str -> Try({}, RegistryDiagnostic)
+		Block, Str, Str -> Try({}, RegistryDiagnostic)
 	validate_no_reference_fields = |schema, command_name, plugin|
 		match Kaifile.references(schema) {
 			[] => Ok({})
@@ -1451,7 +1454,7 @@ Plugin := [].{
 		}
 
 	validate_reference_relationship :
-		KaifileBlock, Str, Str -> Try({}, RegistryDiagnostic)
+		Block, Str, Str -> Try({}, RegistryDiagnostic)
 	validate_reference_relationship = |primary, command_name, plugin|
 		match Kaifile.references(primary) {
 			[reference] => {
@@ -1521,7 +1524,7 @@ Plugin := [].{
 		)
 
 	validate_required_schema_argument :
-		Command, KaifileBlock, Str -> Try({}, RegistryDiagnostic)
+		CommandSyntax, Block, Str -> Try({}, RegistryDiagnostic)
 	validate_required_schema_argument = |declared_command, schema, plugin|
 		match (declared_command.arguments, Kaifile.header_argument(schema)) {
 			([RequiredArgument(argument)], HeaderArgument(slot)) if argument == slot =>
@@ -1540,7 +1543,7 @@ Plugin := [].{
 			}
 
 	validate_optional_schema_argument :
-		Command, Str, KaifileBlock, Str -> Try({}, RegistryDiagnostic)
+		CommandSyntax, Str, Block, Str -> Try({}, RegistryDiagnostic)
 	validate_optional_schema_argument =
 		|declared_command, selected_argument, schema, plugin| {
 			failure = |_|
@@ -1566,7 +1569,7 @@ Plugin := [].{
 		}
 
 	validate_blocks :
-		List(KaifileBlock), List(KaifileBlock), Str -> Try({}, RegistryDiagnostic)
+		List(Block), List(Block), Str -> Try({}, RegistryDiagnostic)
 	validate_blocks = |blocks, all_blocks, plugin|
 		match blocks {
 			[] => Ok({})
@@ -1579,7 +1582,7 @@ Plugin := [].{
 		}
 
 	validate_unique_block_key :
-		KaifileBlock, List(KaifileBlock), Str -> Try({}, RegistryDiagnostic)
+		Block, List(Block), Str -> Try({}, RegistryDiagnostic)
 	validate_unique_block_key = |block, remaining, plugin|
 		if List.any(remaining, |other| Plugin.same_block_key(block, other)) {
 			kind = if Kaifile.is_named(block) "named" else "unnamed"
@@ -1592,7 +1595,7 @@ Plugin := [].{
 		}
 
 	validate_command_block_relationships :
-		List(CommandSchema), List(KaifileBlock), Str -> Try({}, RegistryDiagnostic)
+		List(Command), List(Block), Str -> Try({}, RegistryDiagnostic)
 	validate_command_block_relationships = |commands, blocks, plugin|
 		match commands {
 			[] => Ok({})
@@ -1600,7 +1603,7 @@ Plugin := [].{
 				match first {
 					CommandOnly(_) => Ok({})
 					CommandWithBlock(
-						{ block, command: declared_command, explicit_backend_block: _ },
+						{ block, syntax: declared_command, explicit_backend_block: _ },
 					) => {
 						Plugin.validate_block_relationship(
 							block,
@@ -1633,7 +1636,7 @@ Plugin := [].{
 		}
 
 	validate_block_reference_targets :
-		KaifileBlock, List(KaifileBlock), Str -> Try({}, RegistryDiagnostic)
+		Block, List(Block), Str -> Try({}, RegistryDiagnostic)
 	validate_block_reference_targets = |block, blocks, plugin|
 		Plugin.validate_reference_targets(Kaifile.references(block), blocks, plugin)
 
@@ -1653,7 +1656,7 @@ Plugin := [].{
 		}
 
 	validate_block_relationship :
-		KaifileBlock, List(KaifileBlock), Str, Str -> Try({}, RegistryDiagnostic)
+		Block, List(Block), Str, Str -> Try({}, RegistryDiagnostic)
 	validate_block_relationship = |block, blocks, relationship, plugin|
 		if Plugin.compatible_block_count(block, blocks) == 1 {
 			Ok({})
@@ -1670,7 +1673,7 @@ Plugin := [].{
 			)
 		}
 
-	compatible_block_count : KaifileBlock, List(KaifileBlock) -> U64
+	compatible_block_count : Block, List(Block) -> U64
 	compatible_block_count = |block, blocks|
 		match blocks {
 			[] => 0
@@ -1694,7 +1697,7 @@ Plugin := [].{
 		}
 
 	validate_plugin_blocks :
-		List(KaifileBlock), Str, List(Definition) -> Try({}, RegistryDiagnostic)
+		List(Block), Str, List(Definition) -> Try({}, RegistryDiagnostic)
 	validate_plugin_blocks = |blocks, plugin, definitions|
 		match blocks {
 			[] => Ok({})
@@ -1705,7 +1708,7 @@ Plugin := [].{
 		}
 
 	validate_block_across_plugins :
-		KaifileBlock, Str, List(Definition) -> Try({}, RegistryDiagnostic)
+		Block, Str, List(Definition) -> Try({}, RegistryDiagnostic)
 	validate_block_across_plugins = |block, plugin, definitions|
 		match definitions {
 			[] => Ok({})
@@ -1716,7 +1719,7 @@ Plugin := [].{
 		}
 
 	validate_block_against :
-		KaifileBlock, Str, List(KaifileBlock) -> Try({}, RegistryDiagnostic)
+		Block, Str, List(Block) -> Try({}, RegistryDiagnostic)
 	validate_block_against = |block, plugin, others|
 		match others {
 			[] => Ok({})
@@ -1780,7 +1783,7 @@ Plugin := [].{
 			}
 
 	validate_default_implementations :
-		List(CommandSchema),
+		List(Command),
 		Str,
 		List(Implementation),
 		Str -> Try(
@@ -1791,7 +1794,7 @@ Plugin := [].{
 		match commands {
 			[] => Ok({})
 			[first, .. as rest] => {
-				declared_command = Plugin.command_from_schema(first)
+				declared_command = Plugin.syntax_from_command(first)
 				match Plugin.find_implementation(
 					implementations,
 					declared_command.name,
@@ -1897,7 +1900,7 @@ Plugin := [].{
 					}
 					plugin_definition = owner.definition
 					selected_command = owner.command
-					declared_command = Plugin.command_from_schema(selected_command)
+					declared_command = Plugin.syntax_from_command(selected_command)
 					plugin = plugin_definition.name
 					selected_command_name = declared_command.name
 					backend_selection = Plugin.select_backend(
@@ -1977,7 +1980,7 @@ Plugin := [].{
 							})
 							(
 								CommandWithBlock(
-									{ block: schema, command: _, explicit_backend_block: _ },
+									{ block: schema, syntax: _, explicit_backend_block: _ },
 								),
 								Missing,
 							) =>
@@ -2001,7 +2004,7 @@ Plugin := [].{
 										)
 									}
 							(
-								CommandWithBlock({ block: _, command: _, explicit_backend_block: _ }),
+								CommandWithBlock({ block: _, syntax: _, explicit_backend_block: _ }),
 								Selected(block),
 							) => {
 								parsed_block = Plugin.find_parsed_block(kaifile_blocks, block) ? |_|
@@ -2012,7 +2015,7 @@ Plugin := [].{
 								})
 							}
 							(
-								CommandWithBlock({ block: _, command: _, explicit_backend_block: _ }),
+								CommandWithBlock({ block: _, syntax: _, explicit_backend_block: _ }),
 								SelectedWithReference(
 									{ reference_field, referenced_block, selected_block },
 								),
@@ -2202,7 +2205,7 @@ Plugin := [].{
 				}
 			}
 
-	accepted_blocks : List(Definition) -> List(KaifileBlock)
+	accepted_blocks : List(Definition) -> List(Block)
 	accepted_blocks = |registry|
 		match registry {
 			[] => []
@@ -2212,7 +2215,7 @@ Plugin := [].{
 
 	find_owner : List(Definition),
 	Str -> Try(
-		{ command : CommandSchema, definition : Definition },
+		{ command : Command, definition : Definition },
 		[UnknownCommand],
 	)
 	find_owner = |registry, command_name|
@@ -2228,12 +2231,12 @@ Plugin := [].{
 				}
 			}
 
-	find_command : List(CommandSchema), Str -> Try(CommandSchema, [NotFound])
+	find_command : List(Command), Str -> Try(Command, [NotFound])
 	find_command = |commands, name|
 		match commands {
 			[] => Err(NotFound)
 			[first, .. as rest] =>
-				if Plugin.command_from_schema(first).name == name {
+				if Plugin.syntax_from_command(first).name == name {
 					Ok(first)
 				} else {
 					Plugin.find_command(rest, name)

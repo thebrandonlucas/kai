@@ -32,7 +32,7 @@ Source := [].{
 		}),
 	]
 
-	block : Plugin.KaifileBlock
+	block : Plugin.Block
 	block = Kaifile.named_block({
 		header: "source <source>",
 		fields: [Kaifile.required("url", String)],

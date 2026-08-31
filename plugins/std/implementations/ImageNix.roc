@@ -8,7 +8,7 @@ ImageNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: ImageCommand.command.name,
+		command: ImageCommand.command_syntax.name,
 		plan: ImageNix.plan,
 		validator: NoValidation,
 	}

@@ -18,7 +18,7 @@ GuixPlugin := [].{
 	schema : Plugin.Schema
 	schema = {
 		blocks: [ShellCommand.block, ShellCommand.environment_block],
-		commands: [ShellCommand.command_schema],
+		commands: [ShellCommand.command],
 	}
 
 	backends : List(Plugin.Backend)

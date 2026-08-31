@@ -14,7 +14,7 @@ EnvironmentConfig := [].{
 	name_rules : List(Plugin.TextRule)
 	name_rules = [NonemptyText("environment name must not be empty")]
 
-	block : Plugin.KaifileBlock
+	block : Plugin.Block
 	block = Kaifile.named_block({
 		header: "environment <environment>",
 		fields,

@@ -9,7 +9,7 @@ ShellNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: ShellCommand.command.name,
+		command: ShellCommand.command_syntax.name,
 		validator: Validate({
 			string_lists: [
 				{

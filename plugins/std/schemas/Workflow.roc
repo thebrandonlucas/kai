@@ -9,16 +9,19 @@ Workflow := [].{
 	name_rules : List(Plugin.TextRule)
 	name_rules = [NonemptyText("workflow name must not be empty")]
 
-	block : Plugin.KaifileBlock
+	block : Plugin.Block
 	block = Kaifile.named_block({
 		header: "workflow <workflow>",
 		fields: [Kaifile.required("steps", StringList)],
 		name_rules,
 	})
 
-	command : Plugin.Command
-	command = Plugin.command("workflow", [Plugin.required_argument("workflow")])
+	command_syntax : Plugin.CommandSyntax
+	command_syntax = Plugin.command_syntax(
+		"workflow",
+		[Plugin.required_argument("workflow")],
+	)
 
-	command_schema : Plugin.CommandSchema
-	command_schema = Plugin.command_with_block({ command, block })
+	command : Plugin.Command
+	command = Plugin.command_with_block({ syntax: command_syntax, block })
 }

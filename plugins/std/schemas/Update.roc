@@ -2,9 +2,9 @@
 import kai.Plugin
 
 Update := [].{
-	command : Plugin.Command
-	command = Plugin.command("update", [])
+	command_syntax : Plugin.CommandSyntax
+	command_syntax = Plugin.command_syntax("update", [])
 
-	command_schema : Plugin.CommandSchema
-	command_schema = Plugin.command_only(command)
+	command : Plugin.Command
+	command = Plugin.command_only(command_syntax)
 }
