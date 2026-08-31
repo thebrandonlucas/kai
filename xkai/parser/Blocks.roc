@@ -1,4 +1,4 @@
-# Scan config blocks
+# Scan Kaifile blocks
 Blocks := [].{
 	Location := {
 		byte_offset : U64,

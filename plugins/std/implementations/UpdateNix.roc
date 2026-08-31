@@ -1,34 +1,35 @@
 # An implementation for updating the underlying `flake.nix` files
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Update as UpdateCommand
+import schemas.Update as UpdateCommand
 import EnvironmentNix
 UpdateNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [NixBackend.flake_template].concat(NixBackend.update_lock_templates),
 		backend: NixBackend.backend.name,
-		command: UpdateCommand.command.call.name,
-		renderer: UpdateNix.renderer,
+		command: UpdateCommand.command.name,
+		plan: UpdateNix.plan,
 		validator: NoValidation,
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
-		overlays = EnvironmentNix.all_overlays(context)?
-		sources = EnvironmentNix.all_sources(context)?
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
+		overlays = EnvironmentNix.all_overlays(input)?
+		sources = EnvironmentNix.all_sources(input)?
+		flake = NixBackend.render_update_flake(overlays, sources)
 		Ok(
-			Plugin.RenderResult.{
-				actions: [],
+			Plugin.CommandPlan.{
 				artifacts: [],
-				outputs: [
-					{
-						name: "flake",
-						text: NixBackend.render_update_flake(overlays, sources),
-					},
-				],
-				requests: [],
+				prerequisite_commands: [],
 				requested_packages: [],
+				steps: [NixBackend.write_flake_step(flake)].concat(
+					NixBackend.update_lock_steps,
+				),
 			},
 		)
 	}

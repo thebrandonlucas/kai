@@ -1,26 +1,24 @@
 # Implementation of the `split` command with the `local` backend
 import kai.Plugin
 import backends.Local
-import commands.SplitCommand
+import schemas.SplitCommand
 
 SplitLocal := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [
-			WriteConfigUtf8({
-				output: "message",
-				path: "split-plugin-output.txt",
-			}),
-		],
 		backend: Local.backend.name,
-		command: SplitCommand.command.call.name,
-		renderer: |_| Ok(
-			Plugin.RenderResult.{
-				actions: [],
+		command: SplitCommand.command.name,
+		plan: |_| Ok(
+			Plugin.CommandPlan.{
 				artifacts: [],
-				outputs: [{ name: "message", text: "split plugin worked" }],
-				requests: [],
+				prerequisite_commands: [],
 				requested_packages: [],
+				steps: [
+					WriteFile({
+						contents: "split plugin worked",
+						path: "split-plugin-output.txt",
+					}),
+				],
 			},
 		),
 		validator: NoValidation,

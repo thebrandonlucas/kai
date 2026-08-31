@@ -17,8 +17,8 @@ Workflow := [].{
 	})
 
 	command : Plugin.Command
-	command = Plugin.command({
-		call: Plugin.call("workflow", [Plugin.required_argument("workflow")]),
-		kaifile: block,
-	})
+	command = Plugin.command("workflow", [Plugin.required_argument("workflow")])
+
+	command_schema : Plugin.CommandSchema
+	command_schema = Plugin.command_with_block({ command, block })
 }

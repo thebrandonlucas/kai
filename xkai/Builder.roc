@@ -50,29 +50,35 @@ Builder := [].{
 		Builder.load_files!(Builder.roc_files!(paths)?)
 	}
 
-	load_plugin! = |plugin_path| {
+	load_plugin! = |plugin_path, package_name| {
 		path = Path.utf8(plugin_path)
 		filename = (Path.filename(path) ?? path).display()
 		source_root = Builder.plugin_parent(plugin_path, filename)
 		Ok({
-			filename,
+			package_name,
 			module_name: filename.drop_suffix(".roc"),
-			contents: Path.read_utf8!(path)?,
-			commands: Builder.load_component!(source_root, "commands")?,
+			module_source: {
+				filename,
+				contents: Path.read_utf8!(path)?,
+			},
+			schemas: Builder.load_component!(source_root, "schemas")?,
 			backends: Builder.load_component!(source_root, "backends")?,
 			implementations: Builder.load_component!(source_root, "implementations")?,
 		})
 	}
 
-	load_plugins! = |plugin_paths|
+	load_plugins_from! = |plugin_paths, index|
 		match plugin_paths {
 			[] => Ok([])
 			[first, .. as rest] => {
-				plugin = Builder.load_plugin!(first)?
-				remaining = Builder.load_plugins!(rest)?
+				package_name = "custom${U64.to_str(index)}"
+				plugin = Builder.load_plugin!(first, package_name)?
+				remaining = Builder.load_plugins_from!(rest, index + 1)?
 				Ok([plugin].concat(remaining))
 			}
 		}
+
+	load_plugins! = |plugin_paths| Builder.load_plugins_from!(plugin_paths, 0)
 
 	ensure_directories! = |root, parts|
 		match parts {

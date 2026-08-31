@@ -15,22 +15,30 @@ import kai.Kaifile
 import kai.Plugin
 
 CustomPlugin := [].{
+	plugin : Plugin.Definition
+	plugin = Plugin.Definition.{
+		backends,
+		implementations,
+		name,
+		schema,
+	}
+
 	name = "custom"
 
 	block : Plugin.KaifileBlock
-	block = Kaifile.block({
+	block = Kaifile.unnamed_block({
 		header: "custom",
 		fields: [Kaifile.required("message", String)],
 	})
 
 	command : Plugin.Command
-	command = Plugin.command({
-		call: Plugin.call("custom-write", []),
-		kaifile: block,
-	})
+	command = Plugin.command("custom-write", [])
 
-	commands : List(Plugin.Command)
-	commands = [command]
+	command_schema : Plugin.CommandSchema
+	command_schema = Plugin.command_with_block({ command, block })
+
+	schema : Plugin.Schema
+	schema = { blocks: [block], commands: [command_schema] }
 
 	backends : List(Plugin.Backend)
 	backends = [
@@ -49,37 +57,28 @@ CustomPlugin := [].{
 	implementations : List(Plugin.Implementation)
 	implementations = [
 		Plugin.Implementation.{
-			actions: [
-				WriteConfigUtf8({
-					output: "message",
-					path: "custom-plugin-output.txt",
-				}),
-			],
 			backend: "local",
-			command: command.call.name,
-			renderer: |context|
-				match context.config_block {
-					NoConfigBlock => Err({
+			command: command.name,
+			plan: |input|
+				match Fields.get_string(input.command_fields, "message") {
+					Err(_) => Err({
 						byte_offset: None,
-						message: "custom configuration is required",
+						message: "validated custom block is missing 'message'",
 					})
-					SelectedConfigBlock({ body: _, location: _ }) =>
-						match Fields.get_string(context.config, "message") {
-							Err(_) => Err({
-								byte_offset: None,
-								message: "validated custom configuration is missing 'message'",
-							})
-							Ok(message) => Ok(
-								Plugin.RenderResult.{
-									actions: [],
-									artifacts: [],
-									outputs: [{ name: "message", text: message }],
-									requests: [],
-									requested_packages: [],
-								},
-							)
-						}
-					},
+					Ok(message) => Ok(
+						Plugin.CommandPlan.{
+							artifacts: [],
+							prerequisite_commands: [],
+							requested_packages: [],
+							steps: [
+								WriteFile({
+									contents: message,
+									path: "custom-plugin-output.txt",
+								}),
+							],
+						},
+					)
+				},
 			validator: NoValidation,
 		},
 	]

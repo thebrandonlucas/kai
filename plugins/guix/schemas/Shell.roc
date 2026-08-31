@@ -9,7 +9,7 @@ Shell := [].{
 	fields = [packages_field]
 
 	block : Plugin.KaifileBlock
-	block = Kaifile.block({ header: "shell", fields })
+	block = Kaifile.unnamed_block({ header: "shell", fields })
 
 	environment_block : Plugin.KaifileBlock
 	environment_block = Kaifile.named_block({
@@ -19,10 +19,12 @@ Shell := [].{
 	})
 
 	command : Plugin.Command
-	command = Plugin.command_with_backend_blocks({
-		backend_blocks: RequireBackendSpecific,
-		call: Plugin.call("shell", [Plugin.optional_argument("environment")]),
-		kaifile: Kaifile.by_optional_argument({
+	command = Plugin.command("shell", [Plugin.optional_argument("environment")])
+
+	command_schema : Plugin.CommandSchema
+	command_schema = Plugin.command_with_required_backend_block({
+		command,
+		block: Kaifile.by_optional_argument({
 			argument: "environment",
 			when_omitted: block,
 			when_provided: environment_block,

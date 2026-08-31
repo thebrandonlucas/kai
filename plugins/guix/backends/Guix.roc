@@ -14,7 +14,7 @@ Guix := [].{
 		required_packages: [],
 	}
 
-	supported_targets : List(Plugin.BackendTarget)
+	supported_targets : List(Plugin.SupportedBackendTarget)
 	supported_targets = [
 		{ arch: X64, os: LINUX, value: "x86_64-linux" },
 		{ arch: AARCH64, os: LINUX, value: "aarch64-linux" },

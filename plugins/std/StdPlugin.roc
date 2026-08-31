@@ -1,15 +1,18 @@
 # Standard plugin definition for Kai's built-in Nix commands.
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Build as BuildCommand
-import commands.Image as ImageCommand
-import commands.Machine as MachineCommand
-import commands.Secret as SecretCommand
-import commands.Service as ServiceCommand
-import commands.Shell as ShellCommand
-import commands.Task as TaskCommand
-import commands.Update as UpdateCommand
-import commands.Workflow as WorkflowCommand
+import schemas.Build as BuildCommand
+import schemas.EnvironmentConfig
+import schemas.Image as ImageCommand
+import schemas.Machine as MachineCommand
+import schemas.MachineConfig
+import schemas.Secret as SecretCommand
+import schemas.Service as ServiceCommand
+import schemas.Shell as ShellCommand
+import schemas.Source
+import schemas.Task as TaskCommand
+import schemas.Update as UpdateCommand
+import schemas.Workflow as WorkflowCommand
 import implementations.BuildNix
 import implementations.ImageNix
 import implementations.MachineNix
@@ -18,7 +21,6 @@ import implementations.ShellNix
 import implementations.TaskNix
 import implementations.UpdateNix
 import implementations.WorkflowNix
-import project_configs.Source
 
 ## `StdPlugin` is the standard plugin shipped for most `kai` users.
 ##
@@ -49,27 +51,37 @@ StdPlugin := [].{
 	plugin : Plugin.Definition
 	plugin = Plugin.Definition.{
 		backends,
-		commands,
 		implementations,
 		name,
-		project_configs,
+		schema,
 	}
 
 	name = "std"
-	commands : List(Plugin.Command)
-	commands = [
-		BuildCommand.command,
-		ImageCommand.command,
-		MachineCommand.command,
-		ServiceCommand.command,
-		ShellCommand.command,
-		TaskCommand.command,
-		UpdateCommand.command,
-		WorkflowCommand.command,
-	]
 
-	project_configs : List(Plugin.ProjectConfigDescriptor)
-	project_configs = [SecretCommand.descriptor, Source.descriptor]
+	schema : Plugin.Schema
+	schema = {
+		blocks: [
+			BuildCommand.block,
+			EnvironmentConfig.block,
+			MachineConfig.block,
+			SecretCommand.block,
+			ServiceCommand.block,
+			ShellCommand.block,
+			Source.block,
+			TaskCommand.block,
+			WorkflowCommand.block,
+		],
+		commands: [
+			BuildCommand.command_schema,
+			ImageCommand.command_schema,
+			MachineCommand.command_schema,
+			ServiceCommand.command_schema,
+			ShellCommand.command_schema,
+			TaskCommand.command_schema,
+			UpdateCommand.command_schema,
+			WorkflowCommand.command_schema,
+		],
+	}
 
 	backends : List(Plugin.Backend)
 	backends = [NixBackend.backend]

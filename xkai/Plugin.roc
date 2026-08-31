@@ -8,25 +8,15 @@ Plugin := [].{
 	HostOs : [LINUX, MACOS, OTHER(Str)]
 	HostArch : [X86, X64, ARM, AARCH64, OTHER(Str)]
 
-	# Side effects to be performed by a plugin.
-	Action := [
-		Exec({ args : List(Str), command : Str }),
+	# Side effects to be performed later by the executor.
+	ExecutionStep := [
 		PrintLine(Str),
-		WriteUtf8({ content : Str, path : Str }),
+		RunProgram({ arguments : List(Str), program : Str }),
+		WriteFile({ contents : Str, path : Str }),
 	].{
 		encoder_for : _
 		parser_for : _
 	}
-
-	ActionTemplate : [
-		Exec(
-			{
-				args : List(Str),
-				command : Str,
-			},
-		),
-		WriteConfigUtf8({ output : Str, path : Str }),
-	]
 
 	AsciiByte : [AsciiDigit, AsciiLowercase, AsciiUppercase, ExactByte(U8)]
 	ByteRange := { max : U8, min : U8 }
@@ -172,8 +162,8 @@ Plugin := [].{
 			Err({ location: None, message: Plugin.validation_message(failures) })
 		}
 
-	renderer_validation : List(Str) -> Try({}, RendererDiagnostic)
-	renderer_validation = |failures|
+	implementation_validation : List(Str) -> Try({}, ImplementationDiagnostic)
+	implementation_validation = |failures|
 		if failures.is_empty() {
 			Ok({})
 		} else {
@@ -182,13 +172,13 @@ Plugin := [].{
 
 	CommandArgument : [OptionalArgument(Str), RequiredArgument(Str)]
 
-	CommandCall := {
+	Command := {
 		arguments : List(CommandArgument),
 		name : Str,
 	}
 
-	call : Str, List(CommandArgument) -> CommandCall
-	call = |name, arguments| { arguments, name }
+	command : Str, List(CommandArgument) -> Command
+	command = |name, arguments| { arguments, name }
 
 	required_argument : Str -> CommandArgument
 	required_argument = |name| RequiredArgument(name)
@@ -199,106 +189,51 @@ Plugin := [].{
 	KaifileBlock : Kaifile.Block(TextRule)
 	KaifileField : Kaifile.Field(TextRule)
 
-	ConfigBlockRequirement : [
-		OptionalConfigBlock(KaifileBlock),
-		RequiredConfigBlock(KaifileBlock),
-	]
+	ExplicitBackendBlock : [RequireBackendBlock, TryBackendThenShared]
 
-	BackendLookup : [QualifiedOnly, QualifiedThenUnqualified]
-
-	ConfigMetadata : [
-		DirectConfig(BackendLookup),
-		DirectOrNamedConfig(
+	CommandSchema : [
+		CommandOnly(Command),
+		CommandWithBlock(
 			{
-				argument : Str,
-				lookup : BackendLookup,
-				named : KaifileBlock,
-			},
-		),
-		NamedConfig({ lookup : BackendLookup }),
-		NamedWithRelatedConfig(
-			{
-				lookup : BackendLookup,
-				related : KaifileBlock,
-				related_field : Str,
+				block : KaifileBlock,
+				command : Command,
+				explicit_backend_block : ExplicitBackendBlock,
 			},
 		),
 	]
 
-	ProjectConfigDescriptor : KaifileBlock
-
-	Command := {
-		call : CommandCall,
-		config : ConfigMetadata,
-		config_block : ConfigBlockRequirement,
+	Schema := {
+		blocks : List(KaifileBlock),
+		commands : List(CommandSchema),
 	}
 
-	BackendBlocks : [RequireBackendSpecific]
+	command_only : Command -> CommandSchema
+	command_only = |declared_command| CommandOnly(declared_command)
 
-	command : { call : CommandCall, kaifile : KaifileBlock } -> Command
-	command = |declaration|
-		Plugin.lower_command(
-			declaration.call,
-			declaration.kaifile,
-			QualifiedThenUnqualified,
-		)
+	command_with_block :
+		{ block : KaifileBlock, command : Command } -> CommandSchema
+	command_with_block = |declaration|
+		CommandWithBlock({
+			block: declaration.block,
+			command: declaration.command,
+			explicit_backend_block: TryBackendThenShared,
+		})
 
-	command_with_backend_blocks :
-		{
-			backend_blocks : BackendBlocks,
-			call : CommandCall,
-			kaifile : KaifileBlock,
-		} -> Command
-	command_with_backend_blocks = |declaration| {
-		lookup = match declaration.backend_blocks {
-			RequireBackendSpecific => QualifiedOnly
+	command_with_required_backend_block :
+		{ block : KaifileBlock, command : Command } -> CommandSchema
+	command_with_required_backend_block = |declaration|
+		CommandWithBlock({
+			block: declaration.block,
+			command: declaration.command,
+			explicit_backend_block: RequireBackendBlock,
+		})
+
+	command_from_schema : CommandSchema -> Command
+	command_from_schema = |command_schema|
+		match command_schema {
+			CommandOnly(declared_command) => declared_command
+			CommandWithBlock(declaration) => declaration.command
 		}
-		Plugin.lower_command(declaration.call, declaration.kaifile, lookup)
-	}
-
-	lower_command : CommandCall, KaifileBlock, BackendLookup -> Command
-	lower_command = |command_call, kaifile, lookup|
-		match kaifile.selection {
-			RequiredBlock =>
-				if Kaifile.is_named(kaifile) {
-					config = match Kaifile.references(kaifile) {
-						[reference, ..] =>
-							NamedWithRelatedConfig({
-								lookup,
-								related: Kaifile.from_reference_target(reference.target),
-								related_field: reference.field.name,
-							})
-						[] => NamedConfig({ lookup: lookup })
-					}
-					Plugin.Command.{
-						call: command_call,
-						config,
-						config_block: RequiredConfigBlock(kaifile),
-					}
-				} else {
-					Plugin.Command.{
-						call: command_call,
-						config: DirectConfig(lookup),
-						config_block: RequiredConfigBlock(kaifile),
-					}
-				}
-			OptionalBlock =>
-				Plugin.Command.{
-					call: command_call,
-					config: DirectConfig(lookup),
-					config_block: OptionalConfigBlock(kaifile),
-				}
-			ByOptionalArgument({ argument, when_provided }) =>
-				Plugin.Command.{
-					call: command_call,
-					config: DirectOrNamedConfig({
-						argument,
-						lookup,
-						named: Kaifile.from_schema(when_provided),
-					}),
-					config_block: RequiredConfigBlock(kaifile),
-				}
-			}
 
 	DeterminateSystemKind : [Custom, Guix, Nix]
 
@@ -320,8 +255,8 @@ Plugin := [].{
 	# DeterminateSystemKind or missing any other specified Package)
 	# then we give a Fallback prompt to help them or advise.
 	Fallback := {
-		actions : List(Action),
 		prompt : [DefaultPrompt, Prompt(Str)],
+		steps : List(ExecutionStep),
 	}
 
 	Backend := {
@@ -331,10 +266,15 @@ Plugin := [].{
 		required_packages : List(Package),
 	}
 
-	BackendTarget := {
+	SupportedBackendTarget := {
 		arch : HostArch,
 		os : HostOs,
 		value : Str,
+	}
+
+	Host := {
+		arch : HostArch,
+		os : HostOs,
 	}
 
 	SourceLocation := {
@@ -343,33 +283,30 @@ Plugin := [].{
 		line : U64,
 	}
 
-	# location is absolute within the complete config text, including when a
+	# location is absolute within the complete Kaifile text, including when a
 	# plugin selects a block nested inside another generic block.
-	LocatedConfigBlock := {
+	LocatedBlock := {
 		body : Str,
 		location : SourceLocation,
 	}
 
-	ProjectConfigEntry := {
-		block : Str,
-		config : Fields.Configuration,
+	ParsedBlock := {
+		fields : Fields.ParsedFields,
 		header : List(Str),
+		kind : Str,
 		location : SourceLocation,
 	}
 
 	BackendChoice : [DefaultBackend(Backend), ExplicitBackend(Backend)]
 
-	ConfigSelection : [
+	BlockSelection : [
 		Missing,
-		Selected(LocatedConfigBlock),
-		SelectedWithBody({ block : LocatedConfigBlock, body : Fields.Shape }),
-		SelectedWithRelated(
+		Selected(LocatedBlock),
+		SelectedWithReference(
 			{
-				block : LocatedConfigBlock,
-				body : Fields.Shape,
 				reference_field : Str,
-				related_block : LocatedConfigBlock,
-				related_body : Fields.Shape,
+				referenced_block : LocatedBlock,
+				selected_block : LocatedBlock,
 			},
 		),
 	]
@@ -379,14 +316,15 @@ Plugin := [].{
 		message : Str,
 	}
 
-	ConfigSelector :
+	BlockSelector :
 		Str,
-		Command,
+		List(ParsedBlock),
+		CommandSchema,
 		BackendChoice,
 		List(Str),
 		HostOs,
 		HostArch -> Try(
-			ConfigSelection,
+			BlockSelection,
 			SelectorDiagnostic,
 		)
 
@@ -398,213 +336,174 @@ Plugin := [].{
 		plugin : Str,
 	}
 
-	# Select config from the command's declarative metadata.
-	select_config : ConfigSelector
-	select_config = |config_text, selected_command, backend_choice, args, os, _| {
-		primary = Plugin.config_block_schema(selected_command.config_block)
-		block_name = Kaifile.block_name(primary)
-		call_name = selected_command.call.name
-		match selected_command.config {
-			DirectConfig(lookup) =>
-				Plugin.select_with_backend_fallback(
-					config_text,
-					[block_name],
-					backend_choice,
-					os,
-					lookup,
-				)
-			DirectOrNamedConfig({ argument: _, lookup, named }) => {
-				named_block = Kaifile.block_name(named)
-				match args {
-					[] =>
-						match backend_choice {
-							DefaultBackend(_) =>
-								Plugin.select_config_header(
-									config_text,
-									[block_name],
-									backend_choice,
-									os,
-								)
-							ExplicitBackend(backend) =>
-								match Plugin.select_config_header(
-									config_text,
-									[named_block, backend.name],
-									DefaultBackend(backend),
-									os,
-								)? {
-									Missing =>
-										Plugin.select_config_header(
-											config_text,
+	# Select a Kaifile block from the command schema.
+	select_command_block : BlockSelector
+	select_command_block = |text, blocks, schema, choice, args, os, _|
+		match schema {
+			CommandOnly(_) => Ok(Missing)
+			CommandWithBlock(
+				{
+					block: primary,
+					command: declared_command,
+					explicit_backend_block,
+				},
+			) => {
+				block_name = Kaifile.block_name(primary)
+				command_name = declared_command.name
+				match primary.selection {
+					RequiredBlock =>
+						if Kaifile.is_named(primary) {
+							match (args, Kaifile.references(primary)) {
+								([name], [reference, ..]) => {
+									Plugin.selector_validation(
+										Plugin.validate_text(name, Kaifile.name_rules(primary)),
+									)?
+									selected = Plugin.select_required_named_block(
+										text,
+										block_name,
+										name,
+										choice,
+										os,
+										explicit_backend_block,
+									)?
+									parsed = Plugin.find_parsed_block(
+										blocks,
+										selected,
+									) ? |_|
+										{
+											location: At(selected.location),
+											message: Str.join_with(
+												[
+													"selected ${block_name}",
+													"'${name}' was not parsed",
+												],
+												" ",
+											),
+										}
+									related_name = Fields.get_string(
+										parsed.fields,
+										reference.field.name,
+									) ? |_|
+										{
+											location: None,
+											message: Str.join_with(
+												[
+													"validated ${block_name} '${name}' is",
+													"missing '${reference.field.name}'",
+												],
+												" ",
+											),
+										}
+									related = Kaifile.from_reference_target(reference.target)
+									referenced_block = Plugin.select_required_named_block(
+										text,
+										Kaifile.block_name(related),
+										related_name,
+										choice,
+										os,
+										explicit_backend_block,
+									)?
+									Ok(
+										SelectedWithReference({
+											reference_field: reference.field.name,
+											referenced_block,
+											selected_block: selected,
+										}),
+									)
+								}
+								([name], []) =>
+									Plugin.select_named_block(
+										text,
+										primary,
+										name,
+										choice,
+										os,
+										explicit_backend_block,
+									)
+								_ => Err({
+									location: None,
+									message: "${command_name} requires exactly one block name",
+								})
+							}
+						} else {
+							Plugin.select_with_backend_fallback(
+								text,
+								[block_name],
+								choice,
+								os,
+								explicit_backend_block,
+							)
+						}
+					OptionalBlock =>
+						Plugin.select_with_backend_fallback(
+							text,
+							[block_name],
+							choice,
+							os,
+							explicit_backend_block,
+						)
+					ByOptionalArgument({ argument: _, when_provided }) => {
+						named = Kaifile.from_schema(when_provided)
+						named_block = Kaifile.block_name(named)
+						match args {
+							[] =>
+								match choice {
+									DefaultBackend(_) =>
+										Plugin.select_block_header(
+											text,
 											[block_name],
-											backend_choice,
+											choice,
 											os,
 										)
-									Selected(block) =>
-										Ok(
-											SelectedWithBody({
-												block,
-												body: Kaifile.body(named),
-											}),
-										)
-									_ => Err({
-										location: None,
-										message: "invalid ${named_block} selection",
-									})
-								}
-							}
-					[name] =>
-						Plugin.select_named_config(
-							config_text,
-							named,
-							name,
-							backend_choice,
-							os,
-							lookup,
-						)
-					_ => Err({
-						location: None,
-						message: "${call_name} accepts at most one config name",
-					})
-				}
-			}
-			NamedConfig({ lookup }) =>
-				match args {
-					[name] =>
-						Plugin.select_named_config(
-							config_text,
-							primary,
-							name,
-							backend_choice,
-							os,
-							lookup,
-						)
-					_ => Err({
-						location: None,
-						message: "${call_name} requires exactly one config name",
-					})
-				}
-			NamedWithRelatedConfig({ lookup, related, related_field }) =>
-				match args {
-					[name] => {
-						Plugin.selector_validation(
-							Plugin.validate_text(name, Kaifile.name_rules(primary)),
-						)?
-						block = Plugin.select_required_named_block(
-							config_text,
-							block_name,
-							name,
-							backend_choice,
-							os,
-							lookup,
-						)?
-						body = Kaifile.body(primary)
-						config = Plugin.parse_selected_body(body, block)?
-						related_name = Fields.get_string(config, related_field) ? |_|
-							{
+									ExplicitBackend(backend) =>
+										match Plugin.select_block_header(
+											text,
+											[named_block, backend.name],
+											DefaultBackend(backend),
+											os,
+										)? {
+											Missing =>
+												Plugin.select_block_header(
+													text,
+													[block_name],
+													choice,
+													os,
+												)
+											Selected(selected) => Ok(Selected(selected))
+											_ => Err({
+												location: None,
+												message: "invalid ${named_block} selection",
+											})
+										}
+									}
+							[name] =>
+								Plugin.select_named_block(
+									text,
+									named,
+									name,
+									choice,
+									os,
+									explicit_backend_block,
+								)
+							_ => Err({
 								location: None,
-								message: Str.join_with(
-									[
-										"validated ${block_name} '${name}' is",
-										"missing '${related_field}'",
-									],
-									" ",
-								),
-							}
-						related_block_name = Kaifile.block_name(related)
-						related_block = Plugin.select_required_named_block(
-							config_text,
-							related_block_name,
-							related_name,
-							backend_choice,
-							os,
-							lookup,
-						)?
-						Ok(
-							SelectedWithRelated({
-								block,
-								body,
-								reference_field: related_field,
-								related_block,
-								related_body: Kaifile.body(related),
-							}),
-						)
+								message: "${command_name} accepts at most one block name",
+							})
+						}
 					}
-					_ => Err({
-						location: None,
-						message: "${call_name} requires exactly one config name",
-					})
 				}
 			}
-	}
-
-	config_block_schema : ConfigBlockRequirement -> KaifileBlock
-	config_block_schema = |requirement|
-		match requirement {
-			OptionalConfigBlock(schema) => schema
-			RequiredConfigBlock(schema) => schema
 		}
 
-	config_block_name : ConfigBlockRequirement -> Str
-	config_block_name = |requirement|
-		Kaifile.block_name(Plugin.config_block_schema(requirement))
-
-	config_descriptors : List(Command) -> List(ProjectConfigDescriptor)
-	config_descriptors = |commands| Plugin.collect_config_descriptors(commands, [])
-
-	collect_config_descriptors :
-		List(Command), List(ProjectConfigDescriptor) -> List(ProjectConfigDescriptor)
-	collect_config_descriptors = |commands, descriptors|
-		match commands {
-			[] => descriptors
-			[first, .. as rest] => {
-				with_command = Plugin.append_config_descriptors(
-					descriptors,
-					Plugin.command_config_descriptors(first),
-				)
-				Plugin.collect_config_descriptors(rest, with_command)
-			}
-		}
-
-	command_config_descriptors : Command -> List(ProjectConfigDescriptor)
-	command_config_descriptors = |selected_command| {
-		primary = Plugin.config_block_schema(selected_command.config_block)
-		match selected_command.config {
-			DirectConfig(_) | NamedConfig(_) => [primary]
-			DirectOrNamedConfig({ argument: _, lookup: _, named }) => [primary, named]
-			NamedWithRelatedConfig(
-				{
-					lookup: _,
-					related,
-					related_field: _,
-				},
-			) => [primary, related]
-		}
-	}
-
-	append_config_descriptors :
-		List(ProjectConfigDescriptor),
-		List(ProjectConfigDescriptor) -> List(
-			ProjectConfigDescriptor,
-		)
-	append_config_descriptors = |descriptors, additions|
-		match additions {
-			[] => descriptors
-			[first, .. as rest] => {
-				already_present = List.any(
-					descriptors,
-					|descriptor| Plugin.same_config_descriptor(descriptor, first),
-				)
-				updated = if already_present descriptors else descriptors.append(first)
-				Plugin.append_config_descriptors(updated, rest)
-			}
-		}
-
-	same_config_descriptor :
-		ProjectConfigDescriptor, ProjectConfigDescriptor -> Bool
-	same_config_descriptor = |left, right|
+	same_block_key : KaifileBlock, KaifileBlock -> Bool
+	same_block_key = |left, right|
 		Kaifile.block_name(left) == Kaifile.block_name(right) and
-			Kaifile.is_named(left) == Kaifile.is_named(right) and
-				Plugin.same_body_shape(Kaifile.body(left), Kaifile.body(right))
+			Kaifile.is_named(left) == Kaifile.is_named(right)
+
+	compatible_blocks : KaifileBlock, KaifileBlock -> Bool
+	compatible_blocks = |left, right|
+		Plugin.same_block_key(left, right) and
+			Plugin.same_body_shape(Kaifile.body(left), Kaifile.body(right))
 
 	same_body_shape : Fields.Shape, Fields.Shape -> Bool
 	same_body_shape = |left, right|
@@ -626,53 +525,61 @@ Plugin := [].{
 		}
 
 	normalize_command_backend :
-		ConfigMetadata,
+		CommandSchema,
 		BackendChoice,
 		List(Str) -> {
 			args : List(Str),
 			backend_choice : BackendChoice,
 		}
-	normalize_command_backend = |metadata, backend_choice, args|
-		match metadata {
-			NamedConfig(_) | NamedWithRelatedConfig(_) =>
-				match (backend_choice, args) {
-					(ExplicitBackend(backend), []) => {
-						args: [backend.name],
-						backend_choice: DefaultBackend(backend),
-					}
+	normalize_command_backend = |command_schema, backend_choice, args|
+		match command_schema {
+			CommandWithBlock({ block, command: _, explicit_backend_block: _ }) =>
+				match block.selection {
+					RequiredBlock if Kaifile.is_named(block) =>
+						match (backend_choice, args) {
+							(ExplicitBackend(backend), []) => {
+								args: [backend.name],
+								backend_choice: DefaultBackend(backend),
+							}
+							_ => { args, backend_choice }
+						}
 					_ => { args, backend_choice }
 				}
-			DirectConfig(_) | DirectOrNamedConfig(_) => { args, backend_choice }
+			CommandOnly(_) => { args, backend_choice }
 		}
 
-	validate_call_arguments : CommandCall, List(Str) -> Try({}, Str)
-	validate_call_arguments = |command_call, args|
-		match command_call.arguments {
+	validate_command_arguments : Command, List(Str) -> Try({}, Str)
+	validate_command_arguments = |declared_command, args|
+		match declared_command.arguments {
 			[] => if args.is_empty() Ok({}) else Err("command does not accept arguments")
 			[OptionalArgument(name)] =>
 				match args {
 					[] | [_] => Ok({})
-					_ => Err("${command_call.name} accepts at most one ${name} argument")
+					_ => Err(
+						"${declared_command.name} accepts at most one ${name} argument",
+					)
 				}
 			[RequiredArgument(name)] =>
 				match args {
 					[_] => Ok({})
-					_ => Err("${command_call.name} requires exactly one ${name} argument")
+					_ => Err(
+						"${declared_command.name} requires exactly one ${name} argument",
+					)
 				}
 			_ => Err("command declares unsupported arguments")
 		}
 
-	select_named_config :
+	select_named_block :
 		Str,
 		KaifileBlock,
 		Str,
 		BackendChoice,
 		HostOs,
-		BackendLookup -> Try(
-			ConfigSelection,
+		ExplicitBackendBlock -> Try(
+			BlockSelection,
 			SelectorDiagnostic,
 		)
-	select_named_config = |text, schema, name, choice, os, lookup| {
+	select_named_block = |text, schema, name, choice, os, backend_block| {
 		Plugin.selector_validation(
 			Plugin.validate_text(name, Kaifile.name_rules(schema)),
 		)?
@@ -682,9 +589,9 @@ Plugin := [].{
 			name,
 			choice,
 			os,
-			lookup,
+			backend_block,
 		)?
-		Ok(SelectedWithBody({ block, body: Kaifile.body(schema) }))
+		Ok(Selected(block))
 	}
 
 	select_required_named_block :
@@ -693,86 +600,74 @@ Plugin := [].{
 		Str,
 		BackendChoice,
 		HostOs,
-		BackendLookup -> Try(
-			LocatedConfigBlock,
+		ExplicitBackendBlock -> Try(
+			LocatedBlock,
 			SelectorDiagnostic,
 		)
-	select_required_named_block = |text, block, name, choice, os, lookup|
-		match Plugin.select_with_backend_fallback(
-			text,
-			[block, name],
-			choice,
-			os,
-			lookup,
-		)? {
-			Missing => Err({
-				location: None,
-				message: "missing ${block} '${name}'",
-			})
-			Selected(selected) => Ok(selected)
-			_ => Err({ location: None, message: "invalid ${block} selection" })
-		}
+	select_required_named_block =
+		|text, block, name, choice, os, explicit_backend_block|
+			match Plugin.select_with_backend_fallback(
+				text,
+				[block, name],
+				choice,
+				os,
+				explicit_backend_block,
+			)? {
+				Missing => Err({
+					location: None,
+					message: "missing ${block} '${name}'",
+				})
+				Selected(selected) => Ok(selected)
+				_ => Err({ location: None, message: "invalid ${block} selection" })
+			}
 
 	select_with_backend_fallback :
 		Str,
 		List(Str),
 		BackendChoice,
 		HostOs,
-		BackendLookup -> Try(
-			ConfigSelection,
+		ExplicitBackendBlock -> Try(
+			BlockSelection,
 			SelectorDiagnostic,
 		)
-	select_with_backend_fallback = |text, header, choice, os, lookup| {
-		selection = Plugin.select_config_header(
-			text,
-			header,
-			choice,
-			os,
-		)?
-		match (selection, choice, lookup) {
-			(Missing, ExplicitBackend(backend), QualifiedThenUnqualified) =>
-				Plugin.select_config_header(
-					text,
-					header,
-					DefaultBackend(backend),
-					os,
-				)
-			_ => Ok(selection)
-		}
-	}
-
-	parse_selected_body : Fields.Shape,
-	LocatedConfigBlock -> Try(
-		Fields.Configuration,
-		SelectorDiagnostic,
-	)
-	parse_selected_body = |body, block|
-		match Fields.parse(body, block.body) {
-			Ok(config) => Ok(config)
-			Err(diagnostic) => Err({
-				location: At(Plugin.translate_location(block, diagnostic.byte_offset)),
-				message: Fields.describe(diagnostic),
-			})
+	select_with_backend_fallback =
+		|text, header, choice, os, explicit_backend_block| {
+			selection = Plugin.select_block_header(
+				text,
+				header,
+				choice,
+				os,
+			)?
+			match (selection, choice, explicit_backend_block) {
+				(Missing, ExplicitBackend(backend), TryBackendThenShared) =>
+					Plugin.select_block_header(
+						text,
+						header,
+						DefaultBackend(backend),
+						os,
+					)
+				_ => Ok(selection)
+			}
 		}
 
 	# Select a generic, possibly named block while retaining the standard host
 	# fallback and explicit-backend behavior.
-	select_config_header :
+	select_block_header :
 		Str,
 		List(Str),
 		BackendChoice,
 		HostOs -> Try(
-			ConfigSelection,
+			BlockSelection,
 			SelectorDiagnostic,
 		)
-	select_config_header = |config_text, header, backend_choice, os| {
+	select_block_header = |kaifile_text, header, backend_choice, os| {
 		block_header = match backend_choice {
 			DefaultBackend(_) => header
 			ExplicitBackend(backend) => header.append(backend.name)
 		}
-		blocks = Blocks.scan(config_text) ? |diagnostic| {
+		blocks = Blocks.scan(kaifile_text) ? |diagnostic| {
 			location: At(Plugin.source_location(diagnostic.location)),
-			message: "invalid plugin configuration",
+			message: "invalid Kaifile",
 		}
 		host_section = match os {
 			LINUX => HostSection("linux")
@@ -786,15 +681,14 @@ Plugin := [].{
 					blocks,
 					["on", section],
 				) ? |selection_error|
-					Plugin.top_level_duplicate(selection_error, "duplicate host configuration")
+					Plugin.top_level_duplicate(selection_error, "duplicate host block")
 				match host_selection {
 					Missing => Plugin.select_top_level(blocks, block_header)
 					Selected(host) =>
 						match Plugin.select_nested(host, block_header)? {
 							Missing => Plugin.select_top_level(blocks, block_header)
 							Selected(block) => Ok(Selected(block))
-							SelectedWithBody(selected) => Ok(SelectedWithBody(selected))
-							SelectedWithRelated(selected) => Ok(SelectedWithRelated(selected))
+							SelectedWithReference(selected) => Ok(SelectedWithReference(selected))
 						}
 					}
 			}
@@ -802,12 +696,12 @@ Plugin := [].{
 	}
 
 	select_top_level :
-		List(Blocks.Block), List(Str) -> Try(ConfigSelection, SelectorDiagnostic)
+		List(Blocks.Block), List(Str) -> Try(BlockSelection, SelectorDiagnostic)
 	select_top_level = |blocks, header| {
 		selection = Blocks.select_exact(blocks, header) ? |selection_error|
 			Plugin.top_level_duplicate(
 				selection_error,
-				"duplicate command configuration",
+				"duplicate command block",
 			)
 		match selection {
 			Missing => Ok(Missing)
@@ -821,18 +715,18 @@ Plugin := [].{
 	}
 
 	select_nested :
-		Blocks.Block, List(Str) -> Try(ConfigSelection, SelectorDiagnostic)
+		Blocks.Block, List(Str) -> Try(BlockSelection, SelectorDiagnostic)
 	select_nested = |host, header| {
 		blocks = Blocks.scan(host.body) ? |diagnostic| {
 			location: At(Plugin.nested_location(host, diagnostic.location)),
-			message: "invalid host configuration",
+			message: "invalid host block",
 		}
 		selection = Blocks.select_exact(blocks, header) ? |selection_error| {
 			location = match selection_error {
 				DuplicateHeader({ first: _, header: _, second }) =>
 					At(Plugin.nested_location(host, second))
 				}
-			{ location, message: "duplicate command configuration" }
+			{ location, message: "duplicate command block" }
 		}
 		match selection {
 			Missing => Ok(Missing)
@@ -868,257 +762,200 @@ Plugin := [].{
 		line: location.line,
 	}
 
-	ProjectConfigScope : [
-		HostProjectConfigScope(Blocks.Block),
-		TopLevelProjectConfigScope,
-	]
+	BlockScope : [HostBlockScope(Blocks.Block), TopLevelBlockScope]
 
-	build_project_config : Str,
-	List(ProjectConfigDescriptor),
+	parse_kaifile_blocks : Str,
+	List(KaifileBlock),
 	Str -> Try(
-		List(ProjectConfigEntry),
+		List(ParsedBlock),
 		SelectorDiagnostic,
 	)
-	build_project_config = |config_text, descriptors, backend| {
-		blocks = Blocks.scan(config_text) ? |diagnostic| {
+	parse_kaifile_blocks = |kaifile_text, block_schemas, backend| {
+		blocks = Blocks.scan(kaifile_text) ? |diagnostic| {
 			location: At(Plugin.source_location(diagnostic.location)),
-			message: "invalid plugin configuration",
+			message: "invalid Kaifile",
 		}
-		Plugin.collect_project_config(
+		Plugin.collect_kaifile_blocks(
 			blocks,
-			descriptors,
+			block_schemas,
 			backend,
-			TopLevelProjectConfigScope,
+			TopLevelBlockScope,
 			Bool.True,
 			[],
 			[],
 		)
 	}
 
-	collect_project_config :
+	collect_kaifile_blocks :
 		List(Blocks.Block),
-		List(ProjectConfigDescriptor),
+		List(KaifileBlock),
 		Str,
-		ProjectConfigScope,
+		BlockScope,
 		Bool,
 		List(List(Str)),
-		List(ProjectConfigEntry) -> Try(
-			List(ProjectConfigEntry),
+		List(ParsedBlock) -> Try(
+			List(ParsedBlock),
 			SelectorDiagnostic,
 		)
-	collect_project_config = |blocks, descs, backend, scope, hosts, seen, entries|
+	collect_kaifile_blocks = |blocks, schemas, backend, scope, hosts, seen, parsed|
 		match blocks {
-			[] => Ok(entries)
-			[first, .. as rest] => {
-				matching = Plugin.matching_project_descriptors(
-					descs,
-					first.header,
-					backend,
-				)
-				if !matching.is_empty() {
-					if seen.contains(first.header) {
-						Err({
-							location: At(Plugin.project_block_location(first, scope).location),
-							message: "duplicate project configuration block",
-						})
-					} else {
-						located = Plugin.project_block_location(first, scope)
-						Plugin.validate_project_descriptor_shapes(matching, located)?
-						parsed = Plugin.parse_project_descriptors(
-							matching,
-							first.header,
-							located,
-						)?
-						Plugin.collect_project_config(
-							rest,
-							descs,
-							backend,
-							scope,
-							hosts,
-							seen.append(first.header),
-							entries.concat(parsed),
-						)
-					}
-				} else if hosts and Plugin.is_project_host_section(first.header) {
-					if seen.contains(first.header) {
-						Err({
-							location: At(Plugin.source_location(first.location)),
-							message: "duplicate host configuration",
-						})
-					} else {
-						nested = Blocks.scan(first.body) ? |diagnostic| {
-							location: At(Plugin.nested_location(first, diagnostic.location)),
-							message: "invalid host configuration",
-						}
-						nested_entries = Plugin.collect_project_config(
-							nested,
-							descs,
-							backend,
-							HostProjectConfigScope(first),
-							Bool.False,
-							[],
-							[],
-						)?
-						Plugin.collect_project_config(
-							rest,
-							descs,
-							backend,
-							scope,
-							hosts,
-							seen.append(first.header),
-							entries.concat(nested_entries),
-						)
-					}
-				} else {
-					Plugin.collect_project_config(
-						rest,
-						descs,
-						backend,
-						scope,
-						hosts,
-						seen,
-						entries,
-					)
-				}
-			}
-		}
-
-	validate_project_descriptor_shapes :
-		List(ProjectConfigDescriptor),
-		LocatedConfigBlock -> Try(
-			{},
-			SelectorDiagnostic,
-		)
-	validate_project_descriptor_shapes = |descriptors, block|
-		match descriptors {
-			[] => Ok({})
+			[] => Ok(parsed)
 			[first, .. as rest] =>
-				if List.all(
-					rest,
-					|descriptor|
-						Plugin.same_body_shape(
-							Kaifile.body(first),
-							Kaifile.body(descriptor),
-						),
-				) {
-					Ok({})
+				match Plugin.find_block_schema(schemas, first.header, backend) {
+					Some(block_schema) =>
+						if seen.contains(first.header) {
+							Err({
+								location: At(Plugin.block_location(first, scope).location),
+								message: "duplicate Kaifile block",
+							})
+						} else {
+							located = Plugin.block_location(first, scope)
+							parsed_block = Plugin.parse_block(
+								block_schema,
+								first.header,
+								located,
+							)?
+							Plugin.collect_kaifile_blocks(
+								rest,
+								schemas,
+								backend,
+								scope,
+								hosts,
+								seen.append(first.header),
+								parsed.append(parsed_block),
+							)
+						}
+					None if hosts and Plugin.is_host_section(first.header) =>
+						if seen.contains(first.header) {
+							Err({
+								location: At(Plugin.source_location(first.location)),
+								message: "duplicate host block",
+							})
+						} else {
+							nested = Blocks.scan(first.body) ? |diagnostic| {
+								location: At(Plugin.nested_location(first, diagnostic.location)),
+								message: "invalid host block",
+							}
+							nested_parsed = Plugin.collect_kaifile_blocks(
+								nested,
+								schemas,
+								backend,
+								HostBlockScope(first),
+								Bool.False,
+								[],
+								[],
+							)?
+							Plugin.collect_kaifile_blocks(
+								rest,
+								schemas,
+								backend,
+								scope,
+								hosts,
+								seen.append(first.header),
+								parsed.concat(nested_parsed),
+							)
+						}
+					None =>
+						Plugin.collect_kaifile_blocks(
+							rest,
+							schemas,
+							backend,
+							scope,
+							hosts,
+							seen,
+							parsed,
+						)
+					}
+			}
+
+	find_block_schema :
+		List(KaifileBlock), List(Str), Str -> [None, Some(KaifileBlock)]
+	find_block_schema = |blocks, header, backend|
+		match header {
+			[kind] => Plugin.find_block_of_kind(blocks, kind, Bool.False)
+			[kind, name] =>
+				if name == backend {
+					match Plugin.find_block_of_kind(blocks, kind, Bool.False) {
+						Some(block) => Some(block)
+						None => Plugin.find_block_of_kind(blocks, kind, Bool.True)
+					}
 				} else {
-					Err({
-						location: At(block.location),
-						message: Str.join_with(
-							[
-								"project config block",
-								"'${Kaifile.block_name(first)}' has conflicting",
-								"body shapes across plugins",
-							],
-							" ",
-						),
-					})
+					Plugin.find_block_of_kind(blocks, kind, Bool.True)
+				}
+			[kind, _, qualifier] if qualifier == backend =>
+				Plugin.find_block_of_kind(blocks, kind, Bool.True)
+			_ => None
+		}
+
+	find_block_of_kind :
+		List(KaifileBlock), Str, Bool -> [None, Some(KaifileBlock)]
+	find_block_of_kind = |blocks, kind, named|
+		match blocks {
+			[] => None
+			[first, .. as rest] =>
+				if Kaifile.block_name(first) == kind and Kaifile.is_named(first) == named {
+					Some(first)
+				} else {
+					Plugin.find_block_of_kind(rest, kind, named)
 				}
 			}
 
-	matching_project_descriptors :
-		List(ProjectConfigDescriptor),
-		List(Str),
-		Str -> List(
-			ProjectConfigDescriptor,
-		)
-	matching_project_descriptors = |descriptors, header, backend|
-		match header {
-			[block] =>
-				descriptors.keep_if(
-					|descriptor|
-						Kaifile.block_name(descriptor) == block and
-							!Kaifile.is_named(descriptor),
-				)
-			[block, name] =>
-				if name == backend {
-					direct = descriptors.keep_if(
-						|descriptor|
-							Kaifile.block_name(descriptor) == block and
-								!Kaifile.is_named(descriptor),
-					)
-					if direct.is_empty() {
-						descriptors.keep_if(
-							|descriptor|
-								Kaifile.block_name(descriptor) == block and
-									Kaifile.is_named(descriptor),
-						)
-					} else {
-						direct
-					}
-				} else {
-					descriptors.keep_if(
-						|descriptor|
-							Kaifile.block_name(descriptor) == block and
-								Kaifile.is_named(descriptor),
-					)
-				}
-			[block, _, qualifier] =>
-				if qualifier == backend {
-					descriptors.keep_if(
-						|descriptor|
-							Kaifile.block_name(descriptor) == block and
-								Kaifile.is_named(descriptor),
-					)
-				} else {
-					[]
-				}
-			_ => []
-		}
-
-	is_project_host_section : List(Str) -> Bool
-	is_project_host_section = |header|
+	is_host_section : List(Str) -> Bool
+	is_host_section = |header|
 		header == ["on", "linux"] or header == ["on", "macos"]
 
-	project_block_location : Blocks.Block, ProjectConfigScope -> LocatedConfigBlock
-	project_block_location = |block, scope|
+	block_location : Blocks.Block, BlockScope -> LocatedBlock
+	block_location = |block, scope|
 		match scope {
-			TopLevelProjectConfigScope => {
+			TopLevelBlockScope => {
 				body: block.body,
 				location: Plugin.source_location(block.location),
 			}
-			HostProjectConfigScope(host) => {
+			HostBlockScope(host) => {
 				body: block.body,
 				location: Plugin.nested_location(host, block.location),
 			}
 		}
 
-	parse_project_descriptors :
-		List(ProjectConfigDescriptor),
+	parse_block :
+		KaifileBlock,
 		List(Str),
-		LocatedConfigBlock -> Try(
-			List(ProjectConfigEntry),
+		LocatedBlock -> Try(
+			ParsedBlock,
 			SelectorDiagnostic,
 		)
-	parse_project_descriptors = |descriptors, header, block|
-		match descriptors {
-			[] => Ok([])
-			[first, .. as rest] => {
-				config = Fields.parse(Kaifile.body(first), block.body) ? |diagnostic| {
-					location: At(Plugin.translate_location(block, diagnostic.byte_offset)),
-					message: Fields.describe(diagnostic),
-				}
-				remaining = Plugin.parse_project_descriptors(rest, header, block)?
-				Ok(
-					[
-						{
-							block: Kaifile.block_name(first),
-							config,
-							header,
-							location: block.location,
-						},
-					].concat(remaining),
-				)
-			}
+	parse_block = |schema, header, block| {
+		fields = Fields.parse(Kaifile.body(schema), block.body) ? |diagnostic| {
+			location: At(Plugin.translate_location(block, diagnostic.byte_offset)),
+			message: Fields.describe(diagnostic),
 		}
+		Ok({
+			fields,
+			header,
+			kind: Kaifile.block_name(schema),
+			location: block.location,
+		})
+	}
 
-	RelatedConfig : [
-		NoRelatedConfig,
-		SelectedRelatedConfig(
+	find_parsed_block :
+		List(ParsedBlock), LocatedBlock -> Try(ParsedBlock, [NotFound])
+	find_parsed_block = |blocks, selected|
+		match blocks {
+			[] => Err(NotFound)
+			[first, .. as rest] =>
+				if first.location.byte_offset == selected.location.byte_offset {
+					Ok(first)
+				} else {
+					Plugin.find_parsed_block(rest, selected)
+				}
+			}
+
+	ReferencedFields : [
+		NoReferencedFields,
+		SelectedReferencedFields(
 			{
-				config : Fields.Configuration,
 				field : Str,
+				fields : Fields.ParsedFields,
 			},
 		),
 	]
@@ -1141,17 +978,16 @@ Plugin := [].{
 		parser_for : _
 	}
 
-	RenderContext := {
-		args : List(Str),
-		config : Fields.Configuration,
-		config_block : [NoConfigBlock, SelectedConfigBlock(LocatedConfigBlock)],
-		dependencies_resolved : Bool,
-		dependency_artifacts : List(Artifact),
-		host_arch : HostArch,
-		host_os : HostOs,
-		project_config : List(ProjectConfigEntry),
-		related_config : RelatedConfig,
-		target : [NoTarget, SelectedTarget(Str)],
+	PrerequisiteArtifacts : [NotResolved, Resolved(List(Artifact))]
+
+	ImplementationInput := {
+		backend_target : [BackendTarget(Str), NoBackendTarget],
+		command_arguments : List(Str),
+		command_fields : Fields.ParsedFields,
+		host : Host,
+		kaifile_blocks : List(ParsedBlock),
+		prerequisite_artifacts : PrerequisiteArtifacts,
+		referenced_fields : ReferencedFields,
 	}
 
 	StringListValidation := {
@@ -1162,7 +998,7 @@ Plugin := [].{
 	TargetValidation : [
 		NoTargetValidation,
 		SupportedTargets(
-			{ message : Str, supported : List(BackendTarget) },
+			{ message : Str, supported : List(SupportedBackendTarget) },
 		),
 	]
 
@@ -1173,75 +1009,63 @@ Plugin := [].{
 		),
 	]
 
-	# Text that will get written to disk.
-	# "name" is what our plugin would name
-	# the output internally, e.g. "flake",
-	# the text is the actual text inside flake.nix
-	RenderedOutput := {
-		name : Str,
-		text : Str,
+	PrerequisiteCommand := {
+		arguments : List(Str),
+		description : Str,
 	}
 
-	PlanRequest := {
-		args : List(Str),
-		status : Str,
-	}
-
-	same_plan_requests : List(PlanRequest), List(PlanRequest) -> Bool
-	same_plan_requests = |left, right|
+	same_prerequisite_commands :
+		List(PrerequisiteCommand), List(PrerequisiteCommand) -> Bool
+	same_prerequisite_commands = |left, right|
 		match (left, right) {
 			([], []) => Bool.True
 			([left_first, .. as left_rest], [right_first, .. as right_rest]) =>
-				left_first.args == right_first.args and
-					left_first.status == right_first.status and
-						Plugin.same_plan_requests(left_rest, right_rest)
+				left_first.arguments == right_first.arguments and
+					left_first.description == right_first.description and
+						Plugin.same_prerequisite_commands(left_rest, right_rest)
 			_ => Bool.False
 		}
 
-	RenderResult := {
-		actions : List(Action),
+	CommandPlan := {
 		artifacts : List(Artifact),
-		outputs : List(RenderedOutput),
-		requests : List(PlanRequest),
+		prerequisite_commands : List(PrerequisiteCommand),
 		requested_packages : List(Str),
+		steps : List(ExecutionStep),
 	}
 
-	RendererDiagnostic := {
+	ImplementationDiagnostic := {
 		byte_offset : [At(U64), None],
 		message : Str,
 	}
 
-	Renderer : RenderContext -> Try(RenderResult, RendererDiagnostic)
-
 	Implementation := {
-		actions : List(ActionTemplate),
 		backend : Str,
 		command : Str,
-		renderer : Renderer,
+		plan : ImplementationInput -> Try(CommandPlan, ImplementationDiagnostic),
 		validator : Validator,
 	}
 
-	project_configs : RenderContext, List(Str) -> List(ProjectConfigEntry)
-	project_configs = |context, block_names|
-		context.project_config.keep_if(|entry| block_names.contains(entry.block))
+	blocks_of_kind : ImplementationInput, List(Str) -> List(ParsedBlock)
+	blocks_of_kind = |input, kinds|
+		input.kaifile_blocks.keep_if(|block| kinds.contains(block.kind))
 
-	reference_config :
-		RenderContext, Str -> Try(Fields.Configuration, RendererDiagnostic)
-	reference_config = |context, field|
-		match context.related_config {
-			NoRelatedConfig => Err({
+	referenced_fields :
+		ImplementationInput, Str -> Try(Fields.ParsedFields, ImplementationDiagnostic)
+	referenced_fields = |input, field|
+		match input.referenced_fields {
+			NoReferencedFields => Err({
 				byte_offset: None,
-				message: "validated configuration has no reference field '${field}'",
+				message: "validated command block has no reference field '${field}'",
 			})
-			SelectedRelatedConfig({ config, field: selected_field }) =>
+			SelectedReferencedFields({ field: selected_field, fields }) =>
 				if selected_field == field {
-					Ok(config)
+					Ok(fields)
 				} else {
 					Err({
 						byte_offset: None,
 						message: Str.join_with(
 							[
-								"validated configuration reference field",
+								"validated command block reference field",
 								"'${selected_field}' does not match '${field}'",
 							],
 							" ",
@@ -1250,73 +1074,73 @@ Plugin := [].{
 				}
 			}
 
-	validate_render_context : RenderContext,
+	validate_implementation_input : ImplementationInput,
 	Validator -> Try(
-		RenderContext,
-		RendererDiagnostic,
+		ImplementationInput,
+		ImplementationDiagnostic,
 	)
-	validate_render_context = |context, validator|
+	validate_implementation_input = |input, validator|
 		match validator {
-			NoValidation => Ok(context)
+			NoValidation => Ok(input)
 			Validate({ string_lists, target }) => {
-				selected_target = match target {
-					NoTargetValidation => Ok(NoTarget)
+				backend_target = match target {
+					NoTargetValidation => Ok(NoBackendTarget)
 					SupportedTargets({ message, supported }) =>
-						match Plugin.target_value(supported, context.host_os, context.host_arch) {
-							Ok(value) => Ok(SelectedTarget(value))
+						match Plugin.target_value(supported, input.host.os, input.host.arch) {
+							Ok(value) => Ok(BackendTarget(value))
 							Err(_) => Err({ byte_offset: None, message })
 						}
 					}?
-				failures = Plugin.validate_string_list_fields(context.config, string_lists)?
-				Plugin.renderer_validation(failures)?
+				failures = Plugin.validate_string_list_fields(
+					input.command_fields,
+					string_lists,
+				)?
+				Plugin.implementation_validation(failures)?
 				Ok(
-					Plugin.RenderContext.{
-						args: context.args,
-						config: context.config,
-						config_block: context.config_block,
-						dependencies_resolved: context.dependencies_resolved,
-						dependency_artifacts: context.dependency_artifacts,
-						host_arch: context.host_arch,
-						host_os: context.host_os,
-						project_config: context.project_config,
-						related_config: context.related_config,
-						target: selected_target,
+					Plugin.ImplementationInput.{
+						backend_target,
+						command_arguments: input.command_arguments,
+						command_fields: input.command_fields,
+						host: input.host,
+						kaifile_blocks: input.kaifile_blocks,
+						prerequisite_artifacts: input.prerequisite_artifacts,
+						referenced_fields: input.referenced_fields,
 					},
 				)
 			}
 		}
 
 	validate_string_list_fields :
-		Fields.Configuration,
+		Fields.ParsedFields,
 		List(StringListValidation) -> Try(
 			List(Str),
-			RendererDiagnostic,
+			ImplementationDiagnostic,
 		)
-	validate_string_list_fields = |config, validations|
+	validate_string_list_fields = |fields, validations|
 		match validations {
 			[] => Ok([])
 			[first, .. as rest] => {
-				values = Plugin.validated_strings(config, first.field)?
-				remaining = Plugin.validate_string_list_fields(config, rest)?
+				values = Plugin.validated_strings(fields, first.field)?
+				remaining = Plugin.validate_string_list_fields(fields, rest)?
 				Ok(Plugin.validate_string_list(values, first.rules).concat(remaining))
 			}
 		}
 
-	validated_strings : Fields.Configuration,
+	validated_strings : Fields.ParsedFields,
 	KaifileField -> Try(
 		List(Str),
-		RendererDiagnostic,
+		ImplementationDiagnostic,
 	)
-	validated_strings = |config, declared_field| {
+	validated_strings = |fields, declared_field| {
 		field = Kaifile.parser_field(declared_field)
-		match Fields.get_strings(config, field.name) {
+		match Fields.get_strings(fields, field.name) {
 			Ok(values) => Ok(values)
 			Err(MissingField(_)) if field.presence == Optional => Ok([])
 			Err(_) => Err({
 				byte_offset: None,
 				message: Str.join_with(
 					[
-						"validated configuration does not match declared field",
+						"validated fields do not match declared block schema",
 						"'${field.name}'",
 					],
 					" ",
@@ -1325,17 +1149,18 @@ Plugin := [].{
 		}
 	}
 
-	validated_target : RenderContext -> Try(Str, RendererDiagnostic)
-	validated_target = |context|
-		match context.target {
-			SelectedTarget(value) => Ok(value)
-			NoTarget => Err({
+	validated_backend_target :
+		ImplementationInput -> Try(Str, ImplementationDiagnostic)
+	validated_backend_target = |input|
+		match input.backend_target {
+			BackendTarget(value) => Ok(value)
+			NoBackendTarget => Err({
 				byte_offset: None,
 				message: "implementation requires a validated backend target",
 			})
 		}
 
-	target_value : List(BackendTarget),
+	target_value : List(SupportedBackendTarget),
 	HostOs,
 	HostArch -> Try(
 		Str,
@@ -1354,10 +1179,9 @@ Plugin := [].{
 
 	Definition := {
 		backends : List(Backend),
-		commands : List(Command),
 		implementations : List(Implementation),
 		name : Str,
-		project_configs : List(ProjectConfigDescriptor),
+		schema : Schema,
 	}
 
 	RegistryDiagnostic := {
@@ -1366,18 +1190,24 @@ Plugin := [].{
 	}
 
 	validate_registry : List(Definition) -> Try({}, RegistryDiagnostic)
-	validate_registry = |registry|
+	validate_registry = |registry| {
+		Plugin.validate_definitions(registry)?
+		Plugin.validate_block_compatibility(registry)
+	}
+
+	validate_definitions : List(Definition) -> Try({}, RegistryDiagnostic)
+	validate_definitions = |registry|
 		match registry {
 			[] => Ok({})
 			[first, .. as rest] => {
 				Plugin.validate_definition(first)?
-				Plugin.validate_registry(rest)
+				Plugin.validate_definitions(rest)
 			}
 		}
 
 	validate_definition : Definition -> Try({}, RegistryDiagnostic)
 	validate_definition = |definition|
-		if definition.commands.is_empty() {
+		if definition.schema.commands.is_empty() {
 			Plugin.registry_failure(definition.name, "must define at least one command")
 		} else if definition.backends.is_empty() {
 			Plugin.registry_failure(definition.name, "must define at least one backend")
@@ -1387,11 +1217,19 @@ Plugin := [].{
 				"must define at least one implementation",
 			)
 		} else {
-			Plugin.validate_command_calls(definition.commands, definition.name)?
-			Plugin.validate_command_schemas(definition.commands, definition.name)?
-			Plugin.validate_config_descriptors(
-				definition.commands,
-				definition.project_configs,
+			Plugin.validate_blocks(
+				definition.schema.blocks,
+				definition.schema.blocks,
+				definition.name,
+			)?
+			Plugin.validate_commands(definition.schema.commands, definition.name)?
+			Plugin.validate_command_schemas(
+				definition.schema.commands,
+				definition.name,
+			)?
+			Plugin.validate_command_block_relationships(
+				definition.schema.commands,
+				definition.schema.blocks,
 				definition.name,
 			)?
 			Plugin.validate_implementation_references(
@@ -1406,7 +1244,7 @@ Plugin := [].{
 					)
 				[default_backend, ..] => {
 					Plugin.validate_default_implementations(
-						definition.commands,
+						definition.schema.commands,
 						default_backend.name,
 						definition.implementations,
 						definition.name,
@@ -1420,34 +1258,35 @@ Plugin := [].{
 			}
 		}
 
-	validate_command_calls : List(Command), Str -> Try({}, RegistryDiagnostic)
-	validate_command_calls = |commands, plugin|
+	validate_commands : List(CommandSchema), Str -> Try({}, RegistryDiagnostic)
+	validate_commands = |commands, plugin|
 		match commands {
 			[] => Ok({})
-			[first, .. as rest] =>
-				match first.call.arguments {
-					[] => Plugin.validate_command_calls(rest, plugin)
+			[first, .. as rest] => {
+				declared_command = Plugin.command_from_schema(first)
+				match declared_command.arguments {
+					[] => Plugin.validate_commands(rest, plugin)
 					[OptionalArgument(name)] | [RequiredArgument(name)] =>
 						if name.is_empty() {
 							Plugin.registry_failure(
 								plugin,
 								Str.join_with(
 									[
-										"command '${first.call.name}' argument",
+										"command '${declared_command.name}' argument",
 										"name must not be empty",
 									],
 									" ",
 								),
 							)
 						} else {
-							Plugin.validate_command_calls(rest, plugin)
+							Plugin.validate_commands(rest, plugin)
 						}
 					_ =>
 						Plugin.registry_failure(
 							plugin,
 							Str.join_with(
 								[
-									"command '${first.call.name}' must declare",
+									"command '${declared_command.name}' must declare",
 									"at most one argument",
 								],
 								" ",
@@ -1455,80 +1294,72 @@ Plugin := [].{
 						)
 					}
 			}
+		}
 
-	validate_command_schemas : List(Command), Str -> Try({}, RegistryDiagnostic)
+	validate_command_schemas :
+		List(CommandSchema), Str -> Try({}, RegistryDiagnostic)
 	validate_command_schemas = |commands, plugin|
 		match commands {
 			[] => Ok({})
 			[first, .. as rest] => {
-				primary = Plugin.config_block_schema(first.config_block)
-				match first.config {
-					DirectConfig(_) =>
-						Plugin.validate_schema_kind(
-							primary,
-							Bool.False,
-							first.call.name,
-							plugin,
-						)
-					DirectOrNamedConfig({ argument, lookup: _, named }) => {
-						Plugin.validate_schema_kind(
-							primary,
-							Bool.False,
-							first.call.name,
-							plugin,
-						)?
-						Plugin.validate_schema_kind(
-							named,
-							Bool.True,
-							first.call.name,
-							plugin,
-						)?
-						Plugin.validate_optional_schema_argument(
-							first.call,
-							argument,
-							named,
-							plugin,
-						)
-					}
-					NamedConfig(_) => {
-						Plugin.validate_schema_kind(
-							primary,
-							Bool.True,
-							first.call.name,
-							plugin,
-						)?
-						Plugin.validate_required_schema_argument(
-							first.call,
-							primary,
-							plugin,
-						)
-					}
-					NamedWithRelatedConfig(
+				schema_validation = match first {
+					CommandOnly(_) => Ok({})
+					CommandWithBlock(
 						{
-							lookup: _,
-							related,
-							related_field: _,
+							block,
+							command: declared_command,
+							explicit_backend_block: _,
 						},
-					) => {
-						Plugin.validate_schema_kind(
-							primary,
-							Bool.True,
-							first.call.name,
-							plugin,
-						)?
-						Plugin.validate_schema_kind(
-							related,
-							Bool.True,
-							first.call.name,
-							plugin,
-						)?
-						Plugin.validate_required_schema_argument(
-							first.call,
-							primary,
-							plugin,
-						)
+					) =>
+						match block.selection {
+							RequiredBlock => {
+								Plugin.validate_schema_kind(
+									block,
+									Kaifile.is_named(block),
+									declared_command.name,
+									plugin,
+								)?
+								if Kaifile.is_named(block) {
+									Plugin.validate_required_schema_argument(
+										declared_command,
+										block,
+										plugin,
+									)
+								} else {
+									Ok({})
+								}
+							}
+							OptionalBlock =>
+								Plugin.validate_schema_kind(
+									block,
+									Bool.False,
+									declared_command.name,
+									plugin,
+								)
+							ByOptionalArgument({ argument, when_provided }) => {
+								named = Kaifile.from_schema(when_provided)
+								Plugin.validate_schema_kind(
+									block,
+									Bool.False,
+									declared_command.name,
+									plugin,
+								)?
+								Plugin.validate_schema_kind(
+									named,
+									Bool.True,
+									declared_command.name,
+									plugin,
+								)?
+								Plugin.validate_optional_schema_argument(
+									declared_command,
+									argument,
+									named,
+									plugin,
+								)
+							}
+						}
 					}
-				}?
+				schema_validation?
 				Plugin.validate_command_references(first, plugin)?
 				Plugin.validate_command_schemas(rest, plugin)
 			}
@@ -1541,7 +1372,7 @@ Plugin := [].{
 		if Kaifile.is_named(schema) == expected_named {
 			Ok({})
 		} else {
-			expected = if expected_named "named" else "direct"
+			expected = if expected_named "named" else "unnamed"
 			Plugin.registry_failure(
 				plugin,
 				Str.join_with(
@@ -1555,46 +1386,50 @@ Plugin := [].{
 		}
 	}
 
-	validate_command_references : Command, Str -> Try({}, RegistryDiagnostic)
-	validate_command_references = |selected_command, plugin| {
-		primary = Plugin.config_block_schema(selected_command.config_block)
-		match selected_command.config {
-			DirectConfig(_) | NamedConfig(_) =>
-				Plugin.validate_no_reference_fields(
-					primary,
-					selected_command.call.name,
-					plugin,
-				)
-			DirectOrNamedConfig({ argument: _, lookup: _, named }) => {
-				Plugin.validate_no_reference_fields(
-					primary,
-					selected_command.call.name,
-					plugin,
-				)?
-				Plugin.validate_no_reference_fields(
-					named,
-					selected_command.call.name,
-					plugin,
-				)
-			}
-			NamedWithRelatedConfig({ lookup: _, related, related_field }) =>
-				match selected_command.config_block {
-					OptionalConfigBlock(_) =>
-						Plugin.registry_failure(
+	validate_command_references :
+		CommandSchema, Str -> Try({}, RegistryDiagnostic)
+	validate_command_references = |command_schema, plugin|
+		match command_schema {
+			CommandOnly(_) => Ok({})
+			CommandWithBlock(
+				{
+					block,
+					command: declared_command,
+					explicit_backend_block: _,
+				},
+			) =>
+				match block.selection {
+					RequiredBlock if Kaifile.is_named(block) =>
+						match Kaifile.references(block) {
+							[] => Ok({})
+							[_] =>
+								Plugin.validate_reference_relationship(
+									block,
+									declared_command.name,
+									plugin,
+								)
+							_ => Plugin.reference_count_failure(declared_command.name, plugin)
+						}
+					RequiredBlock | OptionalBlock =>
+						Plugin.validate_no_reference_fields(
+							block,
+							declared_command.name,
 							plugin,
-							"reference fields require a required Kaifile block",
 						)
-					RequiredConfigBlock(_) =>
-						Plugin.validate_reference_relationship(
-							primary,
-							related,
-							related_field,
-							selected_command.call.name,
+					ByOptionalArgument({ argument: _, when_provided }) => {
+						Plugin.validate_no_reference_fields(
+							block,
+							declared_command.name,
+							plugin,
+						)?
+						Plugin.validate_no_reference_fields(
+							Kaifile.from_schema(when_provided),
+							declared_command.name,
 							plugin,
 						)
 					}
+				}
 			}
-	}
 
 	validate_no_reference_fields :
 		KaifileBlock, Str, Str -> Try({}, RegistryDiagnostic)
@@ -1616,77 +1451,61 @@ Plugin := [].{
 		}
 
 	validate_reference_relationship :
-		KaifileBlock,
-		KaifileBlock,
-		Str,
-		Str,
-		Str -> Try(
-			{},
-			RegistryDiagnostic,
-		)
-	validate_reference_relationship =
-		|primary, related, related_field, command_name, plugin|
-			match Kaifile.references(primary) {
-				[reference] => {
-					field = reference.field
-					target = Kaifile.from_reference_target(reference.target)
-					if field.presence != Required {
-						Plugin.registry_failure(
-							plugin,
-							"reference field '${field.name}' must be required",
-						)
-					} else if field.value != Identifier and field.value != String {
-						Plugin.registry_failure(
-							plugin,
-							Str.join_with(
-								[
-									"reference field '${field.name}' must use",
-									"identifier or quoted string syntax",
-								],
-								" ",
-							),
-						)
-					} else if !Kaifile.is_named(target) {
-						Plugin.registry_failure(
-							plugin,
-							Str.join_with(
-								[
-									"reference field '${field.name}' must target",
-									"a named Kaifile block schema",
-								],
-								" ",
-							),
-						)
-					} else if reference.target.reference_count > 0 {
-						Plugin.registry_failure(
-							plugin,
-							Str.join_with(
-								[
-									"reference field '${field.name}' target must not",
-									"contain reference fields",
-								],
-								" ",
-							),
-						)
-					} else if
-						field.name != related_field or
-							!Plugin.same_config_descriptor(target, related)
-							{
-								Plugin.registry_failure(
-									plugin,
-									"command '${command_name}' reference metadata does not match",
-								)
-							} else {
-								Ok({})
-							}
-				}
-				[] =>
+		KaifileBlock, Str, Str -> Try({}, RegistryDiagnostic)
+	validate_reference_relationship = |primary, command_name, plugin|
+		match Kaifile.references(primary) {
+			[reference] => {
+				field = reference.field
+				target = Kaifile.from_reference_target(reference.target)
+				if field.presence != Required {
 					Plugin.registry_failure(
 						plugin,
-						"command '${command_name}' must declare its reference field",
+						"reference field '${field.name}' must be required",
 					)
-				_ => Plugin.reference_count_failure(command_name, plugin)
+				} else if field.value != Identifier and field.value != String {
+					Plugin.registry_failure(
+						plugin,
+						Str.join_with(
+							[
+								"reference field '${field.name}' must use",
+								"identifier or quoted string syntax",
+							],
+							" ",
+						),
+					)
+				} else if !Kaifile.is_named(target) {
+					Plugin.registry_failure(
+						plugin,
+						Str.join_with(
+							[
+								"reference field '${field.name}' must target",
+								"a named Kaifile block schema",
+							],
+							" ",
+						),
+					)
+				} else if reference.target.reference_count > 0 {
+					Plugin.registry_failure(
+						plugin,
+						Str.join_with(
+							[
+								"reference field '${field.name}' target must not",
+								"contain reference fields",
+							],
+							" ",
+						),
+					)
+				} else {
+					Ok({})
+				}
 			}
+			[] =>
+				Plugin.registry_failure(
+					plugin,
+					"command '${command_name}' must declare its reference field",
+				)
+			_ => Plugin.reference_count_failure(command_name, plugin)
+		}
 
 	reference_count_failure : Str, Str -> Try({}, RegistryDiagnostic)
 	reference_count_failure = |command_name, plugin|
@@ -1702,9 +1521,9 @@ Plugin := [].{
 		)
 
 	validate_required_schema_argument :
-		CommandCall, KaifileBlock, Str -> Try({}, RegistryDiagnostic)
-	validate_required_schema_argument = |call_shape, schema, plugin|
-		match (call_shape.arguments, Kaifile.header_argument(schema)) {
+		Command, KaifileBlock, Str -> Try({}, RegistryDiagnostic)
+	validate_required_schema_argument = |declared_command, schema, plugin|
+		match (declared_command.arguments, Kaifile.header_argument(schema)) {
 			([RequiredArgument(argument)], HeaderArgument(slot)) if argument == slot =>
 				Ok({})
 			_ =>
@@ -1712,7 +1531,7 @@ Plugin := [].{
 					plugin,
 					Str.join_with(
 						[
-							"command '${call_shape.name}' must declare one required",
+							"command '${declared_command.name}' must declare one required",
 							"argument matching its Kaifile header slot",
 						],
 						" ",
@@ -1721,21 +1540,21 @@ Plugin := [].{
 			}
 
 	validate_optional_schema_argument :
-		CommandCall, Str, KaifileBlock, Str -> Try({}, RegistryDiagnostic)
+		Command, Str, KaifileBlock, Str -> Try({}, RegistryDiagnostic)
 	validate_optional_schema_argument =
-		|call_shape, selected_argument, schema, plugin| {
+		|declared_command, selected_argument, schema, plugin| {
 			failure = |_|
 				Plugin.registry_failure(
 					plugin,
 					Str.join_with(
 						[
-							"command '${call_shape.name}' must use one optional",
+							"command '${declared_command.name}' must use one optional",
 							"argument matching its Kaifile header slot",
 						],
 						" ",
 					),
 				)
-			match (call_shape.arguments, Kaifile.header_argument(schema)) {
+			match (declared_command.arguments, Kaifile.header_argument(schema)) {
 				([OptionalArgument(argument)], HeaderArgument(slot)) =>
 					if argument == selected_argument and argument == slot {
 						Ok({})
@@ -1746,82 +1565,179 @@ Plugin := [].{
 			}
 		}
 
-	validate_config_descriptors :
-		List(Command),
-		List(ProjectConfigDescriptor),
-		Str -> Try(
-			{},
-			RegistryDiagnostic,
-		)
-	validate_config_descriptors = |commands, standalone_descriptors, plugin|
-		Plugin.validate_config_descriptor_list(
-			Plugin.config_descriptors_without_deduplication(commands).concat(
-				standalone_descriptors,
-			),
-			plugin,
-		)
-
-	config_descriptors_without_deduplication : List(Command) -> List(
-		ProjectConfigDescriptor,
-	)
-	config_descriptors_without_deduplication = |commands|
-		match commands {
-			[] => []
-			[first, .. as rest] =>
-				Plugin.command_config_descriptors(first).concat(
-					Plugin.config_descriptors_without_deduplication(rest),
-				)
-			}
-
-	validate_config_descriptor_list : List(ProjectConfigDescriptor),
-	Str -> Try(
-		{},
-		RegistryDiagnostic,
-	)
-	validate_config_descriptor_list = |descriptors, plugin|
-		match descriptors {
+	validate_blocks :
+		List(KaifileBlock), List(KaifileBlock), Str -> Try({}, RegistryDiagnostic)
+	validate_blocks = |blocks, all_blocks, plugin|
+		match blocks {
 			[] => Ok({})
 			[first, .. as rest] => {
 				Kaifile.validate_header(first) ? |message| { message, plugin }
-				Plugin.validate_config_descriptor_against(first, rest, plugin)?
-				Plugin.validate_config_descriptor_list(rest, plugin)
+				Plugin.validate_unique_block_key(first, rest, plugin)?
+				Plugin.validate_block_reference_targets(first, all_blocks, plugin)?
+				Plugin.validate_blocks(rest, all_blocks, plugin)
 			}
 		}
 
-	validate_config_descriptor_against :
-		ProjectConfigDescriptor,
-		List(ProjectConfigDescriptor),
-		Str -> Try(
-			{},
-			RegistryDiagnostic,
-		)
-	validate_config_descriptor_against = |descriptor, remaining, plugin|
-		match remaining {
+	validate_unique_block_key :
+		KaifileBlock, List(KaifileBlock), Str -> Try({}, RegistryDiagnostic)
+	validate_unique_block_key = |block, remaining, plugin|
+		if List.any(remaining, |other| Plugin.same_block_key(block, other)) {
+			kind = if Kaifile.is_named(block) "named" else "unnamed"
+			Plugin.registry_failure(
+				plugin,
+				"duplicate ${kind} Kaifile block '${Kaifile.block_name(block)}'",
+			)
+		} else {
+			Ok({})
+		}
+
+	validate_command_block_relationships :
+		List(CommandSchema), List(KaifileBlock), Str -> Try({}, RegistryDiagnostic)
+	validate_command_block_relationships = |commands, blocks, plugin|
+		match commands {
+			[] => Ok({})
+			[first, .. as rest] => {
+				match first {
+					CommandOnly(_) => Ok({})
+					CommandWithBlock(
+						{ block, command: declared_command, explicit_backend_block: _ },
+					) => {
+						Plugin.validate_block_relationship(
+							block,
+							blocks,
+							"command '${declared_command.name}' primary block",
+							plugin,
+						)?
+						Plugin.validate_block_reference_targets(block, blocks, plugin)?
+						match block.selection {
+							ByOptionalArgument({ argument: _, when_provided }) => {
+								alternative = Kaifile.from_schema(when_provided)
+								Plugin.validate_block_relationship(
+									alternative,
+									blocks,
+									"command '${declared_command.name}' optional alternative",
+									plugin,
+								)?
+								Plugin.validate_block_reference_targets(
+									alternative,
+									blocks,
+									plugin,
+								)
+							}
+							RequiredBlock | OptionalBlock => Ok({})
+						}
+					}
+				}?
+				Plugin.validate_command_block_relationships(rest, blocks, plugin)
+			}
+		}
+
+	validate_block_reference_targets :
+		KaifileBlock, List(KaifileBlock), Str -> Try({}, RegistryDiagnostic)
+	validate_block_reference_targets = |block, blocks, plugin|
+		Plugin.validate_reference_targets(Kaifile.references(block), blocks, plugin)
+
+	validate_reference_targets = |references, blocks, plugin|
+		match references {
+			[] => Ok({})
+			[first, .. as rest] => {
+				target = Kaifile.from_reference_target(first.target)
+				Plugin.validate_block_relationship(
+					target,
+					blocks,
+					"reference field '${first.field.name}' target",
+					plugin,
+				)?
+				Plugin.validate_reference_targets(rest, blocks, plugin)
+			}
+		}
+
+	validate_block_relationship :
+		KaifileBlock, List(KaifileBlock), Str, Str -> Try({}, RegistryDiagnostic)
+	validate_block_relationship = |block, blocks, relationship, plugin|
+		if Plugin.compatible_block_count(block, blocks) == 1 {
+			Ok({})
+		} else {
+			Plugin.registry_failure(
+				plugin,
+				Str.join_with(
+					[
+						relationship,
+						"must match exactly one compatible schema.blocks entry",
+					],
+					" ",
+				),
+			)
+		}
+
+	compatible_block_count : KaifileBlock, List(KaifileBlock) -> U64
+	compatible_block_count = |block, blocks|
+		match blocks {
+			[] => 0
+			[first, .. as rest] =>
+				(if Plugin.compatible_blocks(block, first) 1 else 0) +
+					Plugin.compatible_block_count(block, rest)
+			}
+
+	validate_block_compatibility : List(Definition) -> Try({}, RegistryDiagnostic)
+	validate_block_compatibility = |registry|
+		match registry {
+			[] => Ok({})
+			[first, .. as rest] => {
+				Plugin.validate_plugin_blocks(
+					first.schema.blocks,
+					first.name,
+					rest,
+				)?
+				Plugin.validate_block_compatibility(rest)
+			}
+		}
+
+	validate_plugin_blocks :
+		List(KaifileBlock), Str, List(Definition) -> Try({}, RegistryDiagnostic)
+	validate_plugin_blocks = |blocks, plugin, definitions|
+		match blocks {
+			[] => Ok({})
+			[first, .. as rest] => {
+				Plugin.validate_block_across_plugins(first, plugin, definitions)?
+				Plugin.validate_plugin_blocks(rest, plugin, definitions)
+			}
+		}
+
+	validate_block_across_plugins :
+		KaifileBlock, Str, List(Definition) -> Try({}, RegistryDiagnostic)
+	validate_block_across_plugins = |block, plugin, definitions|
+		match definitions {
+			[] => Ok({})
+			[first, .. as rest] => {
+				Plugin.validate_block_against(block, plugin, first.schema.blocks)?
+				Plugin.validate_block_across_plugins(block, plugin, rest)
+			}
+		}
+
+	validate_block_against :
+		KaifileBlock, Str, List(KaifileBlock) -> Try({}, RegistryDiagnostic)
+	validate_block_against = |block, plugin, others|
+		match others {
 			[] => Ok({})
 			[first, .. as rest] =>
-				if
-					Kaifile.block_name(descriptor) == Kaifile.block_name(first) and
-						Kaifile.is_named(descriptor) == Kaifile.is_named(first) and
-							!Plugin.same_body_shape(
-								Kaifile.body(descriptor),
-								Kaifile.body(first),
-							)
-						{
-							kind = if Kaifile.is_named(descriptor) "named" else "direct"
-							Plugin.registry_failure(
-								plugin,
-								Str.join_with(
-									[
-										"${kind} config block",
-										"'${Kaifile.block_name(descriptor)}' has",
-										"conflicting body shapes",
-									],
-									" ",
-								),
-							)
-						} else {
-							Plugin.validate_config_descriptor_against(descriptor, rest, plugin)
-						}
+				if Plugin.same_block_key(block, first) and
+					!Plugin.compatible_blocks(block, first) {
+					kind = if Kaifile.is_named(block) "named" else "unnamed"
+					Plugin.registry_failure(
+						plugin,
+						Str.join_with(
+							[
+								"${kind} Kaifile block",
+								"'${Kaifile.block_name(block)}' has conflicting",
+								"body shapes across plugins",
+							],
+							" ",
+						),
+					)
+				} else {
+					Plugin.validate_block_against(block, plugin, rest)
+				}
 			}
 
 	validate_implementation_references : List(Implementation),
@@ -1833,7 +1749,7 @@ Plugin := [].{
 		match implementations {
 			[] => Ok({})
 			[first, .. as rest] =>
-				match Plugin.find_command(definition.commands, first.command) {
+				match Plugin.find_command(definition.schema.commands, first.command) {
 					Err(NotFound) =>
 						Plugin.registry_failure(
 							definition.name,
@@ -1864,7 +1780,7 @@ Plugin := [].{
 			}
 
 	validate_default_implementations :
-		List(Command),
+		List(CommandSchema),
 		Str,
 		List(Implementation),
 		Str -> Try(
@@ -1874,10 +1790,11 @@ Plugin := [].{
 	validate_default_implementations = |commands, backend, implementations, plugin|
 		match commands {
 			[] => Ok({})
-			[first, .. as rest] =>
+			[first, .. as rest] => {
+				declared_command = Plugin.command_from_schema(first)
 				match Plugin.find_implementation(
 					implementations,
-					first.call.name,
+					declared_command.name,
 					backend,
 				) {
 					Ok(_) =>
@@ -1892,7 +1809,7 @@ Plugin := [].{
 							plugin,
 							Str.join_with(
 								[
-									"command '${first.call.name}' has no",
+									"command '${declared_command.name}' has no",
 									"implementation for default backend",
 									"'${backend}'",
 								],
@@ -1901,6 +1818,7 @@ Plugin := [].{
 						)
 					}
 			}
+		}
 
 	validate_backends_used : List(Backend),
 	List(Implementation),
@@ -1933,13 +1851,13 @@ Plugin := [].{
 	registry_failure : Str, Str -> Try({}, RegistryDiagnostic)
 	registry_failure = |plugin, message| Err({ message, plugin })
 
-	Plan := {
-		actions : List(Action),
+	ExecutionPlan := {
 		artifacts : List(Artifact),
 		backend : Backend,
 		command : Str,
 		plugin : Str,
 		requested_packages : List(Str),
+		steps : List(ExecutionStep),
 	}.{
 		encoder_for : _
 		parser_for : _
@@ -1951,11 +1869,11 @@ Plugin := [].{
 	List(Str),
 	HostOs,
 	HostArch -> Try(
-		Plan,
+		ExecutionPlan,
 		Error,
 	)
-	plan_registry = |registry, config_text, args, os, arch|
-		Plugin.plan_registry_nested(registry, config_text, args, os, arch, [], 0)
+	plan_registry = |registry, kaifile_text, args, os, arch|
+		Plugin.plan_registry_nested(registry, kaifile_text, args, os, arch, [], 0)
 
 	plan_registry_nested :
 		List(Definition),
@@ -1965,11 +1883,11 @@ Plugin := [].{
 		HostArch,
 		List(List(Str)),
 		U64 -> Try(
-			Plan,
+			ExecutionPlan,
 			Error,
 		)
 	plan_registry_nested =
-		|registry, config_text, args, os, arch, ancestors, depth|
+		|registry, kaifile_text, args, os, arch, ancestors, depth|
 			match args {
 				[] => Err(UnknownCommand)
 				[command_name, .. as command_args] => {
@@ -1979,8 +1897,9 @@ Plugin := [].{
 					}
 					plugin_definition = owner.definition
 					selected_command = owner.command
+					declared_command = Plugin.command_from_schema(selected_command)
 					plugin = plugin_definition.name
-					call_name = selected_command.call.name
+					selected_command_name = declared_command.name
 					backend_selection = Plugin.select_backend(
 						plugin_definition.backends,
 						command_args,
@@ -1988,7 +1907,7 @@ Plugin := [].{
 						PlanningFailed(
 							Plugin.failure(
 								plugin,
-								call_name,
+								selected_command_name,
 								backend_name,
 								None,
 								Str.join_with(
@@ -2001,8 +1920,8 @@ Plugin := [].{
 							),
 						)
 					backend = backend_selection.backend
-					config_selection = Plugin.normalize_command_backend(
-						selected_command.config,
+					normalized_invocation = Plugin.normalize_command_backend(
+						selected_command,
 						backend_selection.choice,
 						backend_selection.args,
 					)
@@ -2010,7 +1929,7 @@ Plugin := [].{
 						PlanningFailed(
 							Plugin.failure(
 								plugin,
-								call_name,
+								selected_command_name,
 								backend.name,
 								location,
 								message,
@@ -2018,217 +1937,174 @@ Plugin := [].{
 						)
 
 					if List.any(ancestors, |ancestor| ancestor == args) {
-						Err(fail(None, "plan request cycle detected"))
+						Err(fail(None, "prerequisite command cycle detected"))
 					} else if depth >= 64 {
-						Err(fail(None, "plan request nesting exceeds 64 levels"))
+						Err(fail(None, "prerequisite command nesting exceeds 64 levels"))
 					} else {
-						Plugin.validate_call_arguments(
-							selected_command.call,
-							config_selection.args,
+						Plugin.validate_command_arguments(
+							declared_command,
+							normalized_invocation.args,
 						) ? |message| fail(None, message)
 						implementation = Plugin.find_implementation(
 							plugin_definition.implementations,
-							call_name,
+							selected_command_name,
 							backend.name,
 						) ? |_|
 							fail(
 								None,
 								"plugin has no implementation for selected backend",
 							)
-						project_commands = Plugin.effective_commands(registry)
-						project_descriptors = Plugin.append_config_descriptors(
-							Plugin.config_descriptors(project_commands),
-							Plugin.effective_project_configs(registry),
-						)
-						project_config = Plugin.build_project_config(
-							config_text,
-							project_descriptors,
+						kaifile_blocks = Plugin.parse_kaifile_blocks(
+							kaifile_text,
+							Plugin.accepted_blocks(registry),
 							backend.name,
 						) ? |diagnostic|
 							fail(diagnostic.location, diagnostic.message)
-						selection = Plugin.select_config(
-							config_text,
+						selection = Plugin.select_command_block(
+							kaifile_text,
+							kaifile_blocks,
 							selected_command,
-							config_selection.backend_choice,
-							config_selection.args,
+							normalized_invocation.backend_choice,
+							normalized_invocation.args,
 							os,
 							arch,
 						) ? |diagnostic|
 							fail(diagnostic.location, diagnostic.message)
-						parsed = match selection {
-							Missing =>
-								match selected_command.config_block {
-									RequiredConfigBlock(schema) =>
+						parsed = match (selected_command, selection) {
+							(CommandOnly(_), _) => Ok({
+								command_fields: Fields.empty,
+								referenced_fields: NoReferencedFields,
+							})
+							(
+								CommandWithBlock(
+									{ block: schema, command: _, explicit_backend_block: _ },
+								),
+								Missing,
+							) =>
+								match schema.selection {
+									OptionalBlock => Ok({
+										command_fields: Fields.empty,
+										referenced_fields: NoReferencedFields,
+									})
+									RequiredBlock | ByOptionalArgument(_) =>
 										Err(
 											fail(
 												None,
 												Str.join_with(
 													[
-														"missing required config block",
+														"missing required block",
 														"'${Kaifile.block_name(schema)}'",
 													],
 													" ",
 												),
 											),
 										)
-									OptionalConfigBlock(_) => Ok({
-										config: Fields.empty,
-										config_block: NoConfigBlock,
-										related_config: NoRelatedConfig,
-									})
-								}
-							Selected(block) => {
-								config = Fields.parse(
-									Kaifile.body(
-										Plugin.config_block_schema(
-											selected_command.config_block,
-										),
-									),
-									block.body,
-								) ? |diagnostic|
-									fail(
-										At(
-											Plugin.translate_location(
-												block,
-												diagnostic.byte_offset,
-											),
-										),
-										Fields.describe(diagnostic),
-									)
-								Ok({
-									config,
-									config_block: SelectedConfigBlock(block),
-									related_config: NoRelatedConfig,
-								})
-							}
-							SelectedWithBody({ block, body }) => {
-								config = Fields.parse(body, block.body) ? |diagnostic|
-									fail(
-										At(
-											Plugin.translate_location(
-												block,
-												diagnostic.byte_offset,
-											),
-										),
-										Fields.describe(diagnostic),
-									)
-								Ok({
-									config,
-									config_block: SelectedConfigBlock(block),
-									related_config: NoRelatedConfig,
-								})
-							}
-							SelectedWithRelated(
-								{
-									block,
-									body,
-									reference_field,
-									related_block,
-									related_body,
-								},
+									}
+							(
+								CommandWithBlock({ block: _, command: _, explicit_backend_block: _ }),
+								Selected(block),
 							) => {
-								config = Fields.parse(body, block.body) ? |diagnostic|
+								parsed_block = Plugin.find_parsed_block(kaifile_blocks, block) ? |_|
+									fail(At(block.location), "selected Kaifile block was not parsed")
+								Ok({
+									command_fields: parsed_block.fields,
+									referenced_fields: NoReferencedFields,
+								})
+							}
+							(
+								CommandWithBlock({ block: _, command: _, explicit_backend_block: _ }),
+								SelectedWithReference(
+									{ reference_field, referenced_block, selected_block },
+								),
+							) => {
+								parsed_block = Plugin.find_parsed_block(
+									kaifile_blocks,
+									selected_block,
+								) ? |_|
 									fail(
-										At(
-											Plugin.translate_location(
-												block,
-												diagnostic.byte_offset,
-											),
-										),
-										Fields.describe(diagnostic),
+										At(selected_block.location),
+										"selected Kaifile block was not parsed",
 									)
-								related = Fields.parse(
-									related_body,
-									related_block.body,
-								) ? |diagnostic|
+								referenced = Plugin.find_parsed_block(
+									kaifile_blocks,
+									referenced_block,
+								) ? |_|
 									fail(
-										At(
-											Plugin.translate_location(
-												related_block,
-												diagnostic.byte_offset,
-											),
-										),
-										Fields.describe(diagnostic),
+										At(referenced_block.location),
+										"referenced Kaifile block was not parsed",
 									)
 								Ok({
-									config,
-									config_block: SelectedConfigBlock(block),
-									related_config: SelectedRelatedConfig({
-										config: related,
+									command_fields: parsed_block.fields,
+									referenced_fields: SelectedReferencedFields({
 										field: reference_field,
+										fields: referenced.fields,
 									}),
 								})
 							}
 						}?
-						context = Plugin.RenderContext.{
-							args: config_selection.args,
-							config: parsed.config,
-							config_block: parsed.config_block,
-							dependencies_resolved: Bool.False,
-							dependency_artifacts: [],
-							host_arch: arch,
-							host_os: os,
-							project_config,
-							related_config: parsed.related_config,
-							target: NoTarget,
+						input = Plugin.ImplementationInput.{
+							backend_target: NoBackendTarget,
+							command_arguments: normalized_invocation.args,
+							command_fields: parsed.command_fields,
+							host: { arch, os },
+							kaifile_blocks,
+							prerequisite_artifacts: NotResolved,
+							referenced_fields: parsed.referenced_fields,
 						}
-						renderer_fail = |diagnostic|
+						implementation_fail = |diagnostic|
 							fail(
-								Plugin.renderer_location(
+								Plugin.implementation_location(
 									selection,
 									diagnostic.byte_offset,
 								),
 								diagnostic.message,
 							)
-						validated_context = Plugin.validate_render_context(
-							context,
+						validated_input = Plugin.validate_implementation_input(
+							input,
 							implementation.validator,
-						) ? |diagnostic| renderer_fail(diagnostic)
-						renderer = implementation.renderer
-						initial_render = renderer(validated_context) ? |diagnostic|
-							renderer_fail(diagnostic)
-						requested = Plugin.plan_requests(
+						) ? |diagnostic| implementation_fail(diagnostic)
+						plan_implementation = implementation.plan
+						initial_command_plan = plan_implementation(validated_input) ? |diagnostic|
+							implementation_fail(diagnostic)
+						prerequisites = Plugin.plan_prerequisite_commands(
 							registry,
-							config_text,
-							initial_render.requests,
+							kaifile_text,
+							initial_command_plan.prerequisite_commands,
 							os,
 							arch,
 							[args].concat(ancestors),
 							depth + 1,
 							plugin,
-							call_name,
+							selected_command_name,
 							backend.name,
 						)?
-						rendered = if initial_render.requests.is_empty() {
-							initial_render
+						command_plan = if initial_command_plan.prerequisite_commands.is_empty() {
+							initial_command_plan
 						} else {
-							with_dependencies = renderer(
-								Plugin.RenderContext.{
-									args: validated_context.args,
-									config: validated_context.config,
-									config_block: validated_context.config_block,
-									dependencies_resolved: Bool.True,
-									dependency_artifacts: requested.artifacts,
-									host_arch: validated_context.host_arch,
-									host_os: validated_context.host_os,
-									project_config: validated_context.project_config,
-									related_config: validated_context.related_config,
-									target: validated_context.target,
+							with_prerequisite_artifacts = plan_implementation(
+								Plugin.ImplementationInput.{
+									backend_target: validated_input.backend_target,
+									command_arguments: validated_input.command_arguments,
+									command_fields: validated_input.command_fields,
+									host: validated_input.host,
+									kaifile_blocks: validated_input.kaifile_blocks,
+									prerequisite_artifacts: Resolved(prerequisites.artifacts),
+									referenced_fields: validated_input.referenced_fields,
 								},
-							) ? |diagnostic| renderer_fail(diagnostic)
-							if Plugin.same_plan_requests(
-								with_dependencies.requests,
-								initial_render.requests,
+							) ? |diagnostic| implementation_fail(diagnostic)
+							if Plugin.same_prerequisite_commands(
+								with_prerequisite_artifacts.prerequisite_commands,
+								initial_command_plan.prerequisite_commands,
 							) {
-								with_dependencies
+								with_prerequisite_artifacts
 							} else {
 								return Err(
 									fail(
 										None,
 										Str.join_with(
 											[
-												"plan requests changed after",
-												"dependencies resolved",
+												"prerequisite commands changed after",
+												"artifacts resolved",
 											],
 											" ",
 										),
@@ -2236,32 +2112,26 @@ Plugin := [].{
 								)
 							}
 						}
-						base_plan = Plugin.lower(
-							implementation,
-							rendered,
-							plugin,
-							backend,
-						) ? |diagnostic| renderer_fail(diagnostic)
 						Ok(
-							Plugin.Plan.{
-								actions: requested.actions.concat(base_plan.actions),
-								artifacts: requested.artifacts.concat(base_plan.artifacts),
-								backend: base_plan.backend,
-								command: base_plan.command,
-								plugin: base_plan.plugin,
-								requested_packages: requested.requested_packages.concat(
-									base_plan.requested_packages,
+							Plugin.ExecutionPlan.{
+								artifacts: prerequisites.artifacts.concat(command_plan.artifacts),
+								backend,
+								command: implementation.command,
+								plugin,
+								requested_packages: prerequisites.requested_packages.concat(
+									command_plan.requested_packages,
 								),
+								steps: prerequisites.steps.concat(command_plan.steps),
 							},
 						)
 					}
 				}
 			}
 
-	plan_requests :
+	plan_prerequisite_commands :
 		List(Definition),
 		Str,
-		List(PlanRequest),
+		List(PrerequisiteCommand),
 		HostOs,
 		HostArch,
 		List(List(Str)),
@@ -2270,110 +2140,86 @@ Plugin := [].{
 		Str,
 		Str -> Try(
 			{
-				actions : List(Action),
 				artifacts : List(Artifact),
 				requested_packages : List(Str),
+				steps : List(ExecutionStep),
 			},
 			Error,
 		)
-	plan_requests = |defs, text, reqs, os, arch, parents, depth, plugin, cmd, back|
-		match reqs {
-			[] => Ok({ actions: [], artifacts: [], requested_packages: [] })
-			[first, .. as rest] => {
-				child = Plugin.plan_registry_nested(
-					defs,
-					text,
-					first.args,
-					os,
-					arch,
-					parents,
-					depth,
-				) ? |error|
-					match error {
-						UnknownCommand => PlanningFailed(
-							Plugin.failure(
-								plugin,
-								cmd,
-								back,
-								None,
-								Str.join_with(
-									[
-										"plan request refers to unknown command",
-										"'${first.args.first() ?? ""}'",
-									],
-									" ",
+	plan_prerequisite_commands =
+		|defs, text, commands, os, arch, parents, depth, plugin, cmd, back|
+			match commands {
+				[] => Ok({ artifacts: [], requested_packages: [], steps: [] })
+				[first, .. as rest] => {
+					child = Plugin.plan_registry_nested(
+						defs,
+						text,
+						first.arguments,
+						os,
+						arch,
+						parents,
+						depth,
+					) ? |error|
+						match error {
+							UnknownCommand => PlanningFailed(
+								Plugin.failure(
+									plugin,
+									cmd,
+									back,
+									None,
+									Str.join_with(
+										[
+											"prerequisite command refers to unknown command",
+											"'${first.arguments.first() ?? ""}'",
+										],
+										" ",
+									),
 								),
-							),
-						)
-						PlanningFailed(diagnostic) => PlanningFailed(diagnostic)
-					}
-				remaining = Plugin.plan_requests(
-					defs,
-					text,
-					rest,
-					os,
-					arch,
-					parents,
-					depth,
-					plugin,
-					cmd,
-					back,
-				)?
-				Ok({
-					actions: [PrintLine(first.status)].concat(child.actions).concat(
-						remaining.actions,
-					),
-					artifacts: child.artifacts.concat(remaining.artifacts),
-					requested_packages: child.requested_packages.concat(
-						remaining.requested_packages,
-					),
-				})
-			}
-		}
-
-	effective_commands : List(Definition) -> List(Command)
-	effective_commands = |registry| Plugin.find_effective_commands(registry, [])
-
-	find_effective_commands : List(Definition), List(Str) -> List(Command)
-	find_effective_commands = |registry, shadowed|
-		match registry {
-			[] => []
-			[first, .. as rest] => {
-				effective = first.commands.keep_if(
-					|candidate| !shadowed.contains(candidate.call.name),
-				)
-				effective.concat(
-					Plugin.find_effective_commands(
+							)
+							PlanningFailed(diagnostic) => PlanningFailed(diagnostic)
+						}
+					remaining = Plugin.plan_prerequisite_commands(
+						defs,
+						text,
 						rest,
-						shadowed.concat(
-							first.commands.map(|candidate| candidate.call.name),
+						os,
+						arch,
+						parents,
+						depth,
+						plugin,
+						cmd,
+						back,
+					)?
+					Ok({
+						artifacts: child.artifacts.concat(remaining.artifacts),
+						requested_packages: child.requested_packages.concat(
+							remaining.requested_packages,
 						),
-					),
-				)
+						steps: [PrintLine(first.description)].concat(child.steps).concat(
+							remaining.steps,
+						),
+					})
+				}
 			}
-		}
 
-	effective_project_configs : List(Definition) -> List(ProjectConfigDescriptor)
-	effective_project_configs = |registry|
+	accepted_blocks : List(Definition) -> List(KaifileBlock)
+	accepted_blocks = |registry|
 		match registry {
 			[] => []
 			[first, .. as rest] =>
-				Plugin.append_config_descriptors(
-					first.project_configs,
-					Plugin.effective_project_configs(rest),
-				)
+				first.schema.blocks.concat(Plugin.accepted_blocks(rest))
 			}
 
 	find_owner : List(Definition),
 	Str -> Try(
-		{ command : Command, definition : Definition },
+		{ command : CommandSchema, definition : Definition },
 		[UnknownCommand],
 	)
 	find_owner = |registry, command_name|
 		match registry {
 			[] => Err(UnknownCommand)
 			[first, .. as rest] =>
-				match Plugin.find_command(first.commands, command_name) {
+				match Plugin.find_command(first.schema.commands, command_name) {
 					Ok(found_command) => Ok({
 						command: found_command,
 						definition: first,
@@ -2382,12 +2228,12 @@ Plugin := [].{
 				}
 			}
 
-	find_command : List(Command), Str -> Try(Command, [NotFound])
+	find_command : List(CommandSchema), Str -> Try(CommandSchema, [NotFound])
 	find_command = |commands, name|
 		match commands {
 			[] => Err(NotFound)
 			[first, .. as rest] =>
-				if first.call.name == name {
+				if Plugin.command_from_schema(first).name == name {
 					Ok(first)
 				} else {
 					Plugin.find_command(rest, name)
@@ -2457,35 +2303,25 @@ Plugin := [].{
 	failure = |plugin, command_name, backend, location, message|
 		{ backend, command: command_name, location, message, plugin }
 
-	renderer_location : ConfigSelection,
+	implementation_location : BlockSelection,
 	[At(U64), None] -> [
 		At(SourceLocation),
 		None,
 	]
-	renderer_location = |selection, relative|
+	implementation_location = |selection, relative|
 		match (selection, relative) {
 			(Selected(block), At(byte_offset)) =>
 				Plugin.relative_location(block, byte_offset)
 			(
-				SelectedWithBody({ block, body: _ }),
-				At(byte_offset),
-			) => Plugin.relative_location(block, byte_offset)
-			(
-				SelectedWithRelated(
-					{
-						block,
-						body: _,
-						reference_field: _,
-						related_block: _,
-						related_body: _,
-					},
+				SelectedWithReference(
+					{ reference_field: _, referenced_block: _, selected_block },
 				),
 				At(byte_offset),
-			) => Plugin.relative_location(block, byte_offset)
+			) => Plugin.relative_location(selected_block, byte_offset)
 			_ => None
 		}
 
-	relative_location : LocatedConfigBlock, U64 -> [At(SourceLocation), None]
+	relative_location : LocatedBlock, U64 -> [At(SourceLocation), None]
 	relative_location = |block, byte_offset|
 		if byte_offset <= block.body.to_utf8().len() {
 			At(Plugin.translate_location(block, byte_offset))
@@ -2493,7 +2329,7 @@ Plugin := [].{
 			None
 		}
 
-	translate_location : LocatedConfigBlock, U64 -> SourceLocation
+	translate_location : LocatedBlock, U64 -> SourceLocation
 	translate_location = |block, byte_offset|
 		Plugin.translate_bytes(block.body.to_utf8(), byte_offset, 0, block.location)
 
@@ -2529,71 +2365,4 @@ Plugin := [].{
 			)
 		}
 
-	# Convert pure action templates into a runtime plan.
-	lower : Implementation,
-	RenderResult,
-	Str,
-	Backend -> Try(
-		Plan,
-		RendererDiagnostic,
-	)
-	lower = |implementation, rendered, plugin, backend| {
-		actions = Plugin.lower_actions(
-			implementation.actions,
-			rendered.outputs,
-		)?
-		Ok(
-			Plugin.Plan.{
-				actions: actions.concat(rendered.actions),
-				artifacts: rendered.artifacts,
-				backend,
-				command: implementation.command,
-				plugin,
-				requested_packages: rendered.requested_packages,
-			},
-		)
-	}
-
-	lower_actions :
-		List(ActionTemplate),
-		List(RenderedOutput) -> Try(
-			List(Action),
-			RendererDiagnostic,
-		)
-	lower_actions = |templates, outputs|
-		match templates {
-			[] => Ok([])
-			[first, .. as rest] => {
-				# At present there are two actions, Exec
-				# and WriteConfigUtf8 (write a file).
-				# For WriteConfigUtf8, we have a list of rendered
-				# output files
-				action = match first {
-					Exec(exec) => Ok(Exec(exec))
-
-					WriteConfigUtf8({ output, path }) =>
-						match Plugin.find_output(outputs, output) {
-							Ok(content) => Ok(WriteUtf8({ content, path }))
-							Err(diagnostic) => Err(diagnostic)
-						}
-					}?
-				rest_actions = Plugin.lower_actions(rest, outputs)?
-				Ok([action].concat(rest_actions))
-			}
-		}
-
-	find_output : List(RenderedOutput), Str -> Try(Str, RendererDiagnostic)
-	find_output = |outputs, expected_name|
-		match outputs {
-			[] => Err({
-				byte_offset: None,
-				message: "plugin renderer did not return named output '${expected_name}'",
-			})
-			[first, .. as rest] =>
-				if first.name == expected_name {
-					Ok(first.text)
-				} else {
-					Plugin.find_output(rest, expected_name)
-				}
-			}
 }

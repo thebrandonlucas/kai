@@ -1,19 +1,15 @@
 # An implementation for defining nix devShells
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Shell as ShellCommand
-import configs.EnvironmentConfig
+import schemas.EnvironmentConfig
+import schemas.Shell as ShellCommand
 import EnvironmentNix
 
 ShellNix := [].{
-	shell_nix_actions = [NixBackend.flake_template]
-		.concat(NixBackend.lock_templates)
-		.concat([NixBackend.develop_template])
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: shell_nix_actions,
 		backend: NixBackend.backend.name,
-		command: ShellCommand.command.call.name,
+		command: ShellCommand.command.name,
 		validator: Validate({
 			string_lists: [
 				{
@@ -23,21 +19,32 @@ ShellNix := [].{
 			],
 			target: NoTargetValidation,
 		}),
-		renderer: ShellNix.renderer,
+		plan: ShellNix.plan,
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
 		pkgs = Plugin.validated_strings(
-			context.config,
+			input.command_fields,
 			EnvironmentConfig.packages_field,
 		)?
-		overlays = EnvironmentNix.extract_overlays(context.config)?
-		EnvironmentNix.render_result(
-			context,
+		overlays = EnvironmentNix.extract_overlays(input.command_fields)?
+		command_plan = EnvironmentNix.command_plan(
+			input,
 			pkgs,
 			overlays,
 			"unsupported shell platform",
-		)
+		)?
+		Ok({
+			..command_plan,
+			steps: command_plan.steps
+				.concat(NixBackend.lock_steps)
+				.concat([NixBackend.develop_step]),
+		})
 	}
 }

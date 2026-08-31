@@ -1,89 +1,100 @@
 # An implementation for building machine images with nix.
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Image as ImageCommand
+import schemas.Image as ImageCommand
 import MachineNix
 
 ImageNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [],
 		backend: NixBackend.backend.name,
-		command: ImageCommand.command.call.name,
-		renderer: ImageNix.renderer,
+		command: ImageCommand.command.name,
+		plan: ImageNix.plan,
 		validator: NoValidation,
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
-		config = MachineNix.configuration(context, "image")?
-		requests = MachineNix.service_requests(config.generated_services, "image")
-		if !requests.is_empty() and !context.dependencies_resolved {
-			return Ok({
-				actions: [],
-				artifacts: [],
-				outputs: [],
-				requests,
-				requested_packages: config.pkgs,
-			})
-		}
-		services = MachineNix.resolve_services(
-			context.dependency_artifacts,
-			config.generated_services,
-			config.target_system,
-		)?
-		native_services = config.services.keep_if(|service|
-			!config.generated_services.contains(service))
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
+		spec = MachineNix.machine_spec(input, "image")?
+		prerequisite_commands = MachineNix.service_prerequisite_commands(
+			spec.generated_services,
+			"image",
+		)
+		services = match input.prerequisite_artifacts {
+			NotResolved =>
+				if prerequisite_commands.is_empty() {
+					Ok([])
+				} else {
+					return Ok({
+						artifacts: [],
+						prerequisite_commands,
+						requested_packages: spec.pkgs,
+						steps: [],
+					})
+				}
+			Resolved(artifacts) =>
+				MachineNix.resolve_services(
+					artifacts,
+					spec.generated_services,
+					spec.target_system,
+				)
+			}?
+		native_services = spec.services.keep_if(|service|
+			!spec.generated_services.contains(service))
 		schema : U64
 		schema = 1
 		metadata = Json.to_str({
 			backend: NixBackend.backend.name,
-			flake_attribute: "kaiImages.\"${config.name}\".image",
-			flake_path: NixBackend.image_flake_path(config.name),
+			flake_attribute: "kaiImages.\"${spec.name}\".image",
+			flake_path: NixBackend.image_flake_path(spec.name),
 			format: "qcow2",
 			kind: "machine-image",
-			metadata_path: NixBackend.image_metadata_path(config.name),
-			name: config.name,
-			output_path: NixBackend.image_file_path(config.name),
+			metadata_path: NixBackend.image_metadata_path(spec.name),
+			name: spec.name,
+			output_path: NixBackend.image_file_path(spec.name),
 			schema,
-			target_architecture: config.target_architecture,
-			target_system: config.target_system,
+			target_architecture: spec.target_architecture,
+			target_system: spec.target_system,
 		})
 		Ok(
-			Plugin.RenderResult.{
-				actions: NixBackend.image_actions(
-					config.name,
-					ImageNix.render_flake(
-						config.name,
-						config.target_system,
-						config.locked_overlays,
-						config.overlays,
-						services,
-					),
-					ImageNix.render_module(
-						config.pkgs,
-						config.users,
-						native_services,
-					),
-					metadata,
-					services,
-				),
+			Plugin.CommandPlan.{
 				artifacts: [
 					{
 						attributes: [
 							{ key: "backend", value: NixBackend.backend.name },
 							{ key: "format", value: "qcow2" },
-							{ key: "target.architecture", value: config.target_architecture },
-							{ key: "target.system", value: config.target_system },
+							{ key: "target.architecture", value: spec.target_architecture },
+							{ key: "target.system", value: spec.target_system },
 						],
 						kind: "kai.machine.image/v1",
-						name: config.name,
-						path: NixBackend.image_file_path(config.name),
+						name: spec.name,
+						path: NixBackend.image_file_path(spec.name),
 					},
 				],
-				outputs: [],
-				requests,
-				requested_packages: config.pkgs,
+				prerequisite_commands,
+				requested_packages: spec.pkgs,
+				steps: NixBackend.image_steps(
+					spec.name,
+					ImageNix.render_flake(
+						spec.name,
+						spec.target_system,
+						spec.locked_overlays,
+						spec.overlays,
+						services,
+					),
+					ImageNix.render_module(
+						spec.pkgs,
+						spec.users,
+						native_services,
+					),
+					metadata,
+					services,
+				),
 			},
 		)
 	}

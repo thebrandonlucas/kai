@@ -1,15 +1,14 @@
 # An implementation of the `shell` command in Guix
 import kai.Plugin
 import backends.Guix as GuixBackend
-import commands.Shell as ShellCommand
+import schemas.Shell as ShellCommand
 
 ShellGuix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [],
 		backend: GuixBackend.backend.name,
-		command: ShellCommand.command.call.name,
-		renderer: ShellGuix.renderer,
+		command: ShellCommand.command.name,
+		plan: ShellGuix.plan,
 		validator: Validate({
 			string_lists: [
 				{
@@ -24,21 +23,28 @@ ShellGuix := [].{
 		}),
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
-		pkgs = Plugin.validated_strings(context.config, ShellCommand.packages_field)?
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
+		pkgs = Plugin.validated_strings(
+			input.command_fields,
+			ShellCommand.packages_field,
+		)?
 		Ok(
-			Plugin.RenderResult.{
-				actions: [
-					Exec({
-						args: ["shell", "--pure"].concat(pkgs),
-						command: GuixBackend.backend.name,
+			Plugin.CommandPlan.{
+				artifacts: [],
+				prerequisite_commands: [],
+				requested_packages: pkgs,
+				steps: [
+					RunProgram({
+						arguments: ["shell", "--pure"].concat(pkgs),
+						program: GuixBackend.backend.name,
 					}),
 				],
-				artifacts: [],
-				outputs: [],
-				requests: [],
-				requested_packages: pkgs,
 			},
 		)
 	}

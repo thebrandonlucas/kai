@@ -40,6 +40,4 @@ Secret := [].{
 		name_rules,
 	})
 
-	descriptor : Plugin.ProjectConfigDescriptor
-	descriptor = block
 }

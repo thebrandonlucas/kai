@@ -4,7 +4,7 @@
 # They pair naturally with workflows to run tasks in series i.e for CI.
 import kai.Kaifile
 import kai.Plugin
-import configs.EnvironmentConfig
+import EnvironmentConfig
 
 Task := [].{
 	fields = [
@@ -30,9 +30,8 @@ Task := [].{
 	block = Kaifile.named_block({ header: "task <task>", fields, name_rules })
 
 	command : Plugin.Command
-	command = Plugin.command_with_backend_blocks({
-		backend_blocks: RequireBackendSpecific,
-		call: Plugin.call("run", [Plugin.required_argument("task")]),
-		kaifile: block,
-	})
+	command = Plugin.command("run", [Plugin.required_argument("task")])
+
+	command_schema : Plugin.CommandSchema
+	command_schema = Plugin.command_with_required_backend_block({ command, block })
 }

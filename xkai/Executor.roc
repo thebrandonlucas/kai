@@ -31,8 +31,11 @@ Executor := [].{
 		match registry {
 			[] => []
 			[first, .. as rest] =>
-				first.commands
-					.map(|command| "  ${command.call.name}")
+				first.schema.commands
+					.map(
+						|command_schema|
+							"  ${Plugin.command_from_schema(command_schema).name}",
+					)
 					.concat(Executor.command_lines(rest))
 			}
 
@@ -94,7 +97,7 @@ Executor := [].{
 							Ok({})
 						}
 						_ => {
-							config_text = Path.read_utf8!(Path.utf8(invocation.kaifile))?
+							kaifile_text = Path.read_utf8!(Path.utf8(invocation.kaifile))?
 							host = Env.platform!()
 							host_os : Plugin.HostOs
 							host_os = match host.os {
@@ -105,7 +108,7 @@ Executor := [].{
 							}
 							match Plugin.plan_registry(
 								registry,
-								config_text,
+								kaifile_text,
 								invocation.args,
 								host_os,
 								host.arch,
@@ -120,27 +123,27 @@ Executor := [].{
 		}
 	}
 
-	execute! : Plugin.Plan => Try({}, _)
+	execute! : Plugin.ExecutionPlan => Try({}, _)
 	execute! = |execution_plan| {
-		for action in execution_plan.actions {
-			Executor.execute_action!(action)?
+		for step in execution_plan.steps {
+			Executor.execute_step!(step)?
 		}
 		Ok({})
 	}
 
-	execute_action! : Plugin.Action => Try({}, _)
-	execute_action! = |action|
-		match action {
+	execute_step! : Plugin.ExecutionStep => Try({}, _)
+	execute_step! = |step|
+		match step {
 			PrintLine(line) => Stdout.line!(line)
-			WriteUtf8({ content, path }) => {
+			WriteFile({ contents, path }) => {
 				parent_parts = Str.split_on(path, "/").drop_last(1)
 				if !parent_parts.is_empty() {
 					Path.create_all!(Path.utf8(Str.join_with(parent_parts, "/")))?
 				}
-				Path.write_utf8!(Path.utf8(path), content)?
+				Path.write_utf8!(Path.utf8(path), contents)?
 				Stdout.line!("wrote: ${path}")
 			}
-			Exec({ args, command }) =>
-				Cmd.exec!(OsStr.utf8(command), args.map(OsStr.utf8))
+			RunProgram({ arguments, program }) =>
+				Cmd.exec!(OsStr.utf8(program), arguments.map(OsStr.utf8))
 			}
 }

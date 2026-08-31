@@ -2,22 +2,26 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Build as BuildCommand
+import schemas.Build as BuildCommand
 import EnvironmentNix
 
 BuildNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [],
 		backend: NixBackend.backend.name,
-		command: BuildCommand.command.call.name,
-		renderer: BuildNix.renderer,
+		command: BuildCommand.command.name,
+		plan: BuildNix.plan,
 		validator: NoValidation,
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
-		name = match context.args {
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
+		name = match input.command_arguments {
 			[selected_name] => Ok(selected_name)
 			_ => Err({
 				byte_offset: None,
@@ -25,35 +29,38 @@ BuildNix := [].{
 			})
 		}?
 		name_failures = Plugin.validate_text(name, BuildCommand.artifact_name_rules)
-		run = Fields.get_strings(context.config, "run") ? |_| {
+		run = Fields.get_strings(input.command_fields, "run") ? |_| {
 			byte_offset: None,
-			message: "validated build configuration is missing 'run'",
+			message: "validated build block is missing 'run'",
 		}
 		run_failures = Plugin.validate_string_list(run, BuildCommand.run_rules)
-		inputs = Plugin.validated_strings(context.config, BuildCommand.inputs_field)?
-		EnvironmentNix.validate_source_inputs(context, inputs)?
-		output = Fields.get_string(context.config, "output") ? |_| {
+		inputs = Plugin.validated_strings(
+			input.command_fields,
+			BuildCommand.inputs_field,
+		)?
+		EnvironmentNix.validate_source_inputs(input, inputs)?
+		output = Fields.get_string(input.command_fields, "output") ? |_| {
 			byte_offset: None,
-			message: "validated build configuration is missing 'output'",
+			message: "validated build block is missing 'output'",
 		}
 		output_failures = Plugin.validate_text(output, BuildCommand.output_rules)
 		failures = name_failures.concat(run_failures).concat(output_failures)
-		Plugin.renderer_validation(failures)?
-		environment = Plugin.reference_config(context, "environment")?
+		Plugin.implementation_validation(failures)?
+		environment = Plugin.referenced_fields(input, "environment")?
 		pkgs = Fields.get_strings(environment, "packages") ? |_| {
 			byte_offset: None,
-			message: "validated environment configuration is missing 'packages'",
+			message: "validated environment block is missing 'packages'",
 		}
 		package_failures = Plugin.validate_string_list(
 			pkgs,
 			NixBackend.package_rules,
 		)
-		Plugin.renderer_validation(package_failures)?
+		Plugin.implementation_validation(package_failures)?
 		overlays = EnvironmentNix.extract_overlays(environment)?
-		target = NixBackend.target(context.host_os, context.host_arch) ? |_|
+		target = NixBackend.target(input.host.os, input.host.arch) ? |_|
 			{ byte_offset: None, message: "unsupported build platform" }
 		flake = EnvironmentNix.render_flake(
-			context,
+			input,
 			pkgs,
 			overlays,
 			Bool.True,
@@ -69,13 +76,7 @@ BuildNix := [].{
 			system: target.system,
 		})
 		Ok(
-			Plugin.RenderResult.{
-				actions: NixBackend.build_artifact_actions(
-					name,
-					flake,
-					build_nix,
-					build_json,
-				),
+			Plugin.CommandPlan.{
 				artifacts: [
 					{
 						attributes: [
@@ -88,9 +89,14 @@ BuildNix := [].{
 						path: NixBackend.build_artifact_path(name),
 					},
 				],
-				outputs: [],
-				requests: [],
+				prerequisite_commands: [],
 				requested_packages: pkgs,
+				steps: NixBackend.build_artifact_steps(
+					name,
+					flake,
+					build_nix,
+					build_json,
+				),
 			},
 		)
 	}

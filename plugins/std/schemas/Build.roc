@@ -1,7 +1,7 @@
 # Shared interface for `build` artifact/executable commands
 import kai.Kaifile
 import kai.Plugin
-import configs.EnvironmentConfig
+import EnvironmentConfig
 
 Build := [].{
 	inputs_field = Kaifile.optional("inputs", StringList)
@@ -67,8 +67,8 @@ Build := [].{
 	})
 
 	command : Plugin.Command
-	command = Plugin.command({
-		call: Plugin.call("build", [Plugin.required_argument("artifact")]),
-		kaifile: block,
-	})
+	command = Plugin.command("build", [Plugin.required_argument("artifact")])
+
+	command_schema : Plugin.CommandSchema
+	command_schema = Plugin.command_with_block({ command, block })
 }

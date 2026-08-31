@@ -1,19 +1,19 @@
-# An implementation for interfacing between Kai environment configuration and
+# An implementation for interfacing between Kai environment blocks and
 # the Nix backend.
 import kai.Plugin
 import backends.Nix as NixBackend
-import configs.EnvironmentConfig
-import project_configs.Source
+import schemas.EnvironmentConfig
+import schemas.Source
 
 EnvironmentNix := [].{
-	extract_overlays = |config|
-		Plugin.validated_strings(config, EnvironmentConfig.overlays_field)
+	extract_overlays = |fields|
+		Plugin.validated_strings(fields, EnvironmentConfig.overlays_field)
 
 	collect_overlays = |entries, collected|
 		match entries {
 			[] => Ok(collected)
 			[first, .. as rest] => {
-				overlays = EnvironmentNix.extract_overlays(first.config)?
+				overlays = EnvironmentNix.extract_overlays(first.fields)?
 				EnvironmentNix.collect_overlays(
 					rest,
 					EnvironmentNix.append_unseen(overlays, collected),
@@ -35,28 +35,28 @@ EnvironmentNix := [].{
 				)
 			}
 
-	all_overlays = |context| {
-		entries = Plugin.project_configs(context, ["shell", "environment"])
+	all_overlays = |input| {
+		entries = Plugin.blocks_of_kind(input, ["shell", "environment"])
 		overlays = EnvironmentNix.collect_overlays(entries, [])?
-		Plugin.renderer_validation(
+		Plugin.implementation_validation(
 			Plugin.validate_string_list(overlays, NixBackend.overlay_rules),
 		)?
 		Ok(overlays)
 	}
 
-	all_sources = |context|
-		Source.collect(Plugin.project_configs(context, ["source"]))
+	all_sources = |input|
+		Source.collect(Plugin.blocks_of_kind(input, ["source"]))
 
-	validate_source_inputs = |context, selected| {
-		sources = EnvironmentNix.all_sources(context)?
+	validate_source_inputs = |input, selected| {
+		sources = EnvironmentNix.all_sources(input)?
 		Source.validate_selected(selected, sources, [])
 	}
 
 	render_flake =
-		|context, pkgs, overlays, export_legacy_packages, unsupported_message| {
-			locked_overlays = EnvironmentNix.all_overlays(context)?
-			sources = EnvironmentNix.all_sources(context)?
-			target = NixBackend.target(context.host_os, context.host_arch) ? |_|
+		|input, pkgs, overlays, export_legacy_packages, unsupported_message| {
+			locked_overlays = EnvironmentNix.all_overlays(input)?
+			sources = EnvironmentNix.all_sources(input)?
+			target = NixBackend.target(input.host.os, input.host.arch) ? |_|
 				{ byte_offset: None, message: unsupported_message }
 			Ok(
 				NixBackend.render_dev_shell({
@@ -70,30 +70,29 @@ EnvironmentNix := [].{
 			)
 		}
 
-	render_result :
-		Plugin.RenderContext,
+	command_plan :
+		Plugin.ImplementationInput,
 		List(Str),
 		List(Str),
 		Str ->
 			Try(
-				Plugin.RenderResult,
-				Plugin.RendererDiagnostic,
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
 			)
-	render_result = |context, pkgs, overlays, unsupported_message| {
+	command_plan = |input, pkgs, overlays, unsupported_message| {
 		flake = EnvironmentNix.render_flake(
-			context,
+			input,
 			pkgs,
 			overlays,
 			Bool.False,
 			unsupported_message,
 		)?
 		Ok(
-			Plugin.RenderResult.{
-				actions: [],
+			Plugin.CommandPlan.{
 				artifacts: [],
-				outputs: [{ name: "flake", text: flake }],
-				requests: [],
+				prerequisite_commands: [],
 				requested_packages: pkgs,
+				steps: [NixBackend.write_flake_step(flake)],
 			},
 		)
 	}

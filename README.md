@@ -1,10 +1,14 @@
 # Kai - A friendly frontend for determinate computing
 
-> WARNING: Hobby project. Use at your own risk!
+> WARNING: Unstable hobby project under rapid development. Use at your own risk!
 
 See the [roadmap](roadmap.md) for planned work.
 
 Kai is a CLI that makes using reproducible systems easy, friendly, and fun.
+
+Imagine everything about how your computer works is a portable config in one file you can just send to your friends or bring with you to a new computer. Spend very little time thinking about installing software, dependencies, developer environments, etc., and once you figure it out once, you _shouldn't have to figure it out again_. We have that, with nix! The problem is nix is so hard to use that people often give up (even agents get confused!). So, `kai` wraps `nix` in a friendly frontend so that you can actually use it with confidence!
+
+Eventually `kai` plans to support the other reproducible system, `guix`, and even potentially it's own implementation :eyes:
 
 There are basically two complete reproducible systems today: [Nix](https://determinate.systems/) and [Guix](https://guix.gnu.org/). They are hard to use. Kai builds on top of them with the goal of making them easy, extensible, customizable, and powerful.
 

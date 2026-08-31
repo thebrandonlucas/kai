@@ -1,4 +1,4 @@
-# Shared project configuration for declaring external flake sources.
+# Shared Kaifile block for declaring external flake sources.
 import parser.Fields
 import kai.Kaifile
 import kai.Plugin
@@ -39,9 +39,6 @@ Source := [].{
 		name_rules,
 	})
 
-	descriptor : Plugin.ProjectConfigDescriptor
-	descriptor = block
-
 	url_rules : List(Plugin.TextRule)
 	url_rules = [
 		NonemptyText("source URL must not be empty"),
@@ -53,10 +50,10 @@ Source := [].{
 	]
 
 	collect :
-		List(Plugin.ProjectConfigEntry) ->
+		List(Plugin.ParsedBlock) ->
 			Try(
 				List(Source.Input),
-				Plugin.RendererDiagnostic,
+				Plugin.ImplementationDiagnostic,
 			)
 	collect = |entries| {
 		inputs = entries.map_try(
@@ -68,7 +65,7 @@ Source := [].{
 						message: "source declaration requires a name",
 					})
 				}?
-				url = Fields.get_string(entry.config, "url") ? |_|
+				url = Fields.get_string(entry.fields, "url") ? |_|
 					{
 						byte_offset: None,
 						message: "validated source '${name}' is missing 'url'",
@@ -81,14 +78,14 @@ Source := [].{
 	}
 
 	validate_sources :
-		List(Source.Input), List(Str) -> Try({}, Plugin.RendererDiagnostic)
+		List(Source.Input), List(Str) -> Try({}, Plugin.ImplementationDiagnostic)
 	validate_sources = |inputs, seen|
 		match inputs {
 			[] => Ok({})
 			[first, .. as rest] => {
 				failures = Plugin.validate_text(first.name, Source.name_rules)
 					.concat(Plugin.validate_text(first.url, Source.url_rules))
-				Plugin.renderer_validation(failures)?
+				Plugin.implementation_validation(failures)?
 				if seen.contains(first.name) {
 					Err({
 						byte_offset: None,
@@ -101,12 +98,20 @@ Source := [].{
 		}
 
 	validate_selected :
-		List(Str), List(Source.Input), List(Str) -> Try({}, Plugin.RendererDiagnostic)
+		List(Str),
+		List(Source.Input),
+		List(Str) ->
+			Try(
+				{},
+				Plugin.ImplementationDiagnostic,
+			)
 	validate_selected = |selected, sources, seen|
 		match selected {
 			[] => Ok({})
 			[first, .. as rest] => {
-				Plugin.renderer_validation(Plugin.validate_text(first, Source.name_rules))?
+				Plugin.implementation_validation(
+					Plugin.validate_text(first, Source.name_rules),
+				)?
 				if seen.contains(first) {
 					Err({
 						byte_offset: None,
