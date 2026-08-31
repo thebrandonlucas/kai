@@ -22,7 +22,7 @@ WorkflowNix := [].{
 	plan = |input| {
 		steps = Fields.get_strings(input.command_fields, "steps") ? |_| {
 			byte_offset: None,
-			message: "validated workflow configuration is missing 'steps'",
+			message: "validated workflow block is missing 'steps'",
 		}
 		if steps.is_empty() {
 			Err({

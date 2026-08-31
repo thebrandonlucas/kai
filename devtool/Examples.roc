@@ -61,7 +61,7 @@ Examples := [].{
 		path = Path.display(kaifile)
 		source = Path.read_utf8!(kaifile)?
 		blocks = Blocks.scan(source) ? |diagnostic|
-			InvalidExampleConfig({ diagnostic: Str.inspect(diagnostic), path })
+			InvalidExampleKaifile({ diagnostic: Str.inspect(diagnostic), path })
 		checks = Examples.invocations(blocks, path)?
 		if checks.is_empty() {
 			Err(EmptyKaifileExample(path))
@@ -131,7 +131,7 @@ Examples := [].{
 
 	nested_invocations = |host_block, path, os, arch| {
 		blocks = Blocks.scan(host_block.body) ? |diagnostic|
-			InvalidExampleHostConfig({ diagnostic: Str.inspect(diagnostic), path })
+			InvalidExampleHostBlock({ diagnostic: Str.inspect(diagnostic), path })
 		Examples.collect_blocks(blocks, path, os, arch, Bool.False)
 	}
 

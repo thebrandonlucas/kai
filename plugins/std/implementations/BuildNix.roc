@@ -31,7 +31,7 @@ BuildNix := [].{
 		name_failures = Plugin.validate_text(name, BuildCommand.artifact_name_rules)
 		run = Fields.get_strings(input.command_fields, "run") ? |_| {
 			byte_offset: None,
-			message: "validated build configuration is missing 'run'",
+			message: "validated build block is missing 'run'",
 		}
 		run_failures = Plugin.validate_string_list(run, BuildCommand.run_rules)
 		inputs = Plugin.validated_strings(
@@ -41,7 +41,7 @@ BuildNix := [].{
 		EnvironmentNix.validate_source_inputs(input, inputs)?
 		output = Fields.get_string(input.command_fields, "output") ? |_| {
 			byte_offset: None,
-			message: "validated build configuration is missing 'output'",
+			message: "validated build block is missing 'output'",
 		}
 		output_failures = Plugin.validate_text(output, BuildCommand.output_rules)
 		failures = name_failures.concat(run_failures).concat(output_failures)
@@ -49,7 +49,7 @@ BuildNix := [].{
 		environment = Plugin.referenced_fields(input, "environment")?
 		pkgs = Fields.get_strings(environment, "packages") ? |_| {
 			byte_offset: None,
-			message: "validated environment configuration is missing 'packages'",
+			message: "validated environment block is missing 'packages'",
 		}
 		package_failures = Plugin.validate_string_list(
 			pkgs,

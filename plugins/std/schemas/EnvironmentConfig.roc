@@ -1,4 +1,4 @@
-# Shared configuration schema for developer environments.
+# Shared block schema for developer environments.
 import kai.Kaifile
 import kai.Plugin
 

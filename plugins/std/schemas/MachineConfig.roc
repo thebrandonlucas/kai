@@ -1,4 +1,4 @@
-# Shared configuration schema and validation for machines.
+# Shared block schema and validation for machines.
 import kai.Kaifile
 import kai.Plugin
 import EnvironmentConfig

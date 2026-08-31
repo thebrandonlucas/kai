@@ -1,4 +1,4 @@
-# Parse fields in a config block
+# Parse fields in a Kaifile block
 Fields := [].{
 
 	ValueShape : [Identifier, String, StringList]
@@ -12,7 +12,7 @@ Fields := [].{
 
 	Value : [StringValue(Str), StringListValue(List(Str))]
 	Entry := { name : Str, value : Value }
-	ParsedFields : [Config(List(Entry))]
+	ParsedFields : [Parsed(List(Entry))]
 
 	DiagnosticKind : [
 		DuplicateField(Str),
@@ -53,7 +53,7 @@ Fields := [].{
 	optional = |name, value| { name, presence: Optional, value }
 
 	empty : ParsedFields
-	empty = Config([])
+	empty = Parsed([])
 
 	parse : Shape, Str -> Try(ParsedFields, Diagnostic)
 	parse = |shape, body_text| {
@@ -72,7 +72,7 @@ Fields := [].{
 			parsed.entries,
 			bytes.len(),
 		)?
-		Ok(Config(parsed.entries))
+		Ok(Parsed(parsed.entries))
 	}
 
 	parse_fields :
@@ -395,21 +395,21 @@ Fields := [].{
 			}
 
 	get_string : ParsedFields, Str -> Try(Str, AccessError)
-	get_string = |Config(entries), name|
+	get_string = |Parsed(entries), name|
 		match Fields.find_entry(entries, name)? {
 			StringValue(value) => Ok(value)
 			StringListValue(_) => Err(WrongType({ expected: String, field: name }))
 		}
 
 	get_strings : ParsedFields, Str -> Try(List(Str), AccessError)
-	get_strings = |Config(entries), name|
+	get_strings = |Parsed(entries), name|
 		match Fields.find_entry(entries, name)? {
 			StringListValue(values) => Ok(values)
 			StringValue(_) => Err(WrongType({ expected: StringList, field: name }))
 		}
 
 	maybe_string : ParsedFields, Str -> Try([None, Some(Str)], AccessError)
-	maybe_string = |Config(entries), name|
+	maybe_string = |Parsed(entries), name|
 		match Fields.find_entry(entries, name) {
 			Err(MissingField(_)) => Ok(None)
 			Err(WrongType(problem)) => Err(WrongType(problem))
@@ -418,7 +418,7 @@ Fields := [].{
 		}
 
 	maybe_strings : ParsedFields, Str -> Try([None, Some(List(Str))], AccessError)
-	maybe_strings = |Config(entries), name|
+	maybe_strings = |Parsed(entries), name|
 		match Fields.find_entry(entries, name) {
 			Err(MissingField(_)) => Ok(None)
 			Err(WrongType(problem)) => Err(WrongType(problem))

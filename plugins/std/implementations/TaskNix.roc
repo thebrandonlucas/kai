@@ -23,7 +23,7 @@ TaskNix := [].{
 	plan = |input| {
 		run = Fields.get_strings(input.command_fields, "run") ? |_| {
 			byte_offset: None,
-			message: "validated task configuration is missing 'run'",
+			message: "validated task block is missing 'run'",
 		}
 		Plugin.implementation_validation(
 			Plugin.validate_string_list(run, TaskCommand.run_rules("task")),
@@ -31,7 +31,7 @@ TaskNix := [].{
 		environment = Plugin.referenced_fields(input, "environment")?
 		pkgs = Fields.get_strings(environment, "packages") ? |_| {
 			byte_offset: None,
-			message: "validated environment configuration is missing 'packages'",
+			message: "validated environment block is missing 'packages'",
 		}
 		Plugin.implementation_validation(
 			Plugin.validate_string_list(pkgs, NixBackend.package_rules),

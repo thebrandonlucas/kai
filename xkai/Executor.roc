@@ -97,7 +97,7 @@ Executor := [].{
 							Ok({})
 						}
 						_ => {
-							config_text = Path.read_utf8!(Path.utf8(invocation.kaifile))?
+							kaifile_text = Path.read_utf8!(Path.utf8(invocation.kaifile))?
 							host = Env.platform!()
 							host_os : Plugin.HostOs
 							host_os = match host.os {
@@ -108,7 +108,7 @@ Executor := [].{
 							}
 							match Plugin.plan_registry(
 								registry,
-								config_text,
+								kaifile_text,
 								invocation.args,
 								host_os,
 								host.arch,

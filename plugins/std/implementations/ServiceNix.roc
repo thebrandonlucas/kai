@@ -29,17 +29,17 @@ ServiceNix := [].{
 		artifact_name = Fields.get_string(input.command_fields, "artifact") ? |_|
 			{
 				byte_offset: None,
-				message: "validated service configuration is missing 'artifact'",
+				message: "validated service block is missing 'artifact'",
 			}
 		secrets = Fields.get_strings(input.command_fields, "secrets") ? |_|
 			{
 				byte_offset: None,
-				message: "validated service configuration is missing 'secrets'",
+				message: "validated service block is missing 'secrets'",
 			}
 		restart = Fields.get_string(input.command_fields, "restart") ? |_|
 			{
 				byte_offset: None,
-				message: "validated service configuration is missing 'restart'",
+				message: "validated service block is missing 'restart'",
 			}
 		failures = ServiceCommand.name_failures(name)
 			.concat(

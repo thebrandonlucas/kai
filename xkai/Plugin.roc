@@ -283,9 +283,9 @@ Plugin := [].{
 		line : U64,
 	}
 
-	# location is absolute within the complete config text, including when a
+	# location is absolute within the complete Kaifile text, including when a
 	# plugin selects a block nested inside another generic block.
-	LocatedConfigBlock := {
+	LocatedBlock := {
 		body : Str,
 		location : SourceLocation,
 	}
@@ -299,14 +299,14 @@ Plugin := [].{
 
 	BackendChoice : [DefaultBackend(Backend), ExplicitBackend(Backend)]
 
-	ConfigSelection : [
+	BlockSelection : [
 		Missing,
-		Selected(LocatedConfigBlock),
-		SelectedWithRelated(
+		Selected(LocatedBlock),
+		SelectedWithReference(
 			{
-				block : LocatedConfigBlock,
 				reference_field : Str,
-				related_block : LocatedConfigBlock,
+				referenced_block : LocatedBlock,
+				selected_block : LocatedBlock,
 			},
 		),
 	]
@@ -316,7 +316,7 @@ Plugin := [].{
 		message : Str,
 	}
 
-	ConfigSelector :
+	BlockSelector :
 		Str,
 		List(ParsedBlock),
 		CommandSchema,
@@ -324,7 +324,7 @@ Plugin := [].{
 		List(Str),
 		HostOs,
 		HostArch -> Try(
-			ConfigSelection,
+			BlockSelection,
 			SelectorDiagnostic,
 		)
 
@@ -337,8 +337,8 @@ Plugin := [].{
 	}
 
 	# Select a Kaifile block from the command schema.
-	select_config : ConfigSelector
-	select_config = |text, blocks, schema, choice, args, os, _|
+	select_command_block : BlockSelector
+	select_command_block = |text, blocks, schema, choice, args, os, _|
 		match schema {
 			CommandOnly(_) => Ok(Missing)
 			CommandWithBlock(
@@ -395,7 +395,7 @@ Plugin := [].{
 											),
 										}
 									related = Kaifile.from_reference_target(reference.target)
-									related_block = Plugin.select_required_named_block(
+									referenced_block = Plugin.select_required_named_block(
 										text,
 										Kaifile.block_name(related),
 										related_name,
@@ -404,15 +404,15 @@ Plugin := [].{
 										explicit_backend_block,
 									)?
 									Ok(
-										SelectedWithRelated({
-											block: selected,
+										SelectedWithReference({
 											reference_field: reference.field.name,
-											related_block,
+											referenced_block,
+											selected_block: selected,
 										}),
 									)
 								}
 								([name], []) =>
-									Plugin.select_named_config(
+									Plugin.select_named_block(
 										text,
 										primary,
 										name,
@@ -422,7 +422,7 @@ Plugin := [].{
 									)
 								_ => Err({
 									location: None,
-									message: "${command_name} requires exactly one config name",
+									message: "${command_name} requires exactly one block name",
 								})
 							}
 						} else {
@@ -449,21 +449,21 @@ Plugin := [].{
 							[] =>
 								match choice {
 									DefaultBackend(_) =>
-										Plugin.select_config_header(
+										Plugin.select_block_header(
 											text,
 											[block_name],
 											choice,
 											os,
 										)
 									ExplicitBackend(backend) =>
-										match Plugin.select_config_header(
+										match Plugin.select_block_header(
 											text,
 											[named_block, backend.name],
 											DefaultBackend(backend),
 											os,
 										)? {
 											Missing =>
-												Plugin.select_config_header(
+												Plugin.select_block_header(
 													text,
 													[block_name],
 													choice,
@@ -477,7 +477,7 @@ Plugin := [].{
 										}
 									}
 							[name] =>
-								Plugin.select_named_config(
+								Plugin.select_named_block(
 									text,
 									named,
 									name,
@@ -487,7 +487,7 @@ Plugin := [].{
 								)
 							_ => Err({
 								location: None,
-								message: "${command_name} accepts at most one config name",
+								message: "${command_name} accepts at most one block name",
 							})
 						}
 					}
@@ -569,17 +569,17 @@ Plugin := [].{
 			_ => Err("command declares unsupported arguments")
 		}
 
-	select_named_config :
+	select_named_block :
 		Str,
 		KaifileBlock,
 		Str,
 		BackendChoice,
 		HostOs,
 		ExplicitBackendBlock -> Try(
-			ConfigSelection,
+			BlockSelection,
 			SelectorDiagnostic,
 		)
-	select_named_config = |text, schema, name, choice, os, backend_block| {
+	select_named_block = |text, schema, name, choice, os, backend_block| {
 		Plugin.selector_validation(
 			Plugin.validate_text(name, Kaifile.name_rules(schema)),
 		)?
@@ -601,7 +601,7 @@ Plugin := [].{
 		BackendChoice,
 		HostOs,
 		ExplicitBackendBlock -> Try(
-			LocatedConfigBlock,
+			LocatedBlock,
 			SelectorDiagnostic,
 		)
 	select_required_named_block =
@@ -627,12 +627,12 @@ Plugin := [].{
 		BackendChoice,
 		HostOs,
 		ExplicitBackendBlock -> Try(
-			ConfigSelection,
+			BlockSelection,
 			SelectorDiagnostic,
 		)
 	select_with_backend_fallback =
 		|text, header, choice, os, explicit_backend_block| {
-			selection = Plugin.select_config_header(
+			selection = Plugin.select_block_header(
 				text,
 				header,
 				choice,
@@ -640,7 +640,7 @@ Plugin := [].{
 			)?
 			match (selection, choice, explicit_backend_block) {
 				(Missing, ExplicitBackend(backend), TryBackendThenShared) =>
-					Plugin.select_config_header(
+					Plugin.select_block_header(
 						text,
 						header,
 						DefaultBackend(backend),
@@ -652,22 +652,22 @@ Plugin := [].{
 
 	# Select a generic, possibly named block while retaining the standard host
 	# fallback and explicit-backend behavior.
-	select_config_header :
+	select_block_header :
 		Str,
 		List(Str),
 		BackendChoice,
 		HostOs -> Try(
-			ConfigSelection,
+			BlockSelection,
 			SelectorDiagnostic,
 		)
-	select_config_header = |config_text, header, backend_choice, os| {
+	select_block_header = |kaifile_text, header, backend_choice, os| {
 		block_header = match backend_choice {
 			DefaultBackend(_) => header
 			ExplicitBackend(backend) => header.append(backend.name)
 		}
-		blocks = Blocks.scan(config_text) ? |diagnostic| {
+		blocks = Blocks.scan(kaifile_text) ? |diagnostic| {
 			location: At(Plugin.source_location(diagnostic.location)),
-			message: "invalid plugin configuration",
+			message: "invalid Kaifile",
 		}
 		host_section = match os {
 			LINUX => HostSection("linux")
@@ -681,14 +681,14 @@ Plugin := [].{
 					blocks,
 					["on", section],
 				) ? |selection_error|
-					Plugin.top_level_duplicate(selection_error, "duplicate host configuration")
+					Plugin.top_level_duplicate(selection_error, "duplicate host block")
 				match host_selection {
 					Missing => Plugin.select_top_level(blocks, block_header)
 					Selected(host) =>
 						match Plugin.select_nested(host, block_header)? {
 							Missing => Plugin.select_top_level(blocks, block_header)
 							Selected(block) => Ok(Selected(block))
-							SelectedWithRelated(selected) => Ok(SelectedWithRelated(selected))
+							SelectedWithReference(selected) => Ok(SelectedWithReference(selected))
 						}
 					}
 			}
@@ -696,12 +696,12 @@ Plugin := [].{
 	}
 
 	select_top_level :
-		List(Blocks.Block), List(Str) -> Try(ConfigSelection, SelectorDiagnostic)
+		List(Blocks.Block), List(Str) -> Try(BlockSelection, SelectorDiagnostic)
 	select_top_level = |blocks, header| {
 		selection = Blocks.select_exact(blocks, header) ? |selection_error|
 			Plugin.top_level_duplicate(
 				selection_error,
-				"duplicate command configuration",
+				"duplicate command block",
 			)
 		match selection {
 			Missing => Ok(Missing)
@@ -715,18 +715,18 @@ Plugin := [].{
 	}
 
 	select_nested :
-		Blocks.Block, List(Str) -> Try(ConfigSelection, SelectorDiagnostic)
+		Blocks.Block, List(Str) -> Try(BlockSelection, SelectorDiagnostic)
 	select_nested = |host, header| {
 		blocks = Blocks.scan(host.body) ? |diagnostic| {
 			location: At(Plugin.nested_location(host, diagnostic.location)),
-			message: "invalid host configuration",
+			message: "invalid host block",
 		}
 		selection = Blocks.select_exact(blocks, header) ? |selection_error| {
 			location = match selection_error {
 				DuplicateHeader({ first: _, header: _, second }) =>
 					At(Plugin.nested_location(host, second))
 				}
-			{ location, message: "duplicate command configuration" }
+			{ location, message: "duplicate command block" }
 		}
 		match selection {
 			Missing => Ok(Missing)
@@ -773,7 +773,7 @@ Plugin := [].{
 	parse_kaifile_blocks = |kaifile_text, block_schemas, backend| {
 		blocks = Blocks.scan(kaifile_text) ? |diagnostic| {
 			location: At(Plugin.source_location(diagnostic.location)),
-			message: "invalid plugin configuration",
+			message: "invalid Kaifile",
 		}
 		Plugin.collect_kaifile_blocks(
 			blocks,
@@ -829,12 +829,12 @@ Plugin := [].{
 						if seen.contains(first.header) {
 							Err({
 								location: At(Plugin.source_location(first.location)),
-								message: "duplicate host configuration",
+								message: "duplicate host block",
 							})
 						} else {
 							nested = Blocks.scan(first.body) ? |diagnostic| {
 								location: At(Plugin.nested_location(first, diagnostic.location)),
-								message: "invalid host configuration",
+								message: "invalid host block",
 							}
 							nested_parsed = Plugin.collect_kaifile_blocks(
 								nested,
@@ -904,7 +904,7 @@ Plugin := [].{
 	is_host_section = |header|
 		header == ["on", "linux"] or header == ["on", "macos"]
 
-	block_location : Blocks.Block, BlockScope -> LocatedConfigBlock
+	block_location : Blocks.Block, BlockScope -> LocatedBlock
 	block_location = |block, scope|
 		match scope {
 			TopLevelBlockScope => {
@@ -920,7 +920,7 @@ Plugin := [].{
 	parse_block :
 		KaifileBlock,
 		List(Str),
-		LocatedConfigBlock -> Try(
+		LocatedBlock -> Try(
 			ParsedBlock,
 			SelectorDiagnostic,
 		)
@@ -938,7 +938,7 @@ Plugin := [].{
 	}
 
 	find_parsed_block :
-		List(ParsedBlock), LocatedConfigBlock -> Try(ParsedBlock, [NotFound])
+		List(ParsedBlock), LocatedBlock -> Try(ParsedBlock, [NotFound])
 	find_parsed_block = |blocks, selected|
 		match blocks {
 			[] => Err(NotFound)
@@ -1116,12 +1116,12 @@ Plugin := [].{
 			List(Str),
 			ImplementationDiagnostic,
 		)
-	validate_string_list_fields = |config, validations|
+	validate_string_list_fields = |fields, validations|
 		match validations {
 			[] => Ok([])
 			[first, .. as rest] => {
-				values = Plugin.validated_strings(config, first.field)?
-				remaining = Plugin.validate_string_list_fields(config, rest)?
+				values = Plugin.validated_strings(fields, first.field)?
+				remaining = Plugin.validate_string_list_fields(fields, rest)?
 				Ok(Plugin.validate_string_list(values, first.rules).concat(remaining))
 			}
 		}
@@ -1131,16 +1131,16 @@ Plugin := [].{
 		List(Str),
 		ImplementationDiagnostic,
 	)
-	validated_strings = |config, declared_field| {
+	validated_strings = |fields, declared_field| {
 		field = Kaifile.parser_field(declared_field)
-		match Fields.get_strings(config, field.name) {
+		match Fields.get_strings(fields, field.name) {
 			Ok(values) => Ok(values)
 			Err(MissingField(_)) if field.presence == Optional => Ok([])
 			Err(_) => Err({
 				byte_offset: None,
 				message: Str.join_with(
 					[
-						"validated configuration does not match declared field",
+						"validated fields do not match declared block schema",
 						"'${field.name}'",
 					],
 					" ",
@@ -1872,8 +1872,8 @@ Plugin := [].{
 		ExecutionPlan,
 		Error,
 	)
-	plan_registry = |registry, config_text, args, os, arch|
-		Plugin.plan_registry_nested(registry, config_text, args, os, arch, [], 0)
+	plan_registry = |registry, kaifile_text, args, os, arch|
+		Plugin.plan_registry_nested(registry, kaifile_text, args, os, arch, [], 0)
 
 	plan_registry_nested :
 		List(Definition),
@@ -1887,7 +1887,7 @@ Plugin := [].{
 			Error,
 		)
 	plan_registry_nested =
-		|registry, config_text, args, os, arch, ancestors, depth|
+		|registry, kaifile_text, args, os, arch, ancestors, depth|
 			match args {
 				[] => Err(UnknownCommand)
 				[command_name, .. as command_args] => {
@@ -1920,7 +1920,7 @@ Plugin := [].{
 							),
 						)
 					backend = backend_selection.backend
-					config_selection = Plugin.normalize_command_backend(
+					normalized_invocation = Plugin.normalize_command_backend(
 						selected_command,
 						backend_selection.choice,
 						backend_selection.args,
@@ -1943,7 +1943,7 @@ Plugin := [].{
 					} else {
 						Plugin.validate_command_arguments(
 							declared_command,
-							config_selection.args,
+							normalized_invocation.args,
 						) ? |message| fail(None, message)
 						implementation = Plugin.find_implementation(
 							plugin_definition.implementations,
@@ -1955,17 +1955,17 @@ Plugin := [].{
 								"plugin has no implementation for selected backend",
 							)
 						kaifile_blocks = Plugin.parse_kaifile_blocks(
-							config_text,
+							kaifile_text,
 							Plugin.accepted_blocks(registry),
 							backend.name,
 						) ? |diagnostic|
 							fail(diagnostic.location, diagnostic.message)
-						selection = Plugin.select_config(
-							config_text,
+						selection = Plugin.select_command_block(
+							kaifile_text,
 							kaifile_blocks,
 							selected_command,
-							config_selection.backend_choice,
-							config_selection.args,
+							normalized_invocation.backend_choice,
+							normalized_invocation.args,
 							os,
 							arch,
 						) ? |diagnostic|
@@ -1992,7 +1992,7 @@ Plugin := [].{
 												None,
 												Str.join_with(
 													[
-														"missing required config block",
+														"missing required block",
 														"'${Kaifile.block_name(schema)}'",
 													],
 													" ",
@@ -2013,32 +2013,38 @@ Plugin := [].{
 							}
 							(
 								CommandWithBlock({ block: _, command: _, explicit_backend_block: _ }),
-								SelectedWithRelated(
-									{ block, reference_field, related_block },
+								SelectedWithReference(
+									{ reference_field, referenced_block, selected_block },
 								),
 							) => {
-								parsed_block = Plugin.find_parsed_block(kaifile_blocks, block) ? |_|
-									fail(At(block.location), "selected Kaifile block was not parsed")
-								related = Plugin.find_parsed_block(
+								parsed_block = Plugin.find_parsed_block(
 									kaifile_blocks,
-									related_block,
+									selected_block,
 								) ? |_|
 									fail(
-										At(related_block.location),
+										At(selected_block.location),
+										"selected Kaifile block was not parsed",
+									)
+								referenced = Plugin.find_parsed_block(
+									kaifile_blocks,
+									referenced_block,
+								) ? |_|
+									fail(
+										At(referenced_block.location),
 										"referenced Kaifile block was not parsed",
 									)
 								Ok({
 									command_fields: parsed_block.fields,
 									referenced_fields: SelectedReferencedFields({
 										field: reference_field,
-										fields: related.fields,
+										fields: referenced.fields,
 									}),
 								})
 							}
 						}?
 						input = Plugin.ImplementationInput.{
 							backend_target: NoBackendTarget,
-							command_arguments: config_selection.args,
+							command_arguments: normalized_invocation.args,
 							command_fields: parsed.command_fields,
 							host: { arch, os },
 							kaifile_blocks,
@@ -2062,7 +2068,7 @@ Plugin := [].{
 							implementation_fail(diagnostic)
 						prerequisites = Plugin.plan_prerequisite_commands(
 							registry,
-							config_text,
+							kaifile_text,
 							initial_command_plan.prerequisite_commands,
 							os,
 							arch,
@@ -2297,7 +2303,7 @@ Plugin := [].{
 	failure = |plugin, command_name, backend, location, message|
 		{ backend, command: command_name, location, message, plugin }
 
-	implementation_location : ConfigSelection,
+	implementation_location : BlockSelection,
 	[At(U64), None] -> [
 		At(SourceLocation),
 		None,
@@ -2307,15 +2313,15 @@ Plugin := [].{
 			(Selected(block), At(byte_offset)) =>
 				Plugin.relative_location(block, byte_offset)
 			(
-				SelectedWithRelated(
-					{ block, reference_field: _, related_block: _ },
+				SelectedWithReference(
+					{ reference_field: _, referenced_block: _, selected_block },
 				),
 				At(byte_offset),
-			) => Plugin.relative_location(block, byte_offset)
+			) => Plugin.relative_location(selected_block, byte_offset)
 			_ => None
 		}
 
-	relative_location : LocatedConfigBlock, U64 -> [At(SourceLocation), None]
+	relative_location : LocatedBlock, U64 -> [At(SourceLocation), None]
 	relative_location = |block, byte_offset|
 		if byte_offset <= block.body.to_utf8().len() {
 			At(Plugin.translate_location(block, byte_offset))
@@ -2323,7 +2329,7 @@ Plugin := [].{
 			None
 		}
 
-	translate_location : LocatedConfigBlock, U64 -> SourceLocation
+	translate_location : LocatedBlock, U64 -> SourceLocation
 	translate_location = |block, byte_offset|
 		Plugin.translate_bytes(block.body.to_utf8(), byte_offset, 0, block.location)
 

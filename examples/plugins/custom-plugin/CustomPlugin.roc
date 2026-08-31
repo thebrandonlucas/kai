@@ -63,7 +63,7 @@ CustomPlugin := [].{
 				match Fields.get_string(input.command_fields, "message") {
 					Err(_) => Err({
 						byte_offset: None,
-						message: "validated custom configuration is missing 'message'",
+						message: "validated custom block is missing 'message'",
 					})
 					Ok(message) => Ok(
 						Plugin.CommandPlan.{

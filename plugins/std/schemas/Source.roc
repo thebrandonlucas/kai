@@ -1,4 +1,4 @@
-# Shared project configuration for declaring external flake sources.
+# Shared Kaifile block for declaring external flake sources.
 import parser.Fields
 import kai.Kaifile
 import kai.Plugin

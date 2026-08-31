@@ -20,9 +20,9 @@ ImageNix := [].{
 				Plugin.ImplementationDiagnostic,
 			)
 	plan = |input| {
-		config = MachineNix.configuration(input, "image")?
+		spec = MachineNix.machine_spec(input, "image")?
 		prerequisite_commands = MachineNix.service_prerequisite_commands(
-			config.generated_services,
+			spec.generated_services,
 			"image",
 		)
 		services = match input.prerequisite_artifacts {
@@ -33,33 +33,33 @@ ImageNix := [].{
 					return Ok({
 						artifacts: [],
 						prerequisite_commands,
-						requested_packages: config.pkgs,
+						requested_packages: spec.pkgs,
 						steps: [],
 					})
 				}
 			Resolved(artifacts) =>
 				MachineNix.resolve_services(
 					artifacts,
-					config.generated_services,
-					config.target_system,
+					spec.generated_services,
+					spec.target_system,
 				)
 			}?
-		native_services = config.services.keep_if(|service|
-			!config.generated_services.contains(service))
+		native_services = spec.services.keep_if(|service|
+			!spec.generated_services.contains(service))
 		schema : U64
 		schema = 1
 		metadata = Json.to_str({
 			backend: NixBackend.backend.name,
-			flake_attribute: "kaiImages.\"${config.name}\".image",
-			flake_path: NixBackend.image_flake_path(config.name),
+			flake_attribute: "kaiImages.\"${spec.name}\".image",
+			flake_path: NixBackend.image_flake_path(spec.name),
 			format: "qcow2",
 			kind: "machine-image",
-			metadata_path: NixBackend.image_metadata_path(config.name),
-			name: config.name,
-			output_path: NixBackend.image_file_path(config.name),
+			metadata_path: NixBackend.image_metadata_path(spec.name),
+			name: spec.name,
+			output_path: NixBackend.image_file_path(spec.name),
 			schema,
-			target_architecture: config.target_architecture,
-			target_system: config.target_system,
+			target_architecture: spec.target_architecture,
+			target_system: spec.target_system,
 		})
 		Ok(
 			Plugin.CommandPlan.{
@@ -68,28 +68,28 @@ ImageNix := [].{
 						attributes: [
 							{ key: "backend", value: NixBackend.backend.name },
 							{ key: "format", value: "qcow2" },
-							{ key: "target.architecture", value: config.target_architecture },
-							{ key: "target.system", value: config.target_system },
+							{ key: "target.architecture", value: spec.target_architecture },
+							{ key: "target.system", value: spec.target_system },
 						],
 						kind: "kai.machine.image/v1",
-						name: config.name,
-						path: NixBackend.image_file_path(config.name),
+						name: spec.name,
+						path: NixBackend.image_file_path(spec.name),
 					},
 				],
 				prerequisite_commands,
-				requested_packages: config.pkgs,
+				requested_packages: spec.pkgs,
 				steps: NixBackend.image_steps(
-					config.name,
+					spec.name,
 					ImageNix.render_flake(
-						config.name,
-						config.target_system,
-						config.locked_overlays,
-						config.overlays,
+						spec.name,
+						spec.target_system,
+						spec.locked_overlays,
+						spec.overlays,
 						services,
 					),
 					ImageNix.render_module(
-						config.pkgs,
-						config.users,
+						spec.pkgs,
+						spec.users,
 						native_services,
 					),
 					metadata,

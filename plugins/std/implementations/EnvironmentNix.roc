@@ -1,4 +1,4 @@
-# An implementation for interfacing between Kai environment configuration and
+# An implementation for interfacing between Kai environment blocks and
 # the Nix backend.
 import kai.Plugin
 import backends.Nix as NixBackend
@@ -6,8 +6,8 @@ import schemas.EnvironmentConfig
 import schemas.Source
 
 EnvironmentNix := [].{
-	extract_overlays = |config|
-		Plugin.validated_strings(config, EnvironmentConfig.overlays_field)
+	extract_overlays = |fields|
+		Plugin.validated_strings(fields, EnvironmentConfig.overlays_field)
 
 	collect_overlays = |entries, collected|
 		match entries {
