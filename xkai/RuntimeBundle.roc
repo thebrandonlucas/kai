@@ -33,20 +33,4 @@ RuntimeBundle := [].{
 			{ destination: "parser/main.roc", contents: parser_package_source },
 		],
 	}
-
-	custom_dependencies = {
-		plugin: [
-			{ name: "kai", path: "../package.roc" },
-			{ name: "parser", path: "../parser/main.roc" },
-		],
-		schemas: [
-			{ name: "kai", path: "../../package.roc" },
-			{ name: "parser", path: "../../parser/main.roc" },
-		],
-		backends: [{ name: "kai", path: "../../package.roc" }],
-		implementations: [
-			{ name: "kai", path: "../../package.roc" },
-			{ name: "parser", path: "../../parser/main.roc" },
-		],
-	}
 }

@@ -2,6 +2,17 @@
 Assembly := [].{
 	SourceFile := { contents : Str, destination : Str }
 
+	PluginFile := { contents : Str, filename : Str }
+
+	PluginSource := {
+		backends : List(Assembly.PluginFile),
+		implementations : List(Assembly.PluginFile),
+		module_name : Str,
+		module_source : Assembly.PluginFile,
+		package_name : Str,
+		schemas : List(Assembly.PluginFile),
+	}
+
 	Dependency := { name : Str, path : Str }
 
 	SourceBundle := {
@@ -10,34 +21,9 @@ Assembly := [].{
 		files : List(Assembly.SourceFile),
 	}
 
-	RegistryEntry := {
-		app_dependency : Assembly.Dependency,
-		expression : Str,
-		import_line : Str,
-	}
-
-	PluginSource := { contents : Str, filename : Str }
-
-	PluginInput := {
-		backends : List(Assembly.PluginSource),
-		contents : Str,
-		filename : Str,
-		implementations : List(Assembly.PluginSource),
-		module_name : Str,
-		schemas : List(Assembly.PluginSource),
-	}
-
-	CustomDependencies := {
-		backends : List(Assembly.Dependency),
-		implementations : List(Assembly.Dependency),
-		plugin : List(Assembly.Dependency),
-		schemas : List(Assembly.Dependency),
-	}
-
 	BuildProfile := {
 		bundles : List(Assembly.SourceBundle),
-		custom_dependencies : Assembly.CustomDependencies,
-		fallback_entries : List(Assembly.RegistryEntry),
+		embedded_plugins : List(Assembly.PluginSource),
 		platform_url : Str,
 	}
 
@@ -94,7 +80,7 @@ Assembly := [].{
 	component_files :
 		Str,
 		Str,
-		List(Assembly.PluginSource),
+		List(Assembly.PluginFile),
 		List(Assembly.Dependency) -> List(
 			Assembly.SourceFile,
 		)
@@ -114,124 +100,136 @@ Assembly := [].{
 		])
 	}
 
-	plugin_files :
-		Assembly.PluginInput,
-		U64,
-		Assembly.CustomDependencies -> List(
+	nested_dependencies :
+		List(Assembly.Dependency) -> List(Assembly.Dependency)
+	nested_dependencies = |dependencies|
+		dependencies.map(
+			|dependency| {
+				name: dependency.name,
+				path: "../${dependency.path}",
+			},
+		)
+
+	stage_plugin :
+		Assembly.PluginSource,
+		List(Assembly.Dependency) -> List(
 			Assembly.SourceFile,
 		)
-	plugin_files = |plugin, index, dependencies| {
-		package_name = "custom${U64.to_str(index)}"
+	stage_plugin = |declared_plugin, external_dependencies| {
+		package_name = declared_plugin.package_name
+		nested_external_dependencies = Assembly.nested_dependencies(
+			external_dependencies,
+		)
 		package_dependencies = [
 			{ name: "backends", path: "./backends/main.roc" },
 			{ name: "implementations", path: "./implementations/main.roc" },
+			{ name: "kai", path: "../package.roc" },
+			{ name: "parser", path: "../parser/main.roc" },
 			{ name: "schemas", path: "./schemas/main.roc" },
-		].concat(dependencies.plugin)
+		].concat(external_dependencies)
+		component_dependencies = [
+			{ name: "kai", path: "../../package.roc" },
+			{ name: "parser", path: "../../parser/main.roc" },
+		].concat(nested_external_dependencies)
 		implementation_dependencies = [
 			{ name: "backends", path: "../backends/main.roc" },
+			{ name: "kai", path: "../../package.roc" },
+			{ name: "parser", path: "../../parser/main.roc" },
 			{ name: "schemas", path: "../schemas/main.roc" },
-		].concat(dependencies.implementations)
+		].concat(nested_external_dependencies)
 
 		[
 			{
 				destination: "${package_name}/main.roc",
 				contents: Assembly.package_source(
-					[plugin.module_name],
+					[declared_plugin.module_name],
 					package_dependencies,
 				),
 			},
 			{
-				destination: "${package_name}/${plugin.filename}",
-				contents: plugin.contents,
+				destination: "${package_name}/${declared_plugin.module_source.filename}",
+				contents: declared_plugin.module_source.contents,
 			},
 		]
 			.concat(
 				Assembly.component_files(
 					package_name,
 					"schemas",
-					plugin.schemas,
-					dependencies.schemas,
+					declared_plugin.schemas,
+					component_dependencies,
 				),
 			)
 			.concat(
 				Assembly.component_files(
 					package_name,
 					"backends",
-					plugin.backends,
-					dependencies.backends,
+					declared_plugin.backends,
+					component_dependencies,
 				),
 			)
 			.concat(
 				Assembly.component_files(
 					package_name,
 					"implementations",
-					plugin.implementations,
+					declared_plugin.implementations,
 					implementation_dependencies,
 				),
 			)
 	}
 
-	custom_files_from :
-		List(Assembly.PluginInput),
-		Assembly.CustomDependencies,
-		U64 -> List(
+	stage_plugins :
+		List(Assembly.PluginSource),
+		List(Assembly.Dependency) -> List(
 			Assembly.SourceFile,
 		)
-	custom_files_from = |plugins, dependencies, index|
+	stage_plugins = |plugins, external_dependencies|
 		match plugins {
 			[] => []
-			[first, .. as rest] => Assembly.plugin_files(
+			[first, .. as rest] => Assembly.stage_plugin(
 				first,
-				index,
-				dependencies,
-			).concat(
-				Assembly.custom_files_from(rest, dependencies, index + 1),
-			)
+				external_dependencies,
+			).concat(Assembly.stage_plugins(rest, external_dependencies))
 		}
 
-	make_custom_files :
-		List(Assembly.PluginInput),
-		Assembly.CustomDependencies -> List(
-			Assembly.SourceFile,
-		)
-	make_custom_files = |plugins, dependencies|
-		Assembly.custom_files_from(plugins, dependencies, 0)
+	plugin_dependency : Assembly.PluginSource -> Assembly.Dependency
+	plugin_dependency = |declared_plugin| {
+		name: declared_plugin.package_name,
+		path: "../${declared_plugin.package_name}/main.roc",
+	}
 
-	make_custom_entries : List(Assembly.PluginInput) -> List(
-		Assembly.RegistryEntry,
-	)
-	make_custom_entries = |plugins|
-		plugins.map_with_index(
-			|plugin, index| {
-				name = "Custom${U64.to_str(index)}"
-				package_name = "custom${U64.to_str(index)}"
-				{
-					app_dependency: { name: package_name, path: "./${package_name}/main.roc" },
-					import_line: "import ${package_name}.${plugin.module_name} as ${name}",
-					expression: "${name}.plugin",
-				}
-			},
-		)
+	app_dependency : Assembly.PluginSource -> Assembly.Dependency
+	app_dependency = |declared_plugin| {
+		name: declared_plugin.package_name,
+		path: "./${declared_plugin.package_name}/main.roc",
+	}
 
 	render_app :
-		Str,
-		List(Assembly.SourceBundle),
-		List(Assembly.RegistryEntry),
-		List(
-			Assembly.RegistryEntry,
-		) -> Str
-	render_app = |platform_url, bundles, custom_entries, fallback_entries| {
-		dependencies = Assembly.bundle_dependencies(bundles)
-			.concat(fallback_entries.map(|entry| entry.app_dependency))
-			.concat(custom_entries.map(|entry| entry.app_dependency))
+		Str, List(Assembly.SourceBundle), List(Assembly.PluginSource) -> Str
+	render_app = |platform_url, bundles, plugins| {
+		dependencies = Assembly.bundle_dependencies(bundles).concat(
+			plugins.map(Assembly.app_dependency),
+		)
 		dependency_lines = dependencies.map(
 			|dependency| "\t${dependency.name}: \"${dependency.path}\",",
 		)
-		import_lines = Assembly.bundle_imports(bundles)
-			.concat(fallback_entries.map(|entry| entry.import_line))
-			.concat(custom_entries.map(|entry| entry.import_line))
-		registry_lines = custom_entries.concat(fallback_entries).map(
-			|entry| "\t${entry.expression},",
+		import_lines = Assembly.bundle_imports(bundles).concat(
+			plugins.map_with_index(
+				|declared_plugin, index|
+					Str.join_with(
+						[
+							"import ",
+							declared_plugin.package_name,
+							".",
+							declared_plugin.module_name,
+							" as Plugin",
+							U64.to_str(index),
+						],
+						"",
+					),
+			),
+		)
+		registry_lines = plugins.map_with_index(
+			|_, index| "\tPlugin${U64.to_str(index)}.plugin,",
 		)
 
 		Str.join_with(
@@ -278,20 +276,20 @@ Assembly := [].{
 		}
 	}
 
-	validate_plugin_sources : List(Assembly.PluginSource) -> Try(
+	validate_plugin_files : List(Assembly.PluginFile) -> Try(
 		{},
 		Assembly.AssemblyProblem,
 	)
-	validate_plugin_sources = |sources|
-		match sources {
+	validate_plugin_files = |files|
+		match files {
 			[] => Ok({})
 			[first, .. as rest] => {
 				Assembly.validate_module_filename(first.filename)?
-				Assembly.validate_plugin_sources(rest)
+				Assembly.validate_plugin_files(rest)
 			}
 		}
 
-	validate_plugins : List(Assembly.PluginInput) -> Try(
+	validate_plugins : List(Assembly.PluginSource) -> Try(
 		{},
 		Assembly.AssemblyProblem,
 	)
@@ -299,10 +297,10 @@ Assembly := [].{
 		match plugins {
 			[] => Ok({})
 			[first, .. as rest] => {
-				Assembly.validate_module_filename(first.filename)?
-				Assembly.validate_plugin_sources(first.schemas)?
-				Assembly.validate_plugin_sources(first.backends)?
-				Assembly.validate_plugin_sources(first.implementations)?
+				Assembly.validate_module_filename(first.module_source.filename)?
+				Assembly.validate_plugin_files(first.schemas)?
+				Assembly.validate_plugin_files(first.backends)?
+				Assembly.validate_plugin_files(first.implementations)?
 				Assembly.validate_plugins(rest)
 			}
 		}
@@ -332,26 +330,32 @@ Assembly := [].{
 
 	assemble :
 		Assembly.BuildProfile,
-		List(Assembly.PluginInput) -> Try(
+		List(Assembly.PluginSource) -> Try(
 			Assembly.BuildPlan,
 			Assembly.AssemblyProblem,
 		)
-	assemble = |profile, plugins| {
+	assemble = |profile, custom_plugins| {
+		plugins = custom_plugins.concat(profile.embedded_plugins)
 		Assembly.validate_plugins(plugins)?
-		assembled_custom_files = Assembly.make_custom_files(
-			plugins,
-			profile.custom_dependencies,
+		embedded_dependencies = profile.embedded_plugins.map(
+			Assembly.plugin_dependency,
 		)
-		assembled_custom_entries = Assembly.make_custom_entries(plugins)
+		staged_custom_plugins = Assembly.stage_plugins(
+			custom_plugins,
+			embedded_dependencies,
+		)
+		staged_embedded_plugins = Assembly.stage_plugins(
+			profile.embedded_plugins,
+			[],
+		)
 		assembled_app_source = Assembly.render_app(
 			profile.platform_url,
 			profile.bundles,
-			assembled_custom_entries,
-			profile.fallback_entries,
+			plugins,
 		)
-		assembled_files = Assembly.bundle_files(profile.bundles).concat(
-			assembled_custom_files,
-		)
+		assembled_files = Assembly.bundle_files(profile.bundles)
+			.concat(staged_custom_plugins)
+			.concat(staged_embedded_plugins)
 		Assembly.validate_destinations(
 			assembled_files.concat([
 				{ destination: "main.roc", contents: assembled_app_source },

@@ -1,5 +1,5 @@
 package
-	[GuixBundle, GuixPlugin]
+	[GuixPlugin]
 	{
 		backends: "./backends/main.roc",
 		implementations: "./implementations/main.roc",

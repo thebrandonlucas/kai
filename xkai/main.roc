@@ -19,26 +19,10 @@ print_usage! = |_| {
 	Ok({})
 }
 
-custom_dependencies = {
-	plugin: RuntimeBundle.custom_dependencies.plugin.concat(
-		StdBundle.custom_dependencies.plugin,
-	),
-	schemas: RuntimeBundle.custom_dependencies.schemas.concat(
-		StdBundle.custom_dependencies.schemas,
-	),
-	backends: RuntimeBundle.custom_dependencies.backends.concat(
-		StdBundle.custom_dependencies.backends,
-	),
-	implementations: RuntimeBundle.custom_dependencies.implementations.concat(
-		StdBundle.custom_dependencies.implementations,
-	),
-}
-
 stock_profile = {
 	platform_url: RuntimeBundle.platform_url,
-	bundles: [RuntimeBundle.source_bundle, StdBundle.source_bundle],
-	custom_dependencies,
-	fallback_entries: [StdBundle.registry_entry],
+	bundles: [RuntimeBundle.source_bundle],
+	embedded_plugins: [StdBundle.plugin_source],
 }
 
 main! = |args| {
