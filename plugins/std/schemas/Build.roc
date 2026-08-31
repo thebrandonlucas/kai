@@ -1,7 +1,7 @@
 # Shared interface for `build` artifact/executable commands
 import kai.Kaifile
 import kai.Plugin
-import configs.EnvironmentConfig
+import EnvironmentConfig
 
 Build := [].{
 	inputs_field = Kaifile.optional("inputs", StringList)

@@ -2,7 +2,7 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Task as TaskCommand
+import schemas.Task as TaskCommand
 import EnvironmentNix
 
 TaskNix := [].{

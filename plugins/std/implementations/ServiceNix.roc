@@ -2,9 +2,9 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Build as BuildCommand
-import commands.Secret as SecretCommand
-import commands.Service as ServiceCommand
+import schemas.Build as BuildCommand
+import schemas.Secret as SecretCommand
+import schemas.Service as ServiceCommand
 
 ServiceNix := [].{
 	implementation : Plugin.Implementation

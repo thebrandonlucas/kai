@@ -1,7 +1,7 @@
 # An implementation for building machine images with nix.
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Image as ImageCommand
+import schemas.Image as ImageCommand
 import MachineNix
 
 ImageNix := [].{

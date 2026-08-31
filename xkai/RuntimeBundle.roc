@@ -39,7 +39,7 @@ RuntimeBundle := [].{
 			{ name: "kai", path: "../package.roc" },
 			{ name: "parser", path: "../parser/main.roc" },
 		],
-		commands: [
+		schemas: [
 			{ name: "kai", path: "../../package.roc" },
 			{ name: "parser", path: "../../parser/main.roc" },
 		],

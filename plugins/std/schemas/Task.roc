@@ -4,7 +4,7 @@
 # They pair naturally with workflows to run tasks in series i.e for CI.
 import kai.Kaifile
 import kai.Plugin
-import configs.EnvironmentConfig
+import EnvironmentConfig
 
 Task := [].{
 	fields = [

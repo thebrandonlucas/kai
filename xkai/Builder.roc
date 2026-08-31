@@ -58,7 +58,7 @@ Builder := [].{
 			filename,
 			module_name: filename.drop_suffix(".roc"),
 			contents: Path.read_utf8!(path)?,
-			commands: Builder.load_component!(source_root, "commands")?,
+			schemas: Builder.load_component!(source_root, "schemas")?,
 			backends: Builder.load_component!(source_root, "backends")?,
 			implementations: Builder.load_component!(source_root, "implementations")?,
 		})

@@ -1,17 +1,18 @@
 # Standard plugin definition for Kai's built-in Nix commands.
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Build as BuildCommand
-import commands.Image as ImageCommand
-import commands.Machine as MachineCommand
-import commands.Secret as SecretCommand
-import commands.Service as ServiceCommand
-import commands.Shell as ShellCommand
-import commands.Task as TaskCommand
-import commands.Update as UpdateCommand
-import commands.Workflow as WorkflowCommand
-import configs.EnvironmentConfig
-import configs.MachineConfig
+import schemas.Build as BuildCommand
+import schemas.EnvironmentConfig
+import schemas.Image as ImageCommand
+import schemas.Machine as MachineCommand
+import schemas.MachineConfig
+import schemas.Secret as SecretCommand
+import schemas.Service as ServiceCommand
+import schemas.Shell as ShellCommand
+import schemas.Source
+import schemas.Task as TaskCommand
+import schemas.Update as UpdateCommand
+import schemas.Workflow as WorkflowCommand
 import implementations.BuildNix
 import implementations.ImageNix
 import implementations.MachineNix
@@ -20,7 +21,6 @@ import implementations.ShellNix
 import implementations.TaskNix
 import implementations.UpdateNix
 import implementations.WorkflowNix
-import project_configs.Source
 
 ## `StdPlugin` is the standard plugin shipped for most `kai` users.
 ##

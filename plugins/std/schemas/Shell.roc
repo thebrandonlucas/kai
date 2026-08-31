@@ -1,7 +1,7 @@
 # Shared `command` interface for developer shell packages and overlays
 import kai.Kaifile
 import kai.Plugin
-import configs.EnvironmentConfig
+import EnvironmentConfig
 
 # TODO: how to make this code more self documenting ie,
 # I want to be able to know easily:

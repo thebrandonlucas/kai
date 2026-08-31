@@ -2,7 +2,7 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Build as BuildCommand
+import schemas.Build as BuildCommand
 import EnvironmentNix
 
 BuildNix := [].{

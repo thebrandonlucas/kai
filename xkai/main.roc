@@ -23,8 +23,8 @@ custom_dependencies = {
 	plugin: RuntimeBundle.custom_dependencies.plugin.concat(
 		StdBundle.custom_dependencies.plugin,
 	),
-	commands: RuntimeBundle.custom_dependencies.commands.concat(
-		StdBundle.custom_dependencies.commands,
+	schemas: RuntimeBundle.custom_dependencies.schemas.concat(
+		StdBundle.custom_dependencies.schemas,
 	),
 	backends: RuntimeBundle.custom_dependencies.backends.concat(
 		StdBundle.custom_dependencies.backends,

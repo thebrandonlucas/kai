@@ -1,7 +1,7 @@
 # Demonstrate the composition of two plugins
 import kai.Plugin as PluginApi
 import backends.Local
-import commands.SplitCommand
+import schemas.SplitCommand
 import implementations.SplitLocal
 
 Plugin := [].{

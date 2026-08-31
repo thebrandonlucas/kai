@@ -1,7 +1,7 @@
 # An implementation of the `shell` command in Guix
 import kai.Plugin
 import backends.Guix as GuixBackend
-import commands.Shell as ShellCommand
+import schemas.Shell as ShellCommand
 
 ShellGuix := [].{
 	implementation : Plugin.Implementation

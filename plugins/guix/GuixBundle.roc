@@ -2,7 +2,7 @@
 # standalone kai binary.
 import "GuixPlugin.roc" as guix_plugin_source : Str
 import "backends/Guix.roc" as guix_backend_source : Str
-import "commands/Shell.roc" as shell_command_source : Str
+import "schemas/Shell.roc" as shell_schema_source : Str
 import "implementations/ShellGuix.roc" as shell_guix_source : Str
 
 GuixBundle := [].{
@@ -30,9 +30,9 @@ GuixBundle := [].{
 					["GuixPlugin"],
 					[
 						{ name: "backends", path: "./backends/main.roc" },
-						{ name: "commands", path: "./commands/main.roc" },
 						{ name: "implementations", path: "./implementations/main.roc" },
 						{ name: "kai", path: "../package.roc" },
+						{ name: "schemas", path: "./schemas/main.roc" },
 					],
 				),
 			},
@@ -46,7 +46,7 @@ GuixBundle := [].{
 			},
 			{ destination: "guix/backends/Guix.roc", contents: guix_backend_source },
 			{
-				destination: "guix/commands/main.roc",
+				destination: "guix/schemas/main.roc",
 				contents: GuixBundle.package_source(
 					["Shell"],
 					[
@@ -55,15 +55,15 @@ GuixBundle := [].{
 					],
 				),
 			},
-			{ destination: "guix/commands/Shell.roc", contents: shell_command_source },
+			{ destination: "guix/schemas/Shell.roc", contents: shell_schema_source },
 			{
 				destination: "guix/implementations/main.roc",
 				contents: GuixBundle.package_source(
 					["ShellGuix"],
 					[
 						{ name: "backends", path: "../backends/main.roc" },
-						{ name: "commands", path: "../commands/main.roc" },
 						{ name: "kai", path: "../../package.roc" },
+						{ name: "schemas", path: "../schemas/main.roc" },
 					],
 				),
 			},
@@ -76,9 +76,9 @@ GuixBundle := [].{
 
 	custom_dependencies = {
 		plugin: [{ name: "guix", path: "../guix/main.roc" }],
-		commands: [{ name: "guix", path: "../../guix/main.roc" }],
 		backends: [{ name: "guix", path: "../../guix/main.roc" }],
 		implementations: [{ name: "guix", path: "../../guix/main.roc" }],
+		schemas: [{ name: "guix", path: "../../guix/main.roc" }],
 	}
 
 	registry_entry = {

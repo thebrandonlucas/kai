@@ -2,8 +2,8 @@
 # the Nix backend.
 import kai.Plugin
 import backends.Nix as NixBackend
-import configs.EnvironmentConfig
-import project_configs.Source
+import schemas.EnvironmentConfig
+import schemas.Source
 
 EnvironmentNix := [].{
 	extract_overlays = |config|

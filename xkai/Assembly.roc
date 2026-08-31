@@ -20,18 +20,18 @@ Assembly := [].{
 
 	PluginInput := {
 		backends : List(Assembly.PluginSource),
-		commands : List(Assembly.PluginSource),
 		contents : Str,
 		filename : Str,
 		implementations : List(Assembly.PluginSource),
 		module_name : Str,
+		schemas : List(Assembly.PluginSource),
 	}
 
 	CustomDependencies := {
 		backends : List(Assembly.Dependency),
-		commands : List(Assembly.Dependency),
 		implementations : List(Assembly.Dependency),
 		plugin : List(Assembly.Dependency),
+		schemas : List(Assembly.Dependency),
 	}
 
 	BuildProfile := {
@@ -124,12 +124,12 @@ Assembly := [].{
 		package_name = "custom${U64.to_str(index)}"
 		package_dependencies = [
 			{ name: "backends", path: "./backends/main.roc" },
-			{ name: "commands", path: "./commands/main.roc" },
 			{ name: "implementations", path: "./implementations/main.roc" },
+			{ name: "schemas", path: "./schemas/main.roc" },
 		].concat(dependencies.plugin)
 		implementation_dependencies = [
 			{ name: "backends", path: "../backends/main.roc" },
-			{ name: "commands", path: "../commands/main.roc" },
+			{ name: "schemas", path: "../schemas/main.roc" },
 		].concat(dependencies.implementations)
 
 		[
@@ -148,9 +148,9 @@ Assembly := [].{
 			.concat(
 				Assembly.component_files(
 					package_name,
-					"commands",
-					plugin.commands,
-					dependencies.commands,
+					"schemas",
+					plugin.schemas,
+					dependencies.schemas,
 				),
 			)
 			.concat(
@@ -300,7 +300,7 @@ Assembly := [].{
 			[] => Ok({})
 			[first, .. as rest] => {
 				Assembly.validate_module_filename(first.filename)?
-				Assembly.validate_plugin_sources(first.commands)?
+				Assembly.validate_plugin_sources(first.schemas)?
 				Assembly.validate_plugin_sources(first.backends)?
 				Assembly.validate_plugin_sources(first.implementations)?
 				Assembly.validate_plugins(rest)

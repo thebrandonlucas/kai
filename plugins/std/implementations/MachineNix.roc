@@ -2,8 +2,8 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Machine as MachineCommand
-import configs.MachineConfig
+import schemas.Machine as MachineCommand
+import schemas.MachineConfig
 import EnvironmentNix
 
 MachineNix := [].{

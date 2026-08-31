@@ -1,7 +1,7 @@
 # Implementation of the `split` command with the `local` backend
 import kai.Plugin
 import backends.Local
-import commands.SplitCommand
+import schemas.SplitCommand
 
 SplitLocal := [].{
 	implementation : Plugin.Implementation

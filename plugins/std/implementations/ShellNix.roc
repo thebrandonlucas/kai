@@ -1,8 +1,8 @@
 # An implementation for defining nix devShells
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Shell as ShellCommand
-import configs.EnvironmentConfig
+import schemas.EnvironmentConfig
+import schemas.Shell as ShellCommand
 import EnvironmentNix
 
 ShellNix := [].{
