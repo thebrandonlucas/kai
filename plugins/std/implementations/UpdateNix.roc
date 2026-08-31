@@ -6,7 +6,6 @@ import EnvironmentNix
 UpdateNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [NixBackend.flake_template].concat(NixBackend.update_lock_templates),
 		backend: NixBackend.backend.name,
 		command: UpdateCommand.command.name,
 		plan: UpdateNix.plan,
@@ -22,18 +21,15 @@ UpdateNix := [].{
 	plan = |input| {
 		overlays = EnvironmentNix.all_overlays(input)?
 		sources = EnvironmentNix.all_sources(input)?
+		flake = NixBackend.render_update_flake(overlays, sources)
 		Ok(
 			Plugin.CommandPlan.{
-				actions: [],
 				artifacts: [],
-				outputs: [
-					{
-						name: "flake",
-						text: NixBackend.render_update_flake(overlays, sources),
-					},
-				],
 				prerequisite_commands: [],
 				requested_packages: [],
+				steps: [NixBackend.write_flake_step(flake)].concat(
+					NixBackend.update_lock_steps,
+				),
 			},
 		)
 	}

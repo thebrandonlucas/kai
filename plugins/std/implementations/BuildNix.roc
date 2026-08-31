@@ -8,7 +8,6 @@ import EnvironmentNix
 BuildNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [],
 		backend: NixBackend.backend.name,
 		command: BuildCommand.command.name,
 		plan: BuildNix.plan,
@@ -78,12 +77,6 @@ BuildNix := [].{
 		})
 		Ok(
 			Plugin.CommandPlan.{
-				actions: NixBackend.build_artifact_actions(
-					name,
-					flake,
-					build_nix,
-					build_json,
-				),
 				artifacts: [
 					{
 						attributes: [
@@ -96,9 +89,14 @@ BuildNix := [].{
 						path: NixBackend.build_artifact_path(name),
 					},
 				],
-				outputs: [],
 				prerequisite_commands: [],
 				requested_packages: pkgs,
+				steps: NixBackend.build_artifact_steps(
+					name,
+					flake,
+					build_nix,
+					build_json,
+				),
 			},
 		)
 	}

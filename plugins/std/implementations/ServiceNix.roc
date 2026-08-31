@@ -9,7 +9,6 @@ import commands.Service as ServiceCommand
 ServiceNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [],
 		backend: NixBackend.backend.name,
 		command: ServiceCommand.command.name,
 		plan: ServiceNix.plan,
@@ -70,12 +69,6 @@ ServiceNix := [].{
 					expression = ServiceNix.render_expression(name, pkgs_flake, target.system)
 					Ok(
 						Plugin.CommandPlan.{
-							actions: NixBackend.service_actions(
-								name,
-								build.path,
-								module_text,
-								expression,
-							),
 							artifacts: [
 								{
 									attributes: [
@@ -88,20 +81,24 @@ ServiceNix := [].{
 									path: NixBackend.service_artifact_path(name),
 								},
 							],
-							outputs: [],
 							prerequisite_commands,
 							requested_packages: [],
+							steps: NixBackend.service_steps(
+								name,
+								build.path,
+								module_text,
+								expression,
+							),
 						},
 					)
 				}
 				NotResolved =>
 					Ok(
 						Plugin.CommandPlan.{
-							actions: [],
 							artifacts: [],
-							outputs: [],
 							prerequisite_commands,
 							requested_packages: [],
+							steps: [],
 						},
 					)
 				}

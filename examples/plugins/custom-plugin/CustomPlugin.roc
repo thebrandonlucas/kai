@@ -57,12 +57,6 @@ CustomPlugin := [].{
 	implementations : List(Plugin.Implementation)
 	implementations = [
 		Plugin.Implementation.{
-			actions: [
-				WriteConfigUtf8({
-					output: "message",
-					path: "custom-plugin-output.txt",
-				}),
-			],
 			backend: "local",
 			command: command.name,
 			plan: |input|
@@ -73,11 +67,15 @@ CustomPlugin := [].{
 					})
 					Ok(message) => Ok(
 						Plugin.CommandPlan.{
-							actions: [],
 							artifacts: [],
-							outputs: [{ name: "message", text: message }],
 							prerequisite_commands: [],
 							requested_packages: [],
+							steps: [
+								WriteFile({
+									contents: message,
+									path: "custom-plugin-output.txt",
+								}),
+							],
 						},
 					)
 				},

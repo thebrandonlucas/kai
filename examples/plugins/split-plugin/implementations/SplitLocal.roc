@@ -6,21 +6,19 @@ import commands.SplitCommand
 SplitLocal := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [
-			WriteConfigUtf8({
-				output: "message",
-				path: "split-plugin-output.txt",
-			}),
-		],
 		backend: Local.backend.name,
 		command: SplitCommand.command.name,
 		plan: |_| Ok(
 			Plugin.CommandPlan.{
-				actions: [],
 				artifacts: [],
-				outputs: [{ name: "message", text: "split plugin worked" }],
 				prerequisite_commands: [],
 				requested_packages: [],
+				steps: [
+					WriteFile({
+						contents: "split plugin worked",
+						path: "split-plugin-output.txt",
+					}),
+				],
 			},
 		),
 		validator: NoValidation,

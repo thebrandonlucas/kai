@@ -125,25 +125,25 @@ Executor := [].{
 
 	execute! : Plugin.ExecutionPlan => Try({}, _)
 	execute! = |execution_plan| {
-		for action in execution_plan.actions {
-			Executor.execute_action!(action)?
+		for step in execution_plan.steps {
+			Executor.execute_step!(step)?
 		}
 		Ok({})
 	}
 
-	execute_action! : Plugin.Action => Try({}, _)
-	execute_action! = |action|
-		match action {
+	execute_step! : Plugin.ExecutionStep => Try({}, _)
+	execute_step! = |step|
+		match step {
 			PrintLine(line) => Stdout.line!(line)
-			WriteUtf8({ content, path }) => {
+			WriteFile({ contents, path }) => {
 				parent_parts = Str.split_on(path, "/").drop_last(1)
 				if !parent_parts.is_empty() {
 					Path.create_all!(Path.utf8(Str.join_with(parent_parts, "/")))?
 				}
-				Path.write_utf8!(Path.utf8(path), content)?
+				Path.write_utf8!(Path.utf8(path), contents)?
 				Stdout.line!("wrote: ${path}")
 			}
-			Exec({ args, command }) =>
-				Cmd.exec!(OsStr.utf8(command), args.map(OsStr.utf8))
+			RunProgram({ arguments, program }) =>
+				Cmd.exec!(OsStr.utf8(program), arguments.map(OsStr.utf8))
 			}
 }

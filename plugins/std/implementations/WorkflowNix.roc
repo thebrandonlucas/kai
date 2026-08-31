@@ -7,7 +7,6 @@ import commands.Workflow as WorkflowCommand
 WorkflowNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [],
 		backend: NixBackend.backend.name,
 		command: WorkflowCommand.command.name,
 		plan: WorkflowNix.plan,
@@ -34,11 +33,10 @@ WorkflowNix := [].{
 			prerequisite_commands = WorkflowNix.parse_steps(steps)?
 			Ok(
 				Plugin.CommandPlan.{
-					actions: [],
 					artifacts: [],
-					outputs: [],
 					prerequisite_commands,
 					requested_packages: [],
+					steps: [],
 				},
 			)
 		}

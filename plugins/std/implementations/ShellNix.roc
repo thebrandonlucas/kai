@@ -6,12 +6,8 @@ import configs.EnvironmentConfig
 import EnvironmentNix
 
 ShellNix := [].{
-	shell_nix_actions = [NixBackend.flake_template]
-		.concat(NixBackend.lock_templates)
-		.concat([NixBackend.develop_template])
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: shell_nix_actions,
 		backend: NixBackend.backend.name,
 		command: ShellCommand.command.name,
 		validator: Validate({
@@ -38,11 +34,17 @@ ShellNix := [].{
 			EnvironmentConfig.packages_field,
 		)?
 		overlays = EnvironmentNix.extract_overlays(input.command_fields)?
-		EnvironmentNix.command_plan(
+		command_plan = EnvironmentNix.command_plan(
 			input,
 			pkgs,
 			overlays,
 			"unsupported shell platform",
-		)
+		)?
+		Ok({
+			..command_plan,
+			steps: command_plan.steps
+				.concat(NixBackend.lock_steps)
+				.concat([NixBackend.develop_step]),
+		})
 	}
 }

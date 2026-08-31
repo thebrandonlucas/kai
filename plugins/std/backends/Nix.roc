@@ -304,13 +304,14 @@ Nix := [].{
 		),
 	]
 
-	flake_template : Plugin.ActionTemplate
-	flake_template = WriteConfigUtf8({ output: "flake", path: ".kai/flake.nix" })
+	write_flake_step : Str -> Plugin.ExecutionStep
+	write_flake_step = |flake|
+		WriteFile({ contents: flake, path: ".kai/flake.nix" })
 
-	lock_templates : List(Plugin.ActionTemplate)
-	lock_templates = [
-		Exec({
-			args: [
+	lock_steps : List(Plugin.ExecutionStep)
+	lock_steps = [
+		RunProgram({
+			arguments: [
 				"flake",
 				"lock",
 				"path:.kai",
@@ -319,10 +320,10 @@ Nix := [].{
 				"--output-lock-file",
 				"kai.lock",
 			],
-			command: backend.name,
+			program: backend.name,
 		}),
-		Exec({
-			args: [
+		RunProgram({
+			arguments: [
 				"flake",
 				"lock",
 				"path:.kai",
@@ -331,24 +332,24 @@ Nix := [].{
 				"--output-lock-file",
 				".kai/flake.lock",
 			],
-			command: backend.name,
+			program: backend.name,
 		}),
 	]
 
-	develop_template : Plugin.ActionTemplate
-	develop_template = Exec({
-		args: [
+	develop_step : Plugin.ExecutionStep
+	develop_step = RunProgram({
+		arguments: [
 			"develop",
 			"path:.kai#default",
 			"--no-update-lock-file",
 		],
-		command: backend.name,
+		program: backend.name,
 	})
 
-	update_lock_templates : List(Plugin.ActionTemplate)
-	update_lock_templates = [
-		Exec({
-			args: [
+	update_lock_steps : List(Plugin.ExecutionStep)
+	update_lock_steps = [
+		RunProgram({
+			arguments: [
 				"flake",
 				"update",
 				"--flake",
@@ -358,10 +359,10 @@ Nix := [].{
 				"--output-lock-file",
 				"kai.lock",
 			],
-			command: backend.name,
+			program: backend.name,
 		}),
-		Exec({
-			args: [
+		RunProgram({
+			arguments: [
 				"flake",
 				"lock",
 				"path:.kai",
@@ -370,7 +371,7 @@ Nix := [].{
 				"--output-lock-file",
 				".kai/flake.lock",
 			],
-			command: backend.name,
+			program: backend.name,
 		}),
 	]
 
@@ -380,15 +381,15 @@ Nix := [].{
 	build_flake_path : Str -> Str
 	build_flake_path = |name| ".kai/builds/${name}"
 
-	build_artifact_actions : Str, Str, Str, Str -> List(Plugin.Action)
-	build_artifact_actions = |name, flake, build_nix, build_json| {
+	build_artifact_steps : Str, Str, Str, Str -> List(Plugin.ExecutionStep)
+	build_artifact_steps = |name, flake, build_nix, build_json| {
 		flake_path = Nix.build_flake_path(name)
 		[
-			WriteUtf8({ content: flake, path: "${flake_path}/flake.nix" }),
-			WriteUtf8({ content: build_nix, path: "${flake_path}/build.nix" }),
-			WriteUtf8({ content: build_json, path: "${flake_path}/build.json" }),
-			Exec({
-				args: [
+			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
+			WriteFile({ contents: build_nix, path: "${flake_path}/build.nix" }),
+			WriteFile({ contents: build_json, path: "${flake_path}/build.json" }),
+			RunProgram({
+				arguments: [
 					"flake",
 					"lock",
 					"path:${flake_path}",
@@ -397,10 +398,10 @@ Nix := [].{
 					"--output-lock-file",
 					"kai.lock",
 				],
-				command: backend.name,
+				program: backend.name,
 			}),
-			Exec({
-				args: [
+			RunProgram({
+				arguments: [
 					"flake",
 					"lock",
 					"path:${flake_path}",
@@ -409,18 +410,18 @@ Nix := [].{
 					"--output-lock-file",
 					"${flake_path}/flake.lock",
 				],
-				command: backend.name,
+				program: backend.name,
 			}),
-			WriteUtf8({ content: "", path: ".kai/artifacts/builds/.keep" }),
-			Exec({
-				args: [
+			WriteFile({ contents: "", path: ".kai/artifacts/builds/.keep" }),
+			RunProgram({
+				arguments: [
 					"build",
 					"--file",
 					"${flake_path}/build.nix",
 					"--out-link",
 					Nix.build_artifact_path(name),
 				],
-				command: backend.name,
+				program: backend.name,
 			}),
 		]
 	}
@@ -428,16 +429,16 @@ Nix := [].{
 	service_artifact_path : Str -> Str
 	service_artifact_path = |name| ".kai/artifacts/.services/${name}"
 
-	service_actions : Str, Str, Str, Str -> List(Plugin.Action)
-	service_actions = |name, build_artifact, module_text, expression| {
+	service_steps : Str, Str, Str, Str -> List(Plugin.ExecutionStep)
+	service_steps = |name, build_artifact, module_text, expression| {
 		source_path = ".kai/services/${name}"
 		artifact_path = "${source_path}/artifact"
 		[
-			WriteUtf8({ content: module_text, path: "${source_path}/module.nix" }),
-			WriteUtf8({ content: expression, path: "${source_path}/default.nix" }),
-			Exec({ args: ["-rf", "--", artifact_path], command: "rm" }),
-			Exec({
-				args: [
+			WriteFile({ contents: module_text, path: "${source_path}/module.nix" }),
+			WriteFile({ contents: expression, path: "${source_path}/default.nix" }),
+			RunProgram({ arguments: ["-rf", "--", artifact_path], program: "rm" }),
+			RunProgram({
+				arguments: [
 					"--recursive",
 					"--dereference",
 					"--preserve=mode",
@@ -445,18 +446,18 @@ Nix := [].{
 					build_artifact,
 					artifact_path,
 				],
-				command: "cp",
+				program: "cp",
 			}),
-			WriteUtf8({ content: "", path: ".kai/artifacts/.services/.keep" }),
-			Exec({
-				args: [
+			WriteFile({ contents: "", path: ".kai/artifacts/.services/.keep" }),
+			RunProgram({
+				arguments: [
 					"build",
 					"--file",
 					"${source_path}/default.nix",
 					"--out-link",
 					Nix.service_artifact_path(name),
 				],
-				command: backend.name,
+				program: backend.name,
 			}),
 		]
 	}
@@ -470,47 +471,47 @@ Nix := [].{
 	machine_metadata_path : Str -> Str
 	machine_metadata_path = |name| ".kai/artifacts/machines/${name}/metadata.json"
 
-	service_copy_actions : Str, List(Plugin.Artifact) -> List(Plugin.Action)
-	service_copy_actions = |flake_path, services| {
+	service_copy_steps : Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
+	service_copy_steps = |flake_path, services| {
 		service_path = "${flake_path}/services"
 		[
-			Exec({ args: ["-rf", service_path], command: "rm" }),
-			Exec({ args: ["-p", service_path], command: "mkdir" }),
+			RunProgram({ arguments: ["-rf", service_path], program: "rm" }),
+			RunProgram({ arguments: ["-p", service_path], program: "mkdir" }),
 		].concat(
 			services.map(
 				|service|
-					Exec({
-						args: [
+					RunProgram({
+						arguments: [
 							"-RH",
 							"--preserve=mode",
 							"--",
 							service.path,
 							"${service_path}/${service.name}",
 						],
-						command: "cp",
+						program: "cp",
 					}),
 			),
 		).concat([
-			Exec({
-				args: ["-R", "u+w", "--", service_path],
-				command: "chmod",
+			RunProgram({
+				arguments: ["-R", "u+w", "--", service_path],
+				program: "chmod",
 			}),
 		])
 	}
 
-	machine_actions :
-		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.Action)
-	machine_actions = |name, flake, module_text, metadata, services| {
+	machine_steps :
+		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
+	machine_steps = |name, flake, module_text, metadata, services| {
 		flake_path = Nix.machine_flake_path(name)
 		metadata_path = Nix.machine_metadata_path(name)
 		[
-			# Empty metadata invalidates an older artifact before any fallible action.
-			WriteUtf8({ content: "", path: metadata_path }),
-			WriteUtf8({ content: flake, path: "${flake_path}/flake.nix" }),
-			WriteUtf8({ content: module_text, path: "${flake_path}/machine.nix" }),
-		].concat(Nix.service_copy_actions(flake_path, services)).concat([
-			Exec({
-				args: [
+			# Empty metadata invalidates an older artifact before any fallible step.
+			WriteFile({ contents: "", path: metadata_path }),
+			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
+			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
+		].concat(Nix.service_copy_steps(flake_path, services)).concat([
+			RunProgram({
+				arguments: [
 					"flake",
 					"lock",
 					"path:${flake_path}",
@@ -519,10 +520,10 @@ Nix := [].{
 					"--output-lock-file",
 					"kai.lock",
 				],
-				command: backend.name,
+				program: backend.name,
 			}),
-			Exec({
-				args: [
+			RunProgram({
+				arguments: [
 					"flake",
 					"lock",
 					"path:${flake_path}",
@@ -531,20 +532,20 @@ Nix := [].{
 					"--output-lock-file",
 					"${flake_path}/flake.lock",
 				],
-				command: backend.name,
+				program: backend.name,
 			}),
-			WriteUtf8({ content: "", path: ".kai/artifacts/machines/${name}/.keep" }),
-			Exec({
-				args: [
+			WriteFile({ contents: "", path: ".kai/artifacts/machines/${name}/.keep" }),
+			RunProgram({
+				arguments: [
 					"build",
 					"path:${flake_path}#kaiMachines.\"${name}\".closure",
 					"--no-update-lock-file",
 					"--out-link",
 					Nix.machine_closure_path(name),
 				],
-				command: backend.name,
+				program: backend.name,
 			}),
-			WriteUtf8({ content: metadata, path: metadata_path }),
+			WriteFile({ contents: metadata, path: metadata_path }),
 		])
 	}
 
@@ -560,18 +561,18 @@ Nix := [].{
 	image_metadata_path : Str -> Str
 	image_metadata_path = |name| ".kai/artifacts/images/${name}/metadata.json"
 
-	image_actions :
-		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.Action)
-	image_actions = |name, flake, module_text, metadata, services| {
+	image_steps :
+		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
+	image_steps = |name, flake, module_text, metadata, services| {
 		flake_path = Nix.image_flake_path(name)
 		metadata_path = Nix.image_metadata_path(name)
 		[
-			WriteUtf8({ content: "", path: metadata_path }),
-			WriteUtf8({ content: flake, path: "${flake_path}/flake.nix" }),
-			WriteUtf8({ content: module_text, path: "${flake_path}/machine.nix" }),
-		].concat(Nix.service_copy_actions(flake_path, services)).concat([
-			Exec({
-				args: [
+			WriteFile({ contents: "", path: metadata_path }),
+			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
+			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
+		].concat(Nix.service_copy_steps(flake_path, services)).concat([
+			RunProgram({
+				arguments: [
 					"flake",
 					"lock",
 					"path:${flake_path}",
@@ -580,10 +581,10 @@ Nix := [].{
 					"--output-lock-file",
 					"kai.lock",
 				],
-				command: backend.name,
+				program: backend.name,
 			}),
-			Exec({
-				args: [
+			RunProgram({
+				arguments: [
 					"flake",
 					"lock",
 					"path:${flake_path}",
@@ -592,34 +593,34 @@ Nix := [].{
 					"--output-lock-file",
 					"${flake_path}/flake.lock",
 				],
-				command: backend.name,
+				program: backend.name,
 			}),
-			WriteUtf8({ content: "", path: ".kai/artifacts/images/${name}/.keep" }),
-			Exec({
-				args: [
+			WriteFile({ contents: "", path: ".kai/artifacts/images/${name}/.keep" }),
+			RunProgram({
+				arguments: [
 					"build",
 					"path:${flake_path}#kaiImages.\"${name}\".image",
 					"--no-update-lock-file",
 					"--out-link",
 					Nix.image_output_path(name),
 				],
-				command: backend.name,
+				program: backend.name,
 			}),
-			WriteUtf8({ content: metadata, path: metadata_path }),
+			WriteFile({ contents: metadata, path: metadata_path }),
 		])
 	}
 
-	develop_command_actions : List(Str) -> List(Plugin.Action)
-	develop_command_actions = |run|
+	develop_command_steps : List(Str) -> List(Plugin.ExecutionStep)
+	develop_command_steps = |run|
 		[
-			Exec({
-				args: [
+			RunProgram({
+				arguments: [
 					"develop",
 					"path:.kai#default",
 					"--no-update-lock-file",
 					"--command",
 				].concat(run),
-				command: backend.name,
+				program: backend.name,
 			}),
 		]
 }

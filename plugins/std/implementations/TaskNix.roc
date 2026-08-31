@@ -8,7 +8,6 @@ import EnvironmentNix
 TaskNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [NixBackend.flake_template].concat(NixBackend.lock_templates),
 		backend: NixBackend.backend.name,
 		command: TaskCommand.command.name,
 		plan: TaskNix.plan,
@@ -44,6 +43,11 @@ TaskNix := [].{
 			overlays,
 			"unsupported task platform",
 		)?
-		Ok({ ..result, actions: NixBackend.develop_command_actions(run) })
+		Ok({
+			..result,
+			steps: result.steps
+				.concat(NixBackend.lock_steps)
+				.concat(NixBackend.develop_command_steps(run)),
+		})
 	}
 }

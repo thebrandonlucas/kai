@@ -89,11 +89,10 @@ EnvironmentNix := [].{
 		)?
 		Ok(
 			Plugin.CommandPlan.{
-				actions: [],
 				artifacts: [],
-				outputs: [{ name: "flake", text: flake }],
 				prerequisite_commands: [],
 				requested_packages: pkgs,
+				steps: [NixBackend.write_flake_step(flake)],
 			},
 		)
 	}

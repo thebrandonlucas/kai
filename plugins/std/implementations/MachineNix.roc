@@ -9,7 +9,6 @@ import EnvironmentNix
 MachineNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [],
 		backend: NixBackend.backend.name,
 		command: MachineCommand.command.name,
 		plan: MachineNix.plan,
@@ -142,11 +141,10 @@ MachineNix := [].{
 					Ok([])
 				} else {
 					return Ok({
-						actions: [],
 						artifacts: [],
-						outputs: [],
 						prerequisite_commands,
 						requested_packages: config.pkgs,
+						steps: [],
 					})
 				}
 			Resolved(artifacts) =>
@@ -184,13 +182,6 @@ MachineNix := [].{
 		metadata = MachineNix.render_metadata(machine_metadata)
 		Ok(
 			Plugin.CommandPlan.{
-				actions: NixBackend.machine_actions(
-					config.name,
-					flake,
-					module_text,
-					metadata,
-					services,
-				),
 				artifacts: [
 					{
 						attributes: [
@@ -206,9 +197,15 @@ MachineNix := [].{
 						path: NixBackend.machine_closure_path(config.name),
 					},
 				],
-				outputs: [],
 				prerequisite_commands,
 				requested_packages: config.pkgs,
+				steps: NixBackend.machine_steps(
+					config.name,
+					flake,
+					module_text,
+					metadata,
+					services,
+				),
 			},
 		)
 	}

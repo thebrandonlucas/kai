@@ -6,7 +6,6 @@ import commands.Shell as ShellCommand
 ShellGuix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [],
 		backend: GuixBackend.backend.name,
 		command: ShellCommand.command.name,
 		plan: ShellGuix.plan,
@@ -37,16 +36,15 @@ ShellGuix := [].{
 		)?
 		Ok(
 			Plugin.CommandPlan.{
-				actions: [
-					Exec({
-						args: ["shell", "--pure"].concat(pkgs),
-						command: GuixBackend.backend.name,
-					}),
-				],
 				artifacts: [],
-				outputs: [],
 				prerequisite_commands: [],
 				requested_packages: pkgs,
+				steps: [
+					RunProgram({
+						arguments: ["shell", "--pure"].concat(pkgs),
+						program: GuixBackend.backend.name,
+					}),
+				],
 			},
 		)
 	}

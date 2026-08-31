@@ -7,7 +7,6 @@ import MachineNix
 ImageNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
-		actions: [],
 		backend: NixBackend.backend.name,
 		command: ImageCommand.command.name,
 		plan: ImageNix.plan,
@@ -32,11 +31,10 @@ ImageNix := [].{
 					Ok([])
 				} else {
 					return Ok({
-						actions: [],
 						artifacts: [],
-						outputs: [],
 						prerequisite_commands,
 						requested_packages: config.pkgs,
+						steps: [],
 					})
 				}
 			Resolved(artifacts) =>
@@ -65,7 +63,22 @@ ImageNix := [].{
 		})
 		Ok(
 			Plugin.CommandPlan.{
-				actions: NixBackend.image_actions(
+				artifacts: [
+					{
+						attributes: [
+							{ key: "backend", value: NixBackend.backend.name },
+							{ key: "format", value: "qcow2" },
+							{ key: "target.architecture", value: config.target_architecture },
+							{ key: "target.system", value: config.target_system },
+						],
+						kind: "kai.machine.image/v1",
+						name: config.name,
+						path: NixBackend.image_file_path(config.name),
+					},
+				],
+				prerequisite_commands,
+				requested_packages: config.pkgs,
+				steps: NixBackend.image_steps(
 					config.name,
 					ImageNix.render_flake(
 						config.name,
@@ -82,22 +95,6 @@ ImageNix := [].{
 					metadata,
 					services,
 				),
-				artifacts: [
-					{
-						attributes: [
-							{ key: "backend", value: NixBackend.backend.name },
-							{ key: "format", value: "qcow2" },
-							{ key: "target.architecture", value: config.target_architecture },
-							{ key: "target.system", value: config.target_system },
-						],
-						kind: "kai.machine.image/v1",
-						name: config.name,
-						path: NixBackend.image_file_path(config.name),
-					},
-				],
-				outputs: [],
-				prerequisite_commands,
-				requested_packages: config.pkgs,
 			},
 		)
 	}

@@ -157,11 +157,11 @@ Examples := [].{
 		Ok({ arch, args, os })
 	}
 
-	written_content = |actions, path|
-		match actions {
+	written_content = |steps, path|
+		match steps {
 			[] => ""
-			[WriteUtf8({ content, path: written_path }), .. as rest] =>
-				if written_path == path content else Examples.written_content(rest, path)
+			[WriteFile({ contents, path: written_path }), .. as rest] =>
+				if written_path == path contents else Examples.written_content(rest, path)
 			[_, .. as rest] => Examples.written_content(rest, path)
 		}
 
@@ -182,7 +182,7 @@ Examples := [].{
 						path,
 						problem: Str.inspect(problem),
 					})
-				if plan.actions.is_empty() {
+				if plan.steps.is_empty() {
 					Err(EmptyExamplePlan({ args: first.args, path }))
 				} else {
 					Examples.check_invocations(source, path, rest)

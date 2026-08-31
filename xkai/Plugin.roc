@@ -8,25 +8,15 @@ Plugin := [].{
 	HostOs : [LINUX, MACOS, OTHER(Str)]
 	HostArch : [X86, X64, ARM, AARCH64, OTHER(Str)]
 
-	# Side effects to be performed by a plugin.
-	Action := [
-		Exec({ args : List(Str), command : Str }),
+	# Side effects to be performed later by the executor.
+	ExecutionStep := [
 		PrintLine(Str),
-		WriteUtf8({ content : Str, path : Str }),
+		RunProgram({ arguments : List(Str), program : Str }),
+		WriteFile({ contents : Str, path : Str }),
 	].{
 		encoder_for : _
 		parser_for : _
 	}
-
-	ActionTemplate : [
-		Exec(
-			{
-				args : List(Str),
-				command : Str,
-			},
-		),
-		WriteConfigUtf8({ output : Str, path : Str }),
-	]
 
 	AsciiByte : [AsciiDigit, AsciiLowercase, AsciiUppercase, ExactByte(U8)]
 	ByteRange := { max : U8, min : U8 }
@@ -265,8 +255,8 @@ Plugin := [].{
 	# DeterminateSystemKind or missing any other specified Package)
 	# then we give a Fallback prompt to help them or advise.
 	Fallback := {
-		actions : List(Action),
 		prompt : [DefaultPrompt, Prompt(Str)],
+		steps : List(ExecutionStep),
 	}
 
 	Backend := {
@@ -1019,15 +1009,6 @@ Plugin := [].{
 		),
 	]
 
-	# Text that will get written to disk.
-	# "name" is what our plugin would name
-	# the output internally, e.g. "flake",
-	# the text is the actual text inside flake.nix
-	RenderedOutput := {
-		name : Str,
-		text : Str,
-	}
-
 	PrerequisiteCommand := {
 		arguments : List(Str),
 		description : Str,
@@ -1046,11 +1027,10 @@ Plugin := [].{
 		}
 
 	CommandPlan := {
-		actions : List(Action),
 		artifacts : List(Artifact),
-		outputs : List(RenderedOutput),
 		prerequisite_commands : List(PrerequisiteCommand),
 		requested_packages : List(Str),
+		steps : List(ExecutionStep),
 	}
 
 	ImplementationDiagnostic := {
@@ -1059,7 +1039,6 @@ Plugin := [].{
 	}
 
 	Implementation := {
-		actions : List(ActionTemplate),
 		backend : Str,
 		command : Str,
 		plan : ImplementationInput -> Try(CommandPlan, ImplementationDiagnostic),
@@ -1873,12 +1852,12 @@ Plugin := [].{
 	registry_failure = |plugin, message| Err({ message, plugin })
 
 	ExecutionPlan := {
-		actions : List(Action),
 		artifacts : List(Artifact),
 		backend : Backend,
 		command : Str,
 		plugin : Str,
 		requested_packages : List(Str),
+		steps : List(ExecutionStep),
 	}.{
 		encoder_for : _
 		parser_for : _
@@ -2127,22 +2106,16 @@ Plugin := [].{
 								)
 							}
 						}
-						base_plan = Plugin.lower(
-							implementation,
-							command_plan,
-							plugin,
-							backend,
-						) ? |diagnostic| implementation_fail(diagnostic)
 						Ok(
 							Plugin.ExecutionPlan.{
-								actions: prerequisites.actions.concat(base_plan.actions),
-								artifacts: prerequisites.artifacts.concat(base_plan.artifacts),
-								backend: base_plan.backend,
-								command: base_plan.command,
-								plugin: base_plan.plugin,
+								artifacts: prerequisites.artifacts.concat(command_plan.artifacts),
+								backend,
+								command: implementation.command,
+								plugin,
 								requested_packages: prerequisites.requested_packages.concat(
-									base_plan.requested_packages,
+									command_plan.requested_packages,
 								),
+								steps: prerequisites.steps.concat(command_plan.steps),
 							},
 						)
 					}
@@ -2161,16 +2134,16 @@ Plugin := [].{
 		Str,
 		Str -> Try(
 			{
-				actions : List(Action),
 				artifacts : List(Artifact),
 				requested_packages : List(Str),
+				steps : List(ExecutionStep),
 			},
 			Error,
 		)
 	plan_prerequisite_commands =
 		|defs, text, commands, os, arch, parents, depth, plugin, cmd, back|
 			match commands {
-				[] => Ok({ actions: [], artifacts: [], requested_packages: [] })
+				[] => Ok({ artifacts: [], requested_packages: [], steps: [] })
 				[first, .. as rest] => {
 					child = Plugin.plan_registry_nested(
 						defs,
@@ -2212,12 +2185,12 @@ Plugin := [].{
 						back,
 					)?
 					Ok({
-						actions: [PrintLine(first.description)].concat(child.actions).concat(
-							remaining.actions,
-						),
 						artifacts: child.artifacts.concat(remaining.artifacts),
 						requested_packages: child.requested_packages.concat(
 							remaining.requested_packages,
+						),
+						steps: [PrintLine(first.description)].concat(child.steps).concat(
+							remaining.steps,
 						),
 					})
 				}
@@ -2386,77 +2359,4 @@ Plugin := [].{
 			)
 		}
 
-	# Convert pure action templates into a runtime plan.
-	lower : Implementation,
-	CommandPlan,
-	Str,
-	Backend -> Try(
-		ExecutionPlan,
-		ImplementationDiagnostic,
-	)
-	lower = |implementation, command_plan, plugin, backend| {
-		actions = Plugin.lower_actions(
-			implementation.actions,
-			command_plan.outputs,
-		)?
-		Ok(
-			Plugin.ExecutionPlan.{
-				actions: actions.concat(command_plan.actions),
-				artifacts: command_plan.artifacts,
-				backend,
-				command: implementation.command,
-				plugin,
-				requested_packages: command_plan.requested_packages,
-			},
-		)
-	}
-
-	lower_actions :
-		List(ActionTemplate),
-		List(RenderedOutput) -> Try(
-			List(Action),
-			ImplementationDiagnostic,
-		)
-	lower_actions = |templates, outputs|
-		match templates {
-			[] => Ok([])
-			[first, .. as rest] => {
-				# At present there are two actions, Exec
-				# and WriteConfigUtf8 (write a file).
-				# For WriteConfigUtf8, we have a list of rendered
-				# output files
-				action = match first {
-					Exec(exec) => Ok(Exec(exec))
-
-					WriteConfigUtf8({ output, path }) =>
-						match Plugin.find_output(outputs, output) {
-							Ok(content) => Ok(WriteUtf8({ content, path }))
-							Err(diagnostic) => Err(diagnostic)
-						}
-					}?
-				rest_actions = Plugin.lower_actions(rest, outputs)?
-				Ok([action].concat(rest_actions))
-			}
-		}
-
-	find_output : List(RenderedOutput), Str -> Try(Str, ImplementationDiagnostic)
-	find_output = |outputs, expected_name|
-		match outputs {
-			[] => Err({
-				byte_offset: None,
-				message: Str.join_with(
-					[
-						"plugin implementation did not return named output ",
-						"'${expected_name}'",
-					],
-					"",
-				),
-			})
-			[first, .. as rest] =>
-				if first.name == expected_name {
-					Ok(first.text)
-				} else {
-					Plugin.find_output(rest, expected_name)
-				}
-			}
 }
