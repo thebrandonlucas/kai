@@ -172,8 +172,8 @@ Plugin := [].{
 			Err({ location: None, message: Plugin.validation_message(failures) })
 		}
 
-	renderer_validation : List(Str) -> Try({}, RendererDiagnostic)
-	renderer_validation = |failures|
+	implementation_validation : List(Str) -> Try({}, ImplementationDiagnostic)
+	implementation_validation = |failures|
 		if failures.is_empty() {
 			Ok({})
 		} else {
@@ -276,10 +276,15 @@ Plugin := [].{
 		required_packages : List(Package),
 	}
 
-	BackendTarget := {
+	SupportedBackendTarget := {
 		arch : HostArch,
 		os : HostOs,
 		value : Str,
+	}
+
+	Host := {
+		arch : HostArch,
+		os : HostOs,
 	}
 
 	SourceLocation := {
@@ -955,12 +960,12 @@ Plugin := [].{
 				}
 			}
 
-	RelatedConfig : [
-		NoRelatedConfig,
-		SelectedRelatedConfig(
+	ReferencedFields : [
+		NoReferencedFields,
+		SelectedReferencedFields(
 			{
-				config : Fields.ParsedFields,
 				field : Str,
+				fields : Fields.ParsedFields,
 			},
 		),
 	]
@@ -983,17 +988,16 @@ Plugin := [].{
 		parser_for : _
 	}
 
-	RenderContext := {
-		args : List(Str),
-		config : Fields.ParsedFields,
-		config_block : [NoConfigBlock, SelectedConfigBlock(LocatedConfigBlock)],
-		dependencies_resolved : Bool,
-		dependency_artifacts : List(Artifact),
-		host_arch : HostArch,
-		host_os : HostOs,
+	PrerequisiteArtifacts : [NotResolved, Resolved(List(Artifact))]
+
+	ImplementationInput := {
+		backend_target : [BackendTarget(Str), NoBackendTarget],
+		command_arguments : List(Str),
+		command_fields : Fields.ParsedFields,
+		host : Host,
 		kaifile_blocks : List(ParsedBlock),
-		related_config : RelatedConfig,
-		target : [NoTarget, SelectedTarget(Str)],
+		prerequisite_artifacts : PrerequisiteArtifacts,
+		referenced_fields : ReferencedFields,
 	}
 
 	StringListValidation := {
@@ -1004,7 +1008,7 @@ Plugin := [].{
 	TargetValidation : [
 		NoTargetValidation,
 		SupportedTargets(
-			{ message : Str, supported : List(BackendTarget) },
+			{ message : Str, supported : List(SupportedBackendTarget) },
 		),
 	]
 
@@ -1024,66 +1028,65 @@ Plugin := [].{
 		text : Str,
 	}
 
-	PlanRequest := {
-		args : List(Str),
-		status : Str,
+	PrerequisiteCommand := {
+		arguments : List(Str),
+		description : Str,
 	}
 
-	same_plan_requests : List(PlanRequest), List(PlanRequest) -> Bool
-	same_plan_requests = |left, right|
+	same_prerequisite_commands :
+		List(PrerequisiteCommand), List(PrerequisiteCommand) -> Bool
+	same_prerequisite_commands = |left, right|
 		match (left, right) {
 			([], []) => Bool.True
 			([left_first, .. as left_rest], [right_first, .. as right_rest]) =>
-				left_first.args == right_first.args and
-					left_first.status == right_first.status and
-						Plugin.same_plan_requests(left_rest, right_rest)
+				left_first.arguments == right_first.arguments and
+					left_first.description == right_first.description and
+						Plugin.same_prerequisite_commands(left_rest, right_rest)
 			_ => Bool.False
 		}
 
-	RenderResult := {
+	CommandPlan := {
 		actions : List(Action),
 		artifacts : List(Artifact),
 		outputs : List(RenderedOutput),
-		requests : List(PlanRequest),
+		prerequisite_commands : List(PrerequisiteCommand),
 		requested_packages : List(Str),
 	}
 
-	RendererDiagnostic := {
+	ImplementationDiagnostic := {
 		byte_offset : [At(U64), None],
 		message : Str,
 	}
-
-	Renderer : RenderContext -> Try(RenderResult, RendererDiagnostic)
 
 	Implementation := {
 		actions : List(ActionTemplate),
 		backend : Str,
 		command : Str,
-		renderer : Renderer,
+		plan : ImplementationInput -> Try(CommandPlan, ImplementationDiagnostic),
 		validator : Validator,
 	}
 
-	blocks_of_kind : RenderContext, List(Str) -> List(ParsedBlock)
-	blocks_of_kind = |context, kinds|
-		context.kaifile_blocks.keep_if(|block| kinds.contains(block.kind))
+	blocks_of_kind : ImplementationInput, List(Str) -> List(ParsedBlock)
+	blocks_of_kind = |input, kinds|
+		input.kaifile_blocks.keep_if(|block| kinds.contains(block.kind))
 
-	reference_config :
-		RenderContext, Str -> Try(Fields.ParsedFields, RendererDiagnostic)
-	reference_config = |context, field|
-		match context.related_config {
-			NoRelatedConfig => Err({
+	referenced_fields :
+		ImplementationInput, Str -> Try(Fields.ParsedFields, ImplementationDiagnostic)
+	referenced_fields = |input, field|
+		match input.referenced_fields {
+			NoReferencedFields => Err({
 				byte_offset: None,
-				message: "validated configuration has no reference field '${field}'",
+				message: "validated command block has no reference field '${field}'",
 			})
-			SelectedRelatedConfig({ config, field: selected_field }) =>
+			SelectedReferencedFields({ field: selected_field, fields }) =>
 				if selected_field == field {
-					Ok(config)
+					Ok(fields)
 				} else {
 					Err({
 						byte_offset: None,
 						message: Str.join_with(
 							[
-								"validated configuration reference field",
+								"validated command block reference field",
 								"'${selected_field}' does not match '${field}'",
 							],
 							" ",
@@ -1092,37 +1095,37 @@ Plugin := [].{
 				}
 			}
 
-	validate_render_context : RenderContext,
+	validate_implementation_input : ImplementationInput,
 	Validator -> Try(
-		RenderContext,
-		RendererDiagnostic,
+		ImplementationInput,
+		ImplementationDiagnostic,
 	)
-	validate_render_context = |context, validator|
+	validate_implementation_input = |input, validator|
 		match validator {
-			NoValidation => Ok(context)
+			NoValidation => Ok(input)
 			Validate({ string_lists, target }) => {
-				selected_target = match target {
-					NoTargetValidation => Ok(NoTarget)
+				backend_target = match target {
+					NoTargetValidation => Ok(NoBackendTarget)
 					SupportedTargets({ message, supported }) =>
-						match Plugin.target_value(supported, context.host_os, context.host_arch) {
-							Ok(value) => Ok(SelectedTarget(value))
+						match Plugin.target_value(supported, input.host.os, input.host.arch) {
+							Ok(value) => Ok(BackendTarget(value))
 							Err(_) => Err({ byte_offset: None, message })
 						}
 					}?
-				failures = Plugin.validate_string_list_fields(context.config, string_lists)?
-				Plugin.renderer_validation(failures)?
+				failures = Plugin.validate_string_list_fields(
+					input.command_fields,
+					string_lists,
+				)?
+				Plugin.implementation_validation(failures)?
 				Ok(
-					Plugin.RenderContext.{
-						args: context.args,
-						config: context.config,
-						config_block: context.config_block,
-						dependencies_resolved: context.dependencies_resolved,
-						dependency_artifacts: context.dependency_artifacts,
-						host_arch: context.host_arch,
-						host_os: context.host_os,
-						kaifile_blocks: context.kaifile_blocks,
-						related_config: context.related_config,
-						target: selected_target,
+					Plugin.ImplementationInput.{
+						backend_target,
+						command_arguments: input.command_arguments,
+						command_fields: input.command_fields,
+						host: input.host,
+						kaifile_blocks: input.kaifile_blocks,
+						prerequisite_artifacts: input.prerequisite_artifacts,
+						referenced_fields: input.referenced_fields,
 					},
 				)
 			}
@@ -1132,7 +1135,7 @@ Plugin := [].{
 		Fields.ParsedFields,
 		List(StringListValidation) -> Try(
 			List(Str),
-			RendererDiagnostic,
+			ImplementationDiagnostic,
 		)
 	validate_string_list_fields = |config, validations|
 		match validations {
@@ -1147,7 +1150,7 @@ Plugin := [].{
 	validated_strings : Fields.ParsedFields,
 	KaifileField -> Try(
 		List(Str),
-		RendererDiagnostic,
+		ImplementationDiagnostic,
 	)
 	validated_strings = |config, declared_field| {
 		field = Kaifile.parser_field(declared_field)
@@ -1167,17 +1170,18 @@ Plugin := [].{
 		}
 	}
 
-	validated_target : RenderContext -> Try(Str, RendererDiagnostic)
-	validated_target = |context|
-		match context.target {
-			SelectedTarget(value) => Ok(value)
-			NoTarget => Err({
+	validated_backend_target :
+		ImplementationInput -> Try(Str, ImplementationDiagnostic)
+	validated_backend_target = |input|
+		match input.backend_target {
+			BackendTarget(value) => Ok(value)
+			NoBackendTarget => Err({
 				byte_offset: None,
 				message: "implementation requires a validated backend target",
 			})
 		}
 
-	target_value : List(BackendTarget),
+	target_value : List(SupportedBackendTarget),
 	HostOs,
 	HostArch -> Try(
 		Str,
@@ -1868,7 +1872,7 @@ Plugin := [].{
 	registry_failure : Str, Str -> Try({}, RegistryDiagnostic)
 	registry_failure = |plugin, message| Err({ message, plugin })
 
-	Plan := {
+	ExecutionPlan := {
 		actions : List(Action),
 		artifacts : List(Artifact),
 		backend : Backend,
@@ -1886,7 +1890,7 @@ Plugin := [].{
 	List(Str),
 	HostOs,
 	HostArch -> Try(
-		Plan,
+		ExecutionPlan,
 		Error,
 	)
 	plan_registry = |registry, config_text, args, os, arch|
@@ -1900,7 +1904,7 @@ Plugin := [].{
 		HostArch,
 		List(List(Str)),
 		U64 -> Try(
-			Plan,
+			ExecutionPlan,
 			Error,
 		)
 	plan_registry_nested =
@@ -1954,9 +1958,9 @@ Plugin := [].{
 						)
 
 					if List.any(ancestors, |ancestor| ancestor == args) {
-						Err(fail(None, "plan request cycle detected"))
+						Err(fail(None, "prerequisite command cycle detected"))
 					} else if depth >= 64 {
-						Err(fail(None, "plan request nesting exceeds 64 levels"))
+						Err(fail(None, "prerequisite command nesting exceeds 64 levels"))
 					} else {
 						Plugin.validate_command_arguments(
 							declared_command,
@@ -1989,9 +1993,8 @@ Plugin := [].{
 							fail(diagnostic.location, diagnostic.message)
 						parsed = match (selected_command, selection) {
 							(CommandOnly(_), _) => Ok({
-								config: Fields.empty,
-								config_block: NoConfigBlock,
-								related_config: NoRelatedConfig,
+								command_fields: Fields.empty,
+								referenced_fields: NoReferencedFields,
 							})
 							(
 								CommandWithBlock(
@@ -2001,9 +2004,8 @@ Plugin := [].{
 							) =>
 								match schema.selection {
 									OptionalBlock => Ok({
-										config: Fields.empty,
-										config_block: NoConfigBlock,
-										related_config: NoRelatedConfig,
+										command_fields: Fields.empty,
+										referenced_fields: NoReferencedFields,
 									})
 									RequiredBlock | ByOptionalArgument(_) =>
 										Err(
@@ -2026,9 +2028,8 @@ Plugin := [].{
 								parsed_block = Plugin.find_parsed_block(kaifile_blocks, block) ? |_|
 									fail(At(block.location), "selected Kaifile block was not parsed")
 								Ok({
-									config: parsed_block.fields,
-									config_block: SelectedConfigBlock(block),
-									related_config: NoRelatedConfig,
+									command_fields: parsed_block.fields,
+									referenced_fields: NoReferencedFields,
 								})
 							}
 							(
@@ -2048,46 +2049,42 @@ Plugin := [].{
 										"referenced Kaifile block was not parsed",
 									)
 								Ok({
-									config: parsed_block.fields,
-									config_block: SelectedConfigBlock(block),
-									related_config: SelectedRelatedConfig({
-										config: related.fields,
+									command_fields: parsed_block.fields,
+									referenced_fields: SelectedReferencedFields({
 										field: reference_field,
+										fields: related.fields,
 									}),
 								})
 							}
 						}?
-						context = Plugin.RenderContext.{
-							args: config_selection.args,
-							config: parsed.config,
-							config_block: parsed.config_block,
-							dependencies_resolved: Bool.False,
-							dependency_artifacts: [],
-							host_arch: arch,
-							host_os: os,
+						input = Plugin.ImplementationInput.{
+							backend_target: NoBackendTarget,
+							command_arguments: config_selection.args,
+							command_fields: parsed.command_fields,
+							host: { arch, os },
 							kaifile_blocks,
-							related_config: parsed.related_config,
-							target: NoTarget,
+							prerequisite_artifacts: NotResolved,
+							referenced_fields: parsed.referenced_fields,
 						}
-						renderer_fail = |diagnostic|
+						implementation_fail = |diagnostic|
 							fail(
-								Plugin.renderer_location(
+								Plugin.implementation_location(
 									selection,
 									diagnostic.byte_offset,
 								),
 								diagnostic.message,
 							)
-						validated_context = Plugin.validate_render_context(
-							context,
+						validated_input = Plugin.validate_implementation_input(
+							input,
 							implementation.validator,
-						) ? |diagnostic| renderer_fail(diagnostic)
-						renderer = implementation.renderer
-						initial_render = renderer(validated_context) ? |diagnostic|
-							renderer_fail(diagnostic)
-						requested = Plugin.plan_requests(
+						) ? |diagnostic| implementation_fail(diagnostic)
+						plan_implementation = implementation.plan
+						initial_command_plan = plan_implementation(validated_input) ? |diagnostic|
+							implementation_fail(diagnostic)
+						prerequisites = Plugin.plan_prerequisite_commands(
 							registry,
 							config_text,
-							initial_render.requests,
+							initial_command_plan.prerequisite_commands,
 							os,
 							arch,
 							[args].concat(ancestors),
@@ -2096,36 +2093,33 @@ Plugin := [].{
 							selected_command_name,
 							backend.name,
 						)?
-						rendered = if initial_render.requests.is_empty() {
-							initial_render
+						command_plan = if initial_command_plan.prerequisite_commands.is_empty() {
+							initial_command_plan
 						} else {
-							with_dependencies = renderer(
-								Plugin.RenderContext.{
-									args: validated_context.args,
-									config: validated_context.config,
-									config_block: validated_context.config_block,
-									dependencies_resolved: Bool.True,
-									dependency_artifacts: requested.artifacts,
-									host_arch: validated_context.host_arch,
-									host_os: validated_context.host_os,
-									kaifile_blocks: validated_context.kaifile_blocks,
-									related_config: validated_context.related_config,
-									target: validated_context.target,
+							with_prerequisite_artifacts = plan_implementation(
+								Plugin.ImplementationInput.{
+									backend_target: validated_input.backend_target,
+									command_arguments: validated_input.command_arguments,
+									command_fields: validated_input.command_fields,
+									host: validated_input.host,
+									kaifile_blocks: validated_input.kaifile_blocks,
+									prerequisite_artifacts: Resolved(prerequisites.artifacts),
+									referenced_fields: validated_input.referenced_fields,
 								},
-							) ? |diagnostic| renderer_fail(diagnostic)
-							if Plugin.same_plan_requests(
-								with_dependencies.requests,
-								initial_render.requests,
+							) ? |diagnostic| implementation_fail(diagnostic)
+							if Plugin.same_prerequisite_commands(
+								with_prerequisite_artifacts.prerequisite_commands,
+								initial_command_plan.prerequisite_commands,
 							) {
-								with_dependencies
+								with_prerequisite_artifacts
 							} else {
 								return Err(
 									fail(
 										None,
 										Str.join_with(
 											[
-												"plan requests changed after",
-												"dependencies resolved",
+												"prerequisite commands changed after",
+												"artifacts resolved",
 											],
 											" ",
 										),
@@ -2135,18 +2129,18 @@ Plugin := [].{
 						}
 						base_plan = Plugin.lower(
 							implementation,
-							rendered,
+							command_plan,
 							plugin,
 							backend,
-						) ? |diagnostic| renderer_fail(diagnostic)
+						) ? |diagnostic| implementation_fail(diagnostic)
 						Ok(
-							Plugin.Plan.{
-								actions: requested.actions.concat(base_plan.actions),
-								artifacts: requested.artifacts.concat(base_plan.artifacts),
+							Plugin.ExecutionPlan.{
+								actions: prerequisites.actions.concat(base_plan.actions),
+								artifacts: prerequisites.artifacts.concat(base_plan.artifacts),
 								backend: base_plan.backend,
 								command: base_plan.command,
 								plugin: base_plan.plugin,
-								requested_packages: requested.requested_packages.concat(
+								requested_packages: prerequisites.requested_packages.concat(
 									base_plan.requested_packages,
 								),
 							},
@@ -2155,10 +2149,10 @@ Plugin := [].{
 				}
 			}
 
-	plan_requests :
+	plan_prerequisite_commands :
 		List(Definition),
 		Str,
-		List(PlanRequest),
+		List(PrerequisiteCommand),
 		HostOs,
 		HostArch,
 		List(List(Str)),
@@ -2173,60 +2167,61 @@ Plugin := [].{
 			},
 			Error,
 		)
-	plan_requests = |defs, text, reqs, os, arch, parents, depth, plugin, cmd, back|
-		match reqs {
-			[] => Ok({ actions: [], artifacts: [], requested_packages: [] })
-			[first, .. as rest] => {
-				child = Plugin.plan_registry_nested(
-					defs,
-					text,
-					first.args,
-					os,
-					arch,
-					parents,
-					depth,
-				) ? |error|
-					match error {
-						UnknownCommand => PlanningFailed(
-							Plugin.failure(
-								plugin,
-								cmd,
-								back,
-								None,
-								Str.join_with(
-									[
-										"plan request refers to unknown command",
-										"'${first.args.first() ?? ""}'",
-									],
-									" ",
+	plan_prerequisite_commands =
+		|defs, text, commands, os, arch, parents, depth, plugin, cmd, back|
+			match commands {
+				[] => Ok({ actions: [], artifacts: [], requested_packages: [] })
+				[first, .. as rest] => {
+					child = Plugin.plan_registry_nested(
+						defs,
+						text,
+						first.arguments,
+						os,
+						arch,
+						parents,
+						depth,
+					) ? |error|
+						match error {
+							UnknownCommand => PlanningFailed(
+								Plugin.failure(
+									plugin,
+									cmd,
+									back,
+									None,
+									Str.join_with(
+										[
+											"prerequisite command refers to unknown command",
+											"'${first.arguments.first() ?? ""}'",
+										],
+										" ",
+									),
 								),
-							),
-						)
-						PlanningFailed(diagnostic) => PlanningFailed(diagnostic)
-					}
-				remaining = Plugin.plan_requests(
-					defs,
-					text,
-					rest,
-					os,
-					arch,
-					parents,
-					depth,
-					plugin,
-					cmd,
-					back,
-				)?
-				Ok({
-					actions: [PrintLine(first.status)].concat(child.actions).concat(
-						remaining.actions,
-					),
-					artifacts: child.artifacts.concat(remaining.artifacts),
-					requested_packages: child.requested_packages.concat(
-						remaining.requested_packages,
-					),
-				})
+							)
+							PlanningFailed(diagnostic) => PlanningFailed(diagnostic)
+						}
+					remaining = Plugin.plan_prerequisite_commands(
+						defs,
+						text,
+						rest,
+						os,
+						arch,
+						parents,
+						depth,
+						plugin,
+						cmd,
+						back,
+					)?
+					Ok({
+						actions: [PrintLine(first.description)].concat(child.actions).concat(
+							remaining.actions,
+						),
+						artifacts: child.artifacts.concat(remaining.artifacts),
+						requested_packages: child.requested_packages.concat(
+							remaining.requested_packages,
+						),
+					})
+				}
 			}
-		}
 
 	accepted_blocks : List(Definition) -> List(KaifileBlock)
 	accepted_blocks = |registry|
@@ -2329,12 +2324,12 @@ Plugin := [].{
 	failure = |plugin, command_name, backend, location, message|
 		{ backend, command: command_name, location, message, plugin }
 
-	renderer_location : ConfigSelection,
+	implementation_location : ConfigSelection,
 	[At(U64), None] -> [
 		At(SourceLocation),
 		None,
 	]
-	renderer_location = |selection, relative|
+	implementation_location = |selection, relative|
 		match (selection, relative) {
 			(Selected(block), At(byte_offset)) =>
 				Plugin.relative_location(block, byte_offset)
@@ -2393,25 +2388,25 @@ Plugin := [].{
 
 	# Convert pure action templates into a runtime plan.
 	lower : Implementation,
-	RenderResult,
+	CommandPlan,
 	Str,
 	Backend -> Try(
-		Plan,
-		RendererDiagnostic,
+		ExecutionPlan,
+		ImplementationDiagnostic,
 	)
-	lower = |implementation, rendered, plugin, backend| {
+	lower = |implementation, command_plan, plugin, backend| {
 		actions = Plugin.lower_actions(
 			implementation.actions,
-			rendered.outputs,
+			command_plan.outputs,
 		)?
 		Ok(
-			Plugin.Plan.{
-				actions: actions.concat(rendered.actions),
-				artifacts: rendered.artifacts,
+			Plugin.ExecutionPlan.{
+				actions: actions.concat(command_plan.actions),
+				artifacts: command_plan.artifacts,
 				backend,
 				command: implementation.command,
 				plugin,
-				requested_packages: rendered.requested_packages,
+				requested_packages: command_plan.requested_packages,
 			},
 		)
 	}
@@ -2420,7 +2415,7 @@ Plugin := [].{
 		List(ActionTemplate),
 		List(RenderedOutput) -> Try(
 			List(Action),
-			RendererDiagnostic,
+			ImplementationDiagnostic,
 		)
 	lower_actions = |templates, outputs|
 		match templates {
@@ -2444,12 +2439,18 @@ Plugin := [].{
 			}
 		}
 
-	find_output : List(RenderedOutput), Str -> Try(Str, RendererDiagnostic)
+	find_output : List(RenderedOutput), Str -> Try(Str, ImplementationDiagnostic)
 	find_output = |outputs, expected_name|
 		match outputs {
 			[] => Err({
 				byte_offset: None,
-				message: "plugin renderer did not return named output '${expected_name}'",
+				message: Str.join_with(
+					[
+						"plugin implementation did not return named output ",
+						"'${expected_name}'",
+					],
+					"",
+				),
 			})
 			[first, .. as rest] =>
 				if first.name == expected_name {

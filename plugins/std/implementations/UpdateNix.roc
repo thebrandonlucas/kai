@@ -9,16 +9,21 @@ UpdateNix := [].{
 		actions: [NixBackend.flake_template].concat(NixBackend.update_lock_templates),
 		backend: NixBackend.backend.name,
 		command: UpdateCommand.command.name,
-		renderer: UpdateNix.renderer,
+		plan: UpdateNix.plan,
 		validator: NoValidation,
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
-		overlays = EnvironmentNix.all_overlays(context)?
-		sources = EnvironmentNix.all_sources(context)?
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
+		overlays = EnvironmentNix.all_overlays(input)?
+		sources = EnvironmentNix.all_sources(input)?
 		Ok(
-			Plugin.RenderResult.{
+			Plugin.CommandPlan.{
 				actions: [],
 				artifacts: [],
 				outputs: [
@@ -27,7 +32,7 @@ UpdateNix := [].{
 						text: NixBackend.render_update_flake(overlays, sources),
 					},
 				],
-				requests: [],
+				prerequisite_commands: [],
 				requested_packages: [],
 			},
 		)

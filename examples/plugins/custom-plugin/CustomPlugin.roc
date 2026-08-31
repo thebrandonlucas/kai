@@ -65,29 +65,22 @@ CustomPlugin := [].{
 			],
 			backend: "local",
 			command: command.name,
-			renderer: |context|
-				match context.config_block {
-					NoConfigBlock => Err({
+			plan: |input|
+				match Fields.get_string(input.command_fields, "message") {
+					Err(_) => Err({
 						byte_offset: None,
-						message: "custom configuration is required",
+						message: "validated custom configuration is missing 'message'",
 					})
-					SelectedConfigBlock({ body: _, location: _ }) =>
-						match Fields.get_string(context.config, "message") {
-							Err(_) => Err({
-								byte_offset: None,
-								message: "validated custom configuration is missing 'message'",
-							})
-							Ok(message) => Ok(
-								Plugin.RenderResult.{
-									actions: [],
-									artifacts: [],
-									outputs: [{ name: "message", text: message }],
-									requests: [],
-									requested_packages: [],
-								},
-							)
-						}
-					},
+					Ok(message) => Ok(
+						Plugin.CommandPlan.{
+							actions: [],
+							artifacts: [],
+							outputs: [{ name: "message", text: message }],
+							prerequisite_commands: [],
+							requested_packages: [],
+						},
+					)
+				},
 			validator: NoValidation,
 		},
 	]

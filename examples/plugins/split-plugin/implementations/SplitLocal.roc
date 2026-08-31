@@ -14,12 +14,12 @@ SplitLocal := [].{
 		],
 		backend: Local.backend.name,
 		command: SplitCommand.command.name,
-		renderer: |_| Ok(
-			Plugin.RenderResult.{
+		plan: |_| Ok(
+			Plugin.CommandPlan.{
 				actions: [],
 				artifacts: [],
 				outputs: [{ name: "message", text: "split plugin worked" }],
-				requests: [],
+				prerequisite_commands: [],
 				requested_packages: [],
 			},
 		),

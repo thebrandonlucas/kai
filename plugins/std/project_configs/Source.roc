@@ -53,7 +53,7 @@ Source := [].{
 		List(Plugin.ParsedBlock) ->
 			Try(
 				List(Source.Input),
-				Plugin.RendererDiagnostic,
+				Plugin.ImplementationDiagnostic,
 			)
 	collect = |entries| {
 		inputs = entries.map_try(
@@ -78,14 +78,14 @@ Source := [].{
 	}
 
 	validate_sources :
-		List(Source.Input), List(Str) -> Try({}, Plugin.RendererDiagnostic)
+		List(Source.Input), List(Str) -> Try({}, Plugin.ImplementationDiagnostic)
 	validate_sources = |inputs, seen|
 		match inputs {
 			[] => Ok({})
 			[first, .. as rest] => {
 				failures = Plugin.validate_text(first.name, Source.name_rules)
 					.concat(Plugin.validate_text(first.url, Source.url_rules))
-				Plugin.renderer_validation(failures)?
+				Plugin.implementation_validation(failures)?
 				if seen.contains(first.name) {
 					Err({
 						byte_offset: None,
@@ -98,12 +98,20 @@ Source := [].{
 		}
 
 	validate_selected :
-		List(Str), List(Source.Input), List(Str) -> Try({}, Plugin.RendererDiagnostic)
+		List(Str),
+		List(Source.Input),
+		List(Str) ->
+			Try(
+				{},
+				Plugin.ImplementationDiagnostic,
+			)
 	validate_selected = |selected, sources, seen|
 		match selected {
 			[] => Ok({})
 			[first, .. as rest] => {
-				Plugin.renderer_validation(Plugin.validate_text(first, Source.name_rules))?
+				Plugin.implementation_validation(
+					Plugin.validate_text(first, Source.name_rules),
+				)?
 				if seen.contains(first) {
 					Err({
 						byte_offset: None,

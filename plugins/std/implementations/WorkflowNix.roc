@@ -10,13 +10,18 @@ WorkflowNix := [].{
 		actions: [],
 		backend: NixBackend.backend.name,
 		command: WorkflowCommand.command.name,
-		renderer: WorkflowNix.renderer,
+		plan: WorkflowNix.plan,
 		validator: NoValidation,
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
-		steps = Fields.get_strings(context.config, "steps") ? |_| {
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
+		steps = Fields.get_strings(input.command_fields, "steps") ? |_| {
 			byte_offset: None,
 			message: "validated workflow configuration is missing 'steps'",
 		}
@@ -26,13 +31,13 @@ WorkflowNix := [].{
 				message: "workflow must contain at least one step",
 			})
 		} else {
-			requests = WorkflowNix.parse_steps(steps)?
+			prerequisite_commands = WorkflowNix.parse_steps(steps)?
 			Ok(
-				Plugin.RenderResult.{
+				Plugin.CommandPlan.{
 					actions: [],
 					artifacts: [],
 					outputs: [],
-					requests,
+					prerequisite_commands,
 					requested_packages: [],
 				},
 			)
@@ -40,33 +45,42 @@ WorkflowNix := [].{
 	}
 
 	parse_steps :
-		List(Str) -> Try(List(Plugin.PlanRequest), Plugin.RendererDiagnostic)
+		List(Str) ->
+			Try(
+				List(Plugin.PrerequisiteCommand),
+				Plugin.ImplementationDiagnostic,
+			)
 	parse_steps = |steps| WorkflowNix.parse_steps_from(steps, 1)
 
 	parse_steps_from :
-		List(Str), U64 -> Try(List(Plugin.PlanRequest), Plugin.RendererDiagnostic)
+		List(Str),
+		U64 ->
+			Try(
+				List(Plugin.PrerequisiteCommand),
+				Plugin.ImplementationDiagnostic,
+			)
 	parse_steps_from = |steps, index|
 		match steps {
 			[] => Ok([])
 			[first, .. as rest] => {
-				request = WorkflowNix.parse_step(first) ? |_|
+				prerequisite = WorkflowNix.parse_step(first) ? |_|
 					WorkflowNix.invalid_step(index, first)
 				remaining = WorkflowNix.parse_steps_from(rest, index + 1)?
-				Ok([request].concat(remaining))
+				Ok([prerequisite].concat(remaining))
 			}
 		}
 
-	parse_step : Str -> Try(Plugin.PlanRequest, [InvalidWorkflowStep])
+	parse_step : Str -> Try(Plugin.PrerequisiteCommand, [InvalidWorkflowStep])
 	parse_step = |step|
 		match WorkflowNix.words(step) {
 			[] => Err(InvalidWorkflowStep)
-			args => Ok({
-				args,
-				status: "workflow: ${Str.join_with(args, " ")}",
+			arguments => Ok({
+				arguments,
+				description: "workflow: ${Str.join_with(arguments, " ")}",
 			})
 		}
 
-	invalid_step : U64, Str -> Plugin.RendererDiagnostic
+	invalid_step : U64, Str -> Plugin.ImplementationDiagnostic
 	invalid_step = |index, step| {
 		byte_offset: None,
 		message: Str.join_with(

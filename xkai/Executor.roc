@@ -123,7 +123,7 @@ Executor := [].{
 		}
 	}
 
-	execute! : Plugin.Plan => Try({}, _)
+	execute! : Plugin.ExecutionPlan => Try({}, _)
 	execute! = |execution_plan| {
 		for action in execution_plan.actions {
 			Executor.execute_action!(action)?

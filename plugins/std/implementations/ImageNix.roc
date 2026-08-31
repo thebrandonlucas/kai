@@ -10,28 +10,42 @@ ImageNix := [].{
 		actions: [],
 		backend: NixBackend.backend.name,
 		command: ImageCommand.command.name,
-		renderer: ImageNix.renderer,
+		plan: ImageNix.plan,
 		validator: NoValidation,
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
-		config = MachineNix.configuration(context, "image")?
-		requests = MachineNix.service_requests(config.generated_services, "image")
-		if !requests.is_empty() and !context.dependencies_resolved {
-			return Ok({
-				actions: [],
-				artifacts: [],
-				outputs: [],
-				requests,
-				requested_packages: config.pkgs,
-			})
-		}
-		services = MachineNix.resolve_services(
-			context.dependency_artifacts,
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
+		config = MachineNix.configuration(input, "image")?
+		prerequisite_commands = MachineNix.service_prerequisite_commands(
 			config.generated_services,
-			config.target_system,
-		)?
+			"image",
+		)
+		services = match input.prerequisite_artifacts {
+			NotResolved =>
+				if prerequisite_commands.is_empty() {
+					Ok([])
+				} else {
+					return Ok({
+						actions: [],
+						artifacts: [],
+						outputs: [],
+						prerequisite_commands,
+						requested_packages: config.pkgs,
+					})
+				}
+			Resolved(artifacts) =>
+				MachineNix.resolve_services(
+					artifacts,
+					config.generated_services,
+					config.target_system,
+				)
+			}?
 		native_services = config.services.keep_if(|service|
 			!config.generated_services.contains(service))
 		schema : U64
@@ -50,7 +64,7 @@ ImageNix := [].{
 			target_system: config.target_system,
 		})
 		Ok(
-			Plugin.RenderResult.{
+			Plugin.CommandPlan.{
 				actions: NixBackend.image_actions(
 					config.name,
 					ImageNix.render_flake(
@@ -82,7 +96,7 @@ ImageNix := [].{
 					},
 				],
 				outputs: [],
-				requests,
+				prerequisite_commands,
 				requested_packages: config.pkgs,
 			},
 		)

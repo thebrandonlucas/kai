@@ -9,7 +9,7 @@ ShellGuix := [].{
 		actions: [],
 		backend: GuixBackend.backend.name,
 		command: ShellCommand.command.name,
-		renderer: ShellGuix.renderer,
+		plan: ShellGuix.plan,
 		validator: Validate({
 			string_lists: [
 				{
@@ -24,11 +24,19 @@ ShellGuix := [].{
 		}),
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
-		pkgs = Plugin.validated_strings(context.config, ShellCommand.packages_field)?
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
+		pkgs = Plugin.validated_strings(
+			input.command_fields,
+			ShellCommand.packages_field,
+		)?
 		Ok(
-			Plugin.RenderResult.{
+			Plugin.CommandPlan.{
 				actions: [
 					Exec({
 						args: ["shell", "--pure"].concat(pkgs),
@@ -37,7 +45,7 @@ ShellGuix := [].{
 				],
 				artifacts: [],
 				outputs: [],
-				requests: [],
+				prerequisite_commands: [],
 				requested_packages: pkgs,
 			},
 		)

@@ -11,30 +11,35 @@ TaskNix := [].{
 		actions: [NixBackend.flake_template].concat(NixBackend.lock_templates),
 		backend: NixBackend.backend.name,
 		command: TaskCommand.command.name,
-		renderer: TaskNix.renderer,
+		plan: TaskNix.plan,
 		validator: NoValidation,
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
-		run = Fields.get_strings(context.config, "run") ? |_| {
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
+		run = Fields.get_strings(input.command_fields, "run") ? |_| {
 			byte_offset: None,
 			message: "validated task configuration is missing 'run'",
 		}
-		Plugin.renderer_validation(
+		Plugin.implementation_validation(
 			Plugin.validate_string_list(run, TaskCommand.run_rules("task")),
 		)?
-		environment = Plugin.reference_config(context, "environment")?
+		environment = Plugin.referenced_fields(input, "environment")?
 		pkgs = Fields.get_strings(environment, "packages") ? |_| {
 			byte_offset: None,
 			message: "validated environment configuration is missing 'packages'",
 		}
-		Plugin.renderer_validation(
+		Plugin.implementation_validation(
 			Plugin.validate_string_list(pkgs, NixBackend.package_rules),
 		)?
 		overlays = EnvironmentNix.extract_overlays(environment)?
-		result = EnvironmentNix.render_result(
-			context,
+		result = EnvironmentNix.command_plan(
+			input,
 			pkgs,
 			overlays,
 			"unsupported task platform",

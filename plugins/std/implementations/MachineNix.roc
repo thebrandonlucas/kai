@@ -12,7 +12,7 @@ MachineNix := [].{
 		actions: [],
 		backend: NixBackend.backend.name,
 		command: MachineCommand.command.name,
-		renderer: MachineNix.renderer,
+		plan: MachineNix.plan,
 		validator: NoValidation,
 	}
 
@@ -40,39 +40,44 @@ MachineNix := [].{
 	}
 
 	configuration :
-		Plugin.RenderContext, Str -> Try(Configuration, Plugin.RendererDiagnostic)
-	configuration = |context, command_name| {
-		name = match context.args {
+		Plugin.ImplementationInput,
+		Str ->
+			Try(
+				Configuration,
+				Plugin.ImplementationDiagnostic,
+			)
+	configuration = |input, command_name| {
+		name = match input.command_arguments {
 			[selected_name] => Ok(selected_name)
 			_ => Err({
 				byte_offset: None,
 				message: "${command_name} requires exactly one name",
 			})
 		}?
-		environment = Plugin.reference_config(context, "environment")?
+		environment = Plugin.referenced_fields(input, "environment")?
 		pkgs = Fields.get_strings(environment, "packages") ? |_|
 			{
 				byte_offset: None,
 				message: "validated machine environment is missing 'packages'",
 			}
 		overlays = EnvironmentNix.extract_overlays(environment)?
-		locked_overlays = EnvironmentNix.all_overlays(context)?
-		system = Fields.get_string(context.config, "system") ? |_|
+		locked_overlays = EnvironmentNix.all_overlays(input)?
+		system = Fields.get_string(input.command_fields, "system") ? |_|
 			{
 				byte_offset: None,
 				message: "validated machine configuration is missing 'system'",
 			}
-		users = MachineNix.optional_strings(context.config, "users")?
-		services = MachineNix.optional_strings(context.config, "services")?
+		users = MachineNix.optional_strings(input.command_fields, "users")?
+		services = MachineNix.optional_strings(input.command_fields, "services")?
 		failures = Plugin.validate_text(name, MachineConfig.name_rules)
 			.concat(Plugin.validate_string_list(pkgs, NixBackend.package_rules))
 			.concat(MachineConfig.user_failures(users))
 			.concat(MachineConfig.service_failures(services))
-		Plugin.renderer_validation(failures)?
+		Plugin.implementation_validation(failures)?
 		target = NixBackend.machine_target(
 			system,
-			context.host_os,
-			context.host_arch,
+			input.host.os,
+			input.host.arch,
 		) ? |problem|
 			match problem {
 				UnsupportedMachineSystem => {
@@ -102,7 +107,7 @@ MachineNix := [].{
 				}
 			}
 		generated_services = services.keep_if(
-			|service| MachineNix.has_service_declaration(context, service),
+			|service| MachineNix.has_service_declaration(input, service),
 		)
 		Ok(
 			MachineNix.Configuration.{
@@ -119,27 +124,38 @@ MachineNix := [].{
 		)
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
-		config = MachineNix.configuration(context, "machine")?
-		requests = MachineNix.service_requests(
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
+		config = MachineNix.configuration(input, "machine")?
+		prerequisite_commands = MachineNix.service_prerequisite_commands(
 			config.generated_services,
 			"machine",
 		)
-		if !requests.is_empty() and !context.dependencies_resolved {
-			return Ok({
-				actions: [],
-				artifacts: [],
-				outputs: [],
-				requests,
-				requested_packages: config.pkgs,
-			})
-		}
-		services = MachineNix.resolve_services(
-			context.dependency_artifacts,
-			config.generated_services,
-			config.target_system,
-		)?
+		services = match input.prerequisite_artifacts {
+			NotResolved =>
+				if prerequisite_commands.is_empty() {
+					Ok([])
+				} else {
+					return Ok({
+						actions: [],
+						artifacts: [],
+						outputs: [],
+						prerequisite_commands,
+						requested_packages: config.pkgs,
+					})
+				}
+			Resolved(artifacts) =>
+				MachineNix.resolve_services(
+					artifacts,
+					config.generated_services,
+					config.target_system,
+				)
+			}?
 		native_services = config.services.keep_if(
 			|service| !config.generated_services.contains(service),
 		)
@@ -167,7 +183,7 @@ MachineNix := [].{
 		)
 		metadata = MachineNix.render_metadata(machine_metadata)
 		Ok(
-			Plugin.RenderResult.{
+			Plugin.CommandPlan.{
 				actions: NixBackend.machine_actions(
 					config.name,
 					flake,
@@ -191,16 +207,16 @@ MachineNix := [].{
 					},
 				],
 				outputs: [],
-				requests,
+				prerequisite_commands,
 				requested_packages: config.pkgs,
 			},
 		)
 	}
 
-	has_service_declaration : Plugin.RenderContext, Str -> Bool
-	has_service_declaration = |context, name|
+	has_service_declaration : Plugin.ImplementationInput, Str -> Bool
+	has_service_declaration = |input, name|
 		List.any(
-			Plugin.blocks_of_kind(context, ["service"]),
+			Plugin.blocks_of_kind(input, ["service"]),
 			|entry|
 				match entry.header {
 					["service", declared] => declared == name
@@ -209,12 +225,13 @@ MachineNix := [].{
 				},
 		)
 
-	service_requests : List(Str), Str -> List(Plugin.PlanRequest)
-	service_requests = |services, command|
+	service_prerequisite_commands :
+		List(Str), Str -> List(Plugin.PrerequisiteCommand)
+	service_prerequisite_commands = |services, command|
 		services.map(
 			|service| {
-				args: ["service", NixBackend.backend.name, service],
-				status: "${command}: service ${service}",
+				arguments: ["service", NixBackend.backend.name, service],
+				description: "${command}: service ${service}",
 			},
 		)
 
@@ -224,7 +241,7 @@ MachineNix := [].{
 		Str ->
 			Try(
 				List(Plugin.Artifact),
-				Plugin.RendererDiagnostic,
+				Plugin.ImplementationDiagnostic,
 			)
 	resolve_services = |artifacts, names, system|
 		match names {
@@ -238,7 +255,7 @@ MachineNix := [].{
 		}
 
 	validate_service :
-		Plugin.Artifact, Str -> Try({}, Plugin.RendererDiagnostic)
+		Plugin.Artifact, Str -> Try({}, Plugin.ImplementationDiagnostic)
 	validate_service = |service, system| {
 		backend = MachineNix.attribute(service.attributes, "backend")?
 		service_system = MachineNix.attribute(
@@ -276,13 +293,18 @@ MachineNix := [].{
 				),
 			]
 		}
-		Plugin.renderer_validation(
+		Plugin.implementation_validation(
 			backend_failures.concat(system_failures).concat(path_failures),
 		)
 	}
 
 	attribute :
-		List(Plugin.ArtifactAttribute), Str -> Try(Str, Plugin.RendererDiagnostic)
+		List(Plugin.ArtifactAttribute),
+		Str ->
+			Try(
+				Str,
+				Plugin.ImplementationDiagnostic,
+			)
 	attribute = |attributes, key|
 		match attributes {
 			[] => Err({
@@ -303,7 +325,12 @@ MachineNix := [].{
 		}
 
 	find_service :
-		List(Plugin.Artifact), Str -> Try(Plugin.Artifact, Plugin.RendererDiagnostic)
+		List(Plugin.Artifact),
+		Str ->
+			Try(
+				Plugin.Artifact,
+				Plugin.ImplementationDiagnostic,
+			)
 	find_service = |artifacts, name|
 		match artifacts.keep_if(|artifact|
 			artifact.kind == "kai.nixos.service/v1" and artifact.name == name) {
@@ -335,7 +362,7 @@ MachineNix := [].{
 		services.map(|service| "          ./services/${service.name}")
 
 	optional_strings :
-		Fields.ParsedFields, Str -> Try(List(Str), Plugin.RendererDiagnostic)
+		Fields.ParsedFields, Str -> Try(List(Str), Plugin.ImplementationDiagnostic)
 	optional_strings = |config, field|
 		match Fields.maybe_strings(config, field) {
 			Ok(None) => Ok([])

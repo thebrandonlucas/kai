@@ -23,18 +23,23 @@ ShellNix := [].{
 			],
 			target: NoTargetValidation,
 		}),
-		renderer: ShellNix.renderer,
+		plan: ShellNix.plan,
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
 		pkgs = Plugin.validated_strings(
-			context.config,
+			input.command_fields,
 			EnvironmentConfig.packages_field,
 		)?
-		overlays = EnvironmentNix.extract_overlays(context.config)?
-		EnvironmentNix.render_result(
-			context,
+		overlays = EnvironmentNix.extract_overlays(input.command_fields)?
+		EnvironmentNix.command_plan(
+			input,
 			pkgs,
 			overlays,
 			"unsupported shell platform",

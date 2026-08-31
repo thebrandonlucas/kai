@@ -12,27 +12,32 @@ ServiceNix := [].{
 		actions: [],
 		backend: NixBackend.backend.name,
 		command: ServiceCommand.command.name,
-		renderer: ServiceNix.renderer,
+		plan: ServiceNix.plan,
 		validator: NoValidation,
 	}
 
-	renderer : Plugin.Renderer
-	renderer = |context| {
-		name = match context.args {
+	plan :
+		Plugin.ImplementationInput ->
+			Try(
+				Plugin.CommandPlan,
+				Plugin.ImplementationDiagnostic,
+			)
+	plan = |input| {
+		name = match input.command_arguments {
 			[selected_name] => Ok(selected_name)
 			_ => Err({ byte_offset: None, message: "service requires exactly one name" })
 		}?
-		artifact_name = Fields.get_string(context.config, "artifact") ? |_|
+		artifact_name = Fields.get_string(input.command_fields, "artifact") ? |_|
 			{
 				byte_offset: None,
 				message: "validated service configuration is missing 'artifact'",
 			}
-		secrets = Fields.get_strings(context.config, "secrets") ? |_|
+		secrets = Fields.get_strings(input.command_fields, "secrets") ? |_|
 			{
 				byte_offset: None,
 				message: "validated service configuration is missing 'secrets'",
 			}
-		restart = Fields.get_string(context.config, "restart") ? |_|
+		restart = Fields.get_string(input.command_fields, "restart") ? |_|
 			{
 				byte_offset: None,
 				message: "validated service configuration is missing 'restart'",
@@ -46,72 +51,79 @@ ServiceNix := [].{
 			)
 			.concat(ServiceCommand.secret_failures(secrets))
 			.concat(ServiceCommand.restart_failures(restart))
-		Plugin.renderer_validation(failures)?
-		if context.host_os != LINUX {
+		Plugin.implementation_validation(failures)?
+		if input.host.os != LINUX {
 			Err({
 				byte_offset: None,
 				message: "NixOS service modules are supported only on Linux",
 			})
 		} else {
-			ServiceNix.validate_secrets(context, secrets)?
-			requests = ServiceNix.requests(artifact_name)
-			if context.dependencies_resolved {
-				build = ServiceNix.find_build(context.dependency_artifacts, artifact_name)?
-				target = NixBackend.target(context.host_os, context.host_arch) ? |_|
-					{ byte_offset: None, message: "unsupported service platform" }
-				pkgs_flake = ServiceNix.validate_build(build, target.system)?
-				module_text = ServiceNix.render_module(name, secrets, restart)
-				expression = ServiceNix.render_expression(name, pkgs_flake, target.system)
-				Ok(
-					Plugin.RenderResult.{
-						actions: NixBackend.service_actions(
-							name,
-							build.path,
-							module_text,
-							expression,
-						),
-						artifacts: [
-							{
-								attributes: [
-									{ key: "backend", value: NixBackend.backend.name },
-									{ key: "build", value: build.name },
-									{ key: "target.system", value: target.system },
-								],
-								kind: "kai.nixos.service/v1",
+			ServiceNix.validate_secrets(input, secrets)?
+			prerequisite_commands = ServiceNix.prerequisite_commands(artifact_name)
+			match input.prerequisite_artifacts {
+				Resolved(artifacts) => {
+					build = ServiceNix.find_build(artifacts, artifact_name)?
+					target = NixBackend.target(input.host.os, input.host.arch) ? |_|
+						{ byte_offset: None, message: "unsupported service platform" }
+					pkgs_flake = ServiceNix.validate_build(build, target.system)?
+					module_text = ServiceNix.render_module(name, secrets, restart)
+					expression = ServiceNix.render_expression(name, pkgs_flake, target.system)
+					Ok(
+						Plugin.CommandPlan.{
+							actions: NixBackend.service_actions(
 								name,
-								path: NixBackend.service_artifact_path(name),
-							},
-						],
-						outputs: [],
-						requests,
-						requested_packages: [],
-					},
-				)
-			} else {
-				Ok(
-					Plugin.RenderResult.{
-						actions: [],
-						artifacts: [],
-						outputs: [],
-						requests,
-						requested_packages: [],
-					},
-				)
-			}
+								build.path,
+								module_text,
+								expression,
+							),
+							artifacts: [
+								{
+									attributes: [
+										{ key: "backend", value: NixBackend.backend.name },
+										{ key: "build", value: build.name },
+										{ key: "target.system", value: target.system },
+									],
+									kind: "kai.nixos.service/v1",
+									name,
+									path: NixBackend.service_artifact_path(name),
+								},
+							],
+							outputs: [],
+							prerequisite_commands,
+							requested_packages: [],
+						},
+					)
+				}
+				NotResolved =>
+					Ok(
+						Plugin.CommandPlan.{
+							actions: [],
+							artifacts: [],
+							outputs: [],
+							prerequisite_commands,
+							requested_packages: [],
+						},
+					)
+				}
 		}
 	}
 
-	requests : Str -> List(Plugin.PlanRequest)
-	requests = |artifact|
+	prerequisite_commands : Str -> List(Plugin.PrerequisiteCommand)
+	prerequisite_commands = |artifact|
 		[
 			{
-				args: ["build", NixBackend.backend.name, artifact],
-				status: "service: build ${artifact}",
+				arguments: ["build", NixBackend.backend.name, artifact],
+				description: "service: build ${artifact}",
 			},
 		]
 
 	find_build :
-		List(Plugin.Artifact), Str -> Try(Plugin.Artifact, Plugin.RendererDiagnostic)
+		List(Plugin.Artifact),
+		Str ->
+			Try(
+				Plugin.Artifact,
+				Plugin.ImplementationDiagnostic,
+			)
 	find_build = |artifacts, name|
 		match artifacts.keep_if(|artifact|
 			artifact.kind == "kai.build/v1" and artifact.name == name) {
@@ -138,7 +150,8 @@ ServiceNix := [].{
 			})
 		}
 
-	validate_build : Plugin.Artifact, Str -> Try(Str, Plugin.RendererDiagnostic)
+	validate_build :
+		Plugin.Artifact, Str -> Try(Str, Plugin.ImplementationDiagnostic)
 	validate_build = |build, system| {
 		backend = ServiceNix.attribute(build.attributes, "backend")?
 		build_system = ServiceNix.attribute(build.attributes, "target.system")?
@@ -170,14 +183,19 @@ ServiceNix := [].{
 		} else {
 			["build artifact targets '${build_system}', expected '${system}'"]
 		}
-		Plugin.renderer_validation(
+		Plugin.implementation_validation(
 			system_failures.concat(failures).concat(flake_failures),
 		)?
 		Ok(pkgs_flake)
 	}
 
 	attribute :
-		List(Plugin.ArtifactAttribute), Str -> Try(Str, Plugin.RendererDiagnostic)
+		List(Plugin.ArtifactAttribute),
+		Str ->
+			Try(
+				Str,
+				Plugin.ImplementationDiagnostic,
+			)
 	attribute = |attributes, key|
 		match attributes {
 			[] => Err({
@@ -192,12 +210,17 @@ ServiceNix := [].{
 		}
 
 	validate_secrets :
-		Plugin.RenderContext, List(Str) -> Try({}, Plugin.RendererDiagnostic)
-	validate_secrets = |context, names|
+		Plugin.ImplementationInput,
+		List(Str) ->
+			Try(
+				{},
+				Plugin.ImplementationDiagnostic,
+			)
+	validate_secrets = |input, names|
 		match names {
 			[] => Ok({})
 			[first, .. as rest] => {
-				entries = Plugin.blocks_of_kind(context, ["secret"])
+				entries = Plugin.blocks_of_kind(input, ["secret"])
 				matches = entries.keep_if(
 					|entry|
 						match entry.header {
@@ -227,8 +250,10 @@ ServiceNix := [].{
 						byte_offset: None,
 						message: "validated secret '${first}' is missing 'provision'",
 					}
-				Plugin.renderer_validation(SecretCommand.provision_failures(provision))?
-				ServiceNix.validate_secrets(context, rest)
+				Plugin.implementation_validation(
+					SecretCommand.provision_failures(provision),
+				)?
+				ServiceNix.validate_secrets(input, rest)
 			}
 		}
 
