@@ -197,41 +197,4 @@ Nix := [].{
 			]),
 		]
 
-	image_output_path : Str -> Str
-	image_output_path = |name| ".kai/artifacts/images/${name}/result"
-
-	image_file_path : Str -> Str
-	image_file_path = |name| "${Nix.image_output_path(name)}/${name}.qcow2"
-
-	image_flake_path : Str -> Str
-	image_flake_path = |name| ".kai/images/${name}"
-
-	image_metadata_path : Str -> Str
-	image_metadata_path = |name| ".kai/artifacts/images/${name}/metadata.json"
-
-	image_steps :
-		Str, Str, Str, Str, List(Plugin.ExecutionStep) -> List(Plugin.ExecutionStep)
-	image_steps = |name, flake, module_text, metadata, service_steps| {
-		flake_path = Nix.image_flake_path(name)
-		metadata_path = Nix.image_metadata_path(name)
-		[
-			WriteFile({ contents: "", path: metadata_path }),
-			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
-			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
-		]
-			.concat(service_steps)
-			.concat(Nix.lock_steps(flake_path))
-			.concat([
-				WriteFile({ contents: "", path: ".kai/artifacts/images/${name}/.keep" }),
-				Nix.run([
-					"build",
-					"path:${flake_path}#kaiImages.\"${name}\".image",
-					"--no-update-lock-file",
-					"--out-link",
-					Nix.image_output_path(name),
-				]),
-				WriteFile({ contents: metadata, path: metadata_path }),
-			])
-	}
-
 }
