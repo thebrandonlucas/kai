@@ -1,4 +1,4 @@
-# Shared `command` interface for working with machine services
+# Kaifile block schema for machine services.
 import kai.Kaifile
 import kai.Plugin
 import Secret
@@ -75,12 +75,4 @@ Service := [].{
 		name_rules,
 	})
 
-	command_syntax : Plugin.CommandSyntax
-	command_syntax = Plugin.command_syntax(
-		"service",
-		[Plugin.required_argument("service")],
-	)
-
-	command : Plugin.Command
-	command = Plugin.command_with_block({ syntax: command_syntax, block })
 }

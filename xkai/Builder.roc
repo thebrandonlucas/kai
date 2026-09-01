@@ -61,7 +61,8 @@ Builder := [].{
 				filename,
 				contents: Path.read_utf8!(path)?,
 			},
-			schemas: Builder.load_component!(source_root, "schemas")?,
+			blocks: Builder.load_component!(source_root, "schemas/blocks")?,
+			commands: Builder.load_component!(source_root, "schemas/commands")?,
 			backends: Builder.load_component!(source_root, "backends")?,
 			implementations: Builder.load_component!(source_root, "implementations")?,
 		})

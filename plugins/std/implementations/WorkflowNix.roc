@@ -2,7 +2,7 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.Workflow as WorkflowCommand
+import commands.Workflow as WorkflowCommand
 
 WorkflowNix := [].{
 	implementation : Plugin.Implementation

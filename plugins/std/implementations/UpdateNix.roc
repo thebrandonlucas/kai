@@ -1,7 +1,7 @@
 # An implementation for updating the underlying `flake.nix` files
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.Update as UpdateCommand
+import commands.Update as UpdateCommand
 import EnvironmentNix
 UpdateNix := [].{
 	implementation : Plugin.Implementation

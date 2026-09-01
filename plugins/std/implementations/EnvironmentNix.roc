@@ -2,12 +2,12 @@
 # the Nix backend.
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.EnvironmentConfig
-import schemas.Source
+import blocks.Environment as EnvironmentBlock
+import blocks.Source as SourceBlock
 
 EnvironmentNix := [].{
 	extract_overlays = |fields|
-		Plugin.validated_strings(fields, EnvironmentConfig.overlays_field)
+		Plugin.validated_strings(fields, EnvironmentBlock.overlays_field)
 
 	collect_overlays = |entries, collected|
 		match entries {
@@ -45,11 +45,11 @@ EnvironmentNix := [].{
 	}
 
 	all_sources = |input|
-		Source.collect(Plugin.blocks_of_kind(input, ["source"]))
+		SourceBlock.collect(Plugin.blocks_of_kind(input, ["source"]))
 
 	validate_source_inputs = |input, selected| {
 		sources = EnvironmentNix.all_sources(input)?
-		Source.validate_selected(selected, sources, [])
+		SourceBlock.validate_selected(selected, sources, [])
 	}
 
 	render_flake =

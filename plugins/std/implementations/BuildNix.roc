@@ -2,7 +2,8 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.Build as BuildCommand
+import blocks.Build as BuildBlock
+import commands.Build as BuildCommand
 import EnvironmentNix
 
 BuildNix := [].{
@@ -28,22 +29,22 @@ BuildNix := [].{
 				message: "build requires exactly one artifact name",
 			})
 		}?
-		name_failures = Plugin.validate_text(name, BuildCommand.artifact_name_rules)
+		name_failures = Plugin.validate_text(name, BuildBlock.artifact_name_rules)
 		run = Fields.get_strings(input.command_fields, "run") ? |_| {
 			byte_offset: None,
 			message: "validated build block is missing 'run'",
 		}
-		run_failures = Plugin.validate_string_list(run, BuildCommand.run_rules)
+		run_failures = Plugin.validate_string_list(run, BuildBlock.run_rules)
 		inputs = Plugin.validated_strings(
 			input.command_fields,
-			BuildCommand.inputs_field,
+			BuildBlock.inputs_field,
 		)?
 		EnvironmentNix.validate_source_inputs(input, inputs)?
 		output = Fields.get_string(input.command_fields, "output") ? |_| {
 			byte_offset: None,
 			message: "validated build block is missing 'output'",
 		}
-		output_failures = Plugin.validate_text(output, BuildCommand.output_rules)
+		output_failures = Plugin.validate_text(output, BuildBlock.output_rules)
 		failures = name_failures.concat(run_failures).concat(output_failures)
 		Plugin.implementation_validation(failures)?
 		environment = Plugin.referenced_fields(input, "environment")?

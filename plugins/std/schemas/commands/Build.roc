@@ -1,17 +1,17 @@
-# Shared `command` interface for building machine images.
+# Command schema for building a declared artifact.
 import kai.Plugin
-import MachineConfig
+import blocks.Build as BuildBlock
 
-Image := [].{
+Build := [].{
 	command_syntax : Plugin.CommandSyntax
 	command_syntax = Plugin.command_syntax(
-		"image",
-		[Plugin.required_argument("machine")],
+		"build",
+		[Plugin.required_argument("artifact")],
 	)
 
 	command : Plugin.Command
 	command = Plugin.command_with_block({
 		syntax: command_syntax,
-		block: MachineConfig.block,
+		block: BuildBlock.block,
 	})
 }

@@ -1,18 +1,23 @@
 # Lists the standard plugin sources embedded in generated Kai runtimes.
 import "StdPlugin.roc" as std_plugin_source : Str
 import "backends/Nix.roc" as nix_backend_source : Str
-import "schemas/Build.roc" as build_schema_source : Str
-import "schemas/EnvironmentConfig.roc" as environment_schema_source : Str
-import "schemas/Image.roc" as image_schema_source : Str
-import "schemas/Machine.roc" as machine_schema_source : Str
-import "schemas/MachineConfig.roc" as machine_config_schema_source : Str
-import "schemas/Secret.roc" as secret_schema_source : Str
-import "schemas/Service.roc" as service_schema_source : Str
-import "schemas/Shell.roc" as shell_schema_source : Str
-import "schemas/Source.roc" as source_schema_source : Str
-import "schemas/Task.roc" as task_schema_source : Str
-import "schemas/Update.roc" as update_schema_source : Str
-import "schemas/Workflow.roc" as workflow_schema_source : Str
+import "schemas/blocks/Build.roc" as build_block_source : Str
+import "schemas/blocks/Environment.roc" as environment_block_source : Str
+import "schemas/blocks/Machine.roc" as machine_block_source : Str
+import "schemas/blocks/Secret.roc" as secret_block_source : Str
+import "schemas/blocks/Service.roc" as service_block_source : Str
+import "schemas/blocks/Shell.roc" as shell_block_source : Str
+import "schemas/blocks/Source.roc" as source_block_source : Str
+import "schemas/blocks/Task.roc" as task_block_source : Str
+import "schemas/blocks/Workflow.roc" as workflow_block_source : Str
+import "schemas/commands/Build.roc" as build_command_source : Str
+import "schemas/commands/Image.roc" as image_command_source : Str
+import "schemas/commands/Machine.roc" as machine_command_source : Str
+import "schemas/commands/Run.roc" as run_command_source : Str
+import "schemas/commands/Service.roc" as service_command_source : Str
+import "schemas/commands/Shell.roc" as shell_command_source : Str
+import "schemas/commands/Update.roc" as update_command_source : Str
+import "schemas/commands/Workflow.roc" as workflow_command_source : Str
 import "implementations/BuildNix.roc" as build_nix_source : Str
 import "implementations/EnvironmentNix.roc" as environment_nix_source : Str
 import "implementations/ImageNix.roc" as image_nix_source : Str
@@ -31,25 +36,26 @@ StdBundle := [].{
 			filename: "StdPlugin.roc",
 			contents: std_plugin_source,
 		},
-		schemas: [
-			{ filename: "Build.roc", contents: build_schema_source },
-			{
-				filename: "EnvironmentConfig.roc",
-				contents: environment_schema_source,
-			},
-			{ filename: "Image.roc", contents: image_schema_source },
-			{ filename: "Machine.roc", contents: machine_schema_source },
-			{
-				filename: "MachineConfig.roc",
-				contents: machine_config_schema_source,
-			},
-			{ filename: "Secret.roc", contents: secret_schema_source },
-			{ filename: "Service.roc", contents: service_schema_source },
-			{ filename: "Shell.roc", contents: shell_schema_source },
-			{ filename: "Source.roc", contents: source_schema_source },
-			{ filename: "Task.roc", contents: task_schema_source },
-			{ filename: "Update.roc", contents: update_schema_source },
-			{ filename: "Workflow.roc", contents: workflow_schema_source },
+		blocks: [
+			{ filename: "Build.roc", contents: build_block_source },
+			{ filename: "Environment.roc", contents: environment_block_source },
+			{ filename: "Machine.roc", contents: machine_block_source },
+			{ filename: "Secret.roc", contents: secret_block_source },
+			{ filename: "Service.roc", contents: service_block_source },
+			{ filename: "Shell.roc", contents: shell_block_source },
+			{ filename: "Source.roc", contents: source_block_source },
+			{ filename: "Task.roc", contents: task_block_source },
+			{ filename: "Workflow.roc", contents: workflow_block_source },
+		],
+		commands: [
+			{ filename: "Build.roc", contents: build_command_source },
+			{ filename: "Image.roc", contents: image_command_source },
+			{ filename: "Machine.roc", contents: machine_command_source },
+			{ filename: "Run.roc", contents: run_command_source },
+			{ filename: "Service.roc", contents: service_command_source },
+			{ filename: "Shell.roc", contents: shell_command_source },
+			{ filename: "Update.roc", contents: update_command_source },
+			{ filename: "Workflow.roc", contents: workflow_command_source },
 		],
 		backends: [{ filename: "Nix.roc", contents: nix_backend_source }],
 		implementations: [

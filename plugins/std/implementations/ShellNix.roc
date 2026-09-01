@@ -1,8 +1,8 @@
 # An implementation for defining nix devShells
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.EnvironmentConfig
-import schemas.Shell as ShellCommand
+import blocks.Environment as EnvironmentBlock
+import commands.Shell as ShellCommand
 import EnvironmentNix
 
 ShellNix := [].{
@@ -13,7 +13,7 @@ ShellNix := [].{
 		validator: Validate({
 			string_lists: [
 				{
-					field: EnvironmentConfig.packages_field,
+					field: EnvironmentBlock.packages_field,
 					rules: NixBackend.package_rules,
 				},
 			],
@@ -31,7 +31,7 @@ ShellNix := [].{
 	plan = |input| {
 		pkgs = Plugin.validated_strings(
 			input.command_fields,
-			EnvironmentConfig.packages_field,
+			EnvironmentBlock.packages_field,
 		)?
 		overlays = EnvironmentNix.extract_overlays(input.command_fields)?
 		command_plan = EnvironmentNix.command_plan(

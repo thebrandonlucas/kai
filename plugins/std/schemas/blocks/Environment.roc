@@ -2,7 +2,7 @@
 import kai.Kaifile
 import kai.Plugin
 
-EnvironmentConfig := [].{
+Environment := [].{
 	packages_field : Plugin.KaifileField
 	packages_field = Kaifile.required("packages", StringList)
 

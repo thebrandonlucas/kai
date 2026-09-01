@@ -1,13 +1,13 @@
-# Shared interface for `build` artifact/executable commands
+# Kaifile block schema for reproducible artifact builds.
 import kai.Kaifile
 import kai.Plugin
-import EnvironmentConfig
+import Environment
 
 Build := [].{
 	inputs_field = Kaifile.optional("inputs", StringList)
 
 	fields = [
-		Kaifile.required_reference("environment", EnvironmentConfig.block),
+		Kaifile.required_reference("environment", Environment.block),
 		inputs_field,
 		Kaifile.required("run", StringList),
 		Kaifile.required("output", String),
@@ -66,12 +66,4 @@ Build := [].{
 		name_rules: artifact_name_rules,
 	})
 
-	command_syntax : Plugin.CommandSyntax
-	command_syntax = Plugin.command_syntax(
-		"build",
-		[Plugin.required_argument("artifact")],
-	)
-
-	command : Plugin.Command
-	command = Plugin.command_with_block({ syntax: command_syntax, block })
 }

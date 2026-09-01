@@ -1,7 +1,8 @@
 # An implementation of the `shell` command in Guix
 import kai.Plugin
 import backends.Guix as GuixBackend
-import schemas.Shell as ShellCommand
+import blocks.Environment as EnvironmentBlock
+import commands.Shell as ShellCommand
 
 ShellGuix := [].{
 	implementation : Plugin.Implementation
@@ -12,7 +13,7 @@ ShellGuix := [].{
 		validator: Validate({
 			string_lists: [
 				{
-					field: ShellCommand.packages_field,
+					field: EnvironmentBlock.packages_field,
 					rules: GuixBackend.package_rules,
 				},
 			],
@@ -32,7 +33,7 @@ ShellGuix := [].{
 	plan = |input| {
 		pkgs = Plugin.validated_strings(
 			input.command_fields,
-			ShellCommand.packages_field,
+			EnvironmentBlock.packages_field,
 		)?
 		Ok(
 			Plugin.CommandPlan.{

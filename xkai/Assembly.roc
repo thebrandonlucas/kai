@@ -6,11 +6,12 @@ Assembly := [].{
 
 	PluginSource := {
 		backends : List(Assembly.PluginFile),
+		blocks : List(Assembly.PluginFile),
+		commands : List(Assembly.PluginFile),
 		implementations : List(Assembly.PluginFile),
 		module_name : Str,
 		module_source : Assembly.PluginFile,
 		package_name : Str,
-		schemas : List(Assembly.PluginFile),
 	}
 
 	Dependency := { name : Str, path : Str }
@@ -89,22 +90,34 @@ Assembly := [].{
 		nested_external_dependencies = Assembly.nested_dependencies(
 			external_dependencies,
 		)
+		schema_external_dependencies = Assembly.nested_dependencies(
+			nested_external_dependencies,
+		)
 		package_dependencies = [
 			{ name: "backends", path: "./backends/main.roc" },
+			{ name: "blocks", path: "./schemas/blocks/main.roc" },
+			{ name: "commands", path: "./schemas/commands/main.roc" },
 			{ name: "implementations", path: "./implementations/main.roc" },
 			{ name: "kai", path: "../../xkai/package.roc" },
 			{ name: "parser", path: "../../xkai/parser/main.roc" },
-			{ name: "schemas", path: "./schemas/main.roc" },
 		].concat(external_dependencies)
 		component_dependencies = [
 			{ name: "kai", path: "../../../xkai/package.roc" },
 			{ name: "parser", path: "../../../xkai/parser/main.roc" },
 		].concat(nested_external_dependencies)
+		schema_dependencies = [
+			{ name: "kai", path: "../../../../xkai/package.roc" },
+			{ name: "parser", path: "../../../../xkai/parser/main.roc" },
+		].concat(schema_external_dependencies)
+		command_dependencies = [
+			{ name: "blocks", path: "../blocks/main.roc" },
+		].concat(schema_dependencies)
 		implementation_dependencies = [
 			{ name: "backends", path: "../backends/main.roc" },
+			{ name: "blocks", path: "../schemas/blocks/main.roc" },
+			{ name: "commands", path: "../schemas/commands/main.roc" },
 			{ name: "kai", path: "../../../xkai/package.roc" },
 			{ name: "parser", path: "../../../xkai/parser/main.roc" },
-			{ name: "schemas", path: "../schemas/main.roc" },
 		].concat(nested_external_dependencies)
 
 		[
@@ -123,9 +136,17 @@ Assembly := [].{
 			.concat(
 				Assembly.component_files(
 					package_name,
-					"schemas",
-					declared_plugin.schemas,
-					component_dependencies,
+					"schemas/blocks",
+					declared_plugin.blocks,
+					schema_dependencies,
+				),
+			)
+			.concat(
+				Assembly.component_files(
+					package_name,
+					"schemas/commands",
+					declared_plugin.commands,
+					command_dependencies,
 				),
 			)
 			.concat(
@@ -266,7 +287,8 @@ Assembly := [].{
 			[] => Ok({})
 			[first, .. as rest] => {
 				Assembly.validate_module_filename(first.module_source.filename)?
-				Assembly.validate_plugin_files(first.schemas)?
+				Assembly.validate_plugin_files(first.blocks)?
+				Assembly.validate_plugin_files(first.commands)?
 				Assembly.validate_plugin_files(first.backends)?
 				Assembly.validate_plugin_files(first.implementations)?
 				Assembly.validate_plugins(rest)

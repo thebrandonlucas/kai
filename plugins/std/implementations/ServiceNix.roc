@@ -2,9 +2,10 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.Build as BuildCommand
-import schemas.Secret as SecretCommand
-import schemas.Service as ServiceCommand
+import blocks.Build as BuildBlock
+import blocks.Secret as SecretBlock
+import blocks.Service as ServiceBlock
+import commands.Service as ServiceCommand
 
 ServiceNix := [].{
 	implementation : Plugin.Implementation
@@ -41,15 +42,15 @@ ServiceNix := [].{
 				byte_offset: None,
 				message: "validated service block is missing 'restart'",
 			}
-		failures = ServiceCommand.name_failures(name)
+		failures = ServiceBlock.name_failures(name)
 			.concat(
 				Plugin.validate_text(
 					artifact_name,
-					BuildCommand.artifact_name_rules,
+					BuildBlock.artifact_name_rules,
 				),
 			)
-			.concat(ServiceCommand.secret_failures(secrets))
-			.concat(ServiceCommand.restart_failures(restart))
+			.concat(ServiceBlock.secret_failures(secrets))
+			.concat(ServiceBlock.restart_failures(restart))
 		Plugin.implementation_validation(failures)?
 		if input.host.os != LINUX {
 			Err({
@@ -248,7 +249,7 @@ ServiceNix := [].{
 						message: "validated secret '${first}' is missing 'provision'",
 					}
 				Plugin.implementation_validation(
-					SecretCommand.provision_failures(provision),
+					SecretBlock.provision_failures(provision),
 				)?
 				ServiceNix.validate_secrets(input, rest)
 			}

@@ -2,14 +2,15 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.Task as TaskCommand
+import blocks.Task as TaskBlock
+import commands.Run as RunCommand
 import EnvironmentNix
 
 TaskNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: TaskCommand.command_syntax.name,
+		command: RunCommand.command_syntax.name,
 		plan: TaskNix.plan,
 		validator: NoValidation,
 	}
@@ -26,7 +27,7 @@ TaskNix := [].{
 			message: "validated task block is missing 'run'",
 		}
 		Plugin.implementation_validation(
-			Plugin.validate_string_list(run, TaskCommand.run_rules("task")),
+			Plugin.validate_string_list(run, TaskBlock.run_rules("task")),
 		)?
 		environment = Plugin.referenced_fields(input, "environment")?
 		pkgs = Fields.get_strings(environment, "packages") ? |_| {

@@ -1,10 +1,9 @@
-# Example `command` interface provided by the split plugin.
+# Example command schema provided by the split plugin.
 import kai.Kaifile
 import kai.Plugin
+import blocks.Split as SplitBlock
 
 SplitCommand := [].{
-	block : Plugin.Block
-	block = Kaifile.unnamed_block({ header: "split", fields: [] })
 
 	command_syntax : Plugin.CommandSyntax
 	command_syntax = Plugin.command_syntax("split-command", [])
@@ -12,6 +11,6 @@ SplitCommand := [].{
 	command : Plugin.Command
 	command = Plugin.command_with_block({
 		syntax: command_syntax,
-		block: Kaifile.optional_block(block),
+		block: Kaifile.optional_block(SplitBlock.block),
 	})
 }
