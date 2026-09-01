@@ -63,14 +63,20 @@ MachineNix := [].{
 			_ => Err(UnsupportedMachineSystem)
 		}
 
-	machine_closure_path : Str -> Str
-	machine_closure_path = |name| ".kai/artifacts/machines/${name}/closure"
+	machine_closure_path : Str, Str -> Str
+	machine_closure_path = |workspace_root, name|
+		Plugin.workspace_path(workspace_root, "artifacts/machines/${name}/closure")
 
-	machine_flake_path : Str -> Str
-	machine_flake_path = |name| ".kai/machines/${name}"
+	machine_flake_path : Str, Str -> Str
+	machine_flake_path = |workspace_root, name|
+		Plugin.workspace_path(workspace_root, "machines/${name}")
 
-	machine_metadata_path : Str -> Str
-	machine_metadata_path = |name| ".kai/artifacts/machines/${name}/metadata.json"
+	machine_metadata_path : Str, Str -> Str
+	machine_metadata_path = |workspace_root, name|
+		Plugin.workspace_path(
+			workspace_root,
+			"artifacts/machines/${name}/metadata.json",
+		)
 
 	service_copy_steps : Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
 	service_copy_steps = |flake_path, services| {
@@ -101,10 +107,10 @@ MachineNix := [].{
 	}
 
 	machine_steps :
-		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
-	machine_steps = |name, flake, module_text, metadata, services| {
-		flake_path = MachineNix.machine_flake_path(name)
-		metadata_path = MachineNix.machine_metadata_path(name)
+		Str, Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
+	machine_steps = |root, name, flake, module_text, metadata, services| {
+		flake_path = MachineNix.machine_flake_path(root, name)
+		metadata_path = MachineNix.machine_metadata_path(root, name)
 		[
 			# Empty metadata invalidates an older artifact before any fallible step.
 			WriteFile({ contents: "", path: metadata_path }),
@@ -114,13 +120,19 @@ MachineNix := [].{
 			.concat(MachineNix.service_copy_steps(flake_path, services))
 			.concat(NixBackend.lock_steps(flake_path))
 			.concat([
-				WriteFile({ contents: "", path: ".kai/artifacts/machines/${name}/.keep" }),
+				WriteFile({
+					contents: "",
+					path: Plugin.workspace_path(
+						root,
+						"artifacts/machines/${name}/.keep",
+					),
+				}),
 				NixBackend.run([
 					"build",
 					"path:${flake_path}#kaiMachines.\"${name}\".closure",
 					"--no-update-lock-file",
 					"--out-link",
-					MachineNix.machine_closure_path(name),
+					MachineNix.machine_closure_path(root, name),
 				]),
 				WriteFile({ contents: metadata, path: metadata_path }),
 			])
@@ -247,10 +259,16 @@ MachineNix := [].{
 		)
 		machine_metadata = MachineNix.MachineMetadata.{
 			backend: NixBackend.backend.name,
-			closure_path: MachineNix.machine_closure_path(spec.name),
+			closure_path: MachineNix.machine_closure_path(
+				input.workspace_root,
+				spec.name,
+			),
 			flake_attribute: "kaiMachines.\"${spec.name}\".closure",
-			flake_path: MachineNix.machine_flake_path(spec.name),
-			metadata_path: MachineNix.machine_metadata_path(spec.name),
+			flake_path: MachineNix.machine_flake_path(input.workspace_root, spec.name),
+			metadata_path: MachineNix.machine_metadata_path(
+				input.workspace_root,
+				spec.name,
+			),
 			name: spec.name,
 			target_architecture: spec.target_architecture,
 			target_system: spec.target_system,
@@ -282,12 +300,13 @@ MachineNix := [].{
 						],
 						kind: "kai.machine.closure/v1",
 						name: spec.name,
-						path: MachineNix.machine_closure_path(spec.name),
+						path: MachineNix.machine_closure_path(input.workspace_root, spec.name),
 					},
 				],
 				prerequisite_commands,
 				requested_packages: spec.pkgs,
 				steps: MachineNix.machine_steps(
+					input.workspace_root,
 					spec.name,
 					flake,
 					module_text,

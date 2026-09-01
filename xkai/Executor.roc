@@ -56,12 +56,104 @@ Executor := [].{
 				"  -f, --file <PATH>  Use the Kaifile at PATH",
 				"  -h, --help         Print help",
 				"",
+				"Environment:",
+				"  KAI_DIR             Project-local workspace directory (default: .kai)",
+				"",
 				"More information: https://github.com/thebrandonlucas/kai",
 			]),
 			"\n",
 		)
 
 	Invocation := { args : List(Str), kaifile : Str }
+
+	workspace_root! : () => Try(Str, _)
+	workspace_root! = ||
+		match Env.var_str!(OsStr.utf8("KAI_DIR")) {
+			Ok(workspace_root) => Ok(workspace_root)
+			Err(VarNotFound(_)) => Ok(Plugin.default_workspace_root)
+			Err(problem) => Err(problem)
+		}
+
+	workspace_marker_name = ".kai-workspace"
+	workspace_marker_contents = "Kai project workspace\n"
+
+	prepare_workspace! : Str => Try({}, _)
+	prepare_workspace! = |workspace_root| {
+		root_path = Path.utf8(workspace_root)
+		if Path.is_sym_link!(root_path)? {
+			Err(UnsafeWorkspaceRoot("workspace root must not be a symbolic link"))
+		} else if workspace_root == Plugin.default_workspace_root {
+			if Path.exists!(root_path)? and !Path.is_dir!(root_path)? {
+				Err(UnsafeWorkspaceRoot("workspace root must be a directory"))
+			} else {
+				Ok({})
+			}
+		} else if Path.exists!(root_path)? {
+			marker = Path.join(root_path, Executor.workspace_marker_name)
+			if !Path.is_dir!(root_path)? {
+				Err(UnsafeWorkspaceRoot("workspace root must be a directory"))
+			} else if !Path.is_file!(marker)? {
+				Err(
+					UnsafeWorkspaceRoot(
+						"existing custom workspace root is not owned by Kai",
+					),
+				)
+			} else if Path.read_utf8!(marker)? != Executor.workspace_marker_contents {
+				Err(
+					UnsafeWorkspaceRoot(
+						"custom workspace root has an invalid ownership marker",
+					),
+				)
+			} else {
+				Ok({})
+			}
+		} else {
+			Path.create_dir!(root_path)?
+			marker = Path.join(root_path, Executor.workspace_marker_name)
+			marker_result = Path.write_utf8!(
+				marker,
+				Executor.workspace_marker_contents,
+			)
+			match marker_result {
+				Ok({}) => Ok({})
+				Err(problem) => {
+					Path.delete!(marker) ?? {}
+					Path.delete_empty!(root_path) ?? {}
+					Err(problem)
+				}
+			}
+		}
+	}
+
+	ensure_workspace_path_safe! : Str, Str => Try({}, _)
+	ensure_workspace_path_safe! = |workspace_root, path|
+		if path == workspace_root or path.starts_with("${workspace_root}/") {
+			Executor.ensure_path_parts_safe!(path.split_on("/"), "")
+		} else {
+			Ok({})
+		}
+
+	ensure_path_parts_safe! : List(Str), Str => Try({}, _)
+	ensure_path_parts_safe! = |parts, parent|
+		match parts {
+			[] => Ok({})
+			[first, .. as rest] => {
+				path = if parent.is_empty() {
+					first
+				} else {
+					"${parent}/${first}"
+				}
+				if Path.is_sym_link!(Path.utf8(path))? {
+					Err(
+						UnsafeWorkspaceRoot(
+							"workspace write path must not contain symbolic links",
+						),
+					)
+				} else {
+					Executor.ensure_path_parts_safe!(rest, path)
+				}
+			}
+		}
 
 	parse_invocation : List(Str) -> Try(Invocation, [MissingKaifilePath])
 	parse_invocation = |args|
@@ -98,6 +190,7 @@ Executor := [].{
 						}
 						_ => {
 							kaifile_text = Path.read_utf8!(Path.utf8(invocation.kaifile))?
+							workspace_root = Executor.workspace_root!()?
 							host = Env.platform!()
 							host_os : Plugin.HostOs
 							host_os = match host.os {
@@ -112,8 +205,13 @@ Executor := [].{
 								invocation.args,
 								host_os,
 								host.arch,
+								workspace_root,
 							) {
-								Ok(selected_plan) => Executor.execute!(selected_plan)
+								Ok(selected_plan) => {
+									Executor.prepare_workspace!(workspace_root)?
+									Executor.execute!(selected_plan, workspace_root)
+								}
+								Err(InvalidWorkspaceRoot(message)) => Err(InvalidWorkspaceRoot(message))
 								Err(PlanningFailed(diagnostic)) => Err(PlanningFailed(diagnostic))
 								Err(UnknownCommand) => Err(UnknownCommand)
 							}
@@ -123,19 +221,22 @@ Executor := [].{
 		}
 	}
 
-	execute! : Plugin.ExecutionPlan => Try({}, _)
-	execute! = |execution_plan| {
+	execute! : Plugin.ExecutionPlan, Str => Try({}, _)
+	execute! = |execution_plan, workspace_root| {
 		for step in execution_plan.steps {
-			Executor.execute_step!(step)?
+			Executor.execute_step!(step, workspace_root)?
 		}
 		Ok({})
 	}
 
-	execute_step! : Plugin.ExecutionStep => Try({}, _)
-	execute_step! = |step|
+	execute_step! : Plugin.ExecutionStep, Str => Try({}, _)
+	execute_step! = |step, workspace_root|
 		match step {
 			PrintLine(line) => Stdout.line!(line)
 			WriteFile({ contents, path }) => {
+				# TODO: Use descriptor-relative no-follow writes when basic-cli
+				# exposes them.
+				Executor.ensure_workspace_path_safe!(workspace_root, path)?
 				parent_parts = Str.split_on(path, "/").drop_last(1)
 				if !parent_parts.is_empty() {
 					Path.create_all!(Path.utf8(Str.join_with(parent_parts, "/")))?

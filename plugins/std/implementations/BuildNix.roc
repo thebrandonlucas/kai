@@ -89,8 +89,14 @@ BuildNix := [].{
 			Bool.True,
 			"unsupported build platform",
 		)?
-		flake_path = ".kai/builds/${artifact_name}"
-		artifact_path = ".kai/artifacts/builds/${artifact_name}"
+		flake_path = Plugin.workspace_path(
+			planning_input.workspace_root,
+			"builds/${artifact_name}",
+		)
+		artifact_path = Plugin.workspace_path(
+			planning_input.workspace_root,
+			"artifacts/builds/${artifact_name}",
+		)
 		build_json = Json.to_str({
 			inputs: source_input_names,
 			name: artifact_name,
@@ -118,12 +124,18 @@ BuildNix := [].{
 				steps: [
 					WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
 					WriteFile({
-						contents: BuildNix.nix_expression,
+						contents: BuildNix.nix_expression(planning_input.workspace_root),
 						path: "${flake_path}/build.nix",
 					}),
 					WriteFile({ contents: build_json, path: "${flake_path}/build.json" }),
 				].concat(NixBackend.lock_steps(flake_path)).concat([
-					WriteFile({ contents: "", path: ".kai/artifacts/builds/.keep" }),
+					WriteFile({
+						contents: "",
+						path: Plugin.workspace_path(
+							planning_input.workspace_root,
+							"artifacts/builds/.keep",
+						),
+					}),
 					NixBackend.run([
 						"build",
 						"--file",
@@ -136,9 +148,14 @@ BuildNix := [].{
 		)
 	}
 
-	nix_expression : Str
-	nix_expression = {
+	nix_expression : Str -> Str
+	nix_expression = |workspace_root| {
 		interpolate = NixBackend.nix_interpolation
+		ignore_paths = if workspace_root == Plugin.default_workspace_root {
+			".git\\n.kai"
+		} else {
+			".git\\n.kai\\n/${workspace_root}"
+		}
 		escaped_source = Str.join_with(
 			[
 				"lib.escapeShellArg (toString ",
@@ -158,7 +175,7 @@ BuildNix := [].{
 				"      (throw (\"Kai build package '\" + name + \"' was not found\"))",
 				"      pkgs;",
 				"  source = pkgs.nix-gitignore.gitignoreFilterRecursiveSource",
-				"    (_: _: true) \".git\\n.kai\" ../../../.;",
+				"    (_: _: true) \"${ignore_paths}\" ../../../.;",
 				"  inputLinks = lib.concatMapStringsSep \"\\n\" (name:",
 				Str.join_with(
 					[

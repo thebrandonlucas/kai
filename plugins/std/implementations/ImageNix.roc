@@ -13,23 +13,30 @@ ImageNix := [].{
 		validator: NoValidation,
 	}
 
-	image_output_path : Str -> Str
-	image_output_path = |name| ".kai/artifacts/images/${name}/result"
+	image_output_path : Str, Str -> Str
+	image_output_path = |workspace_root, name|
+		Plugin.workspace_path(workspace_root, "artifacts/images/${name}/result")
 
-	image_file_path : Str -> Str
-	image_file_path = |name| "${ImageNix.image_output_path(name)}/${name}.qcow2"
+	image_file_path : Str, Str -> Str
+	image_file_path = |workspace_root, name|
+		"${ImageNix.image_output_path(workspace_root, name)}/${name}.qcow2"
 
-	image_flake_path : Str -> Str
-	image_flake_path = |name| ".kai/images/${name}"
+	image_flake_path : Str, Str -> Str
+	image_flake_path = |workspace_root, name|
+		Plugin.workspace_path(workspace_root, "images/${name}")
 
-	image_metadata_path : Str -> Str
-	image_metadata_path = |name| ".kai/artifacts/images/${name}/metadata.json"
+	image_metadata_path : Str, Str -> Str
+	image_metadata_path = |workspace_root, name|
+		Plugin.workspace_path(
+			workspace_root,
+			"artifacts/images/${name}/metadata.json",
+		)
 
 	image_steps :
-		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
-	image_steps = |name, flake, module_text, metadata, services| {
-		flake_path = ImageNix.image_flake_path(name)
-		metadata_path = ImageNix.image_metadata_path(name)
+		Str, Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
+	image_steps = |workspace_root, name, flake, module_text, metadata, services| {
+		flake_path = ImageNix.image_flake_path(workspace_root, name)
+		metadata_path = ImageNix.image_metadata_path(workspace_root, name)
 		[
 			WriteFile({ contents: "", path: metadata_path }),
 			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
@@ -38,13 +45,19 @@ ImageNix := [].{
 			.concat(MachineNix.service_copy_steps(flake_path, services))
 			.concat(NixBackend.lock_steps(flake_path))
 			.concat([
-				WriteFile({ contents: "", path: ".kai/artifacts/images/${name}/.keep" }),
+				WriteFile({
+					contents: "",
+					path: Plugin.workspace_path(
+						workspace_root,
+						"artifacts/images/${name}/.keep",
+					),
+				}),
 				NixBackend.run([
 					"build",
 					"path:${flake_path}#kaiImages.\"${name}\".image",
 					"--no-update-lock-file",
 					"--out-link",
-					ImageNix.image_output_path(name),
+					ImageNix.image_output_path(workspace_root, name),
 				]),
 				WriteFile({ contents: metadata, path: metadata_path }),
 			])
@@ -88,12 +101,12 @@ ImageNix := [].{
 		metadata = Json.to_str({
 			backend: NixBackend.backend.name,
 			flake_attribute: "kaiImages.\"${spec.name}\".image",
-			flake_path: ImageNix.image_flake_path(spec.name),
+			flake_path: ImageNix.image_flake_path(input.workspace_root, spec.name),
 			format: "qcow2",
 			kind: "machine-image",
-			metadata_path: ImageNix.image_metadata_path(spec.name),
+			metadata_path: ImageNix.image_metadata_path(input.workspace_root, spec.name),
 			name: spec.name,
-			output_path: ImageNix.image_file_path(spec.name),
+			output_path: ImageNix.image_file_path(input.workspace_root, spec.name),
 			schema,
 			target_architecture: spec.target_architecture,
 			target_system: spec.target_system,
@@ -110,12 +123,13 @@ ImageNix := [].{
 						],
 						kind: "kai.machine.image/v1",
 						name: spec.name,
-						path: ImageNix.image_file_path(spec.name),
+						path: ImageNix.image_file_path(input.workspace_root, spec.name),
 					},
 				],
 				prerequisite_commands,
 				requested_packages: spec.pkgs,
 				steps: ImageNix.image_steps(
+					input.workspace_root,
 					spec.name,
 					ImageNix.render_flake(
 						spec.name,

@@ -176,6 +176,7 @@ Examples := [].{
 					first.args,
 					first.os,
 					first.arch,
+					Plugin.default_workspace_root,
 				) ? |problem|
 					ExamplePlanningFailed({
 						args: first.args,
