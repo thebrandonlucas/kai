@@ -68,6 +68,8 @@ ServiceNix := [].{
 					pkgs_flake = ServiceNix.validate_build(build, target.system)?
 					module_text = ServiceNix.render_module(name, secrets, restart)
 					expression = ServiceNix.render_expression(name, pkgs_flake, target.system)
+					source_path = ".kai/services/${name}"
+					output_path = ".kai/artifacts/.services/${name}"
 					Ok(
 						Plugin.BackendCommandPlan.{
 							artifacts: [
@@ -79,17 +81,47 @@ ServiceNix := [].{
 									],
 									kind: "kai.nixos.service/v1",
 									name,
-									path: NixBackend.service_artifact_path(name),
+									path: output_path,
 								},
 							],
 							prerequisite_commands,
 							requested_packages: [],
-							steps: NixBackend.service_steps(
-								name,
-								build.path,
-								module_text,
-								expression,
-							),
+							steps: [
+								WriteFile({
+									contents: module_text,
+									path: "${source_path}/module.nix",
+								}),
+								WriteFile({
+									contents: expression,
+									path: "${source_path}/default.nix",
+								}),
+								RunProgram({
+									arguments: ["-rf", "--", "${source_path}/artifact"],
+									program: "rm",
+								}),
+								RunProgram({
+									arguments: [
+										"--recursive",
+										"--dereference",
+										"--preserve=mode",
+										"--",
+										build.path,
+										"${source_path}/artifact",
+									],
+									program: "cp",
+								}),
+								WriteFile({
+									contents: "",
+									path: ".kai/artifacts/.services/.keep",
+								}),
+								NixBackend.run([
+									"build",
+									"--file",
+									"${source_path}/default.nix",
+									"--out-link",
+									output_path,
+								]),
+							],
 						},
 					)
 				}

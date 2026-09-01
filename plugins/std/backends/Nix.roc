@@ -222,39 +222,6 @@ Nix := [].{
 			]),
 		]
 
-	service_artifact_path : Str -> Str
-	service_artifact_path = |name| ".kai/artifacts/.services/${name}"
-
-	service_steps : Str, Str, Str, Str -> List(Plugin.ExecutionStep)
-	service_steps = |name, build_artifact, module_text, expression| {
-		source_path = ".kai/services/${name}"
-		artifact_path = "${source_path}/artifact"
-		[
-			WriteFile({ contents: module_text, path: "${source_path}/module.nix" }),
-			WriteFile({ contents: expression, path: "${source_path}/default.nix" }),
-			RunProgram({ arguments: ["-rf", "--", artifact_path], program: "rm" }),
-			RunProgram({
-				arguments: [
-					"--recursive",
-					"--dereference",
-					"--preserve=mode",
-					"--",
-					build_artifact,
-					artifact_path,
-				],
-				program: "cp",
-			}),
-			WriteFile({ contents: "", path: ".kai/artifacts/.services/.keep" }),
-			Nix.run([
-				"build",
-				"--file",
-				"${source_path}/default.nix",
-				"--out-link",
-				Nix.service_artifact_path(name),
-			]),
-		]
-	}
-
 	machine_closure_path : Str -> Str
 	machine_closure_path = |name| ".kai/artifacts/machines/${name}/closure"
 
