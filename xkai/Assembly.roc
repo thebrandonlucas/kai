@@ -16,10 +16,7 @@ Assembly := [].{
 
 	Dependency := { name : Str, path : Str }
 
-	BuildProfile := {
-		embedded_plugins : List(Assembly.PluginSource),
-		platform_url : Str,
-	}
+	BuildProfile := { platform_url : Str }
 
 	BuildPlan := { app_source : Str, files : List(Assembly.SourceFile) }
 
@@ -181,12 +178,6 @@ Assembly := [].{
 			).concat(Assembly.stage_plugins(rest, external_dependencies))
 		}
 
-	plugin_dependency : Assembly.PluginSource -> Assembly.Dependency
-	plugin_dependency = |declared_plugin| {
-		name: declared_plugin.package_name,
-		path: "../${declared_plugin.package_name}/main.roc",
-	}
-
 	app_dependency : Assembly.PluginSource -> Assembly.Dependency
 	app_dependency = |declared_plugin| {
 		name: declared_plugin.package_name,
@@ -194,32 +185,35 @@ Assembly := [].{
 	}
 
 	render_app : Str, List(Assembly.PluginSource) -> Str
-	render_app = |platform_url, plugins| {
-		dependencies = [{ name: "kai", path: "./package.roc" }].concat(
-			plugins.map(Assembly.app_dependency),
-		)
+	render_app = |platform_url, custom_plugins| {
+		standard_index = U64.to_str(custom_plugins.len())
+		dependencies = [{ name: "kai", path: "./package.roc" }]
+			.concat(custom_plugins.map(Assembly.app_dependency))
+			.concat([{ name: "std", path: "../plugins/std/main.roc" }])
 		dependency_lines = dependencies.map(
 			|dependency| "\t${dependency.name}: \"${dependency.path}\",",
 		)
-		import_lines = ["import Executor"].concat(
-			plugins.map_with_index(
-				|declared_plugin, index|
-					Str.join_with(
-						[
-							"import ",
-							declared_plugin.package_name,
-							".",
-							declared_plugin.module_name,
-							" as Plugin",
-							U64.to_str(index),
-						],
-						"",
-					),
-			),
-		)
-		registry_lines = plugins.map_with_index(
+		import_lines = ["import Executor"]
+			.concat(
+				custom_plugins.map_with_index(
+					|declared_plugin, index|
+						Str.join_with(
+							[
+								"import ",
+								declared_plugin.package_name,
+								".",
+								declared_plugin.module_name,
+								" as Plugin",
+								U64.to_str(index),
+							],
+							"",
+						),
+				),
+			)
+			.concat(["import std.StdPlugin as Plugin${standard_index}"])
+		registry_lines = custom_plugins.map_with_index(
 			|_, index| "\tPlugin${U64.to_str(index)}.plugin,",
-		)
+		).concat(["\tPlugin${standard_index}.plugin,"])
 
 		Str.join_with(
 			[
@@ -325,21 +319,15 @@ Assembly := [].{
 			Assembly.AssemblyProblem,
 		)
 	assemble = |profile, custom_plugins| {
-		plugins = custom_plugins.concat(profile.embedded_plugins)
-		Assembly.validate_plugins(plugins)?
-		embedded_dependencies = profile.embedded_plugins.map(
-			Assembly.plugin_dependency,
-		)
-		staged_custom_plugins = Assembly.stage_plugins(
+		Assembly.validate_plugins(custom_plugins)?
+		assembled_files = Assembly.stage_plugins(
 			custom_plugins,
-			embedded_dependencies,
+			[{ name: "std", path: "../std/main.roc" }],
 		)
-		staged_embedded_plugins = Assembly.stage_plugins(
-			profile.embedded_plugins,
-			[],
+		assembled_app_source = Assembly.render_app(
+			profile.platform_url,
+			custom_plugins,
 		)
-		assembled_app_source = Assembly.render_app(profile.platform_url, plugins)
-		assembled_files = staged_custom_plugins.concat(staged_embedded_plugins)
 		Assembly.validate_destinations(
 			assembled_files.concat([
 				{

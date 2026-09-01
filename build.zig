@@ -5,6 +5,7 @@ const SourceTree = struct {
     roc_apps: []const []const u8,
     roc_files: []const []const u8,
     roc_roots: []const []const u8,
+    standard_plugin_files: []const []const u8,
     xkai_files: []const []const u8,
     zig_files: []const []const u8,
 };
@@ -151,6 +152,7 @@ fn discoverSources(b: *std.Build) SourceTree {
         .roc_apps = roc_apps.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_files = roc_files.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_roots = roc_roots.toOwnedSlice(allocator) catch @panic("out of memory"),
+        .standard_plugin_files = discoverRegularFiles(b, "plugins/std"),
         .xkai_files = discoverRegularFiles(b, "xkai"),
         .zig_files = zig_files.toOwnedSlice(allocator) catch @panic("out of memory"),
     };
@@ -211,16 +213,15 @@ pub fn build(b: *std.Build) void {
 
     const source_stage = b.addWriteFiles();
     _ = source_stage.addCopyDirectory(b.path("xkai"), "xkai", .{});
-    _ = source_stage.addCopyDirectory(
-        b.path("plugins/std"),
-        "plugins/std",
-        .{},
-    );
 
     const bundle = b.addSystemCommand(&.{ "roc", "bundle", "--output-dir" });
     bundle.setCwd(b.path("."));
     const bundle_dir = bundle.addOutputDirectoryArg("xkai-bundle");
     for (sources.xkai_files) |source| {
+        bundle.addArg(source);
+        bundle.addFileInput(b.path(source));
+    }
+    for (sources.standard_plugin_files) |source| {
         bundle.addArg(source);
         bundle.addFileInput(b.path(source));
     }

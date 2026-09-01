@@ -14,12 +14,7 @@ PrepareXkai := [].{
 		archive = PrepareXkai.find_archive!(bundle_root)?
 		archive_name = PrepareXkai.filename(archive)?
 		xkai_source = Path.join(source_root, "xkai")
-		plugins_source = Path.join(source_root, "plugins")
 		PrepareXkai.require_dir!(xkai_source, "xkai")?
-		PrepareXkai.require_dir!(
-			Path.join(plugins_source, "std"),
-			"plugins/std",
-		)?
 		PrepareXkai.validate_tree!(source_root)?
 		Path.create_all!(output_root)?
 		# TODO: Use basic-cli Path copying after Roc's folded Path dispatch bug

@@ -3,7 +3,6 @@ app [main!] {
 	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.22.0/${
 		""
 	}F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL.tar.zst",
-	std: "../plugins/std/main.roc",
 }
 
 import pf.OsStr
@@ -12,7 +11,6 @@ import pf.Stdout
 import Builder
 import Cli
 import EmbeddedSources
-import std.StdBundle
 
 print_usage! = |_| {
 	Stdout.line!(Cli.usage)?
@@ -33,10 +31,7 @@ runtime_platform_url = Str.join_with(
 	"/",
 )
 
-stock_profile = {
-	platform_url: runtime_platform_url,
-	embedded_plugins: [StdBundle.plugin_source],
-}
+stock_profile = { platform_url: runtime_platform_url }
 
 main! = |args| {
 	display_args = args.drop_first(1).map(OsStr.display)
