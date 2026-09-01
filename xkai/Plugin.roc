@@ -162,7 +162,7 @@ Plugin := [].{
 			Err({ location: None, message: Plugin.validation_message(failures) })
 		}
 
-	implementation_validation : List(Str) -> Try({}, ImplementationDiagnostic)
+	implementation_validation : List(Str) -> Try({}, BackendPlanningDiagnostic)
 	implementation_validation = |failures|
 		if failures.is_empty() {
 			Ok({})
@@ -980,7 +980,7 @@ Plugin := [].{
 
 	PrerequisiteArtifacts : [NotResolved, Resolved(List(Artifact))]
 
-	ImplementationInput := {
+	CommandPlanningInput := {
 		backend_target : [BackendTarget(Str), NoBackendTarget],
 		command_arguments : List(Str),
 		command_fields : Fields.ParsedFields,
@@ -1026,14 +1026,14 @@ Plugin := [].{
 			_ => Bool.False
 		}
 
-	CommandPlan := {
+	BackendCommandPlan := {
 		artifacts : List(Artifact),
 		prerequisite_commands : List(PrerequisiteCommand),
 		requested_packages : List(Str),
 		steps : List(ExecutionStep),
 	}
 
-	ImplementationDiagnostic := {
+	BackendPlanningDiagnostic := {
 		byte_offset : [At(U64), None],
 		message : Str,
 	}
@@ -1041,16 +1041,25 @@ Plugin := [].{
 	Implementation := {
 		backend : Str,
 		command : Str,
-		plan : ImplementationInput -> Try(CommandPlan, ImplementationDiagnostic),
+		plan :
+			CommandPlanningInput ->
+				Try(
+					BackendCommandPlan,
+					BackendPlanningDiagnostic,
+				),
 		validator : Validator,
 	}
 
-	blocks_of_kind : ImplementationInput, List(Str) -> List(ParsedBlock)
+	blocks_of_kind : CommandPlanningInput, List(Str) -> List(ParsedBlock)
 	blocks_of_kind = |input, kinds|
 		input.kaifile_blocks.keep_if(|block| kinds.contains(block.kind))
 
 	referenced_fields :
-		ImplementationInput, Str -> Try(Fields.ParsedFields, ImplementationDiagnostic)
+		CommandPlanningInput,
+		Str -> Try(
+			Fields.ParsedFields,
+			BackendPlanningDiagnostic,
+		)
 	referenced_fields = |input, field|
 		match input.referenced_fields {
 			NoReferencedFields => Err({
@@ -1074,10 +1083,10 @@ Plugin := [].{
 				}
 			}
 
-	validate_implementation_input : ImplementationInput,
+	validate_implementation_input : CommandPlanningInput,
 	Validator -> Try(
-		ImplementationInput,
-		ImplementationDiagnostic,
+		CommandPlanningInput,
+		BackendPlanningDiagnostic,
 	)
 	validate_implementation_input = |input, validator|
 		match validator {
@@ -1097,7 +1106,7 @@ Plugin := [].{
 				)?
 				Plugin.implementation_validation(failures)?
 				Ok(
-					Plugin.ImplementationInput.{
+					Plugin.CommandPlanningInput.{
 						backend_target,
 						command_arguments: input.command_arguments,
 						command_fields: input.command_fields,
@@ -1114,7 +1123,7 @@ Plugin := [].{
 		Fields.ParsedFields,
 		List(StringListValidation) -> Try(
 			List(Str),
-			ImplementationDiagnostic,
+			BackendPlanningDiagnostic,
 		)
 	validate_string_list_fields = |fields, validations|
 		match validations {
@@ -1129,7 +1138,7 @@ Plugin := [].{
 	validated_strings : Fields.ParsedFields,
 	KaifileField -> Try(
 		List(Str),
-		ImplementationDiagnostic,
+		BackendPlanningDiagnostic,
 	)
 	validated_strings = |fields, declared_field| {
 		field = Kaifile.parser_field(declared_field)
@@ -1150,7 +1159,7 @@ Plugin := [].{
 	}
 
 	validated_backend_target :
-		ImplementationInput -> Try(Str, ImplementationDiagnostic)
+		CommandPlanningInput -> Try(Str, BackendPlanningDiagnostic)
 	validated_backend_target = |input|
 		match input.backend_target {
 			BackendTarget(value) => Ok(value)
@@ -2045,7 +2054,7 @@ Plugin := [].{
 								})
 							}
 						}?
-						input = Plugin.ImplementationInput.{
+						input = Plugin.CommandPlanningInput.{
 							backend_target: NoBackendTarget,
 							command_arguments: normalized_invocation.args,
 							command_fields: parsed.command_fields,
@@ -2085,7 +2094,7 @@ Plugin := [].{
 							initial_command_plan
 						} else {
 							with_prerequisite_artifacts = plan_implementation(
-								Plugin.ImplementationInput.{
+								Plugin.CommandPlanningInput.{
 									backend_target: validated_input.backend_target,
 									command_arguments: validated_input.command_arguments,
 									command_fields: validated_input.command_fields,

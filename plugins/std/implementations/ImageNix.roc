@@ -14,10 +14,10 @@ ImageNix := [].{
 	}
 
 	plan :
-		Plugin.ImplementationInput ->
+		Plugin.CommandPlanningInput ->
 			Try(
-				Plugin.CommandPlan,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendCommandPlan,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
 		spec = MachineNix.machine_spec(input, "image")?
@@ -62,7 +62,7 @@ ImageNix := [].{
 			target_system: spec.target_system,
 		})
 		Ok(
-			Plugin.CommandPlan.{
+			Plugin.BackendCommandPlan.{
 				artifacts: [
 					{
 						attributes: [

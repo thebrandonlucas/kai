@@ -9,7 +9,7 @@ SplitLocal := [].{
 		backend: Local.backend.name,
 		command: SplitCommand.command_syntax.name,
 		plan: |_| Ok(
-			Plugin.CommandPlan.{
+			Plugin.BackendCommandPlan.{
 				artifacts: [],
 				prerequisite_commands: [],
 				requested_packages: [],

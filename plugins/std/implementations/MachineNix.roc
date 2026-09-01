@@ -39,11 +39,11 @@ MachineNix := [].{
 	}
 
 	machine_spec :
-		Plugin.ImplementationInput,
+		Plugin.CommandPlanningInput,
 		Str ->
 			Try(
 				MachineSpec,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	machine_spec = |input, command_name| {
 		name = match input.command_arguments {
@@ -124,10 +124,10 @@ MachineNix := [].{
 	}
 
 	plan :
-		Plugin.ImplementationInput ->
+		Plugin.CommandPlanningInput ->
 			Try(
-				Plugin.CommandPlan,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendCommandPlan,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
 		spec = MachineNix.machine_spec(input, "machine")?
@@ -181,7 +181,7 @@ MachineNix := [].{
 		)
 		metadata = MachineNix.render_metadata(machine_metadata)
 		Ok(
-			Plugin.CommandPlan.{
+			Plugin.BackendCommandPlan.{
 				artifacts: [
 					{
 						attributes: [
@@ -210,7 +210,7 @@ MachineNix := [].{
 		)
 	}
 
-	has_service_declaration : Plugin.ImplementationInput, Str -> Bool
+	has_service_declaration : Plugin.CommandPlanningInput, Str -> Bool
 	has_service_declaration = |input, name|
 		List.any(
 			Plugin.blocks_of_kind(input, ["service"]),
@@ -238,7 +238,7 @@ MachineNix := [].{
 		Str ->
 			Try(
 				List(Plugin.Artifact),
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	resolve_services = |artifacts, names, system|
 		match names {
@@ -252,7 +252,7 @@ MachineNix := [].{
 		}
 
 	validate_service :
-		Plugin.Artifact, Str -> Try({}, Plugin.ImplementationDiagnostic)
+		Plugin.Artifact, Str -> Try({}, Plugin.BackendPlanningDiagnostic)
 	validate_service = |service, system| {
 		backend = MachineNix.attribute(service.attributes, "backend")?
 		service_system = MachineNix.attribute(
@@ -300,7 +300,7 @@ MachineNix := [].{
 		Str ->
 			Try(
 				Str,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	attribute = |attributes, key|
 		match attributes {
@@ -326,7 +326,7 @@ MachineNix := [].{
 		Str ->
 			Try(
 				Plugin.Artifact,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	find_service = |artifacts, name|
 		match artifacts.keep_if(|artifact|
@@ -359,7 +359,7 @@ MachineNix := [].{
 		services.map(|service| "          ./services/${service.name}")
 
 	optional_strings :
-		Fields.ParsedFields, Str -> Try(List(Str), Plugin.ImplementationDiagnostic)
+		Fields.ParsedFields, Str -> Try(List(Str), Plugin.BackendPlanningDiagnostic)
 	optional_strings = |fields, field|
 		match Fields.maybe_strings(fields, field) {
 			Ok(None) => Ok([])

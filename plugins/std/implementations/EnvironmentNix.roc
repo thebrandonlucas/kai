@@ -71,13 +71,13 @@ EnvironmentNix := [].{
 		}
 
 	command_plan :
-		Plugin.ImplementationInput,
+		Plugin.CommandPlanningInput,
 		List(Str),
 		List(Str),
 		Str ->
 			Try(
-				Plugin.CommandPlan,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendCommandPlan,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	command_plan = |input, pkgs, overlays, unsupported_message| {
 		flake = EnvironmentNix.render_flake(
@@ -88,7 +88,7 @@ EnvironmentNix := [].{
 			unsupported_message,
 		)?
 		Ok(
-			Plugin.CommandPlan.{
+			Plugin.BackendCommandPlan.{
 				artifacts: [],
 				prerequisite_commands: [],
 				requested_packages: pkgs,

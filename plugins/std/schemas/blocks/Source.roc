@@ -53,7 +53,7 @@ Source := [].{
 		List(Plugin.ParsedBlock) ->
 			Try(
 				List(Source.Input),
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	collect = |entries| {
 		inputs = entries.map_try(
@@ -78,7 +78,7 @@ Source := [].{
 	}
 
 	validate_sources :
-		List(Source.Input), List(Str) -> Try({}, Plugin.ImplementationDiagnostic)
+		List(Source.Input), List(Str) -> Try({}, Plugin.BackendPlanningDiagnostic)
 	validate_sources = |inputs, seen|
 		match inputs {
 			[] => Ok({})
@@ -103,7 +103,7 @@ Source := [].{
 		List(Str) ->
 			Try(
 				{},
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	validate_selected = |selected, sources, seen|
 		match selected {

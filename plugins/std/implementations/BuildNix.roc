@@ -16,84 +16,109 @@ BuildNix := [].{
 	}
 
 	plan :
-		Plugin.ImplementationInput ->
+		Plugin.CommandPlanningInput ->
 			Try(
-				Plugin.CommandPlan,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendCommandPlan,
+				Plugin.BackendPlanningDiagnostic,
 			)
-	plan = |input| {
-		name = match input.command_arguments {
-			[selected_name] => Ok(selected_name)
+	plan = |planning_input| {
+		artifact_name = match planning_input.command_arguments {
+			[selected_artifact_name] => Ok(selected_artifact_name)
 			_ => Err({
 				byte_offset: None,
 				message: "build requires exactly one artifact name",
 			})
 		}?
-		name_failures = Plugin.validate_text(name, BuildBlock.artifact_name_rules)
-		run = Fields.get_strings(input.command_fields, "run") ? |_| {
+		artifact_name_errors = Plugin.validate_text(
+			artifact_name,
+			BuildBlock.artifact_name_rules,
+		)
+		run_arguments = Fields.get_strings(
+			planning_input.command_fields,
+			"run",
+		) ? |_| {
 			byte_offset: None,
 			message: "validated build block is missing 'run'",
 		}
-		run_failures = Plugin.validate_string_list(run, BuildBlock.run_rules)
-		inputs = Plugin.validated_strings(
-			input.command_fields,
+		run_argument_errors = Plugin.validate_string_list(
+			run_arguments,
+			BuildBlock.run_rules,
+		)
+		source_input_names = Plugin.validated_strings(
+			planning_input.command_fields,
 			BuildBlock.inputs_field,
 		)?
-		EnvironmentNix.validate_source_inputs(input, inputs)?
-		output = Fields.get_string(input.command_fields, "output") ? |_| {
+		EnvironmentNix.validate_source_inputs(planning_input, source_input_names)?
+		output_path = Fields.get_string(
+			planning_input.command_fields,
+			"output",
+		) ? |_| {
 			byte_offset: None,
 			message: "validated build block is missing 'output'",
 		}
-		output_failures = Plugin.validate_text(output, BuildBlock.output_rules)
-		failures = name_failures.concat(run_failures).concat(output_failures)
-		Plugin.implementation_validation(failures)?
-		environment = Plugin.referenced_fields(input, "environment")?
-		pkgs = Fields.get_strings(environment, "packages") ? |_| {
+		output_path_errors = Plugin.validate_text(
+			output_path,
+			BuildBlock.output_rules,
+		)
+		build_validation_errors = artifact_name_errors
+			.concat(run_argument_errors)
+			.concat(output_path_errors)
+		Plugin.implementation_validation(build_validation_errors)?
+		environment = Plugin.referenced_fields(planning_input, "environment")?
+		environment_packages = Fields.get_strings(
+			environment,
+			"packages",
+		) ? |_| {
 			byte_offset: None,
 			message: "validated environment block is missing 'packages'",
 		}
-		package_failures = Plugin.validate_string_list(
-			pkgs,
+		package_validation_errors = Plugin.validate_string_list(
+			environment_packages,
 			NixBackend.package_rules,
 		)
-		Plugin.implementation_validation(package_failures)?
+		Plugin.implementation_validation(package_validation_errors)?
 		overlays = EnvironmentNix.extract_overlays(environment)?
-		target = NixBackend.target(input.host.os, input.host.arch) ? |_|
-			{ byte_offset: None, message: "unsupported build platform" }
+		target = NixBackend.target(
+			planning_input.host.os,
+			planning_input.host.arch,
+		) ? |_| { byte_offset: None, message: "unsupported build platform" }
 		flake = EnvironmentNix.render_flake(
-			input,
-			pkgs,
+			planning_input,
+			environment_packages,
 			overlays,
 			Bool.True,
 			"unsupported build platform",
 		)?
 		build_nix = BuildNix.nix_expression
 		build_json = Json.to_str({
-			inputs,
-			name,
-			output,
-			pkgs,
-			run,
+			inputs: source_input_names,
+			name: artifact_name,
+			output: output_path,
+			pkgs: environment_packages,
+			run: run_arguments,
 			system: target.system,
 		})
 		Ok(
-			Plugin.CommandPlan.{
+			Plugin.BackendCommandPlan.{
 				artifacts: [
 					{
 						attributes: [
 							{ key: "backend", value: NixBackend.backend.name },
-							{ key: "nix.pkgs-flake", value: NixBackend.build_flake_path(name) },
+							{
+								key: "nix.pkgs-flake",
+								value: NixBackend.build_flake_path(artifact_name),
+							},
 							{ key: "target.system", value: target.system },
 						],
 						kind: "kai.build/v1",
-						name,
-						path: NixBackend.build_artifact_path(name),
+						name: artifact_name,
+						path: NixBackend.build_artifact_path(artifact_name),
 					},
 				],
 				prerequisite_commands: [],
-				requested_packages: pkgs,
+				requested_packages: environment_packages,
 				steps: NixBackend.build_artifact_steps(
-					name,
+					artifact_name,
 					flake,
 					build_nix,
 					build_json,

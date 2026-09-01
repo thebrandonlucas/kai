@@ -17,10 +17,10 @@ ServiceNix := [].{
 	}
 
 	plan :
-		Plugin.ImplementationInput ->
+		Plugin.CommandPlanningInput ->
 			Try(
-				Plugin.CommandPlan,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendCommandPlan,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
 		name = match input.command_arguments {
@@ -69,7 +69,7 @@ ServiceNix := [].{
 					module_text = ServiceNix.render_module(name, secrets, restart)
 					expression = ServiceNix.render_expression(name, pkgs_flake, target.system)
 					Ok(
-						Plugin.CommandPlan.{
+						Plugin.BackendCommandPlan.{
 							artifacts: [
 								{
 									attributes: [
@@ -95,7 +95,7 @@ ServiceNix := [].{
 				}
 				NotResolved =>
 					Ok(
-						Plugin.CommandPlan.{
+						Plugin.BackendCommandPlan.{
 							artifacts: [],
 							prerequisite_commands,
 							requested_packages: [],
@@ -120,7 +120,7 @@ ServiceNix := [].{
 		Str ->
 			Try(
 				Plugin.Artifact,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	find_build = |artifacts, name|
 		match artifacts.keep_if(|artifact|
@@ -149,7 +149,7 @@ ServiceNix := [].{
 		}
 
 	validate_build :
-		Plugin.Artifact, Str -> Try(Str, Plugin.ImplementationDiagnostic)
+		Plugin.Artifact, Str -> Try(Str, Plugin.BackendPlanningDiagnostic)
 	validate_build = |build, system| {
 		backend = ServiceNix.attribute(build.attributes, "backend")?
 		build_system = ServiceNix.attribute(build.attributes, "target.system")?
@@ -192,7 +192,7 @@ ServiceNix := [].{
 		Str ->
 			Try(
 				Str,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	attribute = |attributes, key|
 		match attributes {
@@ -208,11 +208,11 @@ ServiceNix := [].{
 		}
 
 	validate_secrets :
-		Plugin.ImplementationInput,
+		Plugin.CommandPlanningInput,
 		List(Str) ->
 			Try(
 				{},
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	validate_secrets = |input, names|
 		match names {

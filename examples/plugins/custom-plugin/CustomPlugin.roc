@@ -66,7 +66,7 @@ CustomPlugin := [].{
 						message: "validated custom block is missing 'message'",
 					})
 					Ok(message) => Ok(
-						Plugin.CommandPlan.{
+						Plugin.BackendCommandPlan.{
 							artifacts: [],
 							prerequisite_commands: [],
 							requested_packages: [],
