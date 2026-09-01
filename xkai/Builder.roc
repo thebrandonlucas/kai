@@ -101,6 +101,19 @@ Builder := [].{
 		Path.write_utf8!(Path.join(stage, source.destination), source.contents)
 	}
 
+	delete_output! = |path|
+		if Path.is_file!(path)? Path.delete!(path) else Ok({})
+
+	cleanup_failed_build! = |stage, output_path| {
+		stage_result = Path.delete_all!(stage)
+		output_result = Builder.delete_output!(output_path)
+		match (stage_result, output_result) {
+			(Err(err), _) => Err(err)
+			(_, Err(err)) => Err(err)
+			(Ok({}), Ok({})) => Ok({})
+		}
+	}
+
 	unbundle! = |stage, archive| {
 		Path.write_bytes!(Path.join(stage, archive.filename), archive.bytes)?
 		cwd = Env.cwd!()?
@@ -110,7 +123,10 @@ Builder := [].{
 			["unbundle", archive.filename].map(OsStr.utf8),
 		)
 		match Env.set_cwd!(cwd) {
-			Err(err) => Err(err)
+			Err(err) => {
+				Env.set_cwd!(Env.temp_dir!())?
+				Err(err)
+			}
 			Ok({}) => unbundle_result
 		}
 	}
@@ -166,27 +182,33 @@ Builder := [].{
 					output_name,
 					output_path,
 				) {
-					Err(err) => {
-						Path.delete_all!(stage) ?? {}
-						Path.delete!(output_path) ?? {}
-						Err(err)
+					Err(build_err) => {
+						Env.set_cwd!(cwd)?
+						match Builder.cleanup_failed_build!(stage, output_path) {
+							Err(cleanup_err) => Err(cleanup_err)
+							Ok({}) => Err(build_err)
+						}
 					}
-					Ok({}) =>
+					Ok({}) => {
+						Env.set_cwd!(cwd)?
 						match Path.delete_all!(stage) {
-							Err(err) => {
-								Path.delete!(output_path) ?? {}
-								Err(err)
-							}
+							Err(stage_err) =>
+								match Builder.delete_output!(output_path) {
+									Err(output_err) => Err(output_err)
+									Ok({}) => Err(stage_err)
+								}
 							Ok({}) =>
 								match Path.rename!(output_path, published_path) {
 									Ok({}) => Ok({})
-									Err(err) => {
-										Path.delete!(output_path) ?? {}
-										Err(err)
+									Err(rename_err) =>
+										match Builder.delete_output!(output_path) {
+											Err(output_err) => Err(output_err)
+											Ok({}) => Err(rename_err)
+										}
 									}
-								}
 							}
 					}
+				}
 			}
 	}
 }

@@ -218,6 +218,7 @@ pub fn build(b: *std.Build) void {
     );
 
     const bundle = b.addSystemCommand(&.{ "roc", "bundle", "--output-dir" });
+    bundle.setCwd(b.path("."));
     const bundle_dir = bundle.addOutputDirectoryArg("xkai-bundle");
     for (sources.xkai_files) |source| {
         bundle.addArg(source);
