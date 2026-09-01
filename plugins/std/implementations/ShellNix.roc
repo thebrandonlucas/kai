@@ -41,17 +41,18 @@ ShellNix := [].{
 			Bool.False,
 			"unsupported shell platform",
 		)?
+		flake_path = Plugin.workspace_path(input.workspace_root, "flake.nix")
 		Ok(
 			Plugin.BackendCommandPlan.{
 				artifacts: [],
 				prerequisite_commands: [],
 				requested_packages: pkgs,
-				steps: [WriteFile({ contents: flake, path: ".kai/flake.nix" })]
-					.concat(NixBackend.lock_steps(".kai"))
+				steps: [WriteFile({ contents: flake, path: flake_path })]
+					.concat(NixBackend.lock_steps(input.workspace_root))
 					.concat([
 						NixBackend.run([
 							"develop",
-							"path:.kai#default",
+							"path:${input.workspace_root}#default",
 							"--no-update-lock-file",
 						]),
 					]),

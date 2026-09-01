@@ -68,8 +68,14 @@ ServiceNix := [].{
 					pkgs_flake = ServiceNix.validate_build(build, target.system)?
 					module_text = ServiceNix.render_module(name, secrets, restart)
 					expression = ServiceNix.render_expression(name, pkgs_flake, target.system)
-					source_path = ".kai/services/${name}"
-					output_path = ".kai/artifacts/.services/${name}"
+					source_path = Plugin.workspace_path(
+						input.workspace_root,
+						"services/${name}",
+					)
+					output_path = Plugin.workspace_path(
+						input.workspace_root,
+						"artifacts/.services/${name}",
+					)
 					Ok(
 						Plugin.BackendCommandPlan.{
 							artifacts: [
@@ -112,7 +118,10 @@ ServiceNix := [].{
 								}),
 								WriteFile({
 									contents: "",
-									path: ".kai/artifacts/.services/.keep",
+									path: Plugin.workspace_path(
+										input.workspace_root,
+										"artifacts/.services/.keep",
+									),
 								}),
 								NixBackend.run([
 									"build",

@@ -31,18 +31,20 @@ UpdateNix := [].{
 		overlays = EnvironmentNix.all_overlays(input)?
 		sources = EnvironmentNix.all_sources(input)?
 		flake = UpdateNix.render_update_flake(overlays, sources)
+		flake_path = Plugin.workspace_path(input.workspace_root, "flake.nix")
+		lock_path = Plugin.workspace_path(input.workspace_root, "flake.lock")
 		Ok(
 			Plugin.BackendCommandPlan.{
 				artifacts: [],
 				prerequisite_commands: [],
 				requested_packages: [],
 				steps: [
-					WriteFile({ contents: flake, path: ".kai/flake.nix" }),
+					WriteFile({ contents: flake, path: flake_path }),
 					NixBackend.run([
 						"flake",
 						"update",
 						"--flake",
-						"path:.kai",
+						"path:${input.workspace_root}",
 						"--reference-lock-file",
 						"kai.lock",
 						"--output-lock-file",
@@ -51,11 +53,11 @@ UpdateNix := [].{
 					NixBackend.run([
 						"flake",
 						"lock",
-						"path:.kai",
+						"path:${input.workspace_root}",
 						"--reference-lock-file",
 						"kai.lock",
 						"--output-lock-file",
-						".kai/flake.lock",
+						lock_path,
 					]),
 				],
 			},

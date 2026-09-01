@@ -148,7 +148,10 @@ Kaifiles := [].{
 
 		original_directory = Env.cwd!()?
 		Env.set_cwd!(workspace)?
-		command_result = Cmd.new(Path.to_os_str(binary)).args_str(args).exec_output!()
+		command_result = Cmd.new(Path.to_os_str(binary))
+			.args_str(args)
+			.env_str("KAI_DIR", ".kai")
+			.exec_output!()
 		Env.set_cwd!(original_directory)?
 		_ = command_result?
 

@@ -4,9 +4,19 @@ import parser.Blocks
 import Kaifile
 
 Plugin := [].{
-	Error : [PlanningFailed(PlanningDiagnostic), UnknownCommand]
+	Error : [
+		InvalidWorkspaceRoot(Str),
+		PlanningFailed(PlanningDiagnostic),
+		UnknownCommand,
+	]
 	HostOs : [LINUX, MACOS, OTHER(Str)]
 	HostArch : [X86, X64, ARM, AARCH64, OTHER(Str)]
+
+	default_workspace_root : Str
+	default_workspace_root = ".kai"
+
+	workspace_path : Str, Str -> Str
+	workspace_path = |workspace_root, path| "${workspace_root}/${path}"
 
 	# Side effects to be performed later by the executor.
 	ExecutionStep := [
@@ -31,6 +41,66 @@ Plugin := [].{
 		ForbiddenPathSegments({ message : Str, segments : List(Str) }),
 		NonemptyText(Str),
 	]
+
+	workspace_root_rules : List(TextRule)
+	workspace_root_rules = [
+		NonemptyText("KAI_DIR must not be empty"),
+		ForbiddenPathSegments({
+			message: "KAI_DIR must not be '.' or '..'",
+			segments: [".", ".."],
+		}),
+		DisallowedPrefix({
+			message: "KAI_DIR must not start with '-'",
+			prefix: "-",
+		}),
+		AllBytes({
+			allowed: [
+				AsciiUppercase,
+				AsciiLowercase,
+				AsciiDigit,
+				ExactByte('.'),
+				ExactByte('_'),
+				ExactByte('-'),
+			],
+			message: Str.join_with(
+				[
+					"KAI_DIR must be one relative top-level directory name ",
+					"containing only ASCII letters, digits, '.', '_', and '-'",
+				],
+				"",
+			),
+		}),
+	]
+
+	validate_workspace_root : Str -> Try({}, Str)
+	validate_workspace_root = |workspace_root| {
+		failures = Plugin.validate_text(workspace_root, workspace_root_rules)
+		normalized = Str.from_utf8_lossy(
+			Str.to_utf8(workspace_root).map(|byte|
+				if byte >= 65 and byte <= 90 byte + 32 else byte),
+		)
+		reserved_roots = [
+			".bzr",
+			".git",
+			".hg",
+			".jj",
+			".svn",
+			"_darcs",
+			"cvs",
+			"kai.lock",
+			"kaifile",
+		]
+		if normalized == Plugin.default_workspace_root and
+			workspace_root != Plugin.default_workspace_root {
+			Err("invalid workspace root: use the canonical '.kai' spelling")
+		} else if reserved_roots.contains(normalized) {
+			Err("invalid workspace root: KAI_DIR is reserved")
+		} else if failures.is_empty() {
+			Ok({})
+		} else {
+			Err("invalid workspace root: ${Plugin.validation_message(failures)}")
+		}
+	}
 
 	StringListRule : [
 		AllStrings(TextRule),
@@ -988,6 +1058,7 @@ Plugin := [].{
 		kaifile_blocks : List(ParsedBlock),
 		prerequisite_artifacts : PrerequisiteArtifacts,
 		referenced_fields : ReferencedFields,
+		workspace_root : Str,
 	}
 
 	StringListValidation := {
@@ -1114,6 +1185,7 @@ Plugin := [].{
 						kaifile_blocks: input.kaifile_blocks,
 						prerequisite_artifacts: input.prerequisite_artifacts,
 						referenced_fields: input.referenced_fields,
+						workspace_root: input.workspace_root,
 					},
 				)
 			}
@@ -1880,12 +1952,25 @@ Plugin := [].{
 	Str,
 	List(Str),
 	HostOs,
-	HostArch -> Try(
+	HostArch,
+	Str -> Try(
 		ExecutionPlan,
 		Error,
 	)
-	plan_registry = |registry, kaifile_text, args, os, arch|
-		Plugin.plan_registry_nested(registry, kaifile_text, args, os, arch, [], 0)
+	plan_registry = |registry, kaifile_text, args, os, arch, workspace_root| {
+		Plugin.validate_workspace_root(workspace_root) ? |message|
+			InvalidWorkspaceRoot(message)
+		Plugin.plan_registry_nested(
+			registry,
+			kaifile_text,
+			args,
+			os,
+			arch,
+			workspace_root,
+			[],
+			0,
+		)
+	}
 
 	plan_registry_nested :
 		List(Definition),
@@ -1893,13 +1978,14 @@ Plugin := [].{
 		List(Str),
 		HostOs,
 		HostArch,
+		Str,
 		List(List(Str)),
 		U64 -> Try(
 			ExecutionPlan,
 			Error,
 		)
 	plan_registry_nested =
-		|registry, kaifile_text, args, os, arch, ancestors, depth|
+		|registry, kaifile_text, args, os, arch, workspace_root, ancestors, depth|
 			match args {
 				[] => Err(UnknownCommand)
 				[command_name, .. as command_args] => {
@@ -2062,6 +2148,7 @@ Plugin := [].{
 							kaifile_blocks,
 							prerequisite_artifacts: NotResolved,
 							referenced_fields: parsed.referenced_fields,
+							workspace_root,
 						}
 						implementation_fail = |diagnostic|
 							fail(
@@ -2084,6 +2171,7 @@ Plugin := [].{
 							initial_command_plan.prerequisite_commands,
 							os,
 							arch,
+							workspace_root,
 							[args].concat(ancestors),
 							depth + 1,
 							plugin,
@@ -2102,6 +2190,7 @@ Plugin := [].{
 									kaifile_blocks: validated_input.kaifile_blocks,
 									prerequisite_artifacts: Resolved(prerequisites.artifacts),
 									referenced_fields: validated_input.referenced_fields,
+									workspace_root: validated_input.workspace_root,
 								},
 							) ? |diagnostic| implementation_fail(diagnostic)
 							if Plugin.same_prerequisite_commands(
@@ -2146,6 +2235,7 @@ Plugin := [].{
 		List(PrerequisiteCommand),
 		HostOs,
 		HostArch,
+		Str,
 		List(List(Str)),
 		U64,
 		Str,
@@ -2159,7 +2249,7 @@ Plugin := [].{
 			Error,
 		)
 	plan_prerequisite_commands =
-		|defs, text, commands, os, arch, parents, depth, plugin, cmd, back|
+		|defs, text, commands, os, arch, root, parents, depth, plugin, cmd, back|
 			match commands {
 				[] => Ok({ artifacts: [], requested_packages: [], steps: [] })
 				[first, .. as rest] => {
@@ -2169,10 +2259,12 @@ Plugin := [].{
 						first.arguments,
 						os,
 						arch,
+						root,
 						parents,
 						depth,
 					) ? |error|
 						match error {
+							InvalidWorkspaceRoot(message) => InvalidWorkspaceRoot(message)
 							UnknownCommand => PlanningFailed(
 								Plugin.failure(
 									plugin,
@@ -2196,6 +2288,7 @@ Plugin := [].{
 						rest,
 						os,
 						arch,
+						root,
 						parents,
 						depth,
 						plugin,
