@@ -101,20 +101,11 @@ ImageNix := [].{
 
 	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
 	render_flake = |name, system, locked_overlays, overlays, services| {
-		overlay_names = locked_overlays.map_with_index(|_, index|
-			"overlay${U64.to_str(index)}")
 		overlay_lines = overlays.map(
 			|overlay|
-				Str.join_with(
-					[
-						"          ",
-						NixBackend.overlay_name(locked_overlays, overlay, 0),
-						".overlays.default",
-					],
-					"",
-				),
+				"          ${NixBackend.overlay_expression(locked_overlays, overlay, 0)}",
 		)
-		outputs_args = Str.join_with(["nixpkgs"].concat(overlay_names), ", ")
+		outputs_args = NixBackend.overlay_outputs_args(locked_overlays)
 		lines = [
 			"{",
 			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",

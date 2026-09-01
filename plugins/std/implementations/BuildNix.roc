@@ -129,7 +129,7 @@ BuildNix := [].{
 
 	nix_expression : Str
 	nix_expression = {
-		interpolate = BuildNix.nix_interpolation
+		interpolate = NixBackend.nix_interpolation
 		escaped_source = Str.join_with(
 			[
 				"lib.escapeShellArg (toString ",
@@ -172,7 +172,7 @@ BuildNix := [].{
 				),
 				"    chmod -R u+w .",
 				"    mkdir -p .kai/inputs",
-				Str.join_with(["    ", BuildNix.nix_interpolation("inputLinks")], ""),
+				Str.join_with(["    ", interpolate("inputLinks")], ""),
 				Str.join_with(
 					[
 						"    artifact=",
@@ -199,8 +199,5 @@ BuildNix := [].{
 			"\n",
 		)
 	}
-
-	nix_interpolation : Str -> Str
-	nix_interpolation = |expression| Str.join_with(["$", "{", expression, "}"], "")
 
 }

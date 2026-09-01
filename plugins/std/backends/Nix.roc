@@ -119,17 +119,23 @@ Nix := [].{
 		)
 	}
 
-	overlay_name : List(Str), Str, U64 -> Str
-	overlay_name = |overlays, selected, index|
+	overlay_expression : List(Str), Str, U64 -> Str
+	overlay_expression = |overlays, selected, index|
 		match overlays {
-			[] => "overlay0"
+			[] => "overlay0.overlays.default"
 			[first, .. as rest] =>
 				if first == selected {
-					"overlay${U64.to_str(index)}"
+					"overlay${U64.to_str(index)}.overlays.default"
 				} else {
-					Nix.overlay_name(rest, selected, index + 1)
+					Nix.overlay_expression(rest, selected, index + 1)
 				}
 			}
+
+	overlay_outputs_args : List(Str) -> Str
+	overlay_outputs_args = |overlays| {
+		names = overlays.map_with_index(|_, index| "overlay${U64.to_str(index)}")
+		Str.join_with(["nixpkgs"].concat(names), ", ")
+	}
 
 	render_update_flake = |overlays, sources|
 		Str.join_with(
@@ -143,6 +149,9 @@ Nix := [].{
 	render_attributes : Str -> Str
 	render_attributes = |path|
 		Str.join_with(path.split_on(".").map(|part| "\"${part}\""), ".")
+
+	nix_interpolation : Str -> Str
+	nix_interpolation = |expression| Str.join_with(["$", "{", expression, "}"], "")
 
 	# Render a flake containing a dev shell backed directly by nixpkgs.
 	render_dev_shell_without_overlays = |pkgs, sources, system, legacy| {
@@ -187,24 +196,13 @@ Nix := [].{
 
 	# Render a flake containing a dev shell with additional flake overlays.
 	render_dev_shell_with_overlays = |pkgs, locked, overlays, sources, system| {
-		overlay_names = locked.map_with_index(
-			|_, index| "overlay${U64.to_str(index)}",
-		)
 		overlay_lines = overlays.map(
-			|overlay|
-				Str.join_with(
-					[
-						"          ",
-						Nix.overlay_name(locked, overlay, 0),
-						".overlays.default",
-					],
-					"",
-				),
+			|overlay| "          ${Nix.overlay_expression(locked, overlay, 0)}",
 		)
 		package_lines = pkgs.map(
 			|pkg| "              pkgs.${Nix.render_attributes(pkg)}",
 		)
-		outputs_args = Str.join_with(["nixpkgs"].concat(overlay_names), ", ")
+		outputs_args = Nix.overlay_outputs_args(locked)
 		lines = [
 			"{",
 			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",

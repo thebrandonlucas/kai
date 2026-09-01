@@ -273,7 +273,7 @@ ServiceNix := [].{
 				Str.join_with(
 					[
 						"  cp -- ",
-						ServiceNix.nix_interpolation("./module.nix"),
+						NixBackend.nix_interpolation("./module.nix"),
 						" \"$out/default.nix\"",
 					],
 					"",
@@ -281,7 +281,7 @@ ServiceNix := [].{
 				Str.join_with(
 					[
 						"  cp --recursive --no-dereference --preserve=mode ",
-						ServiceNix.nix_interpolation("./artifact"),
+						NixBackend.nix_interpolation("./artifact"),
 						" \"$out/artifact\"",
 					],
 					"",
@@ -311,7 +311,7 @@ ServiceNix := [].{
 				"    wantedBy = [ \"multi-user.target\" ];",
 				"    serviceConfig = {",
 				"      Type = \"exec\";",
-				"      ExecStart = \"${ServiceNix.nix_interpolation("./artifact")}\";",
+				"      ExecStart = \"${NixBackend.nix_interpolation("./artifact")}\";",
 				"      Restart = \"${restart}\";",
 				"      DynamicUser = true;",
 				"      NoNewPrivileges = true;",
@@ -337,6 +337,4 @@ ServiceNix := [].{
 		)
 	}
 
-	nix_interpolation : Str -> Str
-	nix_interpolation = |expression| Str.join_with(["$", "{", expression, "}"], "")
 }
