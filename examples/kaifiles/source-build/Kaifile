@@ -1,6 +1,6 @@
 # Source inputs are locked by `kai update` and exposed only to builds that select them.
 source kai {
-  url: "github:thebrandonlucas/kai/658c5989aef03406f56f9c17556422e662616f41"
+  url: "github:thebrandonlucas/kai/d2355d304f3ad952b6f5a45e8c1d75de5768e7a6"
 }
 
 environment copy {

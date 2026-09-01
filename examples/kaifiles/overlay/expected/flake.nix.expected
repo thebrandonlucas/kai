@@ -1,7 +1,7 @@
 {
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   inputs.overlay0.url = "github:thebrandonlucas/roc-overlay";
-  outputs = { nixpkgs, overlay0, ... }:
+  outputs = inputs@{ nixpkgs, overlay0, ... }:
     let
       pkgs = import nixpkgs {
         system = "{{system}}";
@@ -10,6 +10,7 @@
         ];
       };
     in {
+      kaiSources = {  };
       legacyPackages."{{system}}" = pkgs;
       devShells."{{system}}".default = pkgs.mkShell {
         packages = [
