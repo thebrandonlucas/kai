@@ -527,14 +527,14 @@ MachineNix := [].{
 	render_module : List(Str), List(Str), List(Str) -> Str
 	render_module = |pkgs, users, services| {
 		package_lines = pkgs.map(
-			|pkg| "    pkgs.${NixBackend.render_attributes(pkg)}",
+			|pkg| "    pkgs.${NixBackend.render_attribute_path(pkg)}",
 		)
 		user_lines = users.map(
 			|user| "  users.users.\"${user}\".isNormalUser = true;",
 		)
 		service_lines = services.map(
 			|service| {
-				service_attr = NixBackend.render_attributes(service)
+				service_attr = NixBackend.render_attribute_path(service)
 				"  services.${service_attr}.enable = true;"
 			},
 		)

@@ -189,7 +189,7 @@ ImageNix := [].{
 	render_module : List(Str), List(Str), List(Str) -> Str
 	render_module = |pkgs, users, services| {
 		package_lines = pkgs.map(|pkg|
-			"    pkgs.${NixBackend.render_attributes(pkg)}")
+			"    pkgs.${NixBackend.render_attribute_path(pkg)}")
 		user_lines = users.map(|user|
 			"  users.users.\"${user}\".isNormalUser = true;")
 		service_lines = services.map(
@@ -197,7 +197,7 @@ ImageNix := [].{
 				Str.join_with(
 					[
 						"  services.",
-						NixBackend.render_attributes(service),
+						NixBackend.render_attribute_path(service),
 						".enable = true;",
 					],
 					"",

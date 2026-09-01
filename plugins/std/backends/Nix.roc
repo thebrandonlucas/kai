@@ -94,8 +94,8 @@ Nix := [].{
 		Str.join_with(["nixpkgs"].concat(names), ", ")
 	}
 
-	render_attributes : Str -> Str
-	render_attributes = |path|
+	render_attribute_path : Str -> Str
+	render_attribute_path = |path|
 		Str.join_with(path.split_on(".").map(|part| "\"${part}\""), ".")
 
 	nix_interpolation : Str -> Str
