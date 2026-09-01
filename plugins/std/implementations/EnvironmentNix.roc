@@ -52,22 +52,109 @@ EnvironmentNix := [].{
 		SourceBlock.validate_selected(selected, sources, [])
 	}
 
+	# Render a flake containing a dev shell backed directly by nixpkgs.
+	render_dev_shell_without_overlays = |pkgs, sources, system, legacy| {
+		package_lines = pkgs.map(
+			|pkg|
+				Str.join_with(
+					[
+						"              nixpkgs.\"legacyPackages\".\"${system}\".",
+						NixBackend.render_attributes(pkg),
+					],
+					"",
+				),
+		)
+		legacy_lines = if legacy {
+			["    legacyPackages.\"${system}\" = nixpkgs.legacyPackages.\"${system}\";"]
+		} else {
+			[]
+		}
+		lines = [
+			"{",
+			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
+		].concat(NixBackend.source_input_lines(sources)).concat([
+			"  outputs = inputs@{ nixpkgs, ... }: {",
+			"    ${NixBackend.source_attribute(sources)}",
+		]).concat(legacy_lines).concat([
+			Str.join_with(
+				[
+					"    devShells.\"${system}\".default = ",
+					"nixpkgs.legacyPackages.\"${system}\".mkShell {",
+				],
+				"",
+			),
+			"      packages = [",
+		]).concat(package_lines).concat([
+			"      ];",
+			"    };",
+			"  };",
+			"}",
+		])
+		Str.join_with(lines, "\n")
+	}
+
+	# Render a flake containing a dev shell with additional flake overlays.
+	render_dev_shell_with_overlays = |pkgs, locked, overlays, sources, system| {
+		overlay_lines = overlays.map(
+			|overlay|
+				"          ${NixBackend.overlay_expression(locked, overlay, 0)}",
+		)
+		package_lines = pkgs.map(
+			|pkg| "              pkgs.${NixBackend.render_attributes(pkg)}",
+		)
+		outputs_args = NixBackend.overlay_outputs_args(locked)
+		lines = [
+			"{",
+			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
+		]
+			.concat(NixBackend.input_lines(locked))
+			.concat(NixBackend.source_input_lines(sources))
+			.concat([
+				"  outputs = inputs@{ ${outputs_args}, ... }:",
+				"    let",
+				"      pkgs = import nixpkgs {",
+				"        system = \"${system}\";",
+				"        overlays = [",
+			]).concat(overlay_lines).concat([
+			"        ];",
+			"      };",
+			"    in {",
+			"      ${NixBackend.source_attribute(sources)}",
+			"      legacyPackages.\"${system}\" = pkgs;",
+			"      devShells.\"${system}\".default = pkgs.mkShell {",
+			"        packages = [",
+		]).concat(package_lines).concat([
+			"        ];",
+			"      };",
+			"    };",
+			"}",
+		])
+		Str.join_with(lines, "\n")
+	}
+
 	render_flake =
 		|input, pkgs, overlays, export_legacy_packages, unsupported_message| {
 			locked_overlays = EnvironmentNix.all_overlays(input)?
 			sources = EnvironmentNix.all_sources(input)?
 			target = NixBackend.target(input.host.os, input.host.arch) ? |_|
 				{ byte_offset: None, message: unsupported_message }
-			Ok(
-				NixBackend.render_dev_shell({
-					export_legacy_packages,
-					locked_overlays,
-					overlays,
+			flake = if locked_overlays.is_empty() {
+				EnvironmentNix.render_dev_shell_without_overlays(
 					pkgs,
 					sources,
-					system: target.system,
-				}),
-			)
+					target.system,
+					export_legacy_packages,
+				)
+			} else {
+				EnvironmentNix.render_dev_shell_with_overlays(
+					pkgs,
+					locked_overlays,
+					overlays,
+					sources,
+					target.system,
+				)
+			}
+			Ok(flake)
 		}
 
 	command_plan :

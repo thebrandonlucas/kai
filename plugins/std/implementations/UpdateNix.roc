@@ -12,6 +12,15 @@ UpdateNix := [].{
 		validator: NoValidation,
 	}
 
+	render_update_flake = |overlays, sources|
+		Str.join_with(
+			["{", "  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";"]
+				.concat(NixBackend.input_lines(overlays))
+				.concat(NixBackend.source_input_lines(sources))
+				.concat(["  outputs = _: {};", "}"]),
+			"\n",
+		)
+
 	plan :
 		Plugin.CommandPlanningInput ->
 			Try(
@@ -21,7 +30,7 @@ UpdateNix := [].{
 	plan = |input| {
 		overlays = EnvironmentNix.all_overlays(input)?
 		sources = EnvironmentNix.all_sources(input)?
-		flake = NixBackend.render_update_flake(overlays, sources)
+		flake = UpdateNix.render_update_flake(overlays, sources)
 		Ok(
 			Plugin.BackendCommandPlan.{
 				artifacts: [],
