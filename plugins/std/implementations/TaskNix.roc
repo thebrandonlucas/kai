@@ -47,7 +47,7 @@ TaskNix := [].{
 		Ok({
 			..result,
 			steps: result.steps
-				.concat(NixBackend.lock_steps)
+				.concat(NixBackend.lock_steps(".kai"))
 				.concat(NixBackend.develop_command_steps(run)),
 		})
 	}

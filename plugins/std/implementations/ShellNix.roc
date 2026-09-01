@@ -43,7 +43,7 @@ ShellNix := [].{
 		Ok({
 			..command_plan,
 			steps: command_plan.steps
-				.concat(NixBackend.lock_steps)
+				.concat(NixBackend.lock_steps(".kai"))
 				.concat([NixBackend.develop_step]),
 		})
 	}
