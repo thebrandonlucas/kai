@@ -222,31 +222,6 @@ Nix := [].{
 			]),
 		]
 
-	build_artifact_path : Str -> Str
-	build_artifact_path = |name| ".kai/artifacts/builds/${name}"
-
-	build_flake_path : Str -> Str
-	build_flake_path = |name| ".kai/builds/${name}"
-
-	build_artifact_steps : Str, Str, Str, Str -> List(Plugin.ExecutionStep)
-	build_artifact_steps = |name, flake, build_nix, build_json| {
-		flake_path = Nix.build_flake_path(name)
-		[
-			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
-			WriteFile({ contents: build_nix, path: "${flake_path}/build.nix" }),
-			WriteFile({ contents: build_json, path: "${flake_path}/build.json" }),
-		].concat(Nix.lock_steps(flake_path)).concat([
-			WriteFile({ contents: "", path: ".kai/artifacts/builds/.keep" }),
-			Nix.run([
-				"build",
-				"--file",
-				"${flake_path}/build.nix",
-				"--out-link",
-				Nix.build_artifact_path(name),
-			]),
-		])
-	}
-
 	service_artifact_path : Str -> Str
 	service_artifact_path = |name| ".kai/artifacts/.services/${name}"
 

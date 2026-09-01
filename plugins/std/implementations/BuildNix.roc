@@ -89,7 +89,8 @@ BuildNix := [].{
 			Bool.True,
 			"unsupported build platform",
 		)?
-		build_nix = BuildNix.nix_expression
+		flake_path = ".kai/builds/${artifact_name}"
+		artifact_path = ".kai/artifacts/builds/${artifact_name}"
 		build_json = Json.to_str({
 			inputs: source_input_names,
 			name: artifact_name,
@@ -104,25 +105,33 @@ BuildNix := [].{
 					{
 						attributes: [
 							{ key: "backend", value: NixBackend.backend.name },
-							{
-								key: "nix.pkgs-flake",
-								value: NixBackend.build_flake_path(artifact_name),
-							},
+							{ key: "nix.pkgs-flake", value: flake_path },
 							{ key: "target.system", value: target.system },
 						],
 						kind: "kai.build/v1",
 						name: artifact_name,
-						path: NixBackend.build_artifact_path(artifact_name),
+						path: artifact_path,
 					},
 				],
 				prerequisite_commands: [],
 				requested_packages: environment_packages,
-				steps: NixBackend.build_artifact_steps(
-					artifact_name,
-					flake,
-					build_nix,
-					build_json,
-				),
+				steps: [
+					WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
+					WriteFile({
+						contents: BuildNix.nix_expression,
+						path: "${flake_path}/build.nix",
+					}),
+					WriteFile({ contents: build_json, path: "${flake_path}/build.json" }),
+				].concat(NixBackend.lock_steps(flake_path)).concat([
+					WriteFile({ contents: "", path: ".kai/artifacts/builds/.keep" }),
+					NixBackend.run([
+						"build",
+						"--file",
+						"${flake_path}/build.nix",
+						"--out-link",
+						artifact_path,
+					]),
+				]),
 			},
 		)
 	}
