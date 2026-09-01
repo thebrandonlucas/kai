@@ -36,9 +36,28 @@ UpdateNix := [].{
 				artifacts: [],
 				prerequisite_commands: [],
 				requested_packages: [],
-				steps: [NixBackend.write_flake_step(flake)].concat(
-					NixBackend.update_lock_steps,
-				),
+				steps: [
+					WriteFile({ contents: flake, path: ".kai/flake.nix" }),
+					NixBackend.run([
+						"flake",
+						"update",
+						"--flake",
+						"path:.kai",
+						"--reference-lock-file",
+						"kai.lock",
+						"--output-lock-file",
+						"kai.lock",
+					]),
+					NixBackend.run([
+						"flake",
+						"lock",
+						"path:.kai",
+						"--reference-lock-file",
+						"kai.lock",
+						"--output-lock-file",
+						".kai/flake.lock",
+					]),
+				],
 			},
 		)
 	}

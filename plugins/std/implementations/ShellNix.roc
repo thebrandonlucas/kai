@@ -34,17 +34,28 @@ ShellNix := [].{
 			EnvironmentBlock.packages_field,
 		)?
 		overlays = EnvironmentNix.extract_overlays(input.command_fields)?
-		command_plan = EnvironmentNix.command_plan(
+		flake = EnvironmentNix.render_flake(
 			input,
 			pkgs,
 			overlays,
+			Bool.False,
 			"unsupported shell platform",
 		)?
-		Ok({
-			..command_plan,
-			steps: command_plan.steps
-				.concat(NixBackend.lock_steps(".kai"))
-				.concat([NixBackend.develop_step]),
-		})
+		Ok(
+			Plugin.BackendCommandPlan.{
+				artifacts: [],
+				prerequisite_commands: [],
+				requested_packages: pkgs,
+				steps: [WriteFile({ contents: flake, path: ".kai/flake.nix" })]
+					.concat(NixBackend.lock_steps(".kai"))
+					.concat([
+						NixBackend.run([
+							"develop",
+							"path:.kai#default",
+							"--no-update-lock-file",
+						]),
+					]),
+			},
+		)
 	}
 }

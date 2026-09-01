@@ -38,17 +38,31 @@ TaskNix := [].{
 			Plugin.validate_string_list(pkgs, NixBackend.package_rules),
 		)?
 		overlays = EnvironmentNix.extract_overlays(environment)?
-		result = EnvironmentNix.command_plan(
+		flake = EnvironmentNix.render_flake(
 			input,
 			pkgs,
 			overlays,
+			Bool.False,
 			"unsupported task platform",
 		)?
-		Ok({
-			..result,
-			steps: result.steps
-				.concat(NixBackend.lock_steps(".kai"))
-				.concat(NixBackend.develop_command_steps(run)),
-		})
+		Ok(
+			Plugin.BackendCommandPlan.{
+				artifacts: [],
+				prerequisite_commands: [],
+				requested_packages: pkgs,
+				steps: [WriteFile({ contents: flake, path: ".kai/flake.nix" })]
+					.concat(NixBackend.lock_steps(".kai"))
+					.concat([
+						NixBackend.run(
+							[
+								"develop",
+								"path:.kai#default",
+								"--no-update-lock-file",
+								"--command",
+							].concat(run),
+						),
+					]),
+			},
+		)
 	}
 }

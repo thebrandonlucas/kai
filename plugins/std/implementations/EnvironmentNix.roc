@@ -157,30 +157,4 @@ EnvironmentNix := [].{
 			Ok(flake)
 		}
 
-	command_plan :
-		Plugin.CommandPlanningInput,
-		List(Str),
-		List(Str),
-		Str ->
-			Try(
-				Plugin.BackendCommandPlan,
-				Plugin.BackendPlanningDiagnostic,
-			)
-	command_plan = |input, pkgs, overlays, unsupported_message| {
-		flake = EnvironmentNix.render_flake(
-			input,
-			pkgs,
-			overlays,
-			Bool.False,
-			unsupported_message,
-		)?
-		Ok(
-			Plugin.BackendCommandPlan.{
-				artifacts: [],
-				prerequisite_commands: [],
-				requested_packages: pkgs,
-				steps: [NixBackend.write_flake_step(flake)],
-			},
-		)
-	}
 }

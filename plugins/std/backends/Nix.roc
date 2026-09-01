@@ -196,10 +196,6 @@ Nix := [].{
 		),
 	]
 
-	write_flake_step : Str -> Plugin.ExecutionStep
-	write_flake_step = |flake|
-		WriteFile({ contents: flake, path: ".kai/flake.nix" })
-
 	run : List(Str) -> Plugin.ExecutionStep
 	run = |arguments| RunProgram({ arguments, program: backend.name })
 
@@ -225,36 +221,6 @@ Nix := [].{
 				"${flake_path}/flake.lock",
 			]),
 		]
-
-	develop_step : Plugin.ExecutionStep
-	develop_step = Nix.run([
-		"develop",
-		"path:.kai#default",
-		"--no-update-lock-file",
-	])
-
-	update_lock_steps : List(Plugin.ExecutionStep)
-	update_lock_steps = [
-		Nix.run([
-			"flake",
-			"update",
-			"--flake",
-			"path:.kai",
-			"--reference-lock-file",
-			"kai.lock",
-			"--output-lock-file",
-			"kai.lock",
-		]),
-		Nix.run([
-			"flake",
-			"lock",
-			"path:.kai",
-			"--reference-lock-file",
-			"kai.lock",
-			"--output-lock-file",
-			".kai/flake.lock",
-		]),
-	]
 
 	build_artifact_path : Str -> Str
 	build_artifact_path = |name| ".kai/artifacts/builds/${name}"
@@ -414,16 +380,4 @@ Nix := [].{
 			])
 	}
 
-	develop_command_steps : List(Str) -> List(Plugin.ExecutionStep)
-	develop_command_steps = |command|
-		[
-			Nix.run(
-				[
-					"develop",
-					"path:.kai#default",
-					"--no-update-lock-file",
-					"--command",
-				].concat(command),
-			),
-		]
 }
