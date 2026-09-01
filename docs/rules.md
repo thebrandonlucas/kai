@@ -11,6 +11,7 @@
 - Commits should strive to be reviewable by a human. +50/-50 average, upper bound +500/-500 if possible.
 - Do not use conventional commits.
 - Every commit must provide standalone value to make merging code at any point safe and ensuring feature branches don't get out of hand (trunk based development). See [Programming Incrementally](https://web.archive.org/web/20220517144332/https://ourmachinery.com/post/step-by-step-programming-incrementally/)
+- Do not create or modify documentation unless explicitly requested. The intent is for the developer to be able to understand the code.
 
 
 ## Issue and PR Guidelines

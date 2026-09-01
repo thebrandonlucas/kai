@@ -61,7 +61,8 @@ Builder := [].{
 				filename,
 				contents: Path.read_utf8!(path)?,
 			},
-			schemas: Builder.load_component!(source_root, "schemas")?,
+			blocks: Builder.load_component!(source_root, "schemas/blocks")?,
+			commands: Builder.load_component!(source_root, "schemas/commands")?,
 			backends: Builder.load_component!(source_root, "backends")?,
 			implementations: Builder.load_component!(source_root, "implementations")?,
 		})
@@ -100,30 +101,67 @@ Builder := [].{
 		Path.write_utf8!(Path.join(stage, source.destination), source.contents)
 	}
 
-	build_stage! = |stage, plan, output_name, output_path| {
-		for source in plan.files {
-			Builder.write_source!(stage, source)?
+	delete_output! = |path|
+		if Path.is_file!(path)? Path.delete!(path) else Ok({})
+
+	cleanup_failed_build! = |stage, output_path| {
+		stage_result = Path.delete_all!(stage)
+		output_result = Builder.delete_output!(output_path)
+		match (stage_result, output_result) {
+			(Err(err), _) => Err(err)
+			(_, Err(err)) => Err(err)
+			(Ok({}), Ok({})) => Ok({})
 		}
-		app_path = Path.join(stage, "main.roc")
-		Path.write_utf8!(app_path, plan.app_source)?
-		Cmd.exec!(
-			OsStr.utf8("roc"),
-			[
-				"build",
-				Path.display(app_path),
-				"--opt=size",
-				"--output=${output_name}",
-			].map(OsStr.utf8),
-		)?
-		Cmd.exec!(OsStr.utf8("llvm-strip"), [Path.to_os_str(output_path)])?
-		Cmd.exec!(
-			Path.to_os_str(output_path),
-			[OsStr.utf8("--xkai-validate-registry")],
-		)?
-		Ok({})
 	}
 
-	build! = |plugin_paths, profile| {
+	unbundle! = |stage, archive| {
+		Path.write_bytes!(Path.join(stage, archive.filename), archive.bytes)?
+		cwd = Env.cwd!()?
+		Env.set_cwd!(stage)?
+		unbundle_result = Cmd.exec!(
+			OsStr.utf8("roc"),
+			["unbundle", archive.filename].map(OsStr.utf8),
+		)
+		match Env.set_cwd!(cwd) {
+			Err(err) => {
+				Env.set_cwd!(Env.temp_dir!())?
+				Err(err)
+			}
+			Ok({}) => unbundle_result
+		}
+	}
+
+	build_stage! = |stage, archive, plan, output_name, output_path| {
+		Builder.unbundle!(stage, archive)?
+		root = Path.join(stage, archive.root)
+		xkai_root = Path.join(root, "xkai")
+		if !Path.is_dir!(xkai_root)? {
+			Err(MissingEmbeddedRoot(archive.root))
+		} else {
+			for source in plan.files {
+				Builder.write_source!(root, source)?
+			}
+			app_path = Path.join(xkai_root, "GeneratedKai.roc")
+			Path.write_utf8!(app_path, plan.app_source)?
+			Cmd.exec!(
+				OsStr.utf8("roc"),
+				[
+					"build",
+					Path.display(app_path),
+					"--opt=size",
+					"--output=${output_name}",
+				].map(OsStr.utf8),
+			)?
+			Cmd.exec!(OsStr.utf8("llvm-strip"), [Path.to_os_str(output_path)])?
+			Cmd.exec!(
+				Path.to_os_str(output_path),
+				[OsStr.utf8("--xkai-validate-registry")],
+			)?
+			Ok({})
+		}
+	}
+
+	build! = |plugin_paths, archive, profile| {
 		plugins = Builder.load_plugins!(plugin_paths)?
 		plan = Assembly.assemble(profile, plugins) ? |problem|
 			InvalidAssembly(problem)
@@ -137,28 +175,40 @@ Builder := [].{
 		match Path.create_dir!(stage) {
 			Err(err) => Err(err)
 			Ok({}) =>
-				match Builder.build_stage!(stage, plan, output_name, output_path) {
-					Err(err) => {
-						Path.delete_all!(stage) ?? {}
-						Path.delete!(output_path) ?? {}
-						Err(err)
+				match Builder.build_stage!(
+					stage,
+					archive,
+					plan,
+					output_name,
+					output_path,
+				) {
+					Err(build_err) => {
+						Env.set_cwd!(cwd)?
+						match Builder.cleanup_failed_build!(stage, output_path) {
+							Err(cleanup_err) => Err(cleanup_err)
+							Ok({}) => Err(build_err)
+						}
 					}
-					Ok({}) =>
+					Ok({}) => {
+						Env.set_cwd!(cwd)?
 						match Path.delete_all!(stage) {
-							Err(err) => {
-								Path.delete!(output_path) ?? {}
-								Err(err)
-							}
+							Err(stage_err) =>
+								match Builder.delete_output!(output_path) {
+									Err(output_err) => Err(output_err)
+									Ok({}) => Err(stage_err)
+								}
 							Ok({}) =>
 								match Path.rename!(output_path, published_path) {
 									Ok({}) => Ok({})
-									Err(err) => {
-										Path.delete!(output_path) ?? {}
-										Err(err)
+									Err(rename_err) =>
+										match Builder.delete_output!(output_path) {
+											Err(output_err) => Err(output_err)
+											Ok({}) => Err(rename_err)
+										}
 									}
-								}
 							}
 					}
+				}
 			}
 	}
 }

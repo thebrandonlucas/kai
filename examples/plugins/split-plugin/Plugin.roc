@@ -1,7 +1,8 @@
 # Demonstrate the composition of two plugins
 import kai.Plugin as PluginApi
 import backends.Local
-import schemas.SplitCommand
+import blocks.Split as SplitBlock
+import commands.SplitCommand
 import implementations.SplitLocal
 
 Plugin := [].{
@@ -17,8 +18,8 @@ Plugin := [].{
 
 	schema : PluginApi.Schema
 	schema = {
-		blocks: [SplitCommand.block],
-		commands: [SplitCommand.command_schema],
+		blocks: [SplitBlock.block],
+		commands: [SplitCommand.command],
 	}
 
 	backends : List(PluginApi.Backend)

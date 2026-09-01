@@ -2,23 +2,24 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.Task as TaskCommand
+import blocks.Task as TaskBlock
+import commands.Run as RunCommand
 import EnvironmentNix
 
 TaskNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: TaskCommand.command.name,
+		command: RunCommand.command_syntax.name,
 		plan: TaskNix.plan,
 		validator: NoValidation,
 	}
 
 	plan :
-		Plugin.ImplementationInput ->
+		Plugin.CommandPlanningInput ->
 			Try(
-				Plugin.CommandPlan,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendCommandPlan,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
 		run = Fields.get_strings(input.command_fields, "run") ? |_| {
@@ -26,7 +27,7 @@ TaskNix := [].{
 			message: "validated task block is missing 'run'",
 		}
 		Plugin.implementation_validation(
-			Plugin.validate_string_list(run, TaskCommand.run_rules("task")),
+			Plugin.validate_string_list(run, TaskBlock.run_rules("task")),
 		)?
 		environment = Plugin.referenced_fields(input, "environment")?
 		pkgs = Fields.get_strings(environment, "packages") ? |_| {
@@ -37,17 +38,31 @@ TaskNix := [].{
 			Plugin.validate_string_list(pkgs, NixBackend.package_rules),
 		)?
 		overlays = EnvironmentNix.extract_overlays(environment)?
-		result = EnvironmentNix.command_plan(
+		flake = EnvironmentNix.render_flake(
 			input,
 			pkgs,
 			overlays,
+			Bool.False,
 			"unsupported task platform",
 		)?
-		Ok({
-			..result,
-			steps: result.steps
-				.concat(NixBackend.lock_steps)
-				.concat(NixBackend.develop_command_steps(run)),
-		})
+		Ok(
+			Plugin.BackendCommandPlan.{
+				artifacts: [],
+				prerequisite_commands: [],
+				requested_packages: pkgs,
+				steps: [WriteFile({ contents: flake, path: ".kai/flake.nix" })]
+					.concat(NixBackend.lock_steps(".kai"))
+					.concat([
+						NixBackend.run(
+							[
+								"develop",
+								"path:.kai#default",
+								"--no-update-lock-file",
+								"--command",
+							].concat(run),
+						),
+					]),
+			},
+		)
 	}
 }

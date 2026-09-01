@@ -33,7 +33,7 @@ Secret := [].{
 	provision_failures = |provision|
 		if provision == "runtime" [] else ["secret provision must be 'runtime'"]
 
-	block : Plugin.KaifileBlock
+	block : Plugin.Block
 	block = Kaifile.named_block({
 		header: "secret <secret>",
 		fields: [Kaifile.required("provision", Identifier)],

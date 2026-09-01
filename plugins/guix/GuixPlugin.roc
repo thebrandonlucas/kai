@@ -1,7 +1,9 @@
 # A minimal implementation of Guix to prove out the plugin architecture.
 import kai.Plugin
 import backends.Guix as GuixBackend
-import schemas.Shell as ShellCommand
+import blocks.Environment as EnvironmentBlock
+import blocks.Shell as ShellBlock
+import commands.Shell as ShellCommand
 import implementations.ShellGuix
 
 GuixPlugin := [].{
@@ -17,8 +19,8 @@ GuixPlugin := [].{
 
 	schema : Plugin.Schema
 	schema = {
-		blocks: [ShellCommand.block, ShellCommand.environment_block],
-		commands: [ShellCommand.command_schema],
+		blocks: [EnvironmentBlock.block, ShellBlock.block],
+		commands: [ShellCommand.command],
 	}
 
 	backends : List(Plugin.Backend)

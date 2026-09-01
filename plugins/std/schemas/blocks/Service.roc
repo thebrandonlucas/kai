@@ -1,4 +1,4 @@
-# Shared `command` interface for working with machine services
+# Kaifile block schema for machine services.
 import kai.Kaifile
 import kai.Plugin
 import Secret
@@ -68,16 +68,11 @@ Service := [].{
 	restart_failures = |restart|
 		if restart == "on-failure" [] else ["service restart must be 'on-failure'"]
 
-	block : Plugin.KaifileBlock
+	block : Plugin.Block
 	block = Kaifile.named_block({
 		header: "service <service>",
 		fields,
 		name_rules,
 	})
 
-	command : Plugin.Command
-	command = Plugin.command("service", [Plugin.required_argument("service")])
-
-	command_schema : Plugin.CommandSchema
-	command_schema = Plugin.command_with_block({ command, block })
 }

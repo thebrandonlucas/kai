@@ -1,18 +1,19 @@
 # An implementation of the `shell` command in Guix
 import kai.Plugin
 import backends.Guix as GuixBackend
-import schemas.Shell as ShellCommand
+import blocks.Environment as EnvironmentBlock
+import commands.Shell as ShellCommand
 
 ShellGuix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: GuixBackend.backend.name,
-		command: ShellCommand.command.name,
+		command: ShellCommand.command_syntax.name,
 		plan: ShellGuix.plan,
 		validator: Validate({
 			string_lists: [
 				{
-					field: ShellCommand.packages_field,
+					field: EnvironmentBlock.packages_field,
 					rules: GuixBackend.package_rules,
 				},
 			],
@@ -24,18 +25,18 @@ ShellGuix := [].{
 	}
 
 	plan :
-		Plugin.ImplementationInput ->
+		Plugin.CommandPlanningInput ->
 			Try(
-				Plugin.CommandPlan,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendCommandPlan,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
 		pkgs = Plugin.validated_strings(
 			input.command_fields,
-			ShellCommand.packages_field,
+			EnvironmentBlock.packages_field,
 		)?
 		Ok(
-			Plugin.CommandPlan.{
+			Plugin.BackendCommandPlan.{
 				artifacts: [],
 				prerequisite_commands: [],
 				requested_packages: pkgs,

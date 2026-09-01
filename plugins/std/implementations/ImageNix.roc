@@ -1,23 +1,60 @@
 # An implementation for building machine images with nix.
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.Image as ImageCommand
+import commands.Image as ImageCommand
 import MachineNix
 
 ImageNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: ImageCommand.command.name,
+		command: ImageCommand.command_syntax.name,
 		plan: ImageNix.plan,
 		validator: NoValidation,
 	}
 
+	image_output_path : Str -> Str
+	image_output_path = |name| ".kai/artifacts/images/${name}/result"
+
+	image_file_path : Str -> Str
+	image_file_path = |name| "${ImageNix.image_output_path(name)}/${name}.qcow2"
+
+	image_flake_path : Str -> Str
+	image_flake_path = |name| ".kai/images/${name}"
+
+	image_metadata_path : Str -> Str
+	image_metadata_path = |name| ".kai/artifacts/images/${name}/metadata.json"
+
+	image_steps :
+		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
+	image_steps = |name, flake, module_text, metadata, services| {
+		flake_path = ImageNix.image_flake_path(name)
+		metadata_path = ImageNix.image_metadata_path(name)
+		[
+			WriteFile({ contents: "", path: metadata_path }),
+			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
+			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
+		]
+			.concat(MachineNix.service_copy_steps(flake_path, services))
+			.concat(NixBackend.lock_steps(flake_path))
+			.concat([
+				WriteFile({ contents: "", path: ".kai/artifacts/images/${name}/.keep" }),
+				NixBackend.run([
+					"build",
+					"path:${flake_path}#kaiImages.\"${name}\".image",
+					"--no-update-lock-file",
+					"--out-link",
+					ImageNix.image_output_path(name),
+				]),
+				WriteFile({ contents: metadata, path: metadata_path }),
+			])
+	}
+
 	plan :
-		Plugin.ImplementationInput ->
+		Plugin.CommandPlanningInput ->
 			Try(
-				Plugin.CommandPlan,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendCommandPlan,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
 		spec = MachineNix.machine_spec(input, "image")?
@@ -51,18 +88,18 @@ ImageNix := [].{
 		metadata = Json.to_str({
 			backend: NixBackend.backend.name,
 			flake_attribute: "kaiImages.\"${spec.name}\".image",
-			flake_path: NixBackend.image_flake_path(spec.name),
+			flake_path: ImageNix.image_flake_path(spec.name),
 			format: "qcow2",
 			kind: "machine-image",
-			metadata_path: NixBackend.image_metadata_path(spec.name),
+			metadata_path: ImageNix.image_metadata_path(spec.name),
 			name: spec.name,
-			output_path: NixBackend.image_file_path(spec.name),
+			output_path: ImageNix.image_file_path(spec.name),
 			schema,
 			target_architecture: spec.target_architecture,
 			target_system: spec.target_system,
 		})
 		Ok(
-			Plugin.CommandPlan.{
+			Plugin.BackendCommandPlan.{
 				artifacts: [
 					{
 						attributes: [
@@ -73,12 +110,12 @@ ImageNix := [].{
 						],
 						kind: "kai.machine.image/v1",
 						name: spec.name,
-						path: NixBackend.image_file_path(spec.name),
+						path: ImageNix.image_file_path(spec.name),
 					},
 				],
 				prerequisite_commands,
 				requested_packages: spec.pkgs,
-				steps: NixBackend.image_steps(
+				steps: ImageNix.image_steps(
 					spec.name,
 					ImageNix.render_flake(
 						spec.name,
@@ -101,20 +138,11 @@ ImageNix := [].{
 
 	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
 	render_flake = |name, system, locked_overlays, overlays, services| {
-		overlay_names = locked_overlays.map_with_index(|_, index|
-			"overlay${U64.to_str(index)}")
 		overlay_lines = overlays.map(
 			|overlay|
-				Str.join_with(
-					[
-						"          ",
-						NixBackend.overlay_name(locked_overlays, overlay, 0),
-						".overlays.default",
-					],
-					"",
-				),
+				"          ${NixBackend.overlay_expression(locked_overlays, overlay, 0)}",
 		)
-		outputs_args = Str.join_with(["nixpkgs"].concat(overlay_names), ", ")
+		outputs_args = NixBackend.overlay_outputs_args(locked_overlays)
 		lines = [
 			"{",
 			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
@@ -161,7 +189,7 @@ ImageNix := [].{
 	render_module : List(Str), List(Str), List(Str) -> Str
 	render_module = |pkgs, users, services| {
 		package_lines = pkgs.map(|pkg|
-			"    pkgs.${NixBackend.render_attributes(pkg)}")
+			"    pkgs.${NixBackend.render_attribute_path(pkg)}")
 		user_lines = users.map(|user|
 			"  users.users.\"${user}\".isNormalUser = true;")
 		service_lines = services.map(
@@ -169,7 +197,7 @@ ImageNix := [].{
 				Str.join_with(
 					[
 						"  services.",
-						NixBackend.render_attributes(service),
+						NixBackend.render_attribute_path(service),
 						".enable = true;",
 					],
 					"",

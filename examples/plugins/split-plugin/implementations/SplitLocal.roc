@@ -1,15 +1,15 @@
 # Implementation of the `split` command with the `local` backend
 import kai.Plugin
 import backends.Local
-import schemas.SplitCommand
+import commands.SplitCommand
 
 SplitLocal := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: Local.backend.name,
-		command: SplitCommand.command.name,
+		command: SplitCommand.command_syntax.name,
 		plan: |_| Ok(
-			Plugin.CommandPlan.{
+			Plugin.BackendCommandPlan.{
 				artifacts: [],
 				prerequisite_commands: [],
 				requested_packages: [],

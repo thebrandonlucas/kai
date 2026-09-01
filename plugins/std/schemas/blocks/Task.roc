@@ -1,14 +1,11 @@
-# Shared `command` interface for defining tasks the user can run.
-#
-# These can be anything e.g. commands you would run in the shell.
-# They pair naturally with workflows to run tasks in series i.e for CI.
+# Kaifile block schema for tasks the user can run.
 import kai.Kaifile
 import kai.Plugin
-import EnvironmentConfig
+import Environment
 
 Task := [].{
 	fields = [
-		Kaifile.required_quoted_reference("environment", EnvironmentConfig.block),
+		Kaifile.required_quoted_reference("environment", Environment.block),
 		Kaifile.required("run", StringList),
 	]
 
@@ -26,12 +23,7 @@ Task := [].{
 	environment_rules = |task_name|
 		[NonemptyText("task '${task_name}' environment name must not be empty")]
 
-	block : Plugin.KaifileBlock
+	block : Plugin.Block
 	block = Kaifile.named_block({ header: "task <task>", fields, name_rules })
 
-	command : Plugin.Command
-	command = Plugin.command("run", [Plugin.required_argument("task")])
-
-	command_schema : Plugin.CommandSchema
-	command_schema = Plugin.command_with_required_backend_block({ command, block })
 }

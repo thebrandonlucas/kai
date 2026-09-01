@@ -2,24 +2,25 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.Build as BuildCommand
-import schemas.Secret as SecretCommand
-import schemas.Service as ServiceCommand
+import blocks.Build as BuildBlock
+import blocks.Secret as SecretBlock
+import blocks.Service as ServiceBlock
+import commands.Service as ServiceCommand
 
 ServiceNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: ServiceCommand.command.name,
+		command: ServiceCommand.command_syntax.name,
 		plan: ServiceNix.plan,
 		validator: NoValidation,
 	}
 
 	plan :
-		Plugin.ImplementationInput ->
+		Plugin.CommandPlanningInput ->
 			Try(
-				Plugin.CommandPlan,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendCommandPlan,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
 		name = match input.command_arguments {
@@ -41,15 +42,15 @@ ServiceNix := [].{
 				byte_offset: None,
 				message: "validated service block is missing 'restart'",
 			}
-		failures = ServiceCommand.name_failures(name)
+		failures = ServiceBlock.name_failures(name)
 			.concat(
 				Plugin.validate_text(
 					artifact_name,
-					BuildCommand.artifact_name_rules,
+					BuildBlock.artifact_name_rules,
 				),
 			)
-			.concat(ServiceCommand.secret_failures(secrets))
-			.concat(ServiceCommand.restart_failures(restart))
+			.concat(ServiceBlock.secret_failures(secrets))
+			.concat(ServiceBlock.restart_failures(restart))
 		Plugin.implementation_validation(failures)?
 		if input.host.os != LINUX {
 			Err({
@@ -67,8 +68,10 @@ ServiceNix := [].{
 					pkgs_flake = ServiceNix.validate_build(build, target.system)?
 					module_text = ServiceNix.render_module(name, secrets, restart)
 					expression = ServiceNix.render_expression(name, pkgs_flake, target.system)
+					source_path = ".kai/services/${name}"
+					output_path = ".kai/artifacts/.services/${name}"
 					Ok(
-						Plugin.CommandPlan.{
+						Plugin.BackendCommandPlan.{
 							artifacts: [
 								{
 									attributes: [
@@ -78,23 +81,53 @@ ServiceNix := [].{
 									],
 									kind: "kai.nixos.service/v1",
 									name,
-									path: NixBackend.service_artifact_path(name),
+									path: output_path,
 								},
 							],
 							prerequisite_commands,
 							requested_packages: [],
-							steps: NixBackend.service_steps(
-								name,
-								build.path,
-								module_text,
-								expression,
-							),
+							steps: [
+								WriteFile({
+									contents: module_text,
+									path: "${source_path}/module.nix",
+								}),
+								WriteFile({
+									contents: expression,
+									path: "${source_path}/default.nix",
+								}),
+								RunProgram({
+									arguments: ["-rf", "--", "${source_path}/artifact"],
+									program: "rm",
+								}),
+								RunProgram({
+									arguments: [
+										"--recursive",
+										"--dereference",
+										"--preserve=mode",
+										"--",
+										build.path,
+										"${source_path}/artifact",
+									],
+									program: "cp",
+								}),
+								WriteFile({
+									contents: "",
+									path: ".kai/artifacts/.services/.keep",
+								}),
+								NixBackend.run([
+									"build",
+									"--file",
+									"${source_path}/default.nix",
+									"--out-link",
+									output_path,
+								]),
+							],
 						},
 					)
 				}
 				NotResolved =>
 					Ok(
-						Plugin.CommandPlan.{
+						Plugin.BackendCommandPlan.{
 							artifacts: [],
 							prerequisite_commands,
 							requested_packages: [],
@@ -119,7 +152,7 @@ ServiceNix := [].{
 		Str ->
 			Try(
 				Plugin.Artifact,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	find_build = |artifacts, name|
 		match artifacts.keep_if(|artifact|
@@ -148,7 +181,7 @@ ServiceNix := [].{
 		}
 
 	validate_build :
-		Plugin.Artifact, Str -> Try(Str, Plugin.ImplementationDiagnostic)
+		Plugin.Artifact, Str -> Try(Str, Plugin.BackendPlanningDiagnostic)
 	validate_build = |build, system| {
 		backend = ServiceNix.attribute(build.attributes, "backend")?
 		build_system = ServiceNix.attribute(build.attributes, "target.system")?
@@ -191,7 +224,7 @@ ServiceNix := [].{
 		Str ->
 			Try(
 				Str,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	attribute = |attributes, key|
 		match attributes {
@@ -207,11 +240,11 @@ ServiceNix := [].{
 		}
 
 	validate_secrets :
-		Plugin.ImplementationInput,
+		Plugin.CommandPlanningInput,
 		List(Str) ->
 			Try(
 				{},
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	validate_secrets = |input, names|
 		match names {
@@ -248,7 +281,7 @@ ServiceNix := [].{
 						message: "validated secret '${first}' is missing 'provision'",
 					}
 				Plugin.implementation_validation(
-					SecretCommand.provision_failures(provision),
+					SecretBlock.provision_failures(provision),
 				)?
 				ServiceNix.validate_secrets(input, rest)
 			}
@@ -272,7 +305,7 @@ ServiceNix := [].{
 				Str.join_with(
 					[
 						"  cp -- ",
-						ServiceNix.nix_interpolation("./module.nix"),
+						NixBackend.nix_interpolation("./module.nix"),
 						" \"$out/default.nix\"",
 					],
 					"",
@@ -280,7 +313,7 @@ ServiceNix := [].{
 				Str.join_with(
 					[
 						"  cp --recursive --no-dereference --preserve=mode ",
-						ServiceNix.nix_interpolation("./artifact"),
+						NixBackend.nix_interpolation("./artifact"),
 						" \"$out/artifact\"",
 					],
 					"",
@@ -310,7 +343,7 @@ ServiceNix := [].{
 				"    wantedBy = [ \"multi-user.target\" ];",
 				"    serviceConfig = {",
 				"      Type = \"exec\";",
-				"      ExecStart = \"${ServiceNix.nix_interpolation("./artifact")}\";",
+				"      ExecStart = \"${NixBackend.nix_interpolation("./artifact")}\";",
 				"      Restart = \"${restart}\";",
 				"      DynamicUser = true;",
 				"      NoNewPrivileges = true;",
@@ -336,6 +369,4 @@ ServiceNix := [].{
 		)
 	}
 
-	nix_interpolation : Str -> Str
-	nix_interpolation = |expression| Str.join_with(["$", "{", expression, "}"], "")
 }

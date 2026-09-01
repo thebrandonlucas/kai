@@ -2,15 +2,15 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.Machine as MachineCommand
-import schemas.MachineConfig
+import blocks.Machine as MachineBlock
+import commands.Machine as MachineCommand
 import EnvironmentNix
 
 MachineNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: MachineCommand.command.name,
+		command: MachineCommand.command_syntax.name,
 		plan: MachineNix.plan,
 		validator: NoValidation,
 	}
@@ -38,12 +38,100 @@ MachineNix := [].{
 		users : List(Str),
 	}
 
+	MachineTarget := { architecture : Str, system : Str }
+
+	machine_target :
+		Str,
+		Plugin.HostOs,
+		Plugin.HostArch ->
+			Try(
+				MachineTarget,
+				[
+					CrossArchitectureMachine,
+					UnsupportedMachineHost,
+					UnsupportedMachineSystem,
+				],
+			)
+	machine_target = |system, os, arch|
+		match (system, os, arch) {
+			("x86_64-linux", LINUX, X64) => Ok({ architecture: "x86_64", system })
+			("aarch64-linux", LINUX, AARCH64) => Ok({ architecture: "aarch64", system })
+			("x86_64-linux", LINUX, _) => Err(CrossArchitectureMachine)
+			("aarch64-linux", LINUX, _) => Err(CrossArchitectureMachine)
+			("x86_64-linux", _, _) => Err(UnsupportedMachineHost)
+			("aarch64-linux", _, _) => Err(UnsupportedMachineHost)
+			_ => Err(UnsupportedMachineSystem)
+		}
+
+	machine_closure_path : Str -> Str
+	machine_closure_path = |name| ".kai/artifacts/machines/${name}/closure"
+
+	machine_flake_path : Str -> Str
+	machine_flake_path = |name| ".kai/machines/${name}"
+
+	machine_metadata_path : Str -> Str
+	machine_metadata_path = |name| ".kai/artifacts/machines/${name}/metadata.json"
+
+	service_copy_steps : Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
+	service_copy_steps = |flake_path, services| {
+		service_path = "${flake_path}/services"
+		[
+			RunProgram({ arguments: ["-rf", service_path], program: "rm" }),
+			RunProgram({ arguments: ["-p", service_path], program: "mkdir" }),
+		].concat(
+			services.map(
+				|service|
+					RunProgram({
+						arguments: [
+							"-RH",
+							"--preserve=mode",
+							"--",
+							service.path,
+							"${service_path}/${service.name}",
+						],
+						program: "cp",
+					}),
+			),
+		).concat([
+			RunProgram({
+				arguments: ["-R", "u+w", "--", service_path],
+				program: "chmod",
+			}),
+		])
+	}
+
+	machine_steps :
+		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
+	machine_steps = |name, flake, module_text, metadata, services| {
+		flake_path = MachineNix.machine_flake_path(name)
+		metadata_path = MachineNix.machine_metadata_path(name)
+		[
+			# Empty metadata invalidates an older artifact before any fallible step.
+			WriteFile({ contents: "", path: metadata_path }),
+			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
+			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
+		]
+			.concat(MachineNix.service_copy_steps(flake_path, services))
+			.concat(NixBackend.lock_steps(flake_path))
+			.concat([
+				WriteFile({ contents: "", path: ".kai/artifacts/machines/${name}/.keep" }),
+				NixBackend.run([
+					"build",
+					"path:${flake_path}#kaiMachines.\"${name}\".closure",
+					"--no-update-lock-file",
+					"--out-link",
+					MachineNix.machine_closure_path(name),
+				]),
+				WriteFile({ contents: metadata, path: metadata_path }),
+			])
+	}
+
 	machine_spec :
-		Plugin.ImplementationInput,
+		Plugin.CommandPlanningInput,
 		Str ->
 			Try(
 				MachineSpec,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	machine_spec = |input, command_name| {
 		name = match input.command_arguments {
@@ -68,12 +156,12 @@ MachineNix := [].{
 			}
 		users = MachineNix.optional_strings(input.command_fields, "users")?
 		services = MachineNix.optional_strings(input.command_fields, "services")?
-		failures = Plugin.validate_text(name, MachineConfig.name_rules)
+		failures = Plugin.validate_text(name, MachineBlock.name_rules)
 			.concat(Plugin.validate_string_list(pkgs, NixBackend.package_rules))
-			.concat(MachineConfig.user_failures(users))
-			.concat(MachineConfig.service_failures(services))
+			.concat(MachineBlock.user_failures(users))
+			.concat(MachineBlock.service_failures(services))
 		Plugin.implementation_validation(failures)?
-		target = NixBackend.machine_target(
+		target = MachineNix.machine_target(
 			system,
 			input.host.os,
 			input.host.arch,
@@ -124,10 +212,10 @@ MachineNix := [].{
 	}
 
 	plan :
-		Plugin.ImplementationInput ->
+		Plugin.CommandPlanningInput ->
 			Try(
-				Plugin.CommandPlan,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendCommandPlan,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
 		spec = MachineNix.machine_spec(input, "machine")?
@@ -159,10 +247,10 @@ MachineNix := [].{
 		)
 		machine_metadata = MachineNix.MachineMetadata.{
 			backend: NixBackend.backend.name,
-			closure_path: NixBackend.machine_closure_path(spec.name),
+			closure_path: MachineNix.machine_closure_path(spec.name),
 			flake_attribute: "kaiMachines.\"${spec.name}\".closure",
-			flake_path: NixBackend.machine_flake_path(spec.name),
-			metadata_path: NixBackend.machine_metadata_path(spec.name),
+			flake_path: MachineNix.machine_flake_path(spec.name),
+			metadata_path: MachineNix.machine_metadata_path(spec.name),
 			name: spec.name,
 			target_architecture: spec.target_architecture,
 			target_system: spec.target_system,
@@ -181,7 +269,7 @@ MachineNix := [].{
 		)
 		metadata = MachineNix.render_metadata(machine_metadata)
 		Ok(
-			Plugin.CommandPlan.{
+			Plugin.BackendCommandPlan.{
 				artifacts: [
 					{
 						attributes: [
@@ -194,12 +282,12 @@ MachineNix := [].{
 						],
 						kind: "kai.machine.closure/v1",
 						name: spec.name,
-						path: NixBackend.machine_closure_path(spec.name),
+						path: MachineNix.machine_closure_path(spec.name),
 					},
 				],
 				prerequisite_commands,
 				requested_packages: spec.pkgs,
-				steps: NixBackend.machine_steps(
+				steps: MachineNix.machine_steps(
 					spec.name,
 					flake,
 					module_text,
@@ -210,7 +298,7 @@ MachineNix := [].{
 		)
 	}
 
-	has_service_declaration : Plugin.ImplementationInput, Str -> Bool
+	has_service_declaration : Plugin.CommandPlanningInput, Str -> Bool
 	has_service_declaration = |input, name|
 		List.any(
 			Plugin.blocks_of_kind(input, ["service"]),
@@ -238,7 +326,7 @@ MachineNix := [].{
 		Str ->
 			Try(
 				List(Plugin.Artifact),
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	resolve_services = |artifacts, names, system|
 		match names {
@@ -252,7 +340,7 @@ MachineNix := [].{
 		}
 
 	validate_service :
-		Plugin.Artifact, Str -> Try({}, Plugin.ImplementationDiagnostic)
+		Plugin.Artifact, Str -> Try({}, Plugin.BackendPlanningDiagnostic)
 	validate_service = |service, system| {
 		backend = MachineNix.attribute(service.attributes, "backend")?
 		service_system = MachineNix.attribute(
@@ -300,7 +388,7 @@ MachineNix := [].{
 		Str ->
 			Try(
 				Str,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	attribute = |attributes, key|
 		match attributes {
@@ -326,7 +414,7 @@ MachineNix := [].{
 		Str ->
 			Try(
 				Plugin.Artifact,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	find_service = |artifacts, name|
 		match artifacts.keep_if(|artifact|
@@ -359,7 +447,7 @@ MachineNix := [].{
 		services.map(|service| "          ./services/${service.name}")
 
 	optional_strings :
-		Fields.ParsedFields, Str -> Try(List(Str), Plugin.ImplementationDiagnostic)
+		Fields.ParsedFields, Str -> Try(List(Str), Plugin.BackendPlanningDiagnostic)
 	optional_strings = |fields, field|
 		match Fields.maybe_strings(fields, field) {
 			Ok(None) => Ok([])
@@ -396,16 +484,11 @@ MachineNix := [].{
 
 	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
 	render_flake = |name, system, locked_overlays, overlays, services| {
-		overlay_names = locked_overlays.map_with_index(
-			|_, index| "overlay${U64.to_str(index)}",
-		)
 		overlay_lines = overlays.map(
-			|overlay| {
-				overlay_name = NixBackend.overlay_name(locked_overlays, overlay, 0)
-				"          ${overlay_name}.overlays.default"
-			},
+			|overlay|
+				"          ${NixBackend.overlay_expression(locked_overlays, overlay, 0)}",
 		)
-		outputs_args = Str.join_with(["nixpkgs"].concat(overlay_names), ", ")
+		outputs_args = NixBackend.overlay_outputs_args(locked_overlays)
 		lines = [
 			"{",
 			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
@@ -444,14 +527,14 @@ MachineNix := [].{
 	render_module : List(Str), List(Str), List(Str) -> Str
 	render_module = |pkgs, users, services| {
 		package_lines = pkgs.map(
-			|pkg| "    pkgs.${NixBackend.render_attributes(pkg)}",
+			|pkg| "    pkgs.${NixBackend.render_attribute_path(pkg)}",
 		)
 		user_lines = users.map(
 			|user| "  users.users.\"${user}\".isNormalUser = true;",
 		)
 		service_lines = services.map(
 			|service| {
-				service_attr = NixBackend.render_attributes(service)
+				service_attr = NixBackend.render_attribute_path(service)
 				"  services.${service_attr}.enable = true;"
 			},
 		)

@@ -1,19 +1,19 @@
 # An implementation for defining nix devShells
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.EnvironmentConfig
-import schemas.Shell as ShellCommand
+import blocks.Environment as EnvironmentBlock
+import commands.Shell as ShellCommand
 import EnvironmentNix
 
 ShellNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: ShellCommand.command.name,
+		command: ShellCommand.command_syntax.name,
 		validator: Validate({
 			string_lists: [
 				{
-					field: EnvironmentConfig.packages_field,
+					field: EnvironmentBlock.packages_field,
 					rules: NixBackend.package_rules,
 				},
 			],
@@ -23,28 +23,39 @@ ShellNix := [].{
 	}
 
 	plan :
-		Plugin.ImplementationInput ->
+		Plugin.CommandPlanningInput ->
 			Try(
-				Plugin.CommandPlan,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendCommandPlan,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
 		pkgs = Plugin.validated_strings(
 			input.command_fields,
-			EnvironmentConfig.packages_field,
+			EnvironmentBlock.packages_field,
 		)?
 		overlays = EnvironmentNix.extract_overlays(input.command_fields)?
-		command_plan = EnvironmentNix.command_plan(
+		flake = EnvironmentNix.render_flake(
 			input,
 			pkgs,
 			overlays,
+			Bool.False,
 			"unsupported shell platform",
 		)?
-		Ok({
-			..command_plan,
-			steps: command_plan.steps
-				.concat(NixBackend.lock_steps)
-				.concat([NixBackend.develop_step]),
-		})
+		Ok(
+			Plugin.BackendCommandPlan.{
+				artifacts: [],
+				prerequisite_commands: [],
+				requested_packages: pkgs,
+				steps: [WriteFile({ contents: flake, path: ".kai/flake.nix" })]
+					.concat(NixBackend.lock_steps(".kai"))
+					.concat([
+						NixBackend.run([
+							"develop",
+							"path:.kai#default",
+							"--no-update-lock-file",
+						]),
+					]),
+			},
+		)
 	}
 }

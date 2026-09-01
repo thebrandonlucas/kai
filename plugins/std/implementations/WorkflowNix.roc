@@ -2,22 +2,22 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.Workflow as WorkflowCommand
+import commands.Workflow as WorkflowCommand
 
 WorkflowNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: WorkflowCommand.command.name,
+		command: WorkflowCommand.command_syntax.name,
 		plan: WorkflowNix.plan,
 		validator: NoValidation,
 	}
 
 	plan :
-		Plugin.ImplementationInput ->
+		Plugin.CommandPlanningInput ->
 			Try(
-				Plugin.CommandPlan,
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendCommandPlan,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
 		steps = Fields.get_strings(input.command_fields, "steps") ? |_| {
@@ -32,7 +32,7 @@ WorkflowNix := [].{
 		} else {
 			prerequisite_commands = WorkflowNix.parse_steps(steps)?
 			Ok(
-				Plugin.CommandPlan.{
+				Plugin.BackendCommandPlan.{
 					artifacts: [],
 					prerequisite_commands,
 					requested_packages: [],
@@ -46,7 +46,7 @@ WorkflowNix := [].{
 		List(Str) ->
 			Try(
 				List(Plugin.PrerequisiteCommand),
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	parse_steps = |steps| WorkflowNix.parse_steps_from(steps, 1)
 
@@ -55,7 +55,7 @@ WorkflowNix := [].{
 		U64 ->
 			Try(
 				List(Plugin.PrerequisiteCommand),
-				Plugin.ImplementationDiagnostic,
+				Plugin.BackendPlanningDiagnostic,
 			)
 	parse_steps_from = |steps, index|
 		match steps {
@@ -78,7 +78,7 @@ WorkflowNix := [].{
 			})
 		}
 
-	invalid_step : U64, Str -> Plugin.ImplementationDiagnostic
+	invalid_step : U64, Str -> Plugin.BackendPlanningDiagnostic
 	invalid_step = |index, step| {
 		byte_offset: None,
 		message: Str.join_with(

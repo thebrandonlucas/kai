@@ -33,8 +33,8 @@ Executor := [].{
 			[first, .. as rest] =>
 				first.schema.commands
 					.map(
-						|command_schema|
-							"  ${Plugin.command_from_schema(command_schema).name}",
+						|command|
+							"  ${Plugin.syntax_from_command(command).name}",
 					)
 					.concat(Executor.command_lines(rest))
 			}

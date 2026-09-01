@@ -1,18 +1,23 @@
 # Standard plugin definition for Kai's built-in Nix commands.
 import kai.Plugin
 import backends.Nix as NixBackend
-import schemas.Build as BuildCommand
-import schemas.EnvironmentConfig
-import schemas.Image as ImageCommand
-import schemas.Machine as MachineCommand
-import schemas.MachineConfig
-import schemas.Secret as SecretCommand
-import schemas.Service as ServiceCommand
-import schemas.Shell as ShellCommand
-import schemas.Source
-import schemas.Task as TaskCommand
-import schemas.Update as UpdateCommand
-import schemas.Workflow as WorkflowCommand
+import blocks.Build as BuildBlock
+import blocks.Environment as EnvironmentBlock
+import blocks.Machine as MachineBlock
+import blocks.Secret as SecretBlock
+import blocks.Service as ServiceBlock
+import blocks.Shell as ShellBlock
+import blocks.Source as SourceBlock
+import blocks.Task as TaskBlock
+import blocks.Workflow as WorkflowBlock
+import commands.Build as BuildCommand
+import commands.Image as ImageCommand
+import commands.Machine as MachineCommand
+import commands.Run as RunCommand
+import commands.Service as ServiceCommand
+import commands.Shell as ShellCommand
+import commands.Update as UpdateCommand
+import commands.Workflow as WorkflowCommand
 import implementations.BuildNix
 import implementations.ImageNix
 import implementations.MachineNix
@@ -61,25 +66,25 @@ StdPlugin := [].{
 	schema : Plugin.Schema
 	schema = {
 		blocks: [
-			BuildCommand.block,
-			EnvironmentConfig.block,
-			MachineConfig.block,
-			SecretCommand.block,
-			ServiceCommand.block,
-			ShellCommand.block,
-			Source.block,
-			TaskCommand.block,
-			WorkflowCommand.block,
+			BuildBlock.block,
+			EnvironmentBlock.block,
+			MachineBlock.block,
+			SecretBlock.block,
+			ServiceBlock.block,
+			ShellBlock.block,
+			SourceBlock.block,
+			TaskBlock.block,
+			WorkflowBlock.block,
 		],
 		commands: [
-			BuildCommand.command_schema,
-			ImageCommand.command_schema,
-			MachineCommand.command_schema,
-			ServiceCommand.command_schema,
-			ShellCommand.command_schema,
-			TaskCommand.command_schema,
-			UpdateCommand.command_schema,
-			WorkflowCommand.command_schema,
+			BuildCommand.command,
+			ImageCommand.command,
+			MachineCommand.command,
+			RunCommand.command,
+			ServiceCommand.command,
+			ShellCommand.command,
+			UpdateCommand.command,
+			WorkflowCommand.command,
 		],
 	}
 
