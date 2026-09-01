@@ -38,6 +38,94 @@ MachineNix := [].{
 		users : List(Str),
 	}
 
+	MachineTarget := { architecture : Str, system : Str }
+
+	machine_target :
+		Str,
+		Plugin.HostOs,
+		Plugin.HostArch ->
+			Try(
+				MachineTarget,
+				[
+					CrossArchitectureMachine,
+					UnsupportedMachineHost,
+					UnsupportedMachineSystem,
+				],
+			)
+	machine_target = |system, os, arch|
+		match (system, os, arch) {
+			("x86_64-linux", LINUX, X64) => Ok({ architecture: "x86_64", system })
+			("aarch64-linux", LINUX, AARCH64) => Ok({ architecture: "aarch64", system })
+			("x86_64-linux", LINUX, _) => Err(CrossArchitectureMachine)
+			("aarch64-linux", LINUX, _) => Err(CrossArchitectureMachine)
+			("x86_64-linux", _, _) => Err(UnsupportedMachineHost)
+			("aarch64-linux", _, _) => Err(UnsupportedMachineHost)
+			_ => Err(UnsupportedMachineSystem)
+		}
+
+	machine_closure_path : Str -> Str
+	machine_closure_path = |name| ".kai/artifacts/machines/${name}/closure"
+
+	machine_flake_path : Str -> Str
+	machine_flake_path = |name| ".kai/machines/${name}"
+
+	machine_metadata_path : Str -> Str
+	machine_metadata_path = |name| ".kai/artifacts/machines/${name}/metadata.json"
+
+	service_copy_steps : Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
+	service_copy_steps = |flake_path, services| {
+		service_path = "${flake_path}/services"
+		[
+			RunProgram({ arguments: ["-rf", service_path], program: "rm" }),
+			RunProgram({ arguments: ["-p", service_path], program: "mkdir" }),
+		].concat(
+			services.map(
+				|service|
+					RunProgram({
+						arguments: [
+							"-RH",
+							"--preserve=mode",
+							"--",
+							service.path,
+							"${service_path}/${service.name}",
+						],
+						program: "cp",
+					}),
+			),
+		).concat([
+			RunProgram({
+				arguments: ["-R", "u+w", "--", service_path],
+				program: "chmod",
+			}),
+		])
+	}
+
+	machine_steps :
+		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
+	machine_steps = |name, flake, module_text, metadata, services| {
+		flake_path = MachineNix.machine_flake_path(name)
+		metadata_path = MachineNix.machine_metadata_path(name)
+		[
+			# Empty metadata invalidates an older artifact before any fallible step.
+			WriteFile({ contents: "", path: metadata_path }),
+			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
+			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
+		]
+			.concat(MachineNix.service_copy_steps(flake_path, services))
+			.concat(NixBackend.lock_steps(flake_path))
+			.concat([
+				WriteFile({ contents: "", path: ".kai/artifacts/machines/${name}/.keep" }),
+				NixBackend.run([
+					"build",
+					"path:${flake_path}#kaiMachines.\"${name}\".closure",
+					"--no-update-lock-file",
+					"--out-link",
+					MachineNix.machine_closure_path(name),
+				]),
+				WriteFile({ contents: metadata, path: metadata_path }),
+			])
+	}
+
 	machine_spec :
 		Plugin.CommandPlanningInput,
 		Str ->
@@ -73,7 +161,7 @@ MachineNix := [].{
 			.concat(MachineBlock.user_failures(users))
 			.concat(MachineBlock.service_failures(services))
 		Plugin.implementation_validation(failures)?
-		target = NixBackend.machine_target(
+		target = MachineNix.machine_target(
 			system,
 			input.host.os,
 			input.host.arch,
@@ -159,10 +247,10 @@ MachineNix := [].{
 		)
 		machine_metadata = MachineNix.MachineMetadata.{
 			backend: NixBackend.backend.name,
-			closure_path: NixBackend.machine_closure_path(spec.name),
+			closure_path: MachineNix.machine_closure_path(spec.name),
 			flake_attribute: "kaiMachines.\"${spec.name}\".closure",
-			flake_path: NixBackend.machine_flake_path(spec.name),
-			metadata_path: NixBackend.machine_metadata_path(spec.name),
+			flake_path: MachineNix.machine_flake_path(spec.name),
+			metadata_path: MachineNix.machine_metadata_path(spec.name),
 			name: spec.name,
 			target_architecture: spec.target_architecture,
 			target_system: spec.target_system,
@@ -194,12 +282,12 @@ MachineNix := [].{
 						],
 						kind: "kai.machine.closure/v1",
 						name: spec.name,
-						path: NixBackend.machine_closure_path(spec.name),
+						path: MachineNix.machine_closure_path(spec.name),
 					},
 				],
 				prerequisite_commands,
 				requested_packages: spec.pkgs,
-				steps: NixBackend.machine_steps(
+				steps: MachineNix.machine_steps(
 					spec.name,
 					flake,
 					module_text,

@@ -93,7 +93,10 @@ ImageNix := [].{
 						native_services,
 					),
 					metadata,
-					services,
+					MachineNix.service_copy_steps(
+						NixBackend.image_flake_path(spec.name),
+						services,
+					),
 				),
 			},
 		)
