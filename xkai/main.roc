@@ -11,7 +11,7 @@ import pf.Stdout
 
 import Builder
 import Cli
-import RuntimeBundle
+import EmbeddedSources
 import std.StdBundle
 
 print_usage! = |_| {
@@ -19,9 +19,22 @@ print_usage! = |_| {
 	Ok({})
 }
 
+runtime_platform_name = Str.join_with(
+	["F1JVZPYfWP71s8vk6tHcV1Qx", "1Ef6CZkwswGoCn8VHZmL"],
+	"",
+)
+
+runtime_platform_url = Str.join_with(
+	[
+		"https://github.com/roc-lang/basic-cli/releases/download",
+		"0.22.0",
+		"${runtime_platform_name}.tar.zst",
+	],
+	"/",
+)
+
 stock_profile = {
-	platform_url: RuntimeBundle.platform_url,
-	bundles: [RuntimeBundle.source_bundle],
+	platform_url: runtime_platform_url,
 	embedded_plugins: [StdBundle.plugin_source],
 }
 
@@ -33,7 +46,8 @@ main! = |args| {
 			Stdout.line!("xkai version ${Cli.version}")?
 			Ok({})
 		}
-		Cli.Command.Build(plugin_paths) => Builder.build!(plugin_paths, stock_profile)
+		Cli.Command.Build(plugin_paths) =>
+			Builder.build!(plugin_paths, EmbeddedSources.archive, stock_profile)
 		Cli.Command.Unknown(unknown) => {
 			Stdout.line!("Unknown command ${unknown}")?
 			print_usage!({})

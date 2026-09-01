@@ -80,6 +80,7 @@
           localSource,
           binaryName,
           buildBinaryName ? binaryName,
+          prepareXkai ? false,
         }:
         let
           roc = rocFor pkgs;
@@ -104,7 +105,8 @@
           nativeBuildInputs = [
             roc
             pkgs.llvmPackages.bintools
-          ];
+          ]
+          ++ lib.optionals prepareXkai [ pkgs.zig_0_16 ];
           dontConfigure = true;
           dontFixup = true;
 
@@ -124,6 +126,19 @@
               --replace-fail \
               "${rocHttpUrl}" \
               "$PWD/${rocHttpName}/main.roc"
+
+            ${lib.optionalString prepareXkai ''
+              substituteInPlace devtool/main.roc \
+                --replace-fail \
+                "${basicCliBaseUrl}" \
+                "$PWD" \
+                --replace-fail \
+                "${basicCliName}.tar.zst" \
+                "${basicCliName}/main.roc"
+
+              zig build prepare-xkai --prefix "$TMPDIR/prepared-xkai"
+              cp -R "$TMPDIR/prepared-xkai/xkai-source" generated-xkai
+            ''}
 
             cp ${source} ${localSource}
 
@@ -170,10 +185,11 @@
         pkgs: rocTarget:
         mkRocBinary pkgs rocTarget {
           pname = "xkai";
-          source = "xkai/main.roc";
-          localSource = "xkai/main-local.roc";
+          source = "generated-xkai/xkai/main.roc";
+          localSource = "generated-xkai/xkai/main-local.roc";
           binaryName = "xkai";
           buildBinaryName = "xkai-dev";
+          prepareXkai = true;
         };
 
       mkWrappedPackage =

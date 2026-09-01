@@ -5,6 +5,7 @@ Cli := [].{
 		Help,
 		Kaifiles,
 		PrepareRelease({ name : Str, version : Str }),
+		PrepareXkai({ bundle_dir : Str, output_dir : Str, source_dir : Str }),
 		Tidy(List(Str)),
 	].{
 		is_eq : Command, Command -> Bool
@@ -15,6 +16,8 @@ Cli := [].{
 				(Kaifiles, Kaifiles) => Bool.True
 				(PrepareRelease(left_args), PrepareRelease(right_args))
 					=> left_args == right_args
+				(PrepareXkai(left_args), PrepareXkai(right_args))
+					=> left_args == right_args
 				(Tidy(left_paths), Tidy(right_paths)) => left_paths == right_paths
 				_ => Bool.False
 			}
@@ -23,6 +26,7 @@ Cli := [].{
 	Error := [
 		ArgumentsNotAllowed(Str),
 		ExpectedArguments(Str),
+		ExpectedPrepareXkaiArguments,
 		UnknownCommand(Str),
 	].{
 		is_eq : Error, Error -> Bool
@@ -32,6 +36,8 @@ Cli := [].{
 					=> left_name == right_name
 				(ExpectedArguments(left_name), ExpectedArguments(right_name))
 					=> left_name == right_name
+				(ExpectedPrepareXkaiArguments, ExpectedPrepareXkaiArguments)
+					=> Bool.True
 				(UnknownCommand(left_name), UnknownCommand(right_name))
 					=> left_name == right_name
 				_ => Bool.False
@@ -47,6 +53,7 @@ Cli := [].{
 			"  build-release",
 			"  kaifiles",
 			"  prepare-release NAME VERSION",
+			"  prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR",
 			"  tidy [ROC_FILE...]",
 			"  help",
 		],
@@ -61,6 +68,9 @@ Cli := [].{
 			["build-release"] => Ok(BuildRelease)
 			["kaifiles"] => Ok(Kaifiles)
 			["prepare-release", name, version] => Ok(PrepareRelease({ name, version }))
+			["prepare-xkai", bundle_dir, source_dir, output_dir] => Ok(
+				PrepareXkai({ bundle_dir, output_dir, source_dir }),
+			)
 			["tidy", .. as paths] => Ok(Tidy(paths))
 			[first, ..] =>
 				match first {
@@ -68,6 +78,7 @@ Cli := [].{
 					"build-release" => Err(ArgumentsNotAllowed(first))
 					"kaifiles" => Err(ArgumentsNotAllowed(first))
 					"prepare-release" => Err(ExpectedArguments(first))
+					"prepare-xkai" => Err(ExpectedPrepareXkaiArguments)
 					unknown => Err(UnknownCommand(unknown))
 				}
 			}
@@ -77,6 +88,8 @@ Cli := [].{
 		match error {
 			ArgumentsNotAllowed(command) => "${command} does not accept arguments"
 			ExpectedArguments(command) => "${command} requires NAME and VERSION"
+			ExpectedPrepareXkaiArguments =>
+				"prepare-xkai requires BUNDLE_DIR SOURCE_DIR OUTPUT_DIR"
 			UnknownCommand(command) => "unknown command: ${command}"
 		}
 

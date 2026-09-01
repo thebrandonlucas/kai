@@ -15,14 +15,7 @@ Assembly := [].{
 
 	Dependency := { name : Str, path : Str }
 
-	SourceBundle := {
-		app_dependencies : List(Assembly.Dependency),
-		app_imports : List(Str),
-		files : List(Assembly.SourceFile),
-	}
-
 	BuildProfile := {
-		bundles : List(Assembly.SourceBundle),
 		embedded_plugins : List(Assembly.PluginSource),
 		platform_url : Str,
 	}
@@ -52,31 +45,6 @@ Assembly := [].{
 		)
 	}
 
-	bundle_files : List(Assembly.SourceBundle) -> List(Assembly.SourceFile)
-	bundle_files = |bundles|
-		match bundles {
-			[] => []
-			[first, .. as rest] => first.files.concat(Assembly.bundle_files(rest))
-		}
-
-	bundle_dependencies : List(Assembly.SourceBundle) -> List(Assembly.Dependency)
-	bundle_dependencies = |bundles|
-		match bundles {
-			[] => []
-			[first, .. as rest] => first.app_dependencies.concat(
-				Assembly.bundle_dependencies(rest),
-			)
-		}
-
-	bundle_imports : List(Assembly.SourceBundle) -> List(Str)
-	bundle_imports = |bundles|
-		match bundles {
-			[] => []
-			[first, .. as rest] => first.app_imports.concat(
-				Assembly.bundle_imports(rest),
-			)
-		}
-
 	component_files :
 		Str,
 		Str,
@@ -85,7 +53,7 @@ Assembly := [].{
 			Assembly.SourceFile,
 		)
 	component_files = |package_name, component_name, files, dependencies| {
-		root = "${package_name}/${component_name}"
+		root = "plugins/${package_name}/${component_name}"
 		modules = files.map(|file| file.filename.drop_suffix(".roc"))
 		files.map(
 			|file| {
@@ -117,37 +85,38 @@ Assembly := [].{
 		)
 	stage_plugin = |declared_plugin, external_dependencies| {
 		package_name = declared_plugin.package_name
+		plugin_root = "plugins/${package_name}"
 		nested_external_dependencies = Assembly.nested_dependencies(
 			external_dependencies,
 		)
 		package_dependencies = [
 			{ name: "backends", path: "./backends/main.roc" },
 			{ name: "implementations", path: "./implementations/main.roc" },
-			{ name: "kai", path: "../package.roc" },
-			{ name: "parser", path: "../parser/main.roc" },
+			{ name: "kai", path: "../../xkai/package.roc" },
+			{ name: "parser", path: "../../xkai/parser/main.roc" },
 			{ name: "schemas", path: "./schemas/main.roc" },
 		].concat(external_dependencies)
 		component_dependencies = [
-			{ name: "kai", path: "../../package.roc" },
-			{ name: "parser", path: "../../parser/main.roc" },
+			{ name: "kai", path: "../../../xkai/package.roc" },
+			{ name: "parser", path: "../../../xkai/parser/main.roc" },
 		].concat(nested_external_dependencies)
 		implementation_dependencies = [
 			{ name: "backends", path: "../backends/main.roc" },
-			{ name: "kai", path: "../../package.roc" },
-			{ name: "parser", path: "../../parser/main.roc" },
+			{ name: "kai", path: "../../../xkai/package.roc" },
+			{ name: "parser", path: "../../../xkai/parser/main.roc" },
 			{ name: "schemas", path: "../schemas/main.roc" },
 		].concat(nested_external_dependencies)
 
 		[
 			{
-				destination: "${package_name}/main.roc",
+				destination: "${plugin_root}/main.roc",
 				contents: Assembly.package_source(
 					[declared_plugin.module_name],
 					package_dependencies,
 				),
 			},
 			{
-				destination: "${package_name}/${declared_plugin.module_source.filename}",
+				destination: "${plugin_root}/${declared_plugin.module_source.filename}",
 				contents: declared_plugin.module_source.contents,
 			},
 		]
@@ -200,19 +169,18 @@ Assembly := [].{
 	app_dependency : Assembly.PluginSource -> Assembly.Dependency
 	app_dependency = |declared_plugin| {
 		name: declared_plugin.package_name,
-		path: "./${declared_plugin.package_name}/main.roc",
+		path: "../plugins/${declared_plugin.package_name}/main.roc",
 	}
 
-	render_app :
-		Str, List(Assembly.SourceBundle), List(Assembly.PluginSource) -> Str
-	render_app = |platform_url, bundles, plugins| {
-		dependencies = Assembly.bundle_dependencies(bundles).concat(
+	render_app : Str, List(Assembly.PluginSource) -> Str
+	render_app = |platform_url, plugins| {
+		dependencies = [{ name: "kai", path: "./package.roc" }].concat(
 			plugins.map(Assembly.app_dependency),
 		)
 		dependency_lines = dependencies.map(
 			|dependency| "\t${dependency.name}: \"${dependency.path}\",",
 		)
-		import_lines = Assembly.bundle_imports(bundles).concat(
+		import_lines = ["import Executor"].concat(
 			plugins.map_with_index(
 				|declared_plugin, index|
 					Str.join_with(
@@ -348,17 +316,14 @@ Assembly := [].{
 			profile.embedded_plugins,
 			[],
 		)
-		assembled_app_source = Assembly.render_app(
-			profile.platform_url,
-			profile.bundles,
-			plugins,
-		)
-		assembled_files = Assembly.bundle_files(profile.bundles)
-			.concat(staged_custom_plugins)
-			.concat(staged_embedded_plugins)
+		assembled_app_source = Assembly.render_app(profile.platform_url, plugins)
+		assembled_files = staged_custom_plugins.concat(staged_embedded_plugins)
 		Assembly.validate_destinations(
 			assembled_files.concat([
-				{ destination: "main.roc", contents: assembled_app_source },
+				{
+					destination: "xkai/GeneratedKai.roc",
+					contents: assembled_app_source,
+				},
 			]),
 			[],
 		)?

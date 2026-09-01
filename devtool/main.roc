@@ -15,6 +15,7 @@ import Cli
 import Kaifiles
 import GitHub
 import PrepareRelease
+import PrepareXkai
 import Release
 import Tidy
 
@@ -262,6 +263,8 @@ main! = |args|
 			name,
 			version,
 		)
+		Ok(Cli.Command.PrepareXkai({ bundle_dir, output_dir, source_dir })) =>
+			PrepareXkai.run!(bundle_dir, source_dir, output_dir)
 		Ok(Cli.Command.Tidy(paths)) => Tidy.run!(paths)
 		Err(error) => Err(InvalidArguments(Cli.error_message(error)))
 	}
@@ -302,6 +305,7 @@ usage_lines = [
 	"build-release",
 	"kaifiles",
 	"prepare-release NAME VERSION",
+	"prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR",
 	"tidy ROC_FILE...",
 	"help",
 ]

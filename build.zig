@@ -5,6 +5,7 @@ const SourceTree = struct {
     roc_apps: []const []const u8,
     roc_files: []const []const u8,
     roc_roots: []const []const u8,
+    xkai_files: []const []const u8,
     zig_files: []const []const u8,
 };
 
@@ -48,6 +49,41 @@ fn sortPaths(paths: [][]const u8) void {
             return std.mem.order(u8, lhs, rhs) == .lt;
         }
     }.lessThan);
+}
+
+fn discoverRegularFiles(
+    b: *std.Build,
+    root: []const u8,
+) []const []const u8 {
+    const allocator = b.allocator;
+    const io = b.graph.io;
+    const root_path = b.fmt(
+        "{s}/{s}",
+        .{ b.build_root.path orelse ".", root },
+    );
+    var root_dir = std.Io.Dir.cwd().openDir(
+        io,
+        root_path,
+        .{ .iterate = true, .follow_symlinks = false },
+    ) catch @panic("failed to open embedded source root");
+    defer root_dir.close(io);
+
+    var files = std.ArrayList([]const u8).empty;
+    var walker = root_dir.walk(allocator) catch
+        @panic("failed to scan embedded source root");
+    defer walker.deinit();
+    while (walker.next(io) catch
+        @panic("failed to scan embedded source root")) |entry|
+    {
+        if (entry.kind != .file) continue;
+        if (std.fs.path.isAbsolute(entry.path)) {
+            @panic("embedded source escaped its root");
+        }
+        const path = b.fmt("{s}/{s}", .{ root, entry.path });
+        files.append(allocator, path) catch @panic("out of memory");
+    }
+    sortPaths(files.items);
+    return files.toOwnedSlice(allocator) catch @panic("out of memory");
 }
 
 fn discoverSources(b: *std.Build) SourceTree {
@@ -115,6 +151,7 @@ fn discoverSources(b: *std.Build) SourceTree {
         .roc_apps = roc_apps.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_files = roc_files.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_roots = roc_roots.toOwnedSlice(allocator) catch @panic("out of memory"),
+        .xkai_files = discoverRegularFiles(b, "xkai"),
         .zig_files = zig_files.toOwnedSlice(allocator) catch @panic("out of memory"),
     };
 }
@@ -172,16 +209,51 @@ fn artifactName(b: *std.Build, source_path: []const u8) []const u8 {
 pub fn build(b: *std.Build) void {
     const sources = discoverSources(b);
 
+    const source_stage = b.addWriteFiles();
+    _ = source_stage.addCopyDirectory(b.path("xkai"), "xkai", .{});
+    _ = source_stage.addCopyDirectory(
+        b.path("plugins/std"),
+        "plugins/std",
+        .{},
+    );
+
+    const bundle = b.addSystemCommand(&.{ "roc", "bundle", "--output-dir" });
+    const bundle_dir = bundle.addOutputDirectoryArg("xkai-bundle");
+    for (sources.xkai_files) |source| {
+        bundle.addArg(source);
+        bundle.addFileInput(b.path(source));
+    }
+
     const build_devtool = b.addSystemCommand(&.{ "roc", "build" });
     build_devtool.addFileArg(b.path("devtool/main.roc"));
     build_devtool.addFileInput(b.path("devtool/Cli.roc"));
     build_devtool.addFileInput(b.path("devtool/Kaifiles.roc"));
     build_devtool.addFileInput(b.path("devtool/GitHub.roc"));
     build_devtool.addFileInput(b.path("devtool/PrepareRelease.roc"));
+    build_devtool.addFileInput(b.path("devtool/PrepareXkai.roc"));
     build_devtool.addFileInput(b.path("devtool/Release.roc"));
     build_devtool.addFileInput(b.path("devtool/Tidy.roc"));
     build_devtool.addArg("--opt=dev");
     const devtool = build_devtool.addPrefixedOutputFileArg("--output=", "kai-devtool");
+
+    const prepare = std.Build.Step.Run.create(b, "run devtool prepare-xkai");
+    prepare.addFileArg(devtool);
+    prepare.addArg("prepare-xkai");
+    prepare.addDirectoryArg(bundle_dir);
+    prepare.addDirectoryArg(source_stage.getDirectory());
+    const generated_tree = prepare.addOutputDirectoryArg("generated-xkai");
+    const generated_main = generated_tree.path(b, "xkai/main.roc");
+    const install_generated_tree = b.addInstallDirectory(.{
+        .source_dir = generated_tree,
+        .install_dir = .prefix,
+        .install_subdir = "xkai-source",
+    });
+
+    const prepare_step = b.step(
+        "prepare-xkai",
+        "Generate the xkai source tree and embedded archive",
+    );
+    prepare_step.dependOn(&install_generated_tree.step);
 
     const build_publish_devtool = b.addSystemCommand(&.{ "roc", "build" });
     build_publish_devtool.addFileArg(b.path("devtool/publish.roc"));
@@ -304,7 +376,12 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&nix_fmt.step);
 
     for (sources.roc_roots) |root| {
-        const check_roc = b.addSystemCommand(&.{ "roc", "check", root });
+        const check_roc = b.addSystemCommand(&.{ "roc", "check" });
+        if (std.mem.eql(u8, root, "xkai/main.roc")) {
+            check_roc.addFileArg(generated_main);
+        } else {
+            check_roc.addArg(root);
+        }
         check_step.dependOn(&check_roc.step);
     }
 
@@ -345,7 +422,12 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(check_step);
 
     for (sources.roc_apps) |app| {
-        const test_app = b.addSystemCommand(&.{ "roc", "test", app });
+        const test_app = b.addSystemCommand(&.{ "roc", "test" });
+        if (std.mem.eql(u8, app, "xkai/main.roc")) {
+            test_app.addFileArg(generated_main);
+        } else {
+            test_app.addArg(app);
+        }
         test_app.step.dependOn(check_step);
         test_step.dependOn(&test_app.step);
     }
@@ -401,13 +483,13 @@ pub fn build(b: *std.Build) void {
             .{ artifactName(b, app), std.hash.Wyhash.hash(0, app) },
         );
         const output = b.fmt("--output={s}", .{output_path});
-        const build_app = b.addSystemCommand(&.{
-            "roc",
-            "build",
-            app,
-            "--opt=dev",
-            output,
-        });
+        const build_app = b.addSystemCommand(&.{ "roc", "build" });
+        if (std.mem.eql(u8, app, "xkai/main.roc")) {
+            build_app.addFileArg(generated_main);
+        } else {
+            build_app.addArg(app);
+        }
+        build_app.addArgs(&.{ "--opt=dev", output });
         build_app.step.dependOn(&prepare_outputs.step);
         ci_step.dependOn(&build_app.step);
     }
