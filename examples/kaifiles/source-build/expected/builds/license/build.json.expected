@@ -1,0 +1,1 @@
+{"inputs":["kai"],"name":"license","output":"LICENSE","pkgs":[],"run":["cp",".kai/inputs/kai/LICENSE","LICENSE"],"system":"{{system}}"}

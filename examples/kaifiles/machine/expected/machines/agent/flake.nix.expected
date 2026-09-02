@@ -10,7 +10,10 @@
       };
       machine = nixpkgs.lib.nixosSystem {
         inherit system;
-        modules = [ { nixpkgs.pkgs = pkgs; } ./machine.nix ];
+        modules = [
+          { nixpkgs.pkgs = pkgs; }
+          ./machine.nix
+        ];
       };
     in {
       nixosConfigurations."agent" = machine;
