@@ -1,24 +1,27 @@
 # Kai - A friendly frontend for determinate computing
 
-Kai is a CLI that makes using reproducible systems powerful, friendly, and fun.
+> WARNING: Unstable hobby project under rapid development. Use at your own risk!
 
-> WARNING: Hobby project. Use at your own risk!
+Kai is a CLI that makes using reproducible systems easy, powerful, friendly, and fun.
 
 ## Overview
 
-There are basically two complete reproducible systems today: [Nix](https://determinate.systems/) and [Guix](https://guix.gnu.org/). The general consensus appears to be that the ideas are beautiful, the implementations are not. Real-world software adoption has shown that when forced to choose between beauty and short-term utility over ugly long-term stability, the former tends to beat the latter, and the [future pays the price]().
+Imagine everything about how your computer works is a portable config in one file you can just send to your friends or bring with you to a new computer. Spend very little time thinking about installing software, dependencies, developer environments, etc., and once you figure it out once, you _shouldn't have to figure it out again_. We have that with Nix! The problem is Nix is so hard to use that people often give up (even agents get confused!). So, Kai wraps Nix in a friendly frontend so that you can actually use it with confidence!
 
-Kai recognizes this and aims to build on top of these systems to make them easy, extensible, customizable, and powerful.
+There are basically two complete reproducible systems today: [Nix](https://determinate.systems/) and [Guix](https://guix.gnu.org/). The ideas are beautiful, but the implementations are hard to use. Kai builds on them with the goal of making them easy, extensible, customizable, and powerful.
 
-The goal is to make reproducible computing so easy and powerful that they become the de-facto choice for software environments and deployment in all their forms: from desktops and servers to TVs and toasters. Practically, this means adopting Nix under the hood and creating useful abstractions on top in the short term.
+Eventually Kai plans to support Guix and potentially its own implementation.
 
-Read [here]() for more.
+The goal is to make using these systems so easy and powerful that they become the de facto choice for computer use in all its forms: from desktops and servers to fridges and toasters. Practically, this means adopting Nix under the hood and creating useful abstractions on top in the short term.
 
-### Installation
+## Installation
 
-Temporary Nix installation:
+Kai requires [Nix with flakes enabled](https://docs.determinate.systems/).
+
+Run Kai without installing it or add it to a temporary shell:
+
 ```sh
-# Try it out from the latest `master` branch without manually installing
+# Run directly
 nix run github:thebrandonlucas/kai -- version
 
 # Add it to a shell
@@ -26,12 +29,21 @@ nix shell github:thebrandonlucas/kai
 kai version
 ```
 
-For a permanent NixOS install, add Kai as a flake input and pass it to your system configuration:
+Install it into your current Nix profile:
+
+```sh
+nix profile install github:thebrandonlucas/kai
+```
+
+For a declarative NixOS install, add Kai as a flake input and pass it to your system configuration:
 
 ```nix
 # flake.nix
 {
-  inputs.kai.url = "github:thebrandonlucas/kai";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    kai.url = "github:thebrandonlucas/kai";
+  };
 
   outputs = inputs@{ nixpkgs, ... }: {
     nixosConfigurations.your-host = nixpkgs.lib.nixosSystem {
@@ -55,7 +67,7 @@ Then add the package:
 }
 ```
 
-Or direct download [latest release](https://github.com/thebrandonlucas/kai/releases).
+Linux release archives are also available from the [latest release](https://github.com/thebrandonlucas/kai/releases/latest).
 
 ### Build locally
 
@@ -76,7 +88,7 @@ The design is heavily inspired by [`caddy`](https://caddyserver.com/). `caddy`'s
 
 It is a masterclass in tool design.
 
-Thus Kai uses a similar architecture. The stock `kai` binary includes `StdPlugin`, which reads `Kaifile` and provides the default commands and Nix backend. For example:
+Thus Kai uses a similar architecture. The standard `kai` binary includes `StdPlugin`, which reads `Kaifile` and provides the default commands and Nix backend. For example:
 
 ```kai
 on linux {
@@ -115,11 +127,11 @@ Other than `nix develop` anytime you want a shell or `direnv allow` once, we hav
 Build outputs include:
 
 - `zig-out/ci/*`: development/CI executables discovered from Roc app roots
-- `result/bin/kai`: stock Kai, Nix-wrapped with `nix` on `PATH`
+- `result/bin/kai`: standard Kai, Nix-wrapped with `nix` on `PATH`
 - `result/bin/xkai`: the plugin builder, Nix-wrapped with Roc on `PATH`
 - `kai-<version>-<system>.tar.gz`: portable Kai CLI release archive
 
-The stock `kai` executable does not require Roc at runtime. Release archives contain the raw portable executable, so `nix` must already be available to use the standard shell backend. `xkai` requires Roc because it compiles the selected plugins into a new executable.
+The standard `kai` executable does not require Roc at runtime. Release archives contain the raw portable executable, so `nix` must already be available to use the standard shell backend. `xkai` requires Roc because it compiles the selected plugins into a new executable.
 
 ## Releases
 
@@ -140,7 +152,7 @@ Build them with `zig build build-release`. Maintainers prepare a protected relea
     a. A great set of default features downstream of determinism: (rollbacks, dev shells, builds, garbage-collection, etc.)
     b. The ability to add/remove subcommands via a command module registry similar to [Caddy](https://caddyserver.com/).
     c. The ability to modify the default set of modules to fit user needs.
-    d. To the degree possible, the ability to replace suboptimal pieces of the underlying system (i.e. encourage a "protocol" or modularity in determinate systems), as opposed to the current monolithic nature of Nix/Guix. See [snix]() for example.
+    d. To the degree possible, the ability to replace suboptimal pieces of the underlying system (i.e. encourage a "protocol" or modularity in determinate systems), as opposed to the current monolithic nature of Nix/Guix. See [Snix](https://snix.dev/) for example.
 3. Unlocking new use cases and ergonomics. Encouraging benefits that are overlooked or underutilized in current systems. Big examples would be easy desktop setups (or easily trying others' setups just to check them out!), easy, safe modification, easy backups etc. Simple examples include little ergonomic things like e.g. `kai shell keep` to add any temporary shell programs to your `flake.nix` permanently (or eventually to `configuration.nix`).
 
 ### Design Questions
