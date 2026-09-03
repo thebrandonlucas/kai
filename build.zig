@@ -222,6 +222,7 @@ pub fn build(b: *std.Build) void {
         bundle.addFileInput(b.path(source));
     }
     for (sources.standard_plugin_files) |source| {
+        if (std.mem.startsWith(u8, source, "plugins/std/tests/")) continue;
         bundle.addArg(source);
         bundle.addFileInput(b.path(source));
     }
@@ -426,7 +427,7 @@ pub fn build(b: *std.Build) void {
     const test_standard_plugin = b.addSystemCommand(&.{
         "roc",
         "test",
-        "plugins/std/main.roc",
+        "plugins/std/tests/main.roc",
     });
     test_standard_plugin.step.dependOn(check_step);
     test_step.dependOn(&test_standard_plugin.step);
