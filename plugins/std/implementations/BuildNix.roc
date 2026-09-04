@@ -124,7 +124,7 @@ BuildNix := [].{
 				steps: [
 					WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
 					WriteFile({
-						contents: BuildNix.nix_expression(planning_input.workspace_root),
+						contents: BuildNix.render_nix_build_flake(planning_input.workspace_root),
 						path: "${flake_path}/build.nix",
 					}),
 					WriteFile({ contents: build_json, path: "${flake_path}/build.json" }),
@@ -148,8 +148,8 @@ BuildNix := [].{
 		)
 	}
 
-	nix_expression : Str -> Str
-	nix_expression = |workspace_root| {
+	render_nix_build_flake : Str -> Str
+	render_nix_build_flake = |workspace_root| {
 		interpolate = NixBackend.nix_interpolation
 		ignore_paths = if workspace_root == Plugin.default_workspace_root {
 			".git\\n.kai"
@@ -225,5 +225,4 @@ BuildNix := [].{
 			"\n",
 		)
 	}
-
 }

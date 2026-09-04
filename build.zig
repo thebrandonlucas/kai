@@ -222,6 +222,7 @@ pub fn build(b: *std.Build) void {
         bundle.addFileInput(b.path(source));
     }
     for (sources.standard_plugin_files) |source| {
+        if (std.mem.startsWith(u8, source, "plugins/std/tests/")) continue;
         bundle.addArg(source);
         bundle.addFileInput(b.path(source));
     }
@@ -423,16 +424,13 @@ pub fn build(b: *std.Build) void {
     );
     test_step.dependOn(check_step);
 
-    for (sources.roc_apps) |app| {
-        const test_app = b.addSystemCommand(&.{ "roc", "test" });
-        if (std.mem.eql(u8, app, "xkai/main.roc")) {
-            test_app.addFileArg(generated_main);
-        } else {
-            test_app.addArg(app);
-        }
-        test_app.step.dependOn(check_step);
-        test_step.dependOn(&test_app.step);
-    }
+    const test_standard_plugin = b.addSystemCommand(&.{
+        "roc",
+        "test",
+        "plugins/std/tests/main.roc",
+    });
+    test_standard_plugin.step.dependOn(check_step);
+    test_step.dependOn(&test_standard_plugin.step);
 
     const ci_step = b.step(
         "ci",

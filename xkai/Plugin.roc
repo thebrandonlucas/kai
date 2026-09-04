@@ -375,6 +375,12 @@ Plugin := [].{
 		byte_offset : U64,
 		column : U64,
 		line : U64,
+	}.{
+		is_eq : SourceLocation, SourceLocation -> Bool
+		is_eq = |left, right|
+			left.byte_offset == right.byte_offset and
+				left.column == right.column and
+					left.line == right.line
 	}
 
 	# location is absolute within the complete Kaifile text, including when a
@@ -428,6 +434,14 @@ Plugin := [].{
 		location : [At(SourceLocation), None],
 		message : Str,
 		plugin : Str,
+	}.{
+		is_eq : PlanningDiagnostic, PlanningDiagnostic -> Bool
+		is_eq = |left, right|
+			left.backend == right.backend and
+				left.command == right.command and
+					left.location == right.location and
+						left.message == right.message and
+							left.plugin == right.plugin
 	}
 
 	# Select a Kaifile block for the command.
