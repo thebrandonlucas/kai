@@ -26,6 +26,91 @@ Executor := [].{
 				_ => Bool.False
 			}
 
+	HelpCommand : [CommandHelpRequested(Str), NoCommandHelpRequested]
+
+	requested_help_command : List(Str) -> HelpCommand
+	requested_help_command = |args|
+		match args {
+			["-f", _, .. as command_args] | ["--file", _, .. as command_args] =>
+				Executor.requested_help_command(command_args)
+			["help", command, ..] => CommandHelpRequested(command)
+			[command, .. as command_args] =>
+				if List.any(command_args, |arg| arg == "-h" or arg == "--help") {
+					CommandHelpRequested(command)
+				} else {
+					NoCommandHelpRequested
+				}
+			_ => NoCommandHelpRequested
+		}
+
+	argument_usage : List(Plugin.CommandHelpArgument) -> Str
+	argument_usage = |arguments|
+		match arguments {
+			[] => ""
+			[first, .. as rest] => {
+				argument = match first.presence {
+					OptionalHelpArgument => " [${first.name}]"
+					RequiredHelpArgument => " <${first.name}>"
+				}
+				"${argument}${Executor.argument_usage(rest)}"
+			}
+		}
+
+	argument_lines : List(Plugin.CommandHelpArgument) -> List(Str)
+	argument_lines = |arguments|
+		arguments.map(|argument| "  ${argument.name}  ${argument.description}")
+
+	kaifile_block_example_lines : Plugin.CommandHelp -> List(Str)
+	kaifile_block_example_lines = |help_content|
+		match help_content.kaifile_block_example {
+			KaifileBlockExample(lines) =>
+				["", "Kaifile block:"].concat(lines.map(|line| "  ${line}"))
+			NoKaifileBlockExample => []
+		}
+
+	render_command_help : Plugin.CommandSyntax, Plugin.CommandHelp -> Str
+	render_command_help = |command, help_content| {
+		usage_arguments = Executor.argument_usage(help_content.arguments)
+		usage = "  kai [OPTIONS] ${command.name} [BACKEND]${usage_arguments}"
+		Str.join_with(
+			[
+				help_content.description,
+				"",
+				"Usage:",
+				usage,
+				"",
+				"Examples:",
+			].concat(help_content.examples.map(|example| "  ${example}")).concat(
+				Executor.kaifile_block_example_lines(help_content),
+			).concat([
+				"",
+				"Arguments:",
+				"  BACKEND  Optional backend name",
+			]).concat(Executor.argument_lines(help_content.arguments)).concat([
+				"",
+				"Options:",
+				"  -f, --file <PATH>  Use the Kaifile at PATH",
+				"  -h, --help         Print help",
+			]),
+			"\n",
+		)
+	}
+
+	command_help_for : List(Plugin.Definition), Str -> [None, Some(Str)]
+	command_help_for = |registry, name|
+		match Plugin.find_owner(registry, name) {
+			Err(UnknownCommand) => None
+			Ok(owner) => {
+				command = Plugin.syntax_from_command(owner.command)
+				match command.help {
+					CommandHelpAvailable(help_content) => Some(
+						Executor.render_command_help(command, help_content),
+					)
+					NoCommandHelp => None
+				}
+			}
+		}
+
 	command_lines : List(Plugin.Definition) -> List(Str)
 	command_lines = |registry|
 		match registry {
@@ -171,54 +256,65 @@ Executor := [].{
 	run! : List(OsStr), List(Plugin.Definition) => Try({}, _)
 	run! = |args, registry| {
 		display_args = args.drop_first(1).map(OsStr.display)
-		if Executor.help_requested(display_args) {
-			Stdout.line!(Executor.help(registry))?
-			Ok({})
-		} else {
-			match Executor.parse_invocation(display_args) {
-				Err(MissingKaifilePath) => Err(MissingKaifilePath)
-				Ok(invocation) =>
-					match invocation.args {
-						["--xkai-validate-registry"] =>
-							match Plugin.validate_registry(registry) {
-								Ok({}) => Ok({})
-								Err(diagnostic) => Err(InvalidRegistry(diagnostic))
-							}
-						["version"] => {
-							Stdout.line!("kai version ${Executor.version}")?
-							Ok({})
-						}
-						_ => {
-							kaifile_text = Path.read_utf8!(Path.utf8(invocation.kaifile))?
-							workspace_root = Executor.workspace_root!()?
-							host = Env.platform!()
-							host_os : Plugin.HostOs
-							host_os = match host.os {
-								LINUX => LINUX
-								MACOS => MACOS
-								OTHER(name) => OTHER(name)
-								_ => OTHER("unsupported")
-							}
-							match Plugin.plan_registry(
-								registry,
-								kaifile_text,
-								invocation.args,
-								host_os,
-								host.arch,
-								workspace_root,
-							) {
-								Ok(selected_plan) => {
-									Executor.prepare_workspace!(workspace_root)?
-									Executor.execute!(selected_plan, workspace_root)
+		requested_help = match Executor.requested_help_command(display_args) {
+			CommandHelpRequested(command) => Executor.command_help_for(registry, command)
+			NoCommandHelpRequested => None
+		}
+		match requested_help {
+			Some(help_text) => {
+				Stdout.line!(help_text)?
+				Ok({})
+			}
+			None if Executor.help_requested(display_args) => {
+				Stdout.line!(Executor.help(registry))?
+				Ok({})
+			}
+			None =>
+				match Executor.parse_invocation(display_args) {
+					Err(MissingKaifilePath) => Err(MissingKaifilePath)
+					Ok(invocation) =>
+						match invocation.args {
+							["--xkai-validate-registry"] =>
+								match Plugin.validate_registry(registry) {
+									Ok({}) => Ok({})
+									Err(diagnostic) => Err(InvalidRegistry(diagnostic))
 								}
-								Err(InvalidWorkspaceRoot(message)) => Err(InvalidWorkspaceRoot(message))
-								Err(PlanningFailed(diagnostic)) => Err(PlanningFailed(diagnostic))
-								Err(UnknownCommand) => Err(UnknownCommand)
+							["version"] => {
+								Stdout.line!("kai version ${Executor.version}")?
+								Ok({})
+							}
+							_ => {
+								kaifile_text = Path.read_utf8!(Path.utf8(invocation.kaifile))?
+								workspace_root = Executor.workspace_root!()?
+								host = Env.platform!()
+								host_os : Plugin.HostOs
+								host_os = match host.os {
+									LINUX => LINUX
+									MACOS => MACOS
+									OTHER(name) => OTHER(name)
+									_ => OTHER("unsupported")
+								}
+								match Plugin.plan_registry(
+									registry,
+									kaifile_text,
+									invocation.args,
+									host_os,
+									host.arch,
+									workspace_root,
+								) {
+									Ok(selected_plan) => {
+										Executor.prepare_workspace!(workspace_root)?
+										Executor.execute!(selected_plan, workspace_root)
+									}
+									Err(InvalidWorkspaceRoot(message)) =>
+										Err(InvalidWorkspaceRoot(message))
+									Err(PlanningFailed(diagnostic)) => Err(PlanningFailed(diagnostic))
+									Err(UnknownCommand) => Err(UnknownCommand)
+								}
 							}
 						}
 					}
-				}
-		}
+			}
 	}
 
 	execute! : Plugin.ExecutionPlan, Str => Try({}, _)

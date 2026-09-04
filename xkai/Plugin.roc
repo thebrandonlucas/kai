@@ -242,13 +242,37 @@ Plugin := [].{
 
 	CommandArgument : [OptionalArgument(Str), RequiredArgument(Str)]
 
+	CommandHelpArgument := {
+		description : Str,
+		name : Str,
+		presence : [OptionalHelpArgument, RequiredHelpArgument],
+	}
+
+	CommandHelp := {
+		arguments : List(CommandHelpArgument),
+		description : Str,
+		examples : List(Str),
+		kaifile_block_example : [
+			KaifileBlockExample(List(Str)),
+			NoKaifileBlockExample,
+		],
+	}
+
+	CommandHelpAvailability : [CommandHelpAvailable(CommandHelp), NoCommandHelp]
+
 	CommandSyntax := {
 		arguments : List(CommandArgument),
+		help : CommandHelpAvailability,
 		name : Str,
 	}
 
 	command_syntax : Str, List(CommandArgument) -> CommandSyntax
-	command_syntax = |name, arguments| { arguments, name }
+	command_syntax = |name, arguments| { arguments, help: NoCommandHelp, name }
+
+	command_syntax_with_help :
+		Str, List(CommandArgument), CommandHelp -> CommandSyntax
+	command_syntax_with_help = |name, arguments, help|
+		{ arguments, help: CommandHelpAvailable(help), name }
 
 	required_argument : Str -> CommandArgument
 	required_argument = |name| RequiredArgument(name)
