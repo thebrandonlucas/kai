@@ -1,18 +1,18 @@
 # Kai - A friendly frontend for determinate computing
 
-> WARNING: Unstable hobby project under rapid development. Use at your own risk!
+> WARNING: Hobby project under rapid development. Use at your own risk!
 
-See the [roadmap](roadmap.md) for planned work.
+Kai is a CLI that makes using determinate systems easy, friendly, and fun.
 
-Kai is a CLI that makes using reproducible systems easy, friendly, and fun.
+Imagine everything about how your computer works is a portable config in one file you can just send to your friends or bring with you to a new computer. Spend very little time thinking about installing software, dependencies, developer environments, etc., and once you figure it out once, you _shouldn't have to figure it out again_. We have that, with [Nix](https://determinate.systems/)! The problem is Nix is so hard to learn and use that people often give up (even agents get confused!). This is a complete paradigm shift in how we interact with software! But if no one uses it, what's the point?
 
-Imagine everything about how your computer works is a portable config in one file you can just send to your friends or bring with you to a new computer. Spend very little time thinking about installing software, dependencies, developer environments, etc., and once you figure it out once, you _shouldn't have to figure it out again_. We have that, with nix! The problem is nix is so hard to use that people often give up (even agents get confused!). So, `kai` wraps `nix` in a friendly frontend so that you can actually use it with confidence!
+To attempt a solution, `kai` wraps `nix` in a friendly frontend so that you can actually use it with confidence.
 
-Eventually `kai` plans to support the other reproducible system, `guix`, and even potentially it's own implementation :eyes:
+Eventually `kai` plans to support the other determinate system, [Guix](https://guix.gnu.org/), and, if we're lucky, maybe even a custom implementation which learns from the mistakes of the others :eyes:
 
-There are basically two complete reproducible systems today: [Nix](https://determinate.systems/) and [Guix](https://guix.gnu.org/). They are hard to use. Kai builds on top of them with the goal of making them easy, extensible, customizable, and powerful.
+The goal is to make using determinate systems so easy and powerful that they become the de-facto choice for computer use in all its forms: from desktops to servers and beyond. Practically, this means adopting Nix under the hood and creating useful abstractions on top in the short term, like [jujutsu](https://github.com/jj-vcs/jj) does with `git`.
 
-The goal is to make using these so easy and powerful that they become the de-facto choice for computer use in all its forms: from desktops to servers to fridges and toasters. Practically, this means adopting Nix under the hood and creating useful abstractions on top in the short term.
+A personal motivation is to stimulate not just Linux adoption but _determinate_ computing adoption by eventually creating a custom NixOS-based competitor to [Omarchy](https://omarchy.org).
 
 ### Installation
 
@@ -63,51 +63,6 @@ on linux {
 
 See the [plugin documentation](docs/plugin.md) for the plugin contract and `xkai` build details.
 
-## Platform support
-
-I've only tested this on `x86_64-linux` so far, feel free to open an issue if it doesn't build on your system. In theory, it should work on arm64, x64, across Linux and MacOS.
-
-## Development
-
-Other than `nix develop` anytime you want a shell or `direnv allow` once, we have:
-
-   ### Development Commands
-
-   | Task | Command |
-   |---|---|
-   | Format Roc, Zig, and Nix files | `zig build fmt` |
-   | Run static and formatting checks | `zig build check` |
-   | Run tests | `zig build test` |
-   | Run complete source CI locally | `zig build ci` |
-   | Build and validate release artifacts | `zig build build-release` |
-   | Prepare a protected release pull request | `zig build release -- "Kai X.Y.Z" X.Y.Z` |
-   | Run Kai through Nix | `nix run . -- version` |
-   | Run xkai through Nix | `nix run .#xkai -- version` |
-
-
-## Build Artifacts
-
-Build outputs include:
-
-- `zig-out/ci/*`: development/CI executables discovered from Roc app roots
-- `result/bin/kai`: standard Kai, Nix-wrapped with `nix` on `PATH`
-- `result/bin/xkai`: the plugin builder, Nix-wrapped with Roc on `PATH`
-- `kai-<version>-<system>.tar.gz`: portable Kai CLI release archive
-
-The standard `kai` executable does not require Roc at runtime. Release archives contain the raw portable executable, so `nix` must already be available to use the standard shell backend. `xkai` requires Roc because it compiles the selected plugins into a new executable.
-
-## Releases
-
-Linux releases contain only the portable Kai CLI archives and their checksums:
-
-```text
-kai-<version>-x86_64-linux.tar.gz
-kai-<version>-aarch64-linux.tar.gz
-SHA256SUMS
-```
-
-Build them with `zig build build-release`. Maintainers prepare a protected release pull request with `zig build release -- "Kai X.Y.Z" X.Y.Z`; merging it publishes the release automatically. See [the release guide](docs/RELEASE.md) for metadata ownership and recovery.
-
 ## Goals
 
 1. Great UX. The benefits and usage of Kai should be immediate and obvious.
@@ -118,18 +73,6 @@ Build them with `zig build build-release`. Maintainers prepare a protected relea
     d. To the degree possible, the ability to replace suboptimal pieces of the underlying system (i.e. encourage a "protocol" or modularity in determinate systems), as opposed to the current monolithic nature of Nix/Guix. See [snix]() for example.
 3. Unlocking new use cases and ergonomics. Encouraging benefits that are overlooked or underutilized in current systems. Big examples would be easy desktop setups (or easily trying others' setups just to check them out!), easy, safe modification, easy backups etc. Simple examples include little ergonomic things like e.g. `kai shell keep` to add any temporary shell programs to your `flake.nix` permanently (or eventually to `configuration.nix`).
 
-### Design Questions
-
-Eventually, we want our blueprint protocol to support the following universal things at least:
-
-1. Shells (ad-hoc or persistent, locked (flakes) or unlocked (shell.nix))
-2. Builds (for deployable machines & other targets)
-3. Deployments (generic, yet extensible)
-4. Rollbacks
-5. Garbage Collection
-6. Package Resolution (?)
-7. More TBD.
-
 ### Contributing
 
 If you would like to contribute, I would love for you to open an issue!
@@ -138,5 +81,8 @@ If you would like to contribute, I would love for you to open an issue!
 
 Aside from making a great tool for programmers to encourage the use of determinate computing, the hope is to go far beyond that and [dream](https://www.amazon.com/Dream-Machine-M-Mitchell-Waldrop/dp/1732265119) about what computers could be. I believe determinate computing is in its nascent form, and the true realization of its potential could have monumental and lasting effects as a new, better way to use computers.
 
-### Attribution 
+### Attribution
+
 Huge thank you to Luke Boswell for inspiring the initial portable typed configuration idea with [roc-blueprint](https://github.com/lukewilliamboswell/roc-blueprint) and his enthusiastic evangelism of this idea.
+
+Also thank you to the longstanding efforts of the Nix and Guix developers without which this would be impossible, the [Roc](https://roc-lang.org/) team for their encouragement and making a great language to build in, and the [caddy](https://caddyserver.com/) devs from which this project takes heavy inspiration.
