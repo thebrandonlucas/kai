@@ -1,4 +1,5 @@
-# Shared data-driven checks for standard plugin planning.
+# A small API to check expected results against actual results for given
+# implementations, used to make test inputs/outputs more self-documenting.
 import kai.Plugin
 
 Check := [].{
@@ -16,7 +17,6 @@ Check := [].{
 		PlannedWrite(Write),
 	]
 	WriteComparison : { actual : WriteOutcome, expected : WriteOutcome }
-
 	write : List(Plugin.Definition), Invocation, Write -> WriteComparison
 	write = |registry, invocation, expected| {
 		actual = match Plugin.plan_registry(

@@ -2,7 +2,7 @@
 # `kai build <...>` should find the Kaifile block, translate it to
 # a flake, then run `nix build` under the hood.
 import std.StdPlugin
-import Check
+import util.Check
 
 BuildNixTest := [].{}
 
