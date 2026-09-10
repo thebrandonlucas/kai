@@ -6,9 +6,26 @@ import blocks.Shell as ShellBlock
 
 Shell := [].{
 	command_syntax : Plugin.CommandSyntax
-	command_syntax = Plugin.command_syntax(
+	command_syntax = Plugin.command_syntax_with_help(
 		"shell",
 		[Plugin.optional_argument("environment")],
+		{
+			arguments: [
+				{
+					description: "Optional environment name from the Kaifile",
+					name: "ENVIRONMENT",
+					presence: OptionalHelpArgument,
+				},
+			],
+			description: "Enter an inline or declared developer environment.",
+			examples: ["kai shell", "kai shell <my-environment>"],
+			kaifile_block_example: KaifileBlockExample([
+				\\shell {
+				\\	packages: ["git"],
+				\\}
+				,
+			]),
+		},
 	)
 
 	command : Plugin.Command

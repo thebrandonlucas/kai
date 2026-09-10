@@ -111,31 +111,78 @@ Executor := [].{
 			}
 		}
 
-	command_lines : List(Plugin.Definition) -> List(Str)
-	command_lines = |registry|
+	CommandLine := { description : Str, name : Str }
+
+	command_rows : List(Plugin.Definition) -> List(CommandLine)
+	command_rows = |registry|
 		match registry {
 			[] => []
 			[first, .. as rest] =>
 				first.schema.commands
 					.map(
-						|command|
-							"  ${Plugin.syntax_from_command(command).name}",
+						|command| {
+							syntax = Plugin.syntax_from_command(command)
+							description = match syntax.help {
+								CommandHelpAvailable(help_content) => help_content.description
+								NoCommandHelp => ""
+							}
+							{ description, name: syntax.name }
+						},
 					)
-					.concat(Executor.command_lines(rest))
+					.concat(Executor.command_rows(rest))
 			}
 
+	longest_command_name : List(CommandLine) -> U64
+	longest_command_name = |commands|
+		match commands {
+			[] => 0
+			[first, .. as rest] => {
+				first_width = first.name.to_utf8().len()
+				rest_width = Executor.longest_command_name(rest)
+				if first_width > rest_width first_width else rest_width
+			}
+		}
+
+	command_lines : List(CommandLine), U64 -> List(Str)
+	command_lines = |commands, width|
+		commands.map(
+			|command|
+				if command.description.is_empty() {
+					"  ${command.name}"
+				} else {
+					padding = " ".repeat(width - command.name.to_utf8().len() + 2)
+					"  ${command.name}${padding}${command.description}"
+				},
+		)
+
 	help : List(Plugin.Definition) -> Str
-	help = |registry|
+	help = |registry| {
+		commands = Executor.command_rows(registry).concat([
+			{ description: "Print version information.", name: "version" },
+		])
 		Str.join_with(
 			[
-				"Kai makes reproducible systems easy, friendly, and fun.",
+				"A friendly frontend for determinate computing",
 				"",
 				"Usage:",
 				"  kai [OPTIONS] <COMMAND> [ARGUMENTS]",
 				"",
+				"Kai is a tool for providing a simplified interface on top of determinate",
+				"systems (mainly Nix) for ease of use. Commands often correspond with a",
+				"Kaifile block defining their behavior:",
+				"",
+				"  $ kai shell",
+				"  $ cowsay \"Hello from Kai!\"",
+				"",
+				"  # Kaifile",
+				"  shell {",
+				"      packages: [\"cowsay\"]",
+				"  }",
+				"",
 				"Commands:",
-			].concat(Executor.command_lines(registry)).concat([
-				"  version",
+			].concat(
+				Executor.command_lines(commands, Executor.longest_command_name(commands)),
+			).concat([
 				"",
 				"Options:",
 				"  -f, --file <PATH>  Use the Kaifile at PATH",
@@ -148,6 +195,7 @@ Executor := [].{
 			]),
 			"\n",
 		)
+	}
 
 	Invocation := { args : List(Str), kaifile : Str }
 
