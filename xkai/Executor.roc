@@ -128,7 +128,7 @@ Executor := [].{
 	help = |registry|
 		Str.join_with(
 			[
-				"Kai makes reproducible systems easy, friendly, and fun.",
+				"A friendly frontend for determinate computing",
 				"",
 				"Usage:",
 				"  kai [OPTIONS] <COMMAND> [ARGUMENTS]",
