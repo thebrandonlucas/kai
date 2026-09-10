@@ -4,7 +4,7 @@
 import std.StdPlugin
 import Check
 
-BuildNix := [].{}
+BuildNixTest := [].{}
 
 # A Kaifile build block renders the expected Nix flake.
 expect {
