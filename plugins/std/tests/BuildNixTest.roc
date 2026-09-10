@@ -8,14 +8,13 @@ BuildNixTest := [].{}
 
 # A Kaifile build block renders the expected Nix flake.
 expect {
-	wisecow_command = Str.join_with(
-		[
-			"printf '#!%s\\\\n%s | %s\\\\n' ",
-			"\\\"$(command -v sh)\\\" \\\"$(command -v fortune)\\\" ",
-			"\\\"$(command -v cowsay)\\\" > wisecow && chmod +x wisecow",
-		],
-		"",
-	)
+	shell = \\$(command -v sh)
+	fortune = \\$(command -v fortune)
+	cowsay = \\$(command -v cowsay)
+	executable = \\> wisecow && chmod +x wisecow
+	wisecow_command =
+		\\printf '#!%s\\\\n%s | %s\\\\n' ${shell} ${fortune} ${cowsay} ${executable}
+
 	wisecow_kaifile_string =
 		\\environment cow {
 		\\  packages: ["cowsay", "fortune"]
