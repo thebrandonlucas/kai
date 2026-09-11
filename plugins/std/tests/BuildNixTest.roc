@@ -46,7 +46,7 @@ expect {
 		\\  };
 		\\}
 
-	checked = Check.write(
+	checked = Check.compare_planned_write(
 		[StdPlugin.plugin],
 		{
 			args: ["build", "wisecow"],

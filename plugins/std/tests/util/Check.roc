@@ -17,8 +17,9 @@ Check := [].{
 		PlannedWrite(Write),
 	]
 	WriteComparison : { actual : WriteOutcome, expected : WriteOutcome }
-	write : List(Plugin.Definition), Invocation, Write -> WriteComparison
-	write = |registry, invocation, expected| {
+	compare_planned_write :
+		List(Plugin.Definition), Invocation, Write -> WriteComparison
+	compare_planned_write = |registry, invocation, expected| {
 		actual = match Plugin.plan_registry(
 			registry,
 			invocation.kaifile,
