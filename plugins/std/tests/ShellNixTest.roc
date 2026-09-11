@@ -47,3 +47,28 @@ expect {
 		]),
 	)
 }
+
+# An error in Kaifile shows its' source code and location.
+expect {
+	kaifile =
+		\\shell {
+		\\  packages: ["cowsay"],
+		\\}
+	expected =
+		\\error: unexpected ','; fields are separated by newlines
+		\\  --> Kaifile:2:23
+		\\  |
+		\\2 |   packages: ["cowsay"],
+		\\  |                       ^
+
+	Check.error(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["shell"],
+		expected,
+	)
+}
