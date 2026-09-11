@@ -5,6 +5,7 @@ import pf.Cmd
 import pf.Env
 import pf.OsStr
 import pf.Path
+import pf.Stderr
 import pf.Stdout
 
 import kai.Plugin
@@ -94,6 +95,51 @@ Executor := [].{
 			]),
 			"\n",
 		)
+	}
+
+	source_context : Str, Str, Plugin.SourceLocation -> Str
+	source_context = |kaifile, kaifile_text, source| {
+		line_number = U64.to_str(source.line)
+		line = kaifile_text.split_on("\n").get(source.line - 1) ?? ""
+		gutter = " ".repeat(line_number.to_utf8().len())
+		pointer = " ".repeat(source.column - 1)
+		Str.join_with(
+			[
+				"  --> ${kaifile}:${line_number}:${U64.to_str(source.column)}",
+				"${gutter} |",
+				"${line_number} | ${line}",
+				"${gutter} | ${pointer}^",
+			],
+			"\n",
+		)
+	}
+
+	planning_error :
+		Str, Str, List(Plugin.Definition), Plugin.PlanningDiagnostic -> Str
+	planning_error = |kaifile, kaifile_text, registry, diagnostic| {
+		context = match diagnostic.location {
+			At(source) => "\n${Executor.source_context(kaifile, kaifile_text, source)}"
+			None =>
+				match Plugin.find_owner(registry, diagnostic.command) {
+					Err(UnknownCommand) => ""
+					Ok(matching_command_and_definition) => {
+						matching_command = matching_command_and_definition.command
+						command = Plugin.syntax_from_command(matching_command)
+						match command.help {
+							NoCommandHelp => ""
+							CommandHelpAvailable(help_content) => {
+								arguments = Executor.argument_usage(help_content.arguments)
+								usage = "\nusage: kai ${command.name}${arguments}"
+								match help_content.examples {
+									[] => usage
+									[example, ..] => "${usage}\nexample: ${example}"
+								}
+							}
+						}
+					}
+				}
+			}
+		"error: ${diagnostic.message}${context}"
 	}
 
 	command_help_for : List(Plugin.Definition), Str -> [None, Some(Str)]
@@ -356,7 +402,17 @@ Executor := [].{
 									}
 									Err(InvalidWorkspaceRoot(message)) =>
 										Err(InvalidWorkspaceRoot(message))
-									Err(PlanningFailed(diagnostic)) => Err(PlanningFailed(diagnostic))
+									Err(PlanningFailed(diagnostic)) => {
+										Stderr.line!(
+											Executor.planning_error(
+												invocation.kaifile,
+												kaifile_text,
+												registry,
+												diagnostic,
+											),
+										)?
+										Err(Exit(1))
+									}
 									Err(UnknownCommand) => Err(UnknownCommand)
 								}
 							}

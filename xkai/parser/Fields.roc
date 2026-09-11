@@ -285,7 +285,12 @@ Fields := [].{
 	parse_name : List(U8), U64 -> Try({ name : Str, rest : U64 }, Diagnostic)
 	parse_name = |bytes, start| {
 		first = Fields.byte_at(bytes, start)
-		if !Fields.is_name_start(first) {
+		if first == ',' {
+			Err({
+				byte_offset: start,
+				kind: InvalidSyntax("unexpected ','; fields are separated by newlines"),
+			})
+		} else if !Fields.is_name_start(first) {
 			Err({ byte_offset: start, kind: InvalidSyntax("expected a field name") })
 		} else {
 			end = Fields.find_name_end(bytes, start + 1)
