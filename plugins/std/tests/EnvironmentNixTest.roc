@@ -26,18 +26,18 @@ expect {
 		\\  };
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["shell", "dev"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{ contents: expected_file, path: ".kai/flake.nix" },
+		["shell", "dev"],
+		Succeeds([
+			WritesExactly({ contents: expected_file, path: ".kai/flake.nix" }),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # A Kaifile block with `environment` produces a flake that works for a `task`.
@@ -65,18 +65,18 @@ expect {
 		\\  };
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["run", "greet"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{ contents: expected_file, path: ".kai/flake.nix" },
+		["run", "greet"],
+		Succeeds([
+			WritesExactly({ contents: expected_file, path: ".kai/flake.nix" }),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # Transitivity test:
@@ -110,18 +110,18 @@ expect {
 		\\  };
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["workflow", "all"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{ contents: expected_file, path: ".kai/flake.nix" },
+		["workflow", "all"],
+		Succeeds([
+			WritesExactly({ contents: expected_file, path: ".kai/flake.nix" }),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # Transitivity test:
@@ -159,21 +159,21 @@ expect {
 		\\  };
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["service", "demo"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{
-			contents: expected_file,
-			path: ".kai/builds/app/flake.nix",
-		},
+		["service", "demo"],
+		Succeeds([
+			WritesExactly({
+				contents: expected_file,
+				path: ".kai/builds/app/flake.nix",
+			}),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # Calling kai machine <machine> on a Kaifile whose `machine` block
@@ -205,21 +205,21 @@ expect {
 		\\  ];
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["machine", "box"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{
-			contents: expected_file,
-			path: ".kai/machines/box/machine.nix",
-		},
+		["machine", "box"],
+		Succeeds([
+			WritesExactly({
+				contents: expected_file,
+				path: ".kai/machines/box/machine.nix",
+			}),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # An image module receives packages from its environment.
@@ -244,21 +244,21 @@ expect {
 		\\  ];
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["image", "box"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{
-			contents: expected_file,
-			path: ".kai/images/box/machine.nix",
-		},
+		["image", "box"],
+		Succeeds([
+			WritesExactly({
+				contents: expected_file,
+				path: ".kai/images/box/machine.nix",
+			}),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # An environment with overlays renders a flake with the overlays applied.
@@ -291,18 +291,18 @@ expect {
 		\\    };
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["shell", "dev"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{ contents: expected_file, path: ".kai/flake.nix" },
+		["shell", "dev"],
+		Succeeds([
+			WritesExactly({ contents: expected_file, path: ".kai/flake.nix" }),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # Repeated overlays are emitted once in declaration order.
@@ -330,18 +330,18 @@ expect {
 		\\  outputs = _: {};
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["update"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{ contents: expected_file, path: ".kai/flake.nix" },
+		["update"],
+		Succeeds([
+			WritesExactly({ contents: expected_file, path: ".kai/flake.nix" }),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # Source blocks are exposed through an environment-generated flake.
@@ -369,18 +369,18 @@ expect {
 		\\  };
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["shell", "dev"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{ contents: expected_file, path: ".kai/flake.nix" },
+		["shell", "dev"],
+		Succeeds([
+			WritesExactly({ contents: expected_file, path: ".kai/flake.nix" }),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # Environment flakes select the Nix system from the requested host.
@@ -403,16 +403,16 @@ expect {
 		\\  };
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["shell", "dev"],
-			arch: AARCH64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: AARCH64, os: MACOS },
 			kaifile,
-			os: MACOS,
 			workspace_root: ".kai",
 		},
-		{ contents: expected_file, path: ".kai/flake.nix" },
+		["shell", "dev"],
+		Succeeds([
+			WritesExactly({ contents: expected_file, path: ".kai/flake.nix" }),
+		]),
 	)
-	checked.actual == checked.expected
 }

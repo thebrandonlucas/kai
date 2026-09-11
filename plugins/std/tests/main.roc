@@ -1,5 +1,5 @@
 package
-	[BuildNixTest, EnvironmentNixTest, ImageNixTest]
+	[BuildNixTest, EnvironmentNixTest, ImageNixTest, MachineNixTest]
 	{
 		kai: "../../../xkai/package.roc",
 		std: "../main.roc",
