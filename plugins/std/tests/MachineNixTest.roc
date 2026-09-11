@@ -1,5 +1,5 @@
 # Data-driven tests for ensuring `kai machine <...>` translates a machine
-# block into a NixOS closure build plan.
+# block into a flake
 import std.StdPlugin
 import util.Check
 
