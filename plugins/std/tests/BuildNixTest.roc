@@ -2,20 +2,19 @@
 # `kai build <...>` should find the Kaifile block, translate it to
 # a flake, then run `nix build` under the hood.
 import std.StdPlugin
-import Check
+import util.Check
 
-BuildNix := [].{}
+BuildNixTest := [].{}
 
 # A Kaifile build block renders the expected Nix flake.
 expect {
-	wisecow_command = Str.join_with(
-		[
-			"printf '#!%s\\\\n%s | %s\\\\n' ",
-			"\\\"$(command -v sh)\\\" \\\"$(command -v fortune)\\\" ",
-			"\\\"$(command -v cowsay)\\\" > wisecow && chmod +x wisecow",
-		],
-		"",
-	)
+	shell = \\$(command -v sh)
+	fortune = \\$(command -v fortune)
+	cowsay = \\$(command -v cowsay)
+	executable = \\> wisecow && chmod +x wisecow
+	wisecow_command =
+		\\printf '#!%s\\\\n%s | %s\\\\n' ${shell} ${fortune} ${cowsay} ${executable}
+
 	wisecow_kaifile_string =
 		\\environment cow {
 		\\  packages: ["cowsay", "fortune"]
@@ -47,7 +46,7 @@ expect {
 		\\  };
 		\\}
 
-	checked = Check.write(
+	checked = Check.compare_planned_write(
 		[StdPlugin.plugin],
 		{
 			args: ["build", "wisecow"],
