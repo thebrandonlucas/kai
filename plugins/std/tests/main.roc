@@ -13,5 +13,5 @@ package
 	{
 		kai: "../../../xkai/package.roc",
 		std: "../main.roc",
-		util: "./util/main.roc",
+		util: "../../../xkai/tests/util/main.roc",
 	}

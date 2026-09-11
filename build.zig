@@ -212,12 +212,16 @@ pub fn build(b: *std.Build) void {
     const sources = discoverSources(b);
 
     const source_stage = b.addWriteFiles();
-    _ = source_stage.addCopyDirectory(b.path("xkai"), "xkai", .{});
+    for (sources.xkai_files) |source| {
+        if (std.mem.startsWith(u8, source, "xkai/tests/")) continue;
+        _ = source_stage.addCopyFile(b.path(source), source);
+    }
 
     const bundle = b.addSystemCommand(&.{ "roc", "bundle", "--output-dir" });
     bundle.setCwd(b.path("."));
     const bundle_dir = bundle.addOutputDirectoryArg("xkai-bundle");
     for (sources.xkai_files) |source| {
+        if (std.mem.startsWith(u8, source, "xkai/tests/")) continue;
         bundle.addArg(source);
         bundle.addFileInput(b.path(source));
     }
@@ -423,6 +427,14 @@ pub fn build(b: *std.Build) void {
         "Run checks and Roc tests.",
     );
     test_step.dependOn(check_step);
+
+    const test_xkai = b.addSystemCommand(&.{
+        "roc",
+        "test",
+        "xkai/tests/main.roc",
+    });
+    test_xkai.step.dependOn(check_step);
+    test_step.dependOn(&test_xkai.step);
 
     const test_standard_plugin = b.addSystemCommand(&.{
         "roc",

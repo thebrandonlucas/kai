@@ -62,3 +62,22 @@ expect {
 		]),
 	)
 }
+
+# A missing argument shows the command usage and an example.
+expect {
+	expected =
+		\\error: build requires exactly one artifact argument
+		\\usage: kai build <ARTIFACT>
+		\\example: kai build <my-artifact>
+
+	Check.error(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile: "",
+			workspace_root: ".kai",
+		},
+		["build"],
+		expected,
+	)
+}

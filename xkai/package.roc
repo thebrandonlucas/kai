@@ -1,1 +1,1 @@
-package [Kaifile, Plugin] { parser: "./parser/main.roc" }
+package [Kaifile, PlanningError, Plugin] { parser: "./parser/main.roc" }

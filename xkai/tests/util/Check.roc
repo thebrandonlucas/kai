@@ -1,5 +1,6 @@
 # A small API for comparing plugin planning inputs, invocations, and expected
 # outputs while keeping test cases declarative.
+import kai.PlanningError
 import kai.Plugin
 
 Check := [].{
@@ -44,6 +45,26 @@ Check := [].{
 					Succeeds(_) => Bool.False
 				}
 			}
+
+	error : Input, Invocation, Str -> Bool
+	error = |input, invocation, expected|
+		match Plugin.plan_registry(
+			input.definitions,
+			input.kaifile,
+			invocation,
+			input.host.os,
+			input.host.arch,
+			input.workspace_root,
+		) {
+			Err(PlanningFailed(diagnostic)) =>
+				PlanningError.planning_error(
+					"Kaifile",
+					input.kaifile,
+					input.definitions,
+					diagnostic,
+				) == expected
+			_ => Bool.False
+		}
 
 	expectation_matches : Plugin.ExecutionPlan, PlanExpectation -> Bool
 	expectation_matches = |actual_plan, expectation|
