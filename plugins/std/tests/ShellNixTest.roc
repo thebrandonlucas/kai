@@ -72,3 +72,28 @@ expect {
 		expected,
 	)
 }
+
+# A field type error points to the invalid value.
+expect {
+	kaifile =
+		\\shell {
+		\\  packages: "cowsay"
+		\\}
+	expected =
+		\\error: field 'packages' must be a list of strings
+		\\  --> Kaifile:2:13
+		\\  |
+		\\2 |   packages: "cowsay"
+		\\  |             ^
+
+	Check.error(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["shell"],
+		expected,
+	)
+}
