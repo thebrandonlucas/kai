@@ -1,164 +1,145 @@
-# A small API to check expected results against actual results for given
-# implementations, used to make test inputs/outputs more self-documenting.
+# A small API for comparing plugin planning inputs, invocations, and expected
+# outputs while keeping test cases declarative.
 import kai.Plugin
 
 Check := [].{
-	Registry : List(Plugin.Definition)
-	Invocation : {
-		args : List(Str),
-		arch : Plugin.HostArch,
+	Input : {
+		definitions : List(Plugin.Definition),
+		host : Plugin.Host,
 		kaifile : Str,
-		os : Plugin.HostOs,
 		workspace_root : Str,
 	}
-	Write : { contents : Str, path : Str }
-	WriteOutcome : [
-		ExpectedOneWriteFile({ count : U64, path : Str }),
-		PlanRegistryFailed(Plugin.Error),
-		PlannedWrite(Write),
+	Invocation : List(Str)
+	ExpectedOutcome : [FailsWith(Plugin.Error), Succeeds(List(PlanExpectation))]
+	PlanExpectation : [
+		ContainsArtifact(Plugin.Artifact),
+		ContainsStep(Plugin.ExecutionStep),
+		ContainsStepsInOrder(List(Plugin.ExecutionStep)),
+		WritesAtPathExactly({ contents : List(Str), path : Str }),
+		WritesExactly({ contents : Str, path : Str }),
 	]
-	WriteComparison : { actual : WriteOutcome, expected : WriteOutcome }
-	WritesAtPathExpectation : { contents : List(Str), path : Str }
-	WritesAtPathOutcome : [
-		PlanRegistryFailed(Plugin.Error),
-		PlannedWritesAtPath(WritesAtPathExpectation),
-	]
-	WritesAtPathComparison : {
-		actual : WritesAtPathOutcome,
-		expected : WritesAtPathOutcome,
-	}
-	PlannedStepOutcome : [
-		PlanRegistryFailed(Plugin.Error),
-		PlannedStepFound,
-		PlannedStepMissing,
-	]
-	PlannedStepComparison : {
-		actual : PlannedStepOutcome,
-		expected : PlannedStepOutcome,
-	}
-	PlanningErrorOutcome : [
-		PlanRegistryFailed(Plugin.Error),
-		PlanRegistrySucceeded,
-	]
-	PlanningErrorComparison : {
-		actual : PlanningErrorOutcome,
-		expected : PlanningErrorOutcome,
-	}
-	compare_planned_write :
-		Registry, Invocation, Write -> WriteComparison
-	compare_planned_write = |registry, invocation, expected| {
-		actual = match Plugin.plan_registry(
-			registry,
-			invocation.kaifile,
-			invocation.args,
-			invocation.os,
-			invocation.arch,
-			invocation.workspace_root,
+
+	plan : Input, Invocation, ExpectedOutcome -> Bool
+	plan = |input, invocation, expected|
+		match Plugin.plan_registry(
+			input.definitions,
+			input.kaifile,
+			invocation,
+			input.host.os,
+			input.host.arch,
+			input.workspace_root,
 		) {
-			Ok(plan) => {
-				matching_writes = plan.steps.keep_if(
-					|step|
-						match step {
-							WriteFile({ contents: _, path }) => path == expected.path
-							_ => Bool.False
-						},
-				)
-				match matching_writes {
-					[WriteFile(write)] => PlannedWrite(write)
-					_ => ExpectedOneWriteFile({
-						count: matching_writes.len(),
-						path: expected.path,
-					})
+			Ok(actual) =>
+				match expected {
+					Succeeds(expectations) =>
+						List.all(
+							expectations,
+							|expectation| Check.expectation_matches(actual, expectation),
+						)
+					FailsWith(_) => Bool.False
+				}
+			Err(actual) =>
+				match expected {
+					FailsWith(expected_error) => actual == expected_error
+					Succeeds(_) => Bool.False
 				}
 			}
-			Err(problem) => PlanRegistryFailed(problem)
-		}
-		{ actual, expected: PlannedWrite(expected) }
-	}
 
-	compare_planned_writes_at_path :
-		Registry, Invocation, WritesAtPathExpectation -> WritesAtPathComparison
-	compare_planned_writes_at_path = |registry, invocation, expected| {
-		actual = match Plugin.plan_registry(
-			registry,
-			invocation.kaifile,
-			invocation.args,
-			invocation.os,
-			invocation.arch,
-			invocation.workspace_root,
-		) {
-			Ok(plan) => {
-				matching_contents = plan.steps.keep_if(
+	expectation_matches : Plugin.ExecutionPlan, PlanExpectation -> Bool
+	expectation_matches = |actual_plan, expectation|
+		match expectation {
+			ContainsArtifact(expected) =>
+				List.any(
+					actual_plan.artifacts,
+					|actual| Check.artifacts_equal(actual, expected),
+				)
+			ContainsStep(expected) =>
+				List.any(
+					actual_plan.steps,
+					|actual| Check.steps_equal(actual, expected),
+				)
+			ContainsStepsInOrder(expected) =>
+				Check.contains_steps_in_order(actual_plan.steps, expected)
+			WritesAtPathExactly(expected) => {
+				contents = actual_plan.steps.keep_if(
 					|step|
 						match step {
-							WriteFile({ contents: _, path }) => path == expected.path
+							WriteFile(write) => write.path == expected.path
 							_ => Bool.False
 						},
 				).map(
 					|step|
 						match step {
-							WriteFile({ contents: write_contents, path: _ }) => write_contents
+							WriteFile(write) => write.contents
 							_ => "unreachable non-write step"
 						},
 				)
-				PlannedWritesAtPath({
-					contents: matching_contents,
-					path: expected.path,
-				})
+				contents == expected.contents
 			}
-			Err(problem) => PlanRegistryFailed(problem)
-		}
-		{ actual, expected: PlannedWritesAtPath(expected) }
-	}
-
-	compare_planned_step :
-		Registry, Invocation, Plugin.ExecutionStep -> PlannedStepComparison
-	compare_planned_step = |registry, invocation, expected| {
-		actual = match Plugin.plan_registry(
-			registry,
-			invocation.kaifile,
-			invocation.args,
-			invocation.os,
-			invocation.arch,
-			invocation.workspace_root,
-		) {
-			Ok(plan) => {
-				found = List.any(
-					plan.steps,
+			WritesExactly(expected) => {
+				matching = actual_plan.steps.keep_if(
 					|step|
-						match (step, expected) {
-							(PrintLine(actual_line), PrintLine(expected_line)) =>
-								actual_line == expected_line
-							(RunProgram(actual_run), RunProgram(expected_run)) =>
-								actual_run.arguments == expected_run.arguments and
-									actual_run.program == expected_run.program
-							(WriteFile(actual_write), WriteFile(expected_write)) =>
-								actual_write.contents == expected_write.contents and
-									actual_write.path == expected_write.path
+						match step {
+							WriteFile(write) => write.path == expected.path
 							_ => Bool.False
 						},
 				)
-				if found PlannedStepFound else PlannedStepMissing
+				match matching {
+					[WriteFile(actual)] =>
+						actual.contents == expected.contents and
+							actual.path == expected.path
+					_ => Bool.False
+				}
 			}
-			Err(problem) => PlanRegistryFailed(problem)
 		}
-		{ actual, expected: PlannedStepFound }
-	}
 
-	compare_planning_error :
-		Registry, Invocation, Plugin.Error -> PlanningErrorComparison
-	compare_planning_error = |registry, invocation, expected| {
-		actual = match Plugin.plan_registry(
-			registry,
-			invocation.kaifile,
-			invocation.args,
-			invocation.os,
-			invocation.arch,
-			invocation.workspace_root,
-		) {
-			Ok(_) => PlanRegistrySucceeded
-			Err(problem) => PlanRegistryFailed(problem)
+	contains_steps_in_order :
+		List(Plugin.ExecutionStep), List(Plugin.ExecutionStep) -> Bool
+	contains_steps_in_order = |actual, expected|
+		match expected {
+			[] => Bool.True
+			[expected_first, .. as expected_rest] =>
+				match actual {
+					[] => Bool.False
+					[actual_first, .. as actual_rest] =>
+						if Check.steps_equal(actual_first, expected_first) {
+							Check.contains_steps_in_order(actual_rest, expected_rest)
+						} else {
+							Check.contains_steps_in_order(actual_rest, expected)
+						}
+					}
+			}
+
+	steps_equal : Plugin.ExecutionStep, Plugin.ExecutionStep -> Bool
+	steps_equal = |actual, expected|
+		match (actual, expected) {
+			(PrintLine(actual_line), PrintLine(expected_line)) =>
+				actual_line == expected_line
+			(RunProgram(actual_run), RunProgram(expected_run)) =>
+				actual_run.arguments == expected_run.arguments and
+					actual_run.program == expected_run.program
+			(WriteFile(actual_write), WriteFile(expected_write)) =>
+				actual_write.contents == expected_write.contents and
+					actual_write.path == expected_write.path
+			_ => Bool.False
 		}
-		{ actual, expected: PlanRegistryFailed(expected) }
-	}
+
+	artifact_attributes_equal :
+		List(Plugin.ArtifactAttribute), List(Plugin.ArtifactAttribute) -> Bool
+	artifact_attributes_equal = |actual, expected|
+		match (actual, expected) {
+			([], []) => Bool.True
+			([actual_first, .. as actual_rest], [expected_first, .. as expected_rest]) =>
+				actual_first.key == expected_first.key and
+					actual_first.value == expected_first.value and
+						Check.artifact_attributes_equal(actual_rest, expected_rest)
+			_ => Bool.False
+		}
+
+	artifacts_equal : Plugin.Artifact, Plugin.Artifact -> Bool
+	artifacts_equal = |actual, expected|
+		Check.artifact_attributes_equal(actual.attributes, expected.attributes) and
+			actual.kind == expected.kind and
+				actual.name == expected.name and
+					actual.path == expected.path
 }

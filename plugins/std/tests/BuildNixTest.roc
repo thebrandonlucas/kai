@@ -46,20 +46,19 @@ expect {
 		\\  };
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["build", "wisecow"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile: wisecow_kaifile_string,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{
-			contents: expected_wisecow_flake_string,
-			path: ".kai/builds/wisecow/flake.nix",
-		},
+		["build", "wisecow"],
+		Succeeds([
+			WritesExactly({
+				contents: expected_wisecow_flake_string,
+				path: ".kai/builds/wisecow/flake.nix",
+			}),
+		]),
 	)
-
-	checked.actual == checked.expected
 }

@@ -56,21 +56,21 @@ expect {
 		\\    };
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["image", "agent"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{
-			contents: expected_file,
-			path: ".kai/images/agent/flake.nix",
-		},
+		["image", "agent"],
+		Succeeds([
+			WritesExactly({
+				contents: expected_file,
+				path: ".kai/images/agent/flake.nix",
+			}),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # The image machine module contains environment packages, users, and native
@@ -98,21 +98,21 @@ expect {
 		\\  services."openssh".enable = true;
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["image", "agent"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{
-			contents: expected_file,
-			path: ".kai/images/agent/machine.nix",
-		},
+		["image", "agent"],
+		Succeeds([
+			WritesExactly({
+				contents: expected_file,
+				path: ".kai/images/agent/machine.nix",
+			}),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # An environment overlay is locked and applied to the image package set.
@@ -168,21 +168,21 @@ expect {
 		\\    };
 		\\}
 
-	checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["image", "agent"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{
-			contents: expected_file,
-			path: ".kai/images/agent/flake.nix",
-		},
+		["image", "agent"],
+		Succeeds([
+			WritesExactly({
+				contents: expected_file,
+				path: ".kai/images/agent/flake.nix",
+			}),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # A Kaifile image that includes a service includes the service in the output
@@ -248,35 +248,33 @@ expect {
 		\\      };
 		\\    };
 		\\}
-	invocation = {
-		args: ["image", "agent"],
-		arch: X64,
-		kaifile,
-		os: LINUX,
-		workspace_root: ".kai",
-	}
-	flake_checked = Check.compare_planned_write(
-		[StdPlugin.plugin],
-		invocation,
+	Check.plan(
 		{
-			contents: expected_flake,
-			path: ".kai/images/agent/flake.nix",
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
 		},
+		["image", "agent"],
+		Succeeds([
+			WritesExactly({
+				contents: expected_flake,
+				path: ".kai/images/agent/flake.nix",
+			}),
+			ContainsStep(
+				RunProgram({
+					arguments: [
+						"-RH",
+						"--preserve=mode",
+						"--",
+						".kai/artifacts/.services/web",
+						".kai/images/agent/services/web",
+					],
+					program: "cp",
+				}),
+			),
+		]),
 	)
-	expected_copy_arguments = [
-		"-RH",
-		"--preserve=mode",
-		"--",
-		".kai/artifacts/.services/web",
-		".kai/images/agent/services/web",
-	]
-	copy_checked = Check.compare_planned_step(
-		[StdPlugin.plugin],
-		invocation,
-		RunProgram({ arguments: expected_copy_arguments, program: "cp" }),
-	)
-	flake_checked.actual == flake_checked.expected and
-		copy_checked.actual == copy_checked.expected
 }
 
 # Image metadata is invalidated before the exact final metadata is written.
@@ -292,7 +290,6 @@ expect {
 		\\  users: ["agent"]
 		\\  services: ["openssh"]
 		\\}
-	metadata_path = ".kai/artifacts/images/agent/metadata.json"
 	expected_metadata = Str.join_with(
 		[
 			"{\"backend\":\"nix\",",
@@ -307,18 +304,21 @@ expect {
 		],
 		"",
 	)
-	checked = Check.compare_planned_writes_at_path(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["image", "agent"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		{ contents: ["", expected_metadata], path: metadata_path },
+		["image", "agent"],
+		Succeeds([
+			WritesAtPathExactly({
+				contents: ["", expected_metadata],
+				path: ".kai/artifacts/images/agent/metadata.json",
+			}),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # Image planning emits the expected build command and output-link path.
@@ -334,25 +334,29 @@ expect {
 		\\  users: []
 		\\  services: []
 		\\}
-	expected_build_arguments = [
-		"build",
-		"path:.kai/images/agent#kaiImages.\"agent\".image",
-		"--no-update-lock-file",
-		"--out-link",
-		".kai/artifacts/images/agent/result",
-	]
-	checked = Check.compare_planned_step(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["image", "agent"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
 			kaifile,
-			os: LINUX,
 			workspace_root: ".kai",
 		},
-		RunProgram({ arguments: expected_build_arguments, program: "nix" }),
+		["image", "agent"],
+		Succeeds([
+			ContainsStep(
+				RunProgram({
+					arguments: [
+						"build",
+						"path:.kai/images/agent#kaiImages.\"agent\".image",
+						"--no-update-lock-file",
+						"--out-link",
+						".kai/artifacts/images/agent/result",
+					],
+					program: "nix",
+				}),
+			),
+		]),
 	)
-	checked.actual == checked.expected
 }
 
 # Image planning rejects unsupported hosts and targets.
@@ -368,46 +372,46 @@ expect {
 		\\  users: []
 		\\  services: []
 		\\}
-	macos_checked = Check.compare_planning_error(
-		[StdPlugin.plugin],
+	Check.plan(
 		{
-			args: ["image", "agent"],
-			arch: X64,
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: MACOS },
 			kaifile,
-			os: MACOS,
 			workspace_root: ".kai",
 		},
-		PlanningFailed({
-			backend: "nix",
-			command: "image",
-			location: None,
-			message: "NixOS machine builds are supported only on Linux hosts",
-			plugin: "std",
-		}),
-	)
-	cross_architecture_checked = Check.compare_planning_error(
-		[StdPlugin.plugin],
-		{
-			args: ["image", "agent"],
-			arch: AARCH64,
-			kaifile,
-			os: LINUX,
-			workspace_root: ".kai",
-		},
-		PlanningFailed({
-			backend: "nix",
-			command: "image",
-			location: None,
-			message: Str.join_with(
-				[
-					"cross-architecture NixOS machine builds are not supported; ",
-					"target 'x86_64-linux' must match the host architecture",
-				],
-				"",
+		["image", "agent"],
+		FailsWith(
+			PlanningFailed({
+				backend: "nix",
+				command: "image",
+				location: None,
+				message: "NixOS machine builds are supported only on Linux hosts",
+				plugin: "std",
+			}),
+		),
+	) and
+		Check.plan(
+			{
+				definitions: [StdPlugin.plugin],
+				host: { arch: AARCH64, os: LINUX },
+				kaifile,
+				workspace_root: ".kai",
+			},
+			["image", "agent"],
+			FailsWith(
+				PlanningFailed({
+					backend: "nix",
+					command: "image",
+					location: None,
+					message: Str.join_with(
+						[
+							"cross-architecture NixOS machine builds are not supported; ",
+							"target 'x86_64-linux' must match the host architecture",
+						],
+						"",
+					),
+					plugin: "std",
+				}),
 			),
-			plugin: "std",
-		}),
-	)
-	macos_checked.actual == macos_checked.expected and
-		cross_architecture_checked.actual == cross_architecture_checked.expected
+		)
 }
