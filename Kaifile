@@ -17,7 +17,7 @@ task pika {
 }
 
 build kai {
-  environment: poke,
-  run: ["roc", "build", "./xkai/main.roc", "--opt=size", "--output=xkai-dev"],
+  environment: poke
+  run: ["roc", "build", "./xkai/main.roc", "--opt=size", "--output=xkai-dev"]
   output: "."
 }
