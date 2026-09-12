@@ -5,6 +5,7 @@ package
 		GenerationsNix,
 		ImageNix,
 		MachineNix,
+		RollbackNix,
 		ServiceNix,
 		ShellNix,
 		SwitchNix,

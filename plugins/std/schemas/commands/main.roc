@@ -4,6 +4,7 @@ package
 		Generations,
 		Image,
 		Machine,
+		Rollback,
 		Run,
 		Service,
 		Shell,
