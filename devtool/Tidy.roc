@@ -63,6 +63,8 @@ Tidy := [].{
 
 	is_comment = |line| line.trim().starts_with("#")
 
+	is_platform_dependency = |line| line.trim().starts_with("pf: platform \"")
+
 	has_module_comment = |line|
 		(line.starts_with("# ") and line.trim() != "#") or
 			(line.starts_with("## ") and line.trim() != "##")
@@ -93,9 +95,14 @@ Tidy := [].{
 		lines.map(
 			|line| {
 				line: line.line,
+				text: line.text,
 				width: Tidy.codepoint_count(line.text),
 			},
-		).keep_if(|line| line.width > Tidy.line_limit).map(
+		).keep_if(
+			|line|
+				line.width > Tidy.line_limit and
+					!Tidy.is_platform_dependency(line.text),
+		).map(
 			|line| {
 				kind: LineTooLong(line.width),
 				line: line.line,
