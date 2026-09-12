@@ -21,7 +21,7 @@ Kaifiles := [].{
 		if kaifiles.is_empty() {
 			Err(NoKaifilesFound(Path.display(directory)))
 		} else {
-			lock = Path.read_utf8!(Path.join(root, "kai.lock"))?
+			lock = Path.read_utf8!(Path.join(root, "Kaifile.lock"))?
 			host = Env.platform!()
 			system = Kaifiles.system(host)?
 			platform_name = Kaifiles.platform_name(host)?
@@ -144,7 +144,7 @@ Kaifiles := [].{
 		workspace,
 	| {
 		Path.write_utf8!(Path.join(workspace, "Kaifile"), Path.read_utf8!(kaifile)?)?
-		Path.write_utf8!(Path.join(workspace, "kai.lock"), lock)?
+		Path.write_utf8!(Path.join(workspace, "Kaifile.lock"), lock)?
 
 		original_directory = Env.cwd!()?
 		Env.set_cwd!(workspace)?

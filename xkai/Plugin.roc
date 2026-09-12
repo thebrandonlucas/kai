@@ -87,8 +87,8 @@ Plugin := [].{
 			".svn",
 			"_darcs",
 			"cvs",
-			"kai.lock",
 			"kaifile",
+			"kaifile.lock",
 		]
 		if normalized == Plugin.default_workspace_root and
 			workspace_root != Plugin.default_workspace_root {
