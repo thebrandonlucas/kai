@@ -17,6 +17,49 @@ Executor := [].{
 	version : Str
 	version = canonical_version
 
+	style_labels = |text, labels|
+		match labels {
+			[] => text
+			[(label, code), .. as rest] => {
+				escape = "\u(001b)[${code}m${label}\u(001b)[0m"
+				styled = Str.replace_each(text, label, escape)
+				Executor.style_labels(styled, rest)
+			}
+		}
+
+	colorize = |enabled, text|
+		if !enabled {
+			text
+		} else {
+			Executor.style_labels(
+				text,
+				[
+					("error:", "31;1"),
+					("warning:", "33"),
+					("help:", "36"),
+					("  -->", "36"),
+					("Usage:", "1"),
+					("Examples:", "1"),
+					("Commands:", "1"),
+					("Options:", "1"),
+				],
+			)
+		}
+
+	is_terminal! = |descriptor|
+		match Cmd.new_str("test").args_str(["-t", descriptor]).exec_exit_code!() {
+			Ok(0) => Bool.True
+			_ => Bool.False
+		}
+
+	color_enabled! = ||
+		match Env.var_str!(OsStr.utf8("NO_COLOR")) {
+			Ok(_) => Bool.False
+			Err(VarNotFound(_)) =>
+				Executor.is_terminal!("1") and Executor.is_terminal!("2")
+			Err(_) => Bool.False
+		}
+
 	json_line! = |kind, fields|
 		Stdout.line!("{\"type\":${Json.to_str(kind)}${fields}}")
 
@@ -207,6 +250,7 @@ Executor := [].{
 				"Options:",
 				"  -f, --file <PATH>  Use the Kaifile at PATH",
 				"      --json         Output JSON Lines",
+				"      --no-color     Disable colored output",
 				"  -h, --help         Print help",
 				"",
 				"Environment:",
@@ -326,8 +370,12 @@ Executor := [].{
 	run! = |args, registry| {
 		display_args = args.drop_first(1).map(OsStr.display)
 		json = display_args.contains("--json")
-		clean_args = display_args.keep_if(|arg| arg != "--json")
-		match Executor.run_mode!(clean_args, registry, json) {
+		no_color = display_args.contains("--no-color")
+		clean_args = display_args.keep_if(
+			|arg| arg != "--json" and arg != "--no-color",
+		)
+		color = if json or no_color Bool.False else Executor.color_enabled!()
+		match Executor.run_mode!(clean_args, registry, json, color) {
 			Err(Exit(code)) => Err(Exit(code))
 			Err(problem) if json => {
 				Executor.json_error!("kai_failed", Str.inspect(problem), "")?
@@ -337,15 +385,18 @@ Executor := [].{
 		}
 	}
 
-	run_mode! = |display_args, registry, json| {
+	run_mode! = |display_args, registry, json, color| {
 		requested_help = match Executor.requested_help_command(display_args) {
 			CommandHelpRequested(command) => Executor.command_help_for(registry, command)
 			NoCommandHelpRequested => None
 		}
 		match requested_help {
-			Some(help_text) => Executor.output!(json, "help", help_text)
-			None if Executor.help_requested(display_args) =>
-				Executor.output!(json, "help", Executor.help(registry))
+			Some(help_text) =>
+				Executor.output!(json, "help", Executor.colorize(color, help_text))
+			None if Executor.help_requested(display_args) => {
+				help_text = Executor.colorize(color, Executor.help(registry))
+				Executor.output!(json, "help", help_text)
+			}
 			None =>
 				match Executor.parse_invocation(display_args) {
 					Err(MissingKaifilePath) => Err(MissingKaifilePath)
@@ -386,7 +437,7 @@ Executor := [].{
 								) {
 									Ok(selected_plan) => {
 										Executor.prepare_workspace!(workspace_root)?
-										Executor.execute!(selected_plan, workspace_root, json)
+										Executor.execute!(selected_plan, workspace_root, json, color)
 									}
 									Err(InvalidWorkspaceRoot(message)) =>
 										Err(InvalidWorkspaceRoot(message))
@@ -403,14 +454,13 @@ Executor := [].{
 												extra,
 											)?
 										} else {
-											Stderr.line!(
-												PlanningError.planning_error(
-													invocation.kaifile,
-													kaifile_text,
-													registry,
-													diagnostic,
-												),
-											)?
+											error = PlanningError.planning_error(
+												invocation.kaifile,
+												kaifile_text,
+												registry,
+												diagnostic,
+											)
+											Stderr.line!(Executor.colorize(color, error))?
 										}
 										Err(Exit(1))
 									}
@@ -422,16 +472,16 @@ Executor := [].{
 			}
 	}
 
-	execute! : Plugin.ExecutionPlan, Str, Bool => Try({}, _)
-	execute! = |execution_plan, workspace_root, json| {
+	execute! : Plugin.ExecutionPlan, Str, Bool, Bool => Try({}, _)
+	execute! = |execution_plan, workspace_root, json, color| {
 		for step in execution_plan.steps {
-			Executor.execute_step!(step, workspace_root, json)?
+			Executor.execute_step!(step, workspace_root, json, color)?
 		}
 		Ok({})
 	}
 
-	execute_step! : Plugin.ExecutionStep, Str, Bool => Try({}, _)
-	execute_step! = |step, workspace_root, json|
+	execute_step! : Plugin.ExecutionStep, Str, Bool, Bool => Try({}, _)
+	execute_step! = |step, workspace_root, json, color|
 		match step {
 			PrintLine(line) => Executor.output!(json, "output", line)
 			WriteFile({ contents, path }) => {
@@ -446,7 +496,7 @@ Executor := [].{
 				Executor.output!(json, "progress", "wrote: ${path}")
 			}
 			RunProgram({ arguments, program }) =>
-				Executor.run_program!(json, program, arguments)
+				Executor.run_program!(json, color, program, arguments)
 			}
 
 	emit_process! = |output| {
@@ -492,19 +542,18 @@ Executor := [].{
 		Stderr.write_bytes!(output.stderr_bytes)
 	}
 
-	run_nix! = |command|
+	run_nix! = |command, color|
 		match command.exec_output_bytes!() {
 			Ok(output) => Executor.emit_human_process!(output)
 			Err(NonZeroExitCodeB({ exit_code, stderr_bytes, .. })) => {
-				Stderr.line!(
-					Executor.nix_root_error(Str.from_utf8_lossy(stderr_bytes)),
-				)?
+				error = Executor.nix_root_error(Str.from_utf8_lossy(stderr_bytes))
+				Stderr.line!(Executor.colorize(color, error))?
 				Err(Exit(exit_code))
 			}
 			Err(problem) => Err(problem)
 		}
 
-	run_program! = |json, program, arguments| {
+	run_program! = |json, color, program, arguments| {
 		command = Cmd.new_str(program).args_str(arguments)
 		if json {
 			match command.exec_output_bytes!() {
@@ -522,7 +571,7 @@ Executor := [].{
 				Err(problem) => Err(problem)
 			}
 		} else if program == "nix" and (arguments.first() ?? "") != "develop" {
-			Executor.run_nix!(command)
+			Executor.run_nix!(command, color)
 		} else {
 			exit_code = command.exec_exit_code!()?
 			if exit_code == 0 Ok({}) else Err(Exit(exit_code))
