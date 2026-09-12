@@ -16,6 +16,7 @@ import commands.Machine as MachineCommand
 import commands.Run as RunCommand
 import commands.Service as ServiceCommand
 import commands.Shell as ShellCommand
+import commands.System as SystemCommand
 import commands.Update as UpdateCommand
 import commands.Workflow as WorkflowCommand
 import implementations.BuildNix
@@ -83,6 +84,7 @@ StdPlugin := [].{
 			RunCommand.command,
 			ServiceCommand.command,
 			ShellCommand.command,
+			SystemCommand.command,
 			UpdateCommand.command,
 			WorkflowCommand.command,
 		],
