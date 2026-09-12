@@ -17,6 +17,23 @@ Executor := [].{
 	version : Str
 	version = canonical_version
 
+	json_line! = |kind, fields|
+		Stdout.line!("{\"type\":${Json.to_str(kind)}${fields}}")
+
+	output! = |json, kind, message|
+		if json {
+			Executor.json_line!(kind, ",\"message\":${Json.to_str(message)}")
+		} else {
+			Stdout.line!(message)
+		}
+
+	json_error! = |name, message, extra| {
+		name_json = Json.to_str(name)
+		message_json = Json.to_str(message)
+		fields = ",\"error\":${name_json},\"message\":${message_json}${extra}"
+		Executor.json_line!("error", fields)
+	}
+
 	help_requested : List(Str) -> Bool
 	help_requested = |args|
 		List.any(args, |arg| arg == "-h" or arg == "--help") or
@@ -73,7 +90,7 @@ Executor := [].{
 	render_command_help : Plugin.CommandSyntax, Plugin.CommandHelp -> Str
 	render_command_help = |command, help_content| {
 		usage_arguments = Executor.argument_usage(help_content.arguments)
-		usage = "  kai [OPTIONS] ${command.name} [BACKEND]${usage_arguments}"
+		usage = "  kai [OPTIONS] ${command.name} [BACKEND]${usage_arguments} [--json]"
 		Str.join_with(
 			[
 				help_content.description,
@@ -92,6 +109,7 @@ Executor := [].{
 				"",
 				"Options:",
 				"  -f, --file <PATH>  Use the Kaifile at PATH",
+				"      --json         Output JSON Lines",
 				"  -h, --help         Print help",
 			]),
 			"\n",
@@ -167,7 +185,7 @@ Executor := [].{
 				"A friendly frontend for determinate computing",
 				"",
 				"Usage:",
-				"  kai [OPTIONS] <COMMAND> [ARGUMENTS]",
+				"  kai [OPTIONS] <COMMAND> [ARGUMENTS] [--json]",
 				"",
 				"Kai is a tool for providing a simplified interface on top of determinate",
 				"systems (mainly Nix) for ease of use. Commands often correspond with a",
@@ -188,6 +206,7 @@ Executor := [].{
 				"",
 				"Options:",
 				"  -f, --file <PATH>  Use the Kaifile at PATH",
+				"      --json         Output JSON Lines",
 				"  -h, --help         Print help",
 				"",
 				"Environment:",
@@ -306,19 +325,27 @@ Executor := [].{
 	run! : List(OsStr), List(Plugin.Definition) => Try({}, _)
 	run! = |args, registry| {
 		display_args = args.drop_first(1).map(OsStr.display)
+		json = display_args.contains("--json")
+		clean_args = display_args.keep_if(|arg| arg != "--json")
+		match Executor.run_mode!(clean_args, registry, json) {
+			Err(Exit(code)) => Err(Exit(code))
+			Err(problem) if json => {
+				Executor.json_error!("kai_failed", Str.inspect(problem), "")?
+				Err(Exit(1))
+			}
+			result => result
+		}
+	}
+
+	run_mode! = |display_args, registry, json| {
 		requested_help = match Executor.requested_help_command(display_args) {
 			CommandHelpRequested(command) => Executor.command_help_for(registry, command)
 			NoCommandHelpRequested => None
 		}
 		match requested_help {
-			Some(help_text) => {
-				Stdout.line!(help_text)?
-				Ok({})
-			}
-			None if Executor.help_requested(display_args) => {
-				Stdout.line!(Executor.help(registry))?
-				Ok({})
-			}
+			Some(help_text) => Executor.output!(json, "help", help_text)
+			None if Executor.help_requested(display_args) =>
+				Executor.output!(json, "help", Executor.help(registry))
 			None =>
 				match Executor.parse_invocation(display_args) {
 					Err(MissingKaifilePath) => Err(MissingKaifilePath)
@@ -329,10 +356,15 @@ Executor := [].{
 									Ok({}) => Ok({})
 									Err(diagnostic) => Err(InvalidRegistry(diagnostic))
 								}
-							["version"] => {
-								Stdout.line!("kai version ${Executor.version}")?
-								Ok({})
-							}
+							["version"] =>
+								if json {
+									Executor.json_line!(
+										"version",
+										",\"version\":${Json.to_str(Executor.version)}",
+									)
+								} else {
+									Stdout.line!("kai version ${Executor.version}")
+								}
 							_ => {
 								kaifile_text = Path.read_utf8!(Path.utf8(invocation.kaifile))?
 								workspace_root = Executor.workspace_root!()?
@@ -354,19 +386,32 @@ Executor := [].{
 								) {
 									Ok(selected_plan) => {
 										Executor.prepare_workspace!(workspace_root)?
-										Executor.execute!(selected_plan, workspace_root)
+										Executor.execute!(selected_plan, workspace_root, json)
 									}
 									Err(InvalidWorkspaceRoot(message)) =>
 										Err(InvalidWorkspaceRoot(message))
 									Err(PlanningFailed(diagnostic)) => {
-										Stderr.line!(
-											PlanningError.planning_error(
-												invocation.kaifile,
-												kaifile_text,
-												registry,
-												diagnostic,
-											),
-										)?
+										if json {
+											extra = ",\"command\":${
+												Json.to_str(
+													diagnostic.command,
+												)
+											}"
+											Executor.json_error!(
+												"planning_failed",
+												diagnostic.message,
+												extra,
+											)?
+										} else {
+											Stderr.line!(
+												PlanningError.planning_error(
+													invocation.kaifile,
+													kaifile_text,
+													registry,
+													diagnostic,
+												),
+											)?
+										}
 										Err(Exit(1))
 									}
 									Err(UnknownCommand) => Err(UnknownCommand)
@@ -377,18 +422,18 @@ Executor := [].{
 			}
 	}
 
-	execute! : Plugin.ExecutionPlan, Str => Try({}, _)
-	execute! = |execution_plan, workspace_root| {
+	execute! : Plugin.ExecutionPlan, Str, Bool => Try({}, _)
+	execute! = |execution_plan, workspace_root, json| {
 		for step in execution_plan.steps {
-			Executor.execute_step!(step, workspace_root)?
+			Executor.execute_step!(step, workspace_root, json)?
 		}
 		Ok({})
 	}
 
-	execute_step! : Plugin.ExecutionStep, Str => Try({}, _)
-	execute_step! = |step, workspace_root|
+	execute_step! : Plugin.ExecutionStep, Str, Bool => Try({}, _)
+	execute_step! = |step, workspace_root, json|
 		match step {
-			PrintLine(line) => Stdout.line!(line)
+			PrintLine(line) => Executor.output!(json, "output", line)
 			WriteFile({ contents, path }) => {
 				# TODO: Use descriptor-relative no-follow writes when basic-cli
 				# exposes them.
@@ -398,9 +443,44 @@ Executor := [].{
 					Path.create_all!(Path.utf8(Str.join_with(parent_parts, "/")))?
 				}
 				Path.write_utf8!(Path.utf8(path), contents)?
-				Stdout.line!("wrote: ${path}")
+				Executor.output!(json, "progress", "wrote: ${path}")
 			}
 			RunProgram({ arguments, program }) =>
-				Cmd.exec!(OsStr.utf8(program), arguments.map(OsStr.utf8))
+				Executor.run_program!(json, program, arguments)
 			}
+
+	emit_process! = |output| {
+		for (kind, bytes) in [
+			("subprocess_stdout", output.stdout_bytes),
+			("subprocess_stderr", output.stderr_bytes),
+		] {
+			if !bytes.is_empty() {
+				Executor.output!(Bool.True, kind, Str.from_utf8_lossy(bytes))?
+			}
+		}
+		Ok({})
+	}
+
+	run_program! = |json, program, arguments| {
+		command = Cmd.new_str(program).args_str(arguments)
+		if json {
+			match command.exec_output_bytes!() {
+				Ok(output) => Executor.emit_process!(output)
+				Err(NonZeroExitCodeB({ exit_code, .. } as output)) => {
+					Executor.emit_process!(output)?
+					extra = ",\"exit_code\":${I32.to_str(exit_code)}"
+					Executor.json_error!(
+						"subprocess_failed",
+						"${program} failed",
+						extra,
+					)?
+					Err(Exit(exit_code))
+				}
+				Err(problem) => Err(problem)
+			}
+		} else {
+			exit_code = command.exec_exit_code!()?
+			if exit_code == 0 Ok({}) else Err(Exit(exit_code))
+		}
+	}
 }
