@@ -1,6 +1,6 @@
 # Focused tests for command error presentation.
 import kai.Plugin
-import util.Check
+import util.PlanCheck
 
 PlanningErrorTest := [].{}
 
@@ -44,7 +44,7 @@ expect {
 		},
 	}
 
-	Check.error(
+	PlanCheck.error(
 		{
 			definitions: [moo_plugin],
 			host: { arch: X64, os: LINUX },

@@ -2,5 +2,5 @@ package
 	[PlanningErrorTest]
 	{
 		kai: "../package.roc",
-		util: "./util/main.roc",
+		util: "../../tests/util/main.roc",
 	}

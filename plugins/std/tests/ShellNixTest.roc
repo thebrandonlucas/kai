@@ -1,6 +1,6 @@
 # Data-driven test for entering an inline Nix developer shell.
 import std.StdPlugin
-import util.Check
+import util.PlanCheck
 
 ShellNixTest := [].{}
 
@@ -24,7 +24,7 @@ expect {
 		\\  };
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -73,7 +73,7 @@ expect {
 		\\  };
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -97,7 +97,7 @@ expect {
 		\\usage: kai shell [ENVIRONMENT]
 		\\example: kai shell
 
-	Check.error(
+	PlanCheck.error(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -122,7 +122,7 @@ expect {
 		\\2 |   packages: ["cowsay"],
 		\\  |                       ^
 
-	Check.error(
+	PlanCheck.error(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -147,7 +147,7 @@ expect {
 		\\2 |   packages: "cowsay"
 		\\  |             ^
 
-	Check.error(
+	PlanCheck.error(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },

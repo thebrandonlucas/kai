@@ -3,7 +3,7 @@
 import kai.PlanningError
 import kai.Plugin
 
-Check := [].{
+PlanCheck := [].{
 	Input : {
 		definitions : List(Plugin.Definition),
 		host : Plugin.Host,
@@ -35,7 +35,7 @@ Check := [].{
 					Succeeds(expectations) =>
 						List.all(
 							expectations,
-							|expectation| Check.expectation_matches(actual, expectation),
+							|expectation| PlanCheck.expectation_matches(actual, expectation),
 						)
 					FailsWith(_) => Bool.False
 				}
@@ -72,15 +72,15 @@ Check := [].{
 			ContainsArtifact(expected) =>
 				List.any(
 					actual_plan.artifacts,
-					|actual| Check.artifacts_equal(actual, expected),
+					|actual| PlanCheck.artifacts_equal(actual, expected),
 				)
 			ContainsStep(expected) =>
 				List.any(
 					actual_plan.steps,
-					|actual| Check.steps_equal(actual, expected),
+					|actual| PlanCheck.steps_equal(actual, expected),
 				)
 			ContainsStepsInOrder(expected) =>
-				Check.contains_steps_in_order(actual_plan.steps, expected)
+				PlanCheck.contains_steps_in_order(actual_plan.steps, expected)
 			WritesAtPathExactly(expected) => {
 				contents = actual_plan.steps.keep_if(
 					|step|
@@ -123,10 +123,10 @@ Check := [].{
 				match actual {
 					[] => Bool.False
 					[actual_first, .. as actual_rest] =>
-						if Check.steps_equal(actual_first, expected_first) {
-							Check.contains_steps_in_order(actual_rest, expected_rest)
+						if PlanCheck.steps_equal(actual_first, expected_first) {
+							PlanCheck.contains_steps_in_order(actual_rest, expected_rest)
 						} else {
-							Check.contains_steps_in_order(actual_rest, expected)
+							PlanCheck.contains_steps_in_order(actual_rest, expected)
 						}
 					}
 			}
@@ -153,13 +153,16 @@ Check := [].{
 			([actual_first, .. as actual_rest], [expected_first, .. as expected_rest]) =>
 				actual_first.key == expected_first.key and
 					actual_first.value == expected_first.value and
-						Check.artifact_attributes_equal(actual_rest, expected_rest)
+						PlanCheck.artifact_attributes_equal(actual_rest, expected_rest)
 			_ => Bool.False
 		}
 
 	artifacts_equal : Plugin.Artifact, Plugin.Artifact -> Bool
 	artifacts_equal = |actual, expected|
-		Check.artifact_attributes_equal(actual.attributes, expected.attributes) and
+		PlanCheck.artifact_attributes_equal(
+			actual.attributes,
+			expected.attributes,
+		) and
 			actual.kind == expected.kind and
 				actual.name == expected.name and
 					actual.path == expected.path

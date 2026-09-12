@@ -2,7 +2,7 @@
 # `kai image <...>` should find the Kaifile block, translate it to
 # a flake, which can then create images.
 import std.StdPlugin
-import util.Check
+import util.PlanCheck
 
 ImageNixTest := [].{}
 
@@ -56,7 +56,7 @@ expect {
 		\\    };
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -98,7 +98,7 @@ expect {
 		\\  services."openssh".enable = true;
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -168,7 +168,7 @@ expect {
 		\\    };
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -248,7 +248,7 @@ expect {
 		\\      };
 		\\    };
 		\\}
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -304,7 +304,7 @@ expect {
 		],
 		"",
 	)
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -334,7 +334,7 @@ expect {
 		\\  users: []
 		\\  services: []
 		\\}
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -372,7 +372,7 @@ expect {
 		\\  users: []
 		\\  services: []
 		\\}
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: MACOS },
@@ -390,7 +390,7 @@ expect {
 			}),
 		),
 	) and
-		Check.plan(
+		PlanCheck.plan(
 			{
 				definitions: [StdPlugin.plugin],
 				host: { arch: AARCH64, os: LINUX },

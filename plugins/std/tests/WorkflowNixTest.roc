@@ -1,6 +1,6 @@
 # Data-driven test for running declared workflow steps through Nix.
 import std.StdPlugin
-import util.Check
+import util.PlanCheck
 
 WorkflowNixTest := [].{}
 
@@ -20,7 +20,7 @@ expect {
 		\\  steps: ["run greet", "update"]
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },

@@ -1,6 +1,6 @@
 # Data-driven test for building a declared NixOS service.
 import std.StdPlugin
-import util.Check
+import util.PlanCheck
 
 ServiceNixTest := [].{}
 
@@ -68,7 +68,7 @@ expect {
 		\\  fi
 		\\''
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },

@@ -2,7 +2,7 @@
 # `kai build <...>` should find the Kaifile block, translate it to
 # a flake, then run `nix build` under the hood.
 import std.StdPlugin
-import util.Check
+import util.PlanCheck
 
 BuildNixTest := [].{}
 
@@ -46,7 +46,7 @@ expect {
 		\\  };
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -70,7 +70,7 @@ expect {
 		\\usage: kai build <ARTIFACT>
 		\\example: kai build <my-artifact>
 
-	Check.error(
+	PlanCheck.error(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
