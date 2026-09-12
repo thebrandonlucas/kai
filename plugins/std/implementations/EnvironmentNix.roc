@@ -1,11 +1,29 @@
 # An implementation for interfacing between Kai environment blocks and
 # the Nix backend.
 import kai.Plugin
+import parser.Fields
 import backends.Nix as NixBackend
 import blocks.Environment as EnvironmentBlock
 import blocks.Source as SourceBlock
 
 EnvironmentNix := [].{
+	referenced_environment = |input|
+		match Fields.maybe_string(input.command_fields, "environment") ?? None {
+			None => Ok(None)
+			Some(name) => {
+				matches = input.kaifile_blocks.keep_if(
+					|block| block.header == ["environment", name],
+				)
+				match matches {
+					[environment] => Ok(Some(environment.fields))
+					_ => Err({
+						byte_offset: None,
+						message: "missing environment '${name}'",
+					})
+				}
+			}
+		}
+
 	extract_overlays = |fields|
 		Plugin.validated_strings(fields, EnvironmentBlock.overlays_field)
 

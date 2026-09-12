@@ -48,6 +48,67 @@ expect {
 	)
 }
 
+# An inline shell inherits its environment and keeps its own additions.
+expect {
+	kaifile =
+		\\environment dev {
+		\\  packages: ["git"]
+		\\}
+		\\shell {
+		\\  environment: dev
+		\\  packages: ["roc"]
+		\\}
+	nixpkgs = "nixpkgs.legacyPackages.\"x86_64-linux\""
+	expected_file =
+		\\{
+		\\  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+		\\  outputs = inputs@{ nixpkgs, ... }: {
+		\\    kaiSources = {  };
+		\\    devShells."x86_64-linux".default = ${nixpkgs}.mkShell {
+		\\      packages = [
+		\\              nixpkgs."legacyPackages"."x86_64-linux"."git"
+		\\              nixpkgs."legacyPackages"."x86_64-linux"."roc"
+		\\      ];
+		\\    };
+		\\  };
+		\\}
+
+	Check.plan(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["shell"],
+		Succeeds([
+			WritesExactly({ contents: expected_file, path: ".kai/flake.nix" }),
+		]),
+	)
+}
+
+# An inline shell needs packages, an environment, or both.
+expect {
+	kaifile =
+		\\shell {
+		\\}
+	expected =
+		\\error: shell requires packages or an environment
+		\\usage: kai shell [ENVIRONMENT]
+		\\example: kai shell
+
+	Check.error(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["shell"],
+		expected,
+	)
+}
+
 # An error in Kaifile shows its' source code and location.
 expect {
 	kaifile =
