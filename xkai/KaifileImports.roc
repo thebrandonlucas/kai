@@ -7,7 +7,7 @@ KaifileImports := [].{
 	# they weren't written equally.
 	#
 	# Example:
-	#  - ./foo → foo                                                                                  - dir/../foo → foo
+	# - ./foo → foo
 	# - dir/./foo → dir/foo
 	# - dir/../foo → foo
 	#
