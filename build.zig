@@ -213,7 +213,8 @@ pub fn build(b: *std.Build) void {
 
     const source_stage = b.addWriteFiles();
     for (sources.xkai_files) |source| {
-        if (std.mem.startsWith(u8, source, "xkai/tests/")) continue;
+        if (std.mem.startsWith(u8, source, "xkai/tests/") or
+            std.mem.eql(u8, source, "xkai/ImportsTest.roc")) continue;
         _ = source_stage.addCopyFile(b.path(source), source);
     }
 
@@ -221,7 +222,8 @@ pub fn build(b: *std.Build) void {
     bundle.setCwd(b.path("."));
     const bundle_dir = bundle.addOutputDirectoryArg("xkai-bundle");
     for (sources.xkai_files) |source| {
-        if (std.mem.startsWith(u8, source, "xkai/tests/")) continue;
+        if (std.mem.startsWith(u8, source, "xkai/tests/") or
+            std.mem.eql(u8, source, "xkai/ImportsTest.roc")) continue;
         bundle.addArg(source);
         bundle.addFileInput(b.path(source));
     }
@@ -435,6 +437,22 @@ pub fn build(b: *std.Build) void {
     });
     test_xkai.step.dependOn(check_step);
     test_step.dependOn(&test_xkai.step);
+
+    const test_imports = b.addSystemCommand(&.{
+        "roc",
+        "test",
+        "xkai/ImportsTest.roc",
+    });
+    test_imports.step.dependOn(check_step);
+    test_step.dependOn(&test_imports.step);
+
+    const run_imports = b.addSystemCommand(&.{
+        "roc",
+        "run",
+        "xkai/ImportsTest.roc",
+    });
+    run_imports.step.dependOn(&test_imports.step);
+    test_step.dependOn(&run_imports.step);
 
     const test_standard_plugin = b.addSystemCommand(&.{
         "roc",

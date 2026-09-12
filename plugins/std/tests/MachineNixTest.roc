@@ -1,7 +1,7 @@
 # Data-driven tests for ensuring `kai machine <...>` translates a machine
 # block into a flake
 import std.StdPlugin
-import util.Check
+import util.PlanCheck
 
 MachineNixTest := [].{}
 
@@ -66,7 +66,7 @@ expect {
 		\\  services."openssh".enable = true;
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -155,7 +155,7 @@ expect {
 		\\  ];
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -240,7 +240,7 @@ expect {
 		"",
 	)
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -272,7 +272,7 @@ expect {
 		\\  services: []
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: AARCH64, os: LINUX },
@@ -322,7 +322,7 @@ expect {
 		\\}
 	expected_error = "NixOS machine builds are supported only on Linux hosts"
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: MACOS },
@@ -361,7 +361,7 @@ expect {
 		"target 'x86_64-linux' must match the host architecture"
 	expected_error = "${error_start}${error_target}"
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: AARCH64, os: LINUX },
@@ -399,7 +399,7 @@ expect {
 	error_systems = "expected 'x86_64-linux' or 'aarch64-linux'"
 	expected_error = "${error_start}${error_systems}"
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },

@@ -1,6 +1,6 @@
 # Data-driven test for updating Nix project dependencies.
 import std.StdPlugin
-import util.Check
+import util.PlanCheck
 
 UpdateNixTest := [].{}
 
@@ -12,7 +12,7 @@ expect {
 		\\  outputs = _: {};
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },

@@ -8,6 +8,7 @@ import pf.Path
 import pf.Stderr
 import pf.Stdout
 
+import KaifileImports
 import kai.PlanningError
 import kai.Plugin
 
@@ -417,7 +418,7 @@ Executor := [].{
 									Stdout.line!("kai version ${Executor.version}")
 								}
 							_ => {
-								kaifile_text = Path.read_utf8!(Path.utf8(invocation.kaifile))?
+								kaifile_text = KaifileImports.load!(invocation.kaifile)?
 								workspace_root = Executor.workspace_root!()?
 								host = Env.platform!()
 								host_os : Plugin.HostOs

@@ -1,6 +1,6 @@
 # Data-driven test for running a declared task through Nix.
 import std.StdPlugin
-import util.Check
+import util.PlanCheck
 
 TaskNixTest := [].{}
 
@@ -16,7 +16,7 @@ expect {
 		\\  run: ["hello", "Kai"]
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },

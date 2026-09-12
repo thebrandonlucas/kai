@@ -1,7 +1,7 @@
 # Data-driven tests for ensuring Kaifile creates a valid flake.nix
 # for all Kaifiles using the `environment` block
 import std.StdPlugin
-import util.Check
+import util.PlanCheck
 
 EnvironmentNixTest := [].{}
 
@@ -26,7 +26,7 @@ expect {
 		\\  };
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -65,7 +65,7 @@ expect {
 		\\  };
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -110,7 +110,7 @@ expect {
 		\\  };
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -159,7 +159,7 @@ expect {
 		\\  };
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -205,7 +205,7 @@ expect {
 		\\  ];
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -244,7 +244,7 @@ expect {
 		\\  ];
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -291,7 +291,7 @@ expect {
 		\\    };
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -330,7 +330,7 @@ expect {
 		\\  outputs = _: {};
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -369,7 +369,7 @@ expect {
 		\\  };
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: X64, os: LINUX },
@@ -403,7 +403,7 @@ expect {
 		\\  };
 		\\}
 
-	Check.plan(
+	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
 			host: { arch: AARCH64, os: MACOS },

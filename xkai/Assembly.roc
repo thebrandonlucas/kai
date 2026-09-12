@@ -187,8 +187,10 @@ Assembly := [].{
 	render_app : Str, List(Assembly.PluginSource) -> Str
 	render_app = |platform_url, custom_plugins| {
 		standard_index = U64.to_str(custom_plugins.len())
-		dependencies = [{ name: "kai", path: "./package.roc" }]
-			.concat(custom_plugins.map(Assembly.app_dependency))
+		dependencies = [
+			{ name: "kai", path: "./package.roc" },
+			{ name: "parser", path: "./parser/main.roc" },
+		].concat(custom_plugins.map(Assembly.app_dependency))
 			.concat([{ name: "std", path: "../plugins/std/main.roc" }])
 		dependency_lines = dependencies.map(
 			|dependency| "\t${dependency.name}: \"${dependency.path}\",",
