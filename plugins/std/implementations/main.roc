@@ -2,6 +2,7 @@ package
 	[
 		BuildNix,
 		EnvironmentNix,
+		GenerationsNix,
 		ImageNix,
 		MachineNix,
 		ServiceNix,

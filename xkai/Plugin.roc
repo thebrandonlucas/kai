@@ -285,8 +285,8 @@ Plugin := [].{
 
 	ExplicitBackendBlock : [RequireBackendBlock, TryBackendThenShared]
 
-	Command : [
-		CommandGroup(CommandSyntax),
+	Command := [
+		CommandGroup({ commands : List(Command), syntax : CommandSyntax }),
 		CommandOnly(CommandSyntax),
 		CommandWithBlock(
 			{
@@ -303,8 +303,8 @@ Plugin := [].{
 	}
 
 	# Command groups organize commands and have no backend implementation.
-	command_group : CommandSyntax -> Command
-	command_group = |declared_command| CommandGroup(declared_command)
+	command_group : CommandSyntax, List(Command) -> Command
+	command_group = |syntax, commands| CommandGroup({ commands, syntax })
 
 	command_only : CommandSyntax -> Command
 	command_only = |declared_command| CommandOnly(declared_command)
@@ -330,7 +330,7 @@ Plugin := [].{
 	syntax_from_command : Command -> CommandSyntax
 	syntax_from_command = |command|
 		match command {
-			CommandGroup(declared_command) => declared_command
+			CommandGroup(group) => group.syntax
 			CommandOnly(declared_command) => declared_command
 			CommandWithBlock(declaration) => declaration.syntax
 		}
@@ -1393,21 +1393,15 @@ Plugin := [].{
 			[first, .. as rest] => {
 				declared_command = Plugin.syntax_from_command(first)
 				match declared_command.arguments {
-					[] => Plugin.validate_command_syntaxes(rest, plugin)
+					[] => Ok({})
 					[OptionalArgument(name)] | [RequiredArgument(name)] =>
 						if name.is_empty() {
 							Plugin.registry_failure(
 								plugin,
-								Str.join_with(
-									[
-										"command '${declared_command.name}' argument",
-										"name must not be empty",
-									],
-									" ",
-								),
+								"command '${declared_command.name}' argument name must not be empty",
 							)
 						} else {
-							Plugin.validate_command_syntaxes(rest, plugin)
+							Ok({})
 						}
 					_ =>
 						Plugin.registry_failure(
@@ -1420,7 +1414,13 @@ Plugin := [].{
 								" ",
 							),
 						)
-					}
+					}?
+				match first {
+					CommandGroup(group) =>
+						Plugin.validate_command_syntaxes(group.commands, plugin)
+					_ => Ok({})
+				}?
+				Plugin.validate_command_syntaxes(rest, plugin)
 			}
 		}
 
@@ -1431,7 +1431,8 @@ Plugin := [].{
 			[] => Ok({})
 			[first, .. as rest] => {
 				command_validation = match first {
-					CommandGroup(_) | CommandOnly(_) => Ok({})
+					CommandGroup(group) => Plugin.validate_commands(group.commands, plugin)
+					CommandOnly(_) => Ok({})
 					CommandWithBlock(
 						{
 							block,
@@ -1726,7 +1727,13 @@ Plugin := [].{
 			[] => Ok({})
 			[first, .. as rest] => {
 				match first {
-					CommandGroup(_) | CommandOnly(_) => Ok({})
+					CommandGroup(group) =>
+						Plugin.validate_command_block_relationships(
+							group.commands,
+							blocks,
+							plugin,
+						)
+					CommandOnly(_) => Ok({})
 					CommandWithBlock(
 						{ block, syntax: declared_command, explicit_backend_block: _ },
 					) => {
@@ -1877,7 +1884,10 @@ Plugin := [].{
 		match implementations {
 			[] => Ok({})
 			[first, .. as rest] =>
-				match Plugin.find_command(definition.schema.commands, first.command) {
+				match Plugin.find_nested_command(
+					definition.schema.commands,
+					first.command,
+				) {
 					Err(NotFound) =>
 						Plugin.registry_failure(
 							definition.name,
@@ -1929,7 +1939,13 @@ Plugin := [].{
 			[] => Ok({})
 			[first, .. as rest] => {
 				match first {
-					CommandGroup(_) => Ok({})
+					CommandGroup(group) =>
+						Plugin.validate_default_implementations(
+							group.commands,
+							backend,
+							implementations,
+							plugin,
+						)
 					_ => {
 						declared_command = Plugin.syntax_from_command(first)
 						match Plugin.find_implementation(
@@ -2046,13 +2062,16 @@ Plugin := [].{
 		|registry, kaifile_text, args, os, arch, workspace_root, ancestors, depth|
 			match args {
 				[] => Err(UnknownCommand)
-				[command_name, .. as command_args] => {
+				[command_name, .. as nested_args] => {
 					owner = match Plugin.find_owner(registry, command_name) {
 						Ok(found) => found
 						Err(UnknownCommand) => return Err(UnknownCommand)
 					}
 					plugin_definition = owner.definition
-					selected_command = owner.command
+					resolved = Plugin.resolve_command(owner.command, nested_args) ? |_|
+						UnknownCommand
+					selected_command = resolved.command
+					command_args = resolved.args
 					declared_command = Plugin.syntax_from_command(selected_command)
 					plugin = plugin_definition.name
 					selected_command_name = declared_command.name
@@ -2402,6 +2421,40 @@ Plugin := [].{
 					Plugin.find_command(rest, name)
 				}
 			}
+
+	find_nested_command : List(Command), Str -> Try(Command, [NotFound])
+	find_nested_command = |commands, name|
+		match commands {
+			[] => Err(NotFound)
+			[first, .. as rest] =>
+				match Plugin.find_command([first], name) {
+					Ok(found) => Ok(found)
+					Err(NotFound) =>
+						match first {
+							CommandGroup(group) =>
+								match Plugin.find_nested_command(group.commands, name) {
+									Ok(found) => Ok(found)
+									Err(NotFound) => Plugin.find_nested_command(rest, name)
+								}
+							_ => Plugin.find_nested_command(rest, name)
+						}
+					}
+			}
+
+	resolve_command :
+		Command, List(Str) -> Try({ args : List(Str), command : Command }, [NotFound])
+	resolve_command = |command, args|
+		match command {
+			CommandGroup(group) =>
+				match args {
+					[] => Err(NotFound)
+					[name, .. as rest] => {
+						child = Plugin.find_command(group.commands, name)?
+						Plugin.resolve_command(child, rest)
+					}
+				}
+			_ => Ok({ args, command })
+		}
 
 	find_backend : List(Backend), Str -> Try(Backend, [NotFound])
 	find_backend = |backends, name|

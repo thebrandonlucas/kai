@@ -89,17 +89,21 @@ Executor := [].{
 				_ => Bool.False
 			}
 
-	HelpCommand : [CommandHelpRequested(Str), NoCommandHelpRequested]
+	HelpCommand : [CommandHelpRequested(List(Str)), NoCommandHelpRequested]
 
 	requested_help_command : List(Str) -> HelpCommand
 	requested_help_command = |args|
 		match args {
 			["-f", _, .. as command_args] | ["--file", _, .. as command_args] =>
 				Executor.requested_help_command(command_args)
-			["help", command, ..] => CommandHelpRequested(command)
+			["help", command, .. as rest] =>
+				CommandHelpRequested([command].concat(rest))
 			[command, .. as command_args] =>
 				if List.any(command_args, |arg| arg == "-h" or arg == "--help") {
-					CommandHelpRequested(command)
+					path = [command].concat(
+						command_args.keep_if(|arg| arg != "-h" and arg != "--help"),
+					)
+					CommandHelpRequested(path)
 				} else {
 					NoCommandHelpRequested
 				}
@@ -131,17 +135,26 @@ Executor := [].{
 			NoKaifileBlockExample => []
 		}
 
-	render_command_group_help : Plugin.CommandSyntax -> Str
-	render_command_group_help = |command| {
+	render_command_group_help = |group| {
+		command = group.syntax
 		description = match command.help {
 			CommandHelpAvailable(help_content) => "${help_content.description}\n\n"
 			NoCommandHelp => ""
 		}
-		\\${description}Usage:
-		\\  kai ${command.name} <COMMAND>
-		\\
-		\\Commands:
-		\\  No commands available yet.
+		commands = Executor.command_rows_for(group.commands)
+		lines = Executor.command_lines(
+			commands,
+			Executor.longest_command_name(commands),
+		)
+		Str.join_with(
+			[
+				"${description}Usage:",
+				"  kai ${command.name} <COMMAND>",
+				"",
+				"Commands:",
+			].concat(lines),
+			"\n",
+		)
 	}
 
 	render_command_help : Plugin.CommandSyntax, Plugin.CommandHelp -> Str
@@ -188,21 +201,40 @@ Executor := [].{
 			}
 		}
 
-	command_help_for : List(Plugin.Definition), Str -> [None, Some(Str)]
-	command_help_for = |registry, name|
-		match Plugin.find_owner(registry, name) {
-			Err(UnknownCommand) => None
-			Ok(owner) => Executor.command_help(owner.command)
+	command_at_path : Plugin.Command, List(Str) -> [None, Some(Plugin.Command)]
+	command_at_path = |command, path|
+		match (command, path) {
+			(_, []) => Some(command)
+			(CommandGroup(group), [name, .. as rest]) =>
+				match Plugin.find_command(group.commands, name) {
+					Ok(child) => Executor.command_at_path(child, rest)
+					Err(NotFound) => None
+				}
+			_ => Some(command)
 		}
 
-	# Command groups are empty for now, so any nested invocation shows group help.
+	command_help_for : List(Plugin.Definition), List(Str) -> [None, Some(Str)]
+	command_help_for = |registry, path|
+		match path {
+			[] => None
+			[name, .. as rest] =>
+				match Plugin.find_owner(registry, name) {
+					Err(UnknownCommand) => None
+					Ok(owner) =>
+						match Executor.command_at_path(owner.command, rest) {
+							Some(command) => Executor.command_help(command)
+							None => None
+						}
+					}
+			}
+
 	command_group_help_for :
 		List(Plugin.Definition), List(Str) -> [None, Some(Str)]
 	command_group_help_for = |registry, args|
 		match args {
 			["-f", _, .. as rest] | ["--file", _, .. as rest] =>
 				Executor.command_group_help_for(registry, rest)
-			[name, ..] =>
+			[name] =>
 				match Plugin.find_owner(registry, name) {
 					Ok(owner) =>
 						match owner.command {
@@ -211,28 +243,32 @@ Executor := [].{
 						}
 					Err(UnknownCommand) => None
 				}
-			[] => None
+			_ => None
 		}
 
 	CommandLine := { description : Str, name : Str }
+
+	command_rows_for : List(Plugin.Command) -> List(CommandLine)
+	command_rows_for = |commands|
+		commands.map(
+			|command| {
+				syntax = Plugin.syntax_from_command(command)
+				description = match syntax.help {
+					CommandHelpAvailable(help_content) => help_content.description
+					NoCommandHelp => ""
+				}
+				{ description, name: syntax.name }
+			},
+		)
 
 	command_rows : List(Plugin.Definition) -> List(CommandLine)
 	command_rows = |registry|
 		match registry {
 			[] => []
 			[first, .. as rest] =>
-				first.schema.commands
-					.map(
-						|command| {
-							syntax = Plugin.syntax_from_command(command)
-							description = match syntax.help {
-								CommandHelpAvailable(help_content) => help_content.description
-								NoCommandHelp => ""
-							}
-							{ description, name: syntax.name }
-						},
-					)
-					.concat(Executor.command_rows(rest))
+				Executor.command_rows_for(first.schema.commands).concat(
+					Executor.command_rows(rest),
+				)
 			}
 
 	longest_command_name : List(CommandLine) -> U64
@@ -393,6 +429,21 @@ Executor := [].{
 			}
 		}
 
+	is_command_group : List(Plugin.Definition), List(Str) -> Bool
+	is_command_group = |registry, args|
+		match args {
+			[name, ..] =>
+				match Plugin.find_owner(registry, name) {
+					Ok(owner) =>
+						match owner.command {
+							CommandGroup(_) => Bool.True
+							_ => Bool.False
+						}
+					Err(UnknownCommand) => Bool.False
+				}
+			[] => Bool.False
+		}
+
 	parse_invocation : List(Str) -> Try(Invocation, [MissingKaifilePath])
 	parse_invocation = |args|
 		match args {
@@ -427,7 +478,7 @@ Executor := [].{
 
 	run_mode! = |display_args, registry, json, color| {
 		requested_help = match Executor.requested_help_command(display_args) {
-			CommandHelpRequested(command) => Executor.command_help_for(registry, command)
+			CommandHelpRequested(path) => Executor.command_help_for(registry, path)
 			NoCommandHelpRequested =>
 				Executor.command_group_help_for(registry, display_args)
 			}
@@ -458,8 +509,17 @@ Executor := [].{
 									Stdout.line!("kai version ${Executor.version}")
 								}
 							_ => {
-								kaifile_text = KaifileImports.load!(invocation.kaifile)?
-								workspace_root = Executor.workspace_root!()?
+								group = Executor.is_command_group(registry, invocation.args)
+								kaifile_text = if group {
+									""
+								} else {
+									KaifileImports.load!(invocation.kaifile)?
+								}
+								workspace_root = if group {
+									Plugin.default_workspace_root
+								} else {
+									Executor.workspace_root!()?
+								}
 								host = Env.platform!()
 								host_os : Plugin.HostOs
 								host_os = match host.os {
@@ -477,7 +537,9 @@ Executor := [].{
 									workspace_root,
 								) {
 									Ok(selected_plan) => {
-										Executor.prepare_workspace!(workspace_root)?
+										if !group {
+											Executor.prepare_workspace!(workspace_root)?
+										}
 										Executor.execute!(selected_plan, workspace_root, json, color)
 									}
 									Err(InvalidWorkspaceRoot(message)) =>
