@@ -20,6 +20,7 @@ Plugin := [].{
 
 	# Side effects to be performed later by the executor.
 	ExecutionStep := [
+		Confirm(Str),
 		PrintLine(Str),
 		RunProgram({ arguments : List(Str), program : Str }),
 		WriteFile({ contents : Str, path : Str }),
@@ -259,20 +260,37 @@ Plugin := [].{
 	}
 
 	CommandHelpAvailability : [CommandHelpAvailable(CommandHelp), NoCommandHelp]
+	ProjectContext : [NoProject, RequiresProject]
 
 	CommandSyntax := {
 		arguments : List(CommandArgument),
 		help : CommandHelpAvailability,
 		name : Str,
+		project : ProjectContext,
 	}
 
 	command_syntax : Str, List(CommandArgument) -> CommandSyntax
-	command_syntax = |name, arguments| { arguments, help: NoCommandHelp, name }
+	command_syntax = |name, arguments|
+		{ arguments, help: NoCommandHelp, name, project: RequiresProject }
 
 	command_syntax_with_help :
 		Str, List(CommandArgument), CommandHelp -> CommandSyntax
 	command_syntax_with_help = |name, arguments, help|
-		{ arguments, help: CommandHelpAvailable(help), name }
+		{
+			arguments,
+			help: CommandHelpAvailable(help),
+			name,
+			project: RequiresProject,
+		}
+
+	without_project : CommandSyntax -> CommandSyntax
+	without_project = |syntax|
+		Plugin.CommandSyntax.{
+			arguments: syntax.arguments,
+			help: syntax.help,
+			name: syntax.name,
+			project: NoProject,
+		}
 
 	required_argument : Str -> CommandArgument
 	required_argument = |name| RequiredArgument(name)
@@ -396,9 +414,12 @@ Plugin := [].{
 		location : SourceLocation,
 	}
 
+	BlockHost : [AllHosts, HostOnly(Str)]
+
 	ParsedBlock := {
 		fields : Fields.ParsedFields,
 		header : List(Str),
+		host : BlockHost,
 		kind : Str,
 		location : SourceLocation,
 	}
@@ -928,6 +949,10 @@ Plugin := [].{
 								block_schema,
 								first.header,
 								located,
+								match scope {
+									TopLevelBlockScope => AllHosts
+									HostBlockScope(host) => HostOnly(host.header.last() ?? "")
+								},
 							)?
 							Plugin.collect_kaifile_blocks(
 								rest,
@@ -1034,11 +1059,12 @@ Plugin := [].{
 	parse_block :
 		Block,
 		List(Str),
-		LocatedBlock -> Try(
+		LocatedBlock,
+		BlockHost -> Try(
 			ParsedBlock,
 			SelectorDiagnostic,
 		)
-	parse_block = |schema, header, block| {
+	parse_block = |schema, header, block, host| {
 		fields = Fields.parse(Kaifile.body(schema), block.body) ? |diagnostic| {
 			location: At(Plugin.translate_location(block, diagnostic.byte_offset)),
 			message: Fields.describe(diagnostic),
@@ -1046,6 +1072,7 @@ Plugin := [].{
 		Ok({
 			fields,
 			header,
+			host,
 			kind: Kaifile.block_name(schema),
 			location: block.location,
 		})
@@ -1100,6 +1127,7 @@ Plugin := [].{
 		command_fields : Fields.ParsedFields,
 		host : Host,
 		kaifile_blocks : List(ParsedBlock),
+		kaifile_path : Str,
 		prerequisite_artifacts : PrerequisiteArtifacts,
 		referenced_fields : ReferencedFields,
 		workspace_root : Str,
@@ -1169,6 +1197,16 @@ Plugin := [].{
 	blocks_of_kind = |input, kinds|
 		input.kaifile_blocks.keep_if(|block| kinds.contains(block.kind))
 
+	effective_blocks_of_kind = |input, kinds|
+		Plugin.blocks_of_kind(input, kinds).keep_if(
+			|block|
+				match (block.host, input.host.os) {
+					(AllHosts, _) | (HostOnly("linux"), LINUX) => Bool.True
+					(HostOnly("macos"), MACOS) => Bool.True
+					_ => Bool.False
+				},
+		)
+
 	referenced_fields :
 		CommandPlanningInput,
 		Str -> Try(
@@ -1227,6 +1265,7 @@ Plugin := [].{
 						command_fields: input.command_fields,
 						host: input.host,
 						kaifile_blocks: input.kaifile_blocks,
+						kaifile_path: input.kaifile_path,
 						prerequisite_artifacts: input.prerequisite_artifacts,
 						referenced_fields: input.referenced_fields,
 						workspace_root: input.workspace_root,
@@ -2024,6 +2063,7 @@ Plugin := [].{
 	# Plan the first definition that owns the CLI command.
 	plan_registry : List(Definition),
 	Str,
+	Str,
 	List(Str),
 	HostOs,
 	HostArch,
@@ -2031,23 +2071,26 @@ Plugin := [].{
 		ExecutionPlan,
 		Error,
 	)
-	plan_registry = |registry, kaifile_text, args, os, arch, workspace_root| {
-		Plugin.validate_workspace_root(workspace_root) ? |message|
-			InvalidWorkspaceRoot(message)
-		Plugin.plan_registry_nested(
-			registry,
-			kaifile_text,
-			args,
-			os,
-			arch,
-			workspace_root,
-			[],
-			0,
-		)
-	}
+	plan_registry =
+		|registry, kaifile_text, kaifile_path, args, os, arch, workspace_root| {
+			Plugin.validate_workspace_root(workspace_root) ? |message|
+				InvalidWorkspaceRoot(message)
+			Plugin.plan_registry_nested(
+				registry,
+				kaifile_text,
+				kaifile_path,
+				args,
+				os,
+				arch,
+				workspace_root,
+				[],
+				0,
+			)
+		}
 
 	plan_registry_nested :
 		List(Definition),
+		Str,
 		Str,
 		List(Str),
 		HostOs,
@@ -2059,7 +2102,7 @@ Plugin := [].{
 			Error,
 		)
 	plan_registry_nested =
-		|registry, kaifile_text, args, os, arch, workspace_root, ancestors, depth|
+		|registry, text, path, args, os, arch, workspace_root, ancestors, depth|
 			match args {
 				[] => Err(UnknownCommand)
 				[command_name, .. as nested_args] => {
@@ -2130,13 +2173,13 @@ Plugin := [].{
 								"plugin has no implementation for selected backend",
 							)
 						kaifile_blocks = Plugin.parse_kaifile_blocks(
-							kaifile_text,
+							text,
 							Plugin.accepted_blocks(registry),
 							backend.name,
 						) ? |diagnostic|
 							fail(diagnostic.location, diagnostic.message)
 						selection = Plugin.select_command_block(
-							kaifile_text,
+							text,
 							kaifile_blocks,
 							selected_command,
 							normalized_invocation.backend_choice,
@@ -2223,6 +2266,7 @@ Plugin := [].{
 							command_fields: parsed.command_fields,
 							host: { arch, os },
 							kaifile_blocks,
+							kaifile_path: path,
 							prerequisite_artifacts: NotResolved,
 							referenced_fields: parsed.referenced_fields,
 							workspace_root,
@@ -2244,7 +2288,8 @@ Plugin := [].{
 							implementation_fail(diagnostic)
 						prerequisites = Plugin.plan_prerequisite_commands(
 							registry,
-							kaifile_text,
+							text,
+							path,
 							initial_command_plan.prerequisite_commands,
 							os,
 							arch,
@@ -2265,6 +2310,7 @@ Plugin := [].{
 									command_fields: validated_input.command_fields,
 									host: validated_input.host,
 									kaifile_blocks: validated_input.kaifile_blocks,
+									kaifile_path: validated_input.kaifile_path,
 									prerequisite_artifacts: Resolved(prerequisites.artifacts),
 									referenced_fields: validated_input.referenced_fields,
 									workspace_root: validated_input.workspace_root,
@@ -2309,6 +2355,7 @@ Plugin := [].{
 	plan_prerequisite_commands :
 		List(Definition),
 		Str,
+		Str,
 		List(PrerequisiteCommand),
 		HostOs,
 		HostArch,
@@ -2326,18 +2373,19 @@ Plugin := [].{
 			Error,
 		)
 	plan_prerequisite_commands =
-		|defs, text, commands, os, arch, root, parents, depth, plugin, cmd, back|
+		|defs, text, path, commands, os, arch, root, prev, depth, plugin, cmd, back|
 			match commands {
 				[] => Ok({ artifacts: [], requested_packages: [], steps: [] })
 				[first, .. as rest] => {
 					child = Plugin.plan_registry_nested(
 						defs,
 						text,
+						path,
 						first.arguments,
 						os,
 						arch,
 						root,
-						parents,
+						prev,
 						depth,
 					) ? |error|
 						match error {
@@ -2362,11 +2410,12 @@ Plugin := [].{
 					remaining = Plugin.plan_prerequisite_commands(
 						defs,
 						text,
+						path,
 						rest,
 						os,
 						arch,
 						root,
-						parents,
+						prev,
 						depth,
 						plugin,
 						cmd,

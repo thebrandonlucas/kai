@@ -6,6 +6,7 @@ import pf.Env
 import pf.OsStr
 import pf.Path
 import pf.Stderr
+import pf.Stdin
 import pf.Stdout
 
 import KaifileImports
@@ -180,6 +181,7 @@ Executor := [].{
 				"Options:",
 				"  -f, --file <PATH>  Use the Kaifile at PATH",
 				"      --json         Output JSON Lines",
+				"  -y, --yes          Assume yes for confirmation prompts.",
 				"  -h, --help         Print help",
 			]),
 			"\n",
@@ -327,6 +329,7 @@ Executor := [].{
 				"  -f, --file <PATH>  Use the Kaifile at PATH",
 				"      --json         Output JSON Lines",
 				"      --no-color     Disable colored output",
+				"  -y, --yes          Assume yes for confirmation prompts.",
 				"  -h, --help         Print help",
 				"",
 				"Environment:",
@@ -429,19 +432,41 @@ Executor := [].{
 			}
 		}
 
-	is_command_group : List(Plugin.Definition), List(Str) -> Bool
-	is_command_group = |registry, args|
+	project_context :
+		List(Plugin.Definition), List(Str) -> Plugin.ProjectContext
+	project_context = |registry, args|
 		match args {
-			[name, ..] =>
+			[name, .. as nested_args] =>
 				match Plugin.find_owner(registry, name) {
 					Ok(owner) =>
-						match owner.command {
-							CommandGroup(_) => Bool.True
-							_ => Bool.False
+						match Plugin.resolve_command(owner.command, nested_args) {
+							Ok(resolved) =>
+								Plugin.syntax_from_command(resolved.command).project
+							Err(NotFound) => NoProject
 						}
-					Err(UnknownCommand) => Bool.False
+					Err(UnknownCommand) => NoProject
 				}
-			[] => Bool.False
+			[] => NoProject
+		}
+
+	extract_assume_yes = |args|
+		match args {
+			[] => { args: [], assume_yes: Bool.False }
+			[flag, path, .. as rest] if flag == "-f" or flag == "--file" => {
+				parsed = Executor.extract_assume_yes(rest)
+				{ args: [flag, path].concat(parsed.args), assume_yes: parsed.assume_yes }
+			}
+			[first, .. as rest] => {
+				parsed = Executor.extract_assume_yes(rest)
+				if first == "-y" or first == "--yes" {
+					{ args: parsed.args, assume_yes: Bool.True }
+				} else {
+					{
+						args: [first].concat(parsed.args),
+						assume_yes: parsed.assume_yes,
+					}
+				}
+			}
 		}
 
 	parse_invocation : List(Str) -> Try(Invocation, [MissingKaifilePath])
@@ -460,13 +485,15 @@ Executor := [].{
 	run! : List(OsStr), List(Plugin.Definition) => Try({}, _)
 	run! = |args, registry| {
 		display_args = args.drop_first(1).map(OsStr.display)
-		json = display_args.contains("--json")
-		no_color = display_args.contains("--no-color")
-		clean_args = display_args.keep_if(
+		yes_options = Executor.extract_assume_yes(display_args)
+		json = yes_options.args.contains("--json")
+		no_color = yes_options.args.contains("--no-color")
+		assume_yes = yes_options.assume_yes
+		clean_args = yes_options.args.keep_if(
 			|arg| arg != "--json" and arg != "--no-color",
 		)
 		color = if json or no_color Bool.False else Executor.color_enabled!()
-		match Executor.run_mode!(clean_args, registry, json, color) {
+		match Executor.run_mode!(clean_args, registry, json, color, assume_yes) {
 			Err(Exit(code)) => Err(Exit(code))
 			Err(problem) if json => {
 				Executor.json_error!("kai_failed", Str.inspect(problem), "")?
@@ -476,7 +503,7 @@ Executor := [].{
 		}
 	}
 
-	run_mode! = |display_args, registry, json, color| {
+	run_mode! = |display_args, registry, json, color, assume_yes| {
 		requested_help = match Executor.requested_help_command(display_args) {
 			CommandHelpRequested(path) => Executor.command_help_for(registry, path)
 			NoCommandHelpRequested =>
@@ -509,16 +536,15 @@ Executor := [].{
 									Stdout.line!("kai version ${Executor.version}")
 								}
 							_ => {
-								group = Executor.is_command_group(registry, invocation.args)
-								kaifile_text = if group {
-									""
-								} else {
-									KaifileImports.load!(invocation.kaifile)?
-								}
-								workspace_root = if group {
-									Plugin.default_workspace_root
-								} else {
-									Executor.workspace_root!()?
+								project = Executor.project_context(registry, invocation.args)
+								kaifile_text = match project {
+									NoProject => ""
+									RequiresProject =>
+										KaifileImports.load!(invocation.kaifile)?
+									}
+								workspace_root = match project {
+									NoProject => Plugin.default_workspace_root
+									RequiresProject => Executor.workspace_root!()?
 								}
 								host = Env.platform!()
 								host_os : Plugin.HostOs
@@ -531,16 +557,23 @@ Executor := [].{
 								match Plugin.plan_registry(
 									registry,
 									kaifile_text,
+									invocation.kaifile,
 									invocation.args,
 									host_os,
 									host.arch,
 									workspace_root,
 								) {
 									Ok(selected_plan) => {
-										if !group {
+										if project == RequiresProject {
 											Executor.prepare_workspace!(workspace_root)?
 										}
-										Executor.execute!(selected_plan, workspace_root, json, color)
+										Executor.execute!(
+											selected_plan,
+											workspace_root,
+											json,
+											color,
+											assume_yes,
+										)
 									}
 									Err(InvalidWorkspaceRoot(message)) =>
 										Err(InvalidWorkspaceRoot(message))
@@ -575,18 +608,74 @@ Executor := [].{
 			}
 	}
 
-	execute! : Plugin.ExecutionPlan, Str, Bool, Bool => Try({}, _)
-	execute! = |execution_plan, workspace_root, json, color| {
-		for step in execution_plan.steps {
-			Executor.execute_step!(step, workspace_root, json, color)?
-		}
-		Ok({})
-	}
+	ExecutionControl : [Continue, Stop]
 
-	execute_step! : Plugin.ExecutionStep, Str, Bool, Bool => Try({}, _)
-	execute_step! = |step, workspace_root, json, color|
+	execute! : Plugin.ExecutionPlan, Str, Bool, Bool, Bool => Try({}, _)
+	execute! = |execution_plan, workspace_root, json, color, assume_yes|
+		Executor.execute_steps!(
+			execution_plan.steps,
+			workspace_root,
+			json,
+			color,
+			assume_yes,
+		)
+
+	execute_steps! = |steps, workspace_root, json, color, assume_yes|
+		match steps {
+			[] => Ok({})
+			[first, .. as rest] =>
+				match Executor.execute_step!(
+					first,
+					workspace_root,
+					json,
+					color,
+					assume_yes,
+				)? {
+					Continue => Executor.execute_steps!(
+						rest,
+						workspace_root,
+						json,
+						color,
+						assume_yes,
+					)
+					Stop => Ok({})
+				}
+			}
+
+	ascii_lowercase : Str -> Str
+	ascii_lowercase = |text|
+		Str.from_utf8_lossy(
+			text.to_utf8().map(
+				|byte| if byte >= 65 and byte <= 90 byte + 32 else byte,
+			),
+		)
+
+	confirm! = |message, json, assume_yes|
+		if assume_yes {
+			Ok(Continue)
+		} else if json or !Executor.is_terminal!("0") {
+			error = "error: confirmation requires interactive stdin; pass --yes"
+			if json {
+				Executor.json_error!("confirmation_required", error, "")?
+			} else {
+				Stderr.line!(error)?
+			}
+			Err(Exit(1))
+		} else {
+			Stdout.write!("${message} ")?
+			answer = Executor.ascii_lowercase(Stdin.line!()?.trim())
+			if answer == "y" or answer == "yes" Ok(Continue) else Ok(Stop)
+		}
+
+	execute_step! :
+		Plugin.ExecutionStep, Str, Bool, Bool, Bool => Try(ExecutionControl, _)
+	execute_step! = |step, workspace_root, json, color, assume_yes|
 		match step {
-			PrintLine(line) => Executor.output!(json, "output", line)
+			Confirm(message) => Executor.confirm!(message, json, assume_yes)
+			PrintLine(line) => {
+				Executor.output!(json, "output", line)?
+				Ok(Continue)
+			}
 			WriteFile({ contents, path }) => {
 				# TODO: Use descriptor-relative no-follow writes when basic-cli
 				# exposes them.
@@ -596,11 +685,14 @@ Executor := [].{
 					Path.create_all!(Path.utf8(Str.join_with(parent_parts, "/")))?
 				}
 				Path.write_utf8!(Path.utf8(path), contents)?
-				Executor.output!(json, "progress", "wrote: ${path}")
+				Executor.output!(json, "progress", "wrote: ${path}")?
+				Ok(Continue)
 			}
-			RunProgram({ arguments, program }) =>
-				Executor.run_program!(json, color, program, arguments)
+			RunProgram({ arguments, program }) => {
+				Executor.run_program!(json, color, program, arguments)?
+				Ok(Continue)
 			}
+		}
 
 	emit_process! = |output| {
 		for (kind, bytes) in [

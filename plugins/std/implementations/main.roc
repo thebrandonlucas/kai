@@ -7,6 +7,7 @@ package
 		MachineNix,
 		ServiceNix,
 		ShellNix,
+		SwitchNix,
 		TaskNix,
 		UpdateNix,
 		WorkflowNix,

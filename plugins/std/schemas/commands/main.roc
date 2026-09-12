@@ -8,6 +8,7 @@ package
 		Service,
 		Shell,
 		System,
+		Switch,
 		Update,
 		Workflow,
 	]
