@@ -14,6 +14,7 @@ import commands.Build as BuildCommand
 import commands.Generations as GenerationsCommand
 import commands.Image as ImageCommand
 import commands.Machine as MachineCommand
+import commands.Rollback as RollbackCommand
 import commands.Run as RunCommand
 import commands.Service as ServiceCommand
 import commands.Shell as ShellCommand
@@ -25,6 +26,7 @@ import implementations.BuildNix
 import implementations.GenerationsNix
 import implementations.ImageNix
 import implementations.MachineNix
+import implementations.RollbackNix
 import implementations.ServiceNix
 import implementations.ShellNix
 import implementations.SwitchNix
@@ -90,6 +92,7 @@ StdPlugin := [].{
 			ShellCommand.command,
 			SystemCommand.command([
 				GenerationsCommand.command,
+				RollbackCommand.command,
 				SwitchCommand.command,
 			]),
 			UpdateCommand.command,
@@ -106,6 +109,7 @@ StdPlugin := [].{
 		GenerationsNix.implementation,
 		ImageNix.implementation,
 		MachineNix.implementation,
+		RollbackNix.implementation,
 		ServiceNix.implementation,
 		ShellNix.implementation,
 		SwitchNix.implementation,
