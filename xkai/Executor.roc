@@ -461,6 +461,49 @@ Executor := [].{
 		Ok({})
 	}
 
+	last_nix_error : List(Str), Str -> Str
+	last_nix_error = |lines, found|
+		match lines {
+			[] => found
+			[line, .. as rest] => {
+				trimmed = line.trim()
+				next = if trimmed.starts_with("error:") and trimmed != "error:" {
+					trimmed
+				} else {
+					found
+				}
+				Executor.last_nix_error(rest, next)
+			}
+		}
+
+	nix_root_error : Str -> Str
+	nix_root_error = |stderr| {
+		root = Executor.last_nix_error(stderr.split_on("\n"), "")
+		message = Str.from_utf8_lossy(root.to_utf8().drop_first(6)).trim()
+		if root.is_empty() {
+			"error: Nix command failed"
+		} else {
+			"error: Nix reported: ${message}"
+		}
+	}
+
+	emit_human_process! = |output| {
+		Stdout.write_bytes!(output.stdout_bytes)?
+		Stderr.write_bytes!(output.stderr_bytes)
+	}
+
+	run_nix! = |command|
+		match command.exec_output_bytes!() {
+			Ok(output) => Executor.emit_human_process!(output)
+			Err(NonZeroExitCodeB({ exit_code, stderr_bytes, .. })) => {
+				Stderr.line!(
+					Executor.nix_root_error(Str.from_utf8_lossy(stderr_bytes)),
+				)?
+				Err(Exit(exit_code))
+			}
+			Err(problem) => Err(problem)
+		}
+
 	run_program! = |json, program, arguments| {
 		command = Cmd.new_str(program).args_str(arguments)
 		if json {
@@ -478,6 +521,8 @@ Executor := [].{
 				}
 				Err(problem) => Err(problem)
 			}
+		} else if program == "nix" and (arguments.first() ?? "") != "develop" {
+			Executor.run_nix!(command)
 		} else {
 			exit_code = command.exec_exit_code!()?
 			if exit_code == 0 Ok({}) else Err(Exit(exit_code))
