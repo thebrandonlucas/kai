@@ -14,6 +14,6 @@ System := [].{
 		},
 	)
 
-	command : Plugin.Command
-	command = Plugin.command_group(command_syntax)
+	command : List(Plugin.Command) -> Plugin.Command
+	command = |commands| Plugin.command_group(command_syntax, commands)
 }

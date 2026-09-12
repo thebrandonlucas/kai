@@ -2,6 +2,7 @@ package
 	[
 		BuildNixTest,
 		EnvironmentNixTest,
+		GenerationsNixTest,
 		ImageNixTest,
 		MachineNixTest,
 		ServiceNixTest,

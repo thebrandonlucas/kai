@@ -11,6 +11,7 @@ import blocks.Source as SourceBlock
 import blocks.Task as TaskBlock
 import blocks.Workflow as WorkflowBlock
 import commands.Build as BuildCommand
+import commands.Generations as GenerationsCommand
 import commands.Image as ImageCommand
 import commands.Machine as MachineCommand
 import commands.Run as RunCommand
@@ -20,6 +21,7 @@ import commands.System as SystemCommand
 import commands.Update as UpdateCommand
 import commands.Workflow as WorkflowCommand
 import implementations.BuildNix
+import implementations.GenerationsNix
 import implementations.ImageNix
 import implementations.MachineNix
 import implementations.ServiceNix
@@ -84,7 +86,7 @@ StdPlugin := [].{
 			RunCommand.command,
 			ServiceCommand.command,
 			ShellCommand.command,
-			SystemCommand.command,
+			SystemCommand.command([GenerationsCommand.command]),
 			UpdateCommand.command,
 			WorkflowCommand.command,
 		],
@@ -96,6 +98,7 @@ StdPlugin := [].{
 	implementations : List(Plugin.Implementation)
 	implementations = [
 		BuildNix.implementation,
+		GenerationsNix.implementation,
 		ImageNix.implementation,
 		MachineNix.implementation,
 		ServiceNix.implementation,
