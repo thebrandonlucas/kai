@@ -1,7 +1,9 @@
 # An implementation for defining nix devShells
 import kai.Plugin
+import parser.Fields
 import backends.Nix as NixBackend
 import blocks.Environment as EnvironmentBlock
+import blocks.Shell as ShellBlock
 import commands.Shell as ShellCommand
 import EnvironmentNix
 
@@ -13,7 +15,7 @@ ShellNix := [].{
 		validator: Validate({
 			string_lists: [
 				{
-					field: EnvironmentBlock.packages_field,
+					field: ShellBlock.packages_field,
 					rules: NixBackend.package_rules,
 				},
 			],
@@ -29,11 +31,36 @@ ShellNix := [].{
 				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
-		pkgs = Plugin.validated_strings(
+		referenced = EnvironmentNix.referenced_environment(input)?
+		shell_packages = Fields.maybe_strings(
 			input.command_fields,
-			EnvironmentBlock.packages_field,
+			"packages",
+		) ?? None
+		shell_pkgs = match (referenced, shell_packages) {
+			(None, None) =>
+				return Err({
+					byte_offset: None,
+					message: "shell requires packages or an environment",
+				})
+			(_, Some(values)) => values
+			(_, None) => []
+		}
+		(base_pkgs, base_overlays) = match referenced {
+			None => ([], [])
+			Some(environment) => (
+				Plugin.validated_strings(
+					environment,
+					EnvironmentBlock.packages_field,
+				)?,
+				EnvironmentNix.extract_overlays(environment)?,
+			)
+		}
+		pkgs = EnvironmentNix.append_unseen(shell_pkgs, base_pkgs)
+		Plugin.implementation_validation(
+			Plugin.validate_string_list(pkgs, NixBackend.package_rules),
 		)?
-		overlays = EnvironmentNix.extract_overlays(input.command_fields)?
+		shell_overlays = EnvironmentNix.extract_overlays(input.command_fields)?
+		overlays = EnvironmentNix.append_unseen(shell_overlays, base_overlays)
 		flake = EnvironmentNix.render_flake(
 			input,
 			pkgs,

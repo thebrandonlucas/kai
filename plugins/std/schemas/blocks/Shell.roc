@@ -4,9 +4,12 @@ import kai.Plugin
 import Environment
 
 Shell := [].{
+	environment_field = Kaifile.optional("environment", Identifier)
+	packages_field = Kaifile.optional("packages", StringList)
+
 	block : Plugin.Block
 	block = Kaifile.unnamed_block({
 		header: "shell",
-		fields: Environment.fields,
+		fields: [environment_field, packages_field, Environment.overlays_field],
 	})
 }
