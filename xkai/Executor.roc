@@ -131,6 +131,19 @@ Executor := [].{
 			NoKaifileBlockExample => []
 		}
 
+	render_command_group_help : Plugin.CommandSyntax -> Str
+	render_command_group_help = |command| {
+		description = match command.help {
+			CommandHelpAvailable(help_content) => "${help_content.description}\n\n"
+			NoCommandHelp => ""
+		}
+		\\${description}Usage:
+		\\  kai ${command.name} <COMMAND>
+		\\
+		\\Commands:
+		\\  No commands available yet.
+	}
+
 	render_command_help : Plugin.CommandSyntax, Plugin.CommandHelp -> Str
 	render_command_help = |command, help_content| {
 		usage_arguments = Executor.argument_usage(help_content.arguments)
@@ -160,19 +173,45 @@ Executor := [].{
 		)
 	}
 
-	command_help_for : List(Plugin.Definition), Str -> [None, Some(Str)]
-	command_help_for = |registry, name|
-		match Plugin.find_owner(registry, name) {
-			Err(UnknownCommand) => None
-			Ok(owner) => {
-				command = Plugin.syntax_from_command(owner.command)
-				match command.help {
+	command_help : Plugin.Command -> [None, Some(Str)]
+	command_help = |command|
+		match command {
+			CommandGroup(group) => Some(Executor.render_command_group_help(group))
+			_ => {
+				syntax = Plugin.syntax_from_command(command)
+				match syntax.help {
 					CommandHelpAvailable(help_content) => Some(
-						Executor.render_command_help(command, help_content),
+						Executor.render_command_help(syntax, help_content),
 					)
 					NoCommandHelp => None
 				}
 			}
+		}
+
+	command_help_for : List(Plugin.Definition), Str -> [None, Some(Str)]
+	command_help_for = |registry, name|
+		match Plugin.find_owner(registry, name) {
+			Err(UnknownCommand) => None
+			Ok(owner) => Executor.command_help(owner.command)
+		}
+
+	# Command groups are empty for now, so any nested invocation shows group help.
+	command_group_help_for :
+		List(Plugin.Definition), List(Str) -> [None, Some(Str)]
+	command_group_help_for = |registry, args|
+		match args {
+			["-f", _, .. as rest] | ["--file", _, .. as rest] =>
+				Executor.command_group_help_for(registry, rest)
+			[name, ..] =>
+				match Plugin.find_owner(registry, name) {
+					Ok(owner) =>
+						match owner.command {
+							CommandGroup(_) => Executor.command_help(owner.command)
+							_ => None
+						}
+					Err(UnknownCommand) => None
+				}
+			[] => None
 		}
 
 	CommandLine := { description : Str, name : Str }
@@ -389,8 +428,9 @@ Executor := [].{
 	run_mode! = |display_args, registry, json, color| {
 		requested_help = match Executor.requested_help_command(display_args) {
 			CommandHelpRequested(command) => Executor.command_help_for(registry, command)
-			NoCommandHelpRequested => None
-		}
+			NoCommandHelpRequested =>
+				Executor.command_group_help_for(registry, display_args)
+			}
 		match requested_help {
 			Some(help_text) =>
 				Executor.output!(json, "help", Executor.colorize(color, help_text))

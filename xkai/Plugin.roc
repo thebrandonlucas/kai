@@ -286,6 +286,7 @@ Plugin := [].{
 	ExplicitBackendBlock : [RequireBackendBlock, TryBackendThenShared]
 
 	Command : [
+		CommandGroup(CommandSyntax),
 		CommandOnly(CommandSyntax),
 		CommandWithBlock(
 			{
@@ -300,6 +301,10 @@ Plugin := [].{
 		blocks : List(Block),
 		commands : List(Command),
 	}
+
+	# Command groups organize commands and have no backend implementation.
+	command_group : CommandSyntax -> Command
+	command_group = |declared_command| CommandGroup(declared_command)
 
 	command_only : CommandSyntax -> Command
 	command_only = |declared_command| CommandOnly(declared_command)
@@ -325,6 +330,7 @@ Plugin := [].{
 	syntax_from_command : Command -> CommandSyntax
 	syntax_from_command = |command|
 		match command {
+			CommandGroup(declared_command) => declared_command
 			CommandOnly(declared_command) => declared_command
 			CommandWithBlock(declaration) => declaration.syntax
 		}
@@ -448,7 +454,7 @@ Plugin := [].{
 	select_command_block : BlockSelector
 	select_command_block = |text, blocks, command, choice, args, os, _|
 		match command {
-			CommandOnly(_) => Ok(Missing)
+			CommandGroup(_) | CommandOnly(_) => Ok(Missing)
 			CommandWithBlock(
 				{
 					block: primary,
@@ -653,7 +659,7 @@ Plugin := [].{
 						}
 					_ => { args, backend_choice }
 				}
-			CommandOnly(_) => { args, backend_choice }
+			CommandGroup(_) | CommandOnly(_) => { args, backend_choice }
 		}
 
 	validate_command_arguments : CommandSyntax, List(Str) -> Try({}, Str)
@@ -1425,7 +1431,7 @@ Plugin := [].{
 			[] => Ok({})
 			[first, .. as rest] => {
 				command_validation = match first {
-					CommandOnly(_) => Ok({})
+					CommandGroup(_) | CommandOnly(_) => Ok({})
 					CommandWithBlock(
 						{
 							block,
@@ -1512,7 +1518,7 @@ Plugin := [].{
 		Command, Str -> Try({}, RegistryDiagnostic)
 	validate_command_references = |command, plugin|
 		match command {
-			CommandOnly(_) => Ok({})
+			CommandGroup(_) | CommandOnly(_) => Ok({})
 			CommandWithBlock(
 				{
 					block,
@@ -1720,7 +1726,7 @@ Plugin := [].{
 			[] => Ok({})
 			[first, .. as rest] => {
 				match first {
-					CommandOnly(_) => Ok({})
+					CommandGroup(_) | CommandOnly(_) => Ok({})
 					CommandWithBlock(
 						{ block, syntax: declared_command, explicit_backend_block: _ },
 					) => {
@@ -1883,21 +1889,30 @@ Plugin := [].{
 								" ",
 							),
 						)
-					Ok(_) =>
-						match Plugin.find_backend(definition.backends, first.backend) {
-							Err(NotFound) =>
+					Ok(command) =>
+						match command {
+							CommandGroup(_) =>
 								Plugin.registry_failure(
 									definition.name,
-									Str.join_with(
-										[
-											"implementation '${first.command}/${first.backend}'",
-											"references unknown backend '${first.backend}'",
-										],
-										" ",
-									),
+									"command group '${first.command}' must not have an implementation",
 								)
-							Ok(_) => Plugin.validate_implementation_references(rest, definition)
-						}
+							_ =>
+								match Plugin.find_backend(definition.backends, first.backend) {
+									Err(NotFound) =>
+										Plugin.registry_failure(
+											definition.name,
+											Str.join_with(
+												[
+													"implementation '${first.command}/${first.backend}'",
+													"references unknown backend '${first.backend}'",
+												],
+												" ",
+											),
+										)
+									Ok(_) =>
+										Plugin.validate_implementation_references(rest, definition)
+									}
+							}
 					}
 			}
 
@@ -1913,32 +1928,37 @@ Plugin := [].{
 		match commands {
 			[] => Ok({})
 			[first, .. as rest] => {
-				declared_command = Plugin.syntax_from_command(first)
-				match Plugin.find_implementation(
-					implementations,
-					declared_command.name,
-					backend,
-				) {
-					Ok(_) =>
-						Plugin.validate_default_implementations(
-							rest,
-							backend,
+				match first {
+					CommandGroup(_) => Ok({})
+					_ => {
+						declared_command = Plugin.syntax_from_command(first)
+						match Plugin.find_implementation(
 							implementations,
-							plugin,
-						)
-					Err(NotFound) =>
-						Plugin.registry_failure(
-							plugin,
-							Str.join_with(
-								[
-									"command '${declared_command.name}' has no",
-									"implementation for default backend",
-									"'${backend}'",
-								],
-								" ",
-							),
-						)
+							declared_command.name,
+							backend,
+						) {
+							Ok(_) => Ok({})
+							Err(NotFound) =>
+								Plugin.registry_failure(
+									plugin,
+									Str.join_with(
+										[
+											"command '${declared_command.name}' has no",
+											"implementation for default backend",
+											"'${backend}'",
+										],
+										" ",
+									),
+								)
+							}
 					}
+				}?
+				Plugin.validate_default_implementations(
+					rest,
+					backend,
+					implementations,
+					plugin,
+				)
 			}
 		}
 
@@ -2107,7 +2127,7 @@ Plugin := [].{
 						) ? |diagnostic|
 							fail(diagnostic.location, diagnostic.message)
 						parsed = match (selected_command, selection) {
-							(CommandOnly(_), _) => Ok({
+							(CommandGroup(_), _) | (CommandOnly(_), _) => Ok({
 								command_fields: Fields.empty,
 								referenced_fields: NoReferencedFields,
 							})
