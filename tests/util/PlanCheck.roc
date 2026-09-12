@@ -25,6 +25,7 @@ PlanCheck := [].{
 		match Plugin.plan_registry(
 			input.definitions,
 			input.kaifile,
+			"Kaifile",
 			invocation,
 			input.host.os,
 			input.host.arch,
@@ -51,6 +52,7 @@ PlanCheck := [].{
 		match Plugin.plan_registry(
 			input.definitions,
 			input.kaifile,
+			"Kaifile",
 			invocation,
 			input.host.os,
 			input.host.arch,
@@ -134,6 +136,8 @@ PlanCheck := [].{
 	steps_equal : Plugin.ExecutionStep, Plugin.ExecutionStep -> Bool
 	steps_equal = |actual, expected|
 		match (actual, expected) {
+			(Confirm(actual_message), Confirm(expected_message)) =>
+				actual_message == expected_message
 			(PrintLine(actual_line), PrintLine(expected_line)) =>
 				actual_line == expected_line
 			(RunProgram(actual_run), RunProgram(expected_run)) =>

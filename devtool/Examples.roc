@@ -173,6 +173,7 @@ Examples := [].{
 				plan = Plugin.plan_registry(
 					[StdPlugin.plugin],
 					source,
+					path,
 					first.args,
 					first.os,
 					first.arch,

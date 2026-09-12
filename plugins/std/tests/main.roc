@@ -7,6 +7,7 @@ package
 		MachineNixTest,
 		ServiceNixTest,
 		ShellNixTest,
+		SwitchNixTest,
 		TaskNixTest,
 		UpdateNixTest,
 		WorkflowNixTest,

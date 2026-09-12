@@ -18,6 +18,7 @@ import commands.Run as RunCommand
 import commands.Service as ServiceCommand
 import commands.Shell as ShellCommand
 import commands.System as SystemCommand
+import commands.Switch as SwitchCommand
 import commands.Update as UpdateCommand
 import commands.Workflow as WorkflowCommand
 import implementations.BuildNix
@@ -26,6 +27,7 @@ import implementations.ImageNix
 import implementations.MachineNix
 import implementations.ServiceNix
 import implementations.ShellNix
+import implementations.SwitchNix
 import implementations.TaskNix
 import implementations.UpdateNix
 import implementations.WorkflowNix
@@ -86,7 +88,10 @@ StdPlugin := [].{
 			RunCommand.command,
 			ServiceCommand.command,
 			ShellCommand.command,
-			SystemCommand.command([GenerationsCommand.command]),
+			SystemCommand.command([
+				GenerationsCommand.command,
+				SwitchCommand.command,
+			]),
 			UpdateCommand.command,
 			WorkflowCommand.command,
 		],
@@ -103,6 +108,7 @@ StdPlugin := [].{
 		MachineNix.implementation,
 		ServiceNix.implementation,
 		ShellNix.implementation,
+		SwitchNix.implementation,
 		TaskNix.implementation,
 		UpdateNix.implementation,
 		WorkflowNix.implementation,
