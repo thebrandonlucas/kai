@@ -5,6 +5,9 @@ import commands.Image as ImageCommand
 import MachineNix
 
 ImageNix := [].{
+	ImageServices : List(Plugin.Artifact)
+	ImageSteps : List(Plugin.ExecutionStep)
+
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
@@ -32,9 +35,16 @@ ImageNix := [].{
 			"artifacts/images/${name}/metadata.json",
 		)
 
-	image_steps :
-		Str, Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
-	image_steps = |workspace_root, name, flake, module_text, metadata, services| {
+	image_steps : Str, Str, Str, Str, Str, Str, ImageServices -> ImageSteps
+	image_steps = |
+		workspace_root,
+		kaifile_path,
+		name,
+		flake,
+		module_text,
+		metadata,
+		services,
+	| {
 		flake_path = ImageNix.image_flake_path(workspace_root, name)
 		metadata_path = ImageNix.image_metadata_path(workspace_root, name)
 		[
@@ -43,7 +53,7 @@ ImageNix := [].{
 			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
 		]
 			.concat(MachineNix.service_copy_steps(flake_path, services))
-			.concat(NixBackend.lock_steps(flake_path))
+			.concat(NixBackend.lock_steps(flake_path, kaifile_path))
 			.concat([
 				WriteFile({
 					contents: "",
@@ -130,6 +140,7 @@ ImageNix := [].{
 				requested_packages: spec.pkgs,
 				steps: ImageNix.image_steps(
 					input.workspace_root,
+					input.kaifile_path,
 					spec.name,
 					ImageNix.render_flake(
 						spec.name,

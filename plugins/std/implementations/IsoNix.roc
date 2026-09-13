@@ -5,6 +5,9 @@ import commands.Iso as IsoCommand
 import MachineNix
 
 IsoNix := [].{
+	IsoServices : List(Plugin.Artifact)
+	IsoSteps : List(Plugin.ExecutionStep)
+
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
@@ -25,16 +28,22 @@ IsoNix := [].{
 	iso_flake_path = |workspace_root, name|
 		Plugin.workspace_path(workspace_root, "isos/${name}")
 
-	iso_steps :
-		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
-	iso_steps = |workspace_root, name, flake, module_text, services| {
+	iso_steps : Str, Str, Str, Str, Str, IsoServices -> IsoSteps
+	iso_steps = |
+		workspace_root,
+		kaifile_path,
+		name,
+		flake,
+		module_text,
+		services,
+	| {
 		flake_path = IsoNix.iso_flake_path(workspace_root, name)
 		[
 			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
 			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
 		]
 			.concat(MachineNix.service_copy_steps(flake_path, services))
-			.concat(NixBackend.lock_steps(flake_path))
+			.concat(NixBackend.lock_steps(flake_path, kaifile_path))
 			.concat([
 				WriteFile({
 					contents: "",
@@ -103,6 +112,7 @@ IsoNix := [].{
 				requested_packages: spec.pkgs,
 				steps: IsoNix.iso_steps(
 					input.workspace_root,
+					input.kaifile_path,
 					spec.name,
 					IsoNix.render_flake(
 						spec.name,

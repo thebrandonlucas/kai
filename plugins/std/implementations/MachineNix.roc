@@ -7,6 +7,9 @@ import commands.Machine as MachineCommand
 import EnvironmentNix
 
 MachineNix := [].{
+	MachineServices : List(Plugin.Artifact)
+	MachineSteps : List(Plugin.ExecutionStep)
+
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
@@ -110,8 +113,16 @@ MachineNix := [].{
 	}
 
 	machine_steps :
-		Str, Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
-	machine_steps = |root, name, flake, module_text, metadata, services| {
+		Str, Str, Str, Str, Str, Str, MachineServices -> MachineSteps
+	machine_steps = |
+		root,
+		kaifile_path,
+		name,
+		flake,
+		module_text,
+		metadata,
+		services,
+	| {
 		flake_path = MachineNix.machine_flake_path(root, name)
 		metadata_path = MachineNix.machine_metadata_path(root, name)
 		[
@@ -121,7 +132,7 @@ MachineNix := [].{
 			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
 		]
 			.concat(MachineNix.service_copy_steps(flake_path, services))
-			.concat(NixBackend.lock_steps(flake_path))
+			.concat(NixBackend.lock_steps(flake_path, kaifile_path))
 			.concat([
 				WriteFile({
 					contents: "",
@@ -316,6 +327,7 @@ MachineNix := [].{
 				requested_packages: spec.pkgs,
 				steps: MachineNix.machine_steps(
 					input.workspace_root,
+					input.kaifile_path,
 					spec.name,
 					flake,
 					module_text,

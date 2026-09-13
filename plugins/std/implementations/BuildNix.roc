@@ -128,7 +128,9 @@ BuildNix := [].{
 						path: "${flake_path}/build.nix",
 					}),
 					WriteFile({ contents: build_json, path: "${flake_path}/build.json" }),
-				].concat(NixBackend.lock_steps(flake_path)).concat([
+				].concat(
+					NixBackend.lock_steps(flake_path, planning_input.kaifile_path),
+				).concat([
 					WriteFile({
 						contents: "",
 						path: Plugin.workspace_path(

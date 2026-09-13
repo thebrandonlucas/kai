@@ -24,10 +24,14 @@ PlanCheck := [].{
 
 	plan : Input, Invocation, ExpectedOutcome -> Bool
 	plan = |input, invocation, expected|
+		PlanCheck.plan_at(input, "Kaifile", invocation, expected)
+
+	plan_at : Input, Str, Invocation, ExpectedOutcome -> Bool
+	plan_at = |input, kaifile_path, invocation, expected|
 		match Plugin.plan_registry(
 			input.definitions,
 			input.kaifile,
-			"Kaifile",
+			kaifile_path,
 			invocation,
 			input.host.os,
 			input.host.arch,

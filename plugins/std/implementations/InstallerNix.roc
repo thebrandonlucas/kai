@@ -37,9 +37,10 @@ InstallerNix := [].{
 		)
 
 	installer_steps :
-		Str, Str, Str, Str, Str, Str, Str, InstallerServices -> InstallerSteps
+		Str, Str, Str, Str, Str, Str, Str, Str, InstallerServices -> InstallerSteps
 	installer_steps = |
 		root,
+		kaifile_path,
 		name,
 		flake,
 		module_text,
@@ -59,7 +60,7 @@ InstallerNix := [].{
 			WriteFile({ contents: kaifile, path: "${flake_path}/Kaifile" }),
 		]
 			.concat(MachineNix.service_copy_steps(flake_path, services))
-			.concat(NixBackend.lock_steps(flake_path))
+			.concat(NixBackend.lock_steps(flake_path, kaifile_path))
 			.concat([
 				WriteFile({
 					contents: "",
@@ -205,6 +206,7 @@ InstallerNix := [].{
 				requested_packages: spec.pkgs,
 				steps: InstallerNix.installer_steps(
 					input.workspace_root,
+					input.kaifile_path,
 					spec.name,
 					InstallerNix.render_flake(
 						spec.name,

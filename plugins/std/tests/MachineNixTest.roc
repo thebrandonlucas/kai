@@ -515,6 +515,45 @@ expect {
 	)
 }
 
+# Generated flakes use the lock beside a selected non-default Kaifile.
+expect {
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\machine agent {
+		\\  environment: server
+		\\  system: "x86_64-linux"
+		\\}
+	PlanCheck.plan_at(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		"/etc/kai/Kaifile",
+		["machine", "agent"],
+		Succeeds([
+			ContainsStep(
+				RunProgram({
+					arguments: [
+						"flake",
+						"lock",
+						"path:.kai/machines/agent",
+						"--reference-lock-file",
+						"/etc/kai/Kaifile.lock",
+						"--output-lock-file",
+						"/etc/kai/Kaifile.lock",
+					],
+					program: "nix",
+				}),
+			),
+		]),
+	)
+}
+
 # Machine planning rejects systems that NixOS machine builds do not support.
 expect {
 	kaifile =
