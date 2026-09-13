@@ -1,6 +1,7 @@
 package
 	[
 		BuildNixTest,
+		DeployNixTest,
 		EnvironmentNixTest,
 		GenerationsNixTest,
 		ImageNixTest,
