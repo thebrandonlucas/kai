@@ -13,9 +13,10 @@ build greeter {
   output: "greeter"
 }
 
-# Kai provisions the value at runtime; secrets never belong in the Kaifile.
+# Kai decrypts the SOPS-encrypted value at runtime.
 secret greeting {
-  provision: runtime
+  provider: sops
+  file: "secrets/greeting.json"
 }
 
 service greeter {

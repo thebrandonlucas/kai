@@ -28,9 +28,6 @@ expect {
 	expected_module =
 		\\{ ... }:
 		\\{
-		\\  systemd.tmpfiles.rules = [
-		\\    "d /run/kai/secrets 0700 root root -"
-		\\  ];
 		\\  systemd.services."web" = {
 		\\    wantedBy = [ "multi-user.target" ];
 		\\    serviceConfig = {
@@ -107,6 +104,90 @@ expect {
 					program: "nix",
 				}),
 			),
+		]),
+	)
+}
+
+# A service resolves a sops secret into artifact metadata and credentials.
+expect {
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\build app {
+		\\  environment: server
+		\\  run: ["touch", "app"]
+		\\  output: "app"
+		\\}
+		\\
+		\\secret api-key {
+		\\  provider: sops
+		\\  file: "secrets/api-key.json"
+		\\}
+		\\
+		\\service web {
+		\\  artifact: "app"
+		\\  secrets: ["api-key"]
+		\\  restart: on-failure
+		\\}
+	nix_artifact = \\${"$"}{./artifact}
+	sops_path = \\${"$"}{config.sops.secrets."api-key".path}
+	expected_module =
+		\\{ config, ... }:
+		\\{
+		\\  sops.secrets."api-key".restartUnits = [ "web.service" ];
+		\\  systemd.services."web" = {
+		\\    wantedBy = [ "multi-user.target" ];
+		\\    serviceConfig = {
+		\\      Type = "exec";
+		\\      ExecStart = "${nix_artifact}";
+		\\      Restart = "on-failure";
+		\\      DynamicUser = true;
+		\\      NoNewPrivileges = true;
+		\\      PrivateDevices = true;
+		\\      PrivateTmp = true;
+		\\      ProtectControlGroups = true;
+		\\      ProtectHome = true;
+		\\      ProtectKernelModules = true;
+		\\      ProtectKernelTunables = true;
+		\\      ProtectSystem = "strict";
+		\\      RestrictSUIDSGID = true;
+		\\      UMask = "0077";
+		\\      LoadCredential = [
+		\\        "api-key:${sops_path}"
+		\\      ];
+		\\    };
+		\\  };
+		\\}
+
+	PlanCheck.plan(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["service", "web"],
+		Succeeds([
+			WritesExactly({
+				contents: expected_module,
+				path: ".kai/services/web/module.nix",
+			}),
+			ContainsArtifact({
+				attributes: [
+					{ key: "backend", value: "nix" },
+					{ key: "build", value: "app" },
+					{ key: "target.system", value: "x86_64-linux" },
+					{
+						key: "secret.api-key.file",
+						value: "secrets/api-key.json",
+					},
+				],
+				kind: "kai.nixos.service/v1",
+				name: "web",
+				path: ".kai/artifacts/.services/web",
+			}),
 		]),
 	)
 }

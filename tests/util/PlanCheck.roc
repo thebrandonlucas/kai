@@ -14,6 +14,8 @@ PlanCheck := [].{
 	ExpectedOutcome : [FailsWith(Plugin.Error), Succeeds(List(PlanExpectation))]
 	PlanExpectation : [
 		ContainsArtifact(Plugin.Artifact),
+		ContainsRunProgramArguments({ arguments : List(Str), program : Str }),
+		ContainsStagedFile({ directory : Str, name : Str, source : Str }),
 		ContainsStep(Plugin.ExecutionStep),
 		ContainsStepsInOrder(List(Plugin.ExecutionStep)),
 		WritesAtPathExactly({ contents : List(Str), path : Str }),
@@ -75,6 +77,36 @@ PlanCheck := [].{
 				List.any(
 					actual_plan.artifacts,
 					|actual| PlanCheck.artifacts_equal(actual, expected),
+				)
+			ContainsRunProgramArguments(expected) =>
+				List.any(
+					actual_plan.steps,
+					|step|
+						match step {
+							RunProgram(actual) =>
+								actual.program == expected.program and
+									List.all(
+										expected.arguments,
+										|argument| actual.arguments.contains(argument),
+									)
+							_ => Bool.False
+						},
+				)
+			ContainsStagedFile(expected) =>
+				List.any(
+					actual_plan.steps,
+					|step|
+						match step {
+							StageExternalFiles(actual) =>
+								actual.directory == expected.directory and
+									List.any(
+										actual.files,
+										|file|
+											file.name == expected.name and
+												file.source == expected.source,
+									)
+							_ => Bool.False
+						},
 				)
 			ContainsStep(expected) =>
 				List.any(
@@ -143,6 +175,8 @@ PlanCheck := [].{
 			(RunProgram(actual_run), RunProgram(expected_run)) =>
 				actual_run.arguments == expected_run.arguments and
 					actual_run.program == expected_run.program
+			(StageExternalFiles(actual_stage), StageExternalFiles(expected_stage)) =>
+				actual_stage == expected_stage
 			(WriteFile(actual_write), WriteFile(expected_write)) =>
 				actual_write.contents == expected_write.contents and
 					actual_write.path == expected_write.path

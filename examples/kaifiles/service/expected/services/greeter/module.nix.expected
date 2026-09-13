@@ -1,8 +1,6 @@
-{ ... }:
+{ config, ... }:
 {
-  systemd.tmpfiles.rules = [
-    "d /run/kai/secrets 0700 root root -"
-  ];
+  sops.secrets."greeting".restartUnits = [ "greeter.service" ];
   systemd.services."greeter" = {
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
@@ -21,7 +19,7 @@
       RestrictSUIDSGID = true;
       UMask = "0077";
       LoadCredential = [
-        "greeting:/run/kai/secrets/greeting"
+        "greeting:${config.sops.secrets."greeting".path}"
       ];
     };
   };

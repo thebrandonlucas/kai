@@ -3,10 +3,21 @@ import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
 import blocks.Machine as MachineBlock
+import blocks.Secret as SecretBlock
 import commands.Machine as MachineCommand
 import EnvironmentNix
 
 MachineNix := [].{
+	SecretSpec := { file : Str, name : Str }
+
+	MachineStepsInput := {
+		flake : Str,
+		metadata : Str,
+		module_text : Str,
+		secrets : List(SecretSpec),
+		services : List(Plugin.Artifact),
+	}
+
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
@@ -106,18 +117,45 @@ MachineNix := [].{
 		])
 	}
 
+	# Nix may store these files because they contain only SOPS ciphertext and
+	# recipient metadata. The private key and decrypted values never enter the
+	# generated flake or Nix store.
+	secret_stage_steps : Str, List(SecretSpec) -> List(Plugin.ExecutionStep)
+	secret_stage_steps = |flake_path, secrets|
+		[
+			StageExternalFiles({
+				directory: "${flake_path}/secrets",
+				files: secrets.map(
+					|secret| {
+						name: "${secret.name}.json",
+						source: secret.file,
+					},
+				),
+				source_validation_error: "secret source must be SOPS binary JSON",
+				staged_validation_error: "staged secret must be SOPS binary JSON",
+				validators: NixBackend.sops_binary_json_validators,
+			}),
+		]
+
 	machine_steps :
-		Str, Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
-	machine_steps = |root, name, flake, module_text, metadata, services| {
+		Str, Str, MachineStepsInput -> List(Plugin.ExecutionStep)
+	machine_steps = |root, name, input| {
 		flake_path = MachineNix.machine_flake_path(root, name)
 		metadata_path = MachineNix.machine_metadata_path(root, name)
 		[
 			# Empty metadata invalidates an older artifact before any fallible step.
 			WriteFile({ contents: "", path: metadata_path }),
-			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
-			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
+			WriteFile({
+				contents: input.flake,
+				path: "${flake_path}/flake.nix",
+			}),
+			WriteFile({
+				contents: input.module_text,
+				path: "${flake_path}/machine.nix",
+			}),
 		]
-			.concat(MachineNix.service_copy_steps(flake_path, services))
+			.concat(MachineNix.service_copy_steps(flake_path, input.services))
+			.concat(MachineNix.secret_stage_steps(flake_path, input.secrets))
 			.concat(NixBackend.lock_steps(flake_path))
 			.concat([
 				WriteFile({
@@ -134,7 +172,7 @@ MachineNix := [].{
 					"--out-link",
 					MachineNix.machine_closure_path(root, name),
 				]),
-				WriteFile({ contents: metadata, path: metadata_path }),
+				WriteFile({ contents: input.metadata, path: metadata_path }),
 			])
 	}
 
@@ -252,6 +290,19 @@ MachineNix := [].{
 		native_services = spec.services.keep_if(
 			|service| !spec.generated_services.contains(service),
 		)
+		secrets = MachineNix.collect_secrets(
+			services,
+			input.workspace_root,
+		)?
+		if !secrets.is_empty() and !native_services.contains("openssh") {
+			return Err({
+				byte_offset: None,
+				message: \\machines with secrets require the native NixOS service
+					\\'openssh' and an existing /etc/ssh/ssh_host_ed25519_key whose
+					\\recipient encrypted the secret files
+				,
+			})
+		}
 		machine_metadata = MachineNix.MachineMetadata.{
 			backend: NixBackend.backend.name,
 			closure_path: MachineNix.machine_closure_path(
@@ -274,11 +325,13 @@ MachineNix := [].{
 			spec.locked_overlays,
 			spec.overlays,
 			services,
+			secrets,
 		)
 		module_text = MachineNix.render_module(
 			spec.pkgs,
 			spec.users,
 			native_services,
+			secrets,
 		)
 		metadata = MachineNix.render_metadata(machine_metadata)
 		Ok(
@@ -303,10 +356,13 @@ MachineNix := [].{
 				steps: MachineNix.machine_steps(
 					input.workspace_root,
 					spec.name,
-					flake,
-					module_text,
-					metadata,
-					services,
+					MachineNix.MachineStepsInput.{
+						flake,
+						metadata,
+						module_text,
+						secrets,
+						services,
+					},
 				),
 			},
 		)
@@ -456,6 +512,121 @@ MachineNix := [].{
 			})
 		}
 
+	collect_secrets :
+		List(Plugin.Artifact),
+		Str ->
+			Try(
+				List(SecretSpec),
+				Plugin.BackendPlanningDiagnostic,
+			)
+	collect_secrets = |services, workspace_root|
+		MachineNix.collect_service_secrets(services, workspace_root, [])
+
+	collect_service_secrets :
+		List(Plugin.Artifact),
+		Str,
+		List(SecretSpec) ->
+			Try(
+				List(SecretSpec),
+				Plugin.BackendPlanningDiagnostic,
+			)
+	collect_service_secrets = |services, workspace_root, collected|
+		match services {
+			[] => Ok(collected)
+			[first, .. as rest] => {
+				next = MachineNix.collect_secret_attributes(
+					first.attributes,
+					workspace_root,
+					collected,
+				)?
+				MachineNix.collect_service_secrets(rest, workspace_root, next)
+			}
+		}
+
+	collect_secret_attributes :
+		List(Plugin.ArtifactAttribute),
+		Str,
+		List(SecretSpec) ->
+			Try(
+				List(SecretSpec),
+				Plugin.BackendPlanningDiagnostic,
+			)
+	collect_secret_attributes = |attributes, workspace_root, collected|
+		match attributes {
+			[] => Ok(collected)
+			[first, .. as rest] => {
+				is_secret = first.key == "secret" or
+					first.key.starts_with("secret.")
+				if !is_secret {
+					MachineNix.collect_secret_attributes(
+						rest,
+						workspace_root,
+						collected,
+					)
+				} else {
+					name = match first.key.split_on(".") {
+						["secret", parsed_name, "file"] => Ok(parsed_name)
+						_ => Err({
+							byte_offset: None,
+							message: Str.join_with(
+								[
+									"malformed service secret metadata '",
+									first.key,
+									"'; expected 'secret.<NAME>.file'",
+								],
+								"",
+							),
+						})
+					}?
+					failures = SecretBlock.name_failures(name)
+						.concat(SecretBlock.file_failures(first.value))
+						.concat(
+							SecretBlock.workspace_file_failures(
+								first.value,
+								workspace_root,
+							),
+						)
+					Plugin.implementation_validation(failures)?
+					next = MachineNix.insert_secret(
+						collected,
+						{ file: first.value, name },
+					)?
+					MachineNix.collect_secret_attributes(
+						rest,
+						workspace_root,
+						next,
+					)
+				}
+			}
+		}
+
+	insert_secret :
+		List(SecretSpec),
+		SecretSpec ->
+			Try(
+				List(SecretSpec),
+				Plugin.BackendPlanningDiagnostic,
+			)
+	insert_secret = |secrets, candidate|
+		match secrets.keep_if(|secret| secret.name == candidate.name) {
+			[] => Ok(secrets.concat([candidate]))
+			[first, ..] => if first.file == candidate.file {
+				Ok(secrets)
+			} else {
+				Err({
+					byte_offset: None,
+					message: Str.join_with(
+						[
+							"secret '",
+							candidate.name,
+							"' maps to different files in service artifacts",
+						],
+						"",
+					),
+				})
+			}
+		}
+
 	service_module_lines : List(Plugin.Artifact) -> List(Str)
 	service_module_lines = |services|
 		services.map(|service| "          ./services/${service.name}")
@@ -496,50 +667,74 @@ MachineNix := [].{
 		})
 	}
 
-	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
-	render_flake = |name, system, locked_overlays, overlays, services| {
-		overlay_lines = overlays.map(
-			|overlay|
-				"          ${NixBackend.overlay_expression(locked_overlays, overlay, 0)}",
-		)
-		outputs_args = NixBackend.overlay_outputs_args(locked_overlays)
-		lines = [
-			"{",
-			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-		].concat(NixBackend.input_lines(locked_overlays)).concat([
-			"  outputs = { ${outputs_args}, ... }:",
-			"    let",
-			"      system = \"${system}\";",
-			"      pkgs = import nixpkgs {",
-			"        inherit system;",
-			"        overlays = [",
-		]).concat(overlay_lines).concat([
-			"        ];",
-			"      };",
-			"      machine = nixpkgs.lib.nixosSystem {",
-			"        inherit system;",
-			"        modules = [",
-			"          { nixpkgs.pkgs = pkgs; }",
-			"          ./machine.nix",
-		]).concat(MachineNix.service_module_lines(services)).concat([
-			"        ];",
-			"      };",
-			"    in {",
-			"      nixosConfigurations.\"${name}\" = machine;",
-			"      kaiMachines.\"${name}\" = {",
-			"        kind = \"machine\";",
-			"        name = \"${name}\";",
-			"        inherit system;",
-			"        closure = machine.config.system.build.toplevel;",
-			"      };",
-			"    };",
-			"}",
-		])
-		Str.join_with(lines, "\n")
-	}
+	render_flake :
+		Str, Str, List(Str), List(Str), List(Plugin.Artifact), List(SecretSpec) -> Str
+	render_flake =
+		|name, system, locked_overlays, overlays, services, secrets| {
+			overlay_lines = overlays.map(
+				|overlay|
+					"          ${NixBackend.overlay_expression(locked_overlays, overlay, 0)}",
+			)
+			outputs_args = NixBackend.overlay_outputs_args(locked_overlays)
+			# sops-nix is the NixOS integration that decrypts SOPS files during
+			# activation and exposes them as runtime files instead of store paths.
+			sops_input_lines = if secrets.is_empty() {
+				[]
+			} else {
+				[
+					"  inputs.sops-nix = {",
+					"    url = \"github:Mic92/sops-nix\";",
+					"    inputs.nixpkgs.follows = \"nixpkgs\";",
+					"  };",
+				]
+			}
+			sops_outputs_arg = if secrets.is_empty() "" else ", sops-nix"
+			sops_module_lines = if secrets.is_empty() {
+				[]
+			} else {
+				["          sops-nix.nixosModules.sops"]
+			}
+			lines = [
+				"{",
+				"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
+			].concat(sops_input_lines)
+				.concat(NixBackend.input_lines(locked_overlays))
+				.concat([
+					"  outputs = { ${outputs_args}${sops_outputs_arg}, ... }:",
+					"    let",
+					"      system = \"${system}\";",
+					"      pkgs = import nixpkgs {",
+					"        inherit system;",
+					"        overlays = [",
+				]).concat(overlay_lines).concat([
+				"        ];",
+				"      };",
+				"      machine = nixpkgs.lib.nixosSystem {",
+				"        inherit system;",
+				"        modules = [",
+				"          { nixpkgs.pkgs = pkgs; }",
+				"          ./machine.nix",
+			]).concat(sops_module_lines)
+				.concat(MachineNix.service_module_lines(services))
+				.concat([
+					"        ];",
+					"      };",
+					"    in {",
+					"      nixosConfigurations.\"${name}\" = machine;",
+					"      kaiMachines.\"${name}\" = {",
+					"        kind = \"machine\";",
+					"        name = \"${name}\";",
+					"        inherit system;",
+					"        closure = machine.config.system.build.toplevel;",
+					"      };",
+					"    };",
+					"}",
+				])
+			Str.join_with(lines, "\n")
+		}
 
-	render_module : List(Str), List(Str), List(Str) -> Str
-	render_module = |pkgs, users, services| {
+	render_module : List(Str), List(Str), List(Str), List(SecretSpec) -> Str
+	render_module = |pkgs, users, services, secrets| {
 		package_lines = pkgs.map(
 			|pkg| "    pkgs.${NixBackend.render_attribute_path(pkg)}",
 		)
@@ -552,6 +747,33 @@ MachineNix := [].{
 				"  services.${service_attr}.enable = true;"
 			},
 		)
+		# Each entry tells sops-nix which encrypted file to decrypt. `binary` means
+		# the result is the original file bytes, not a parsed JSON field.
+		secret_lines = secrets.map(
+			|secret|
+				Str.join_with(
+					[
+						"  sops.secrets.\"${secret.name}\" = {\n",
+						"    format = \"binary\";\n",
+						"    sopsFile = ./secrets/${secret.name}.json;\n",
+						"  };",
+					],
+					"",
+				),
+		)
+		# sops-nix converts this existing SSH private key into an age identity.
+		# Each source file must name the matching public age recipient, allowing
+		# this machine to unwrap its encrypted data key.
+		secret_config_lines = if secrets.is_empty() {
+			[]
+		} else {
+			[
+				"  # Native OpenSSH is required, and this key must already exist.",
+				"  # Its recipient must have encrypted every SOPS file.",
+				\\  sops.age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
+				,
+			].concat(secret_lines)
+		}
 		lines = [
 			"{ pkgs, ... }:",
 			"{",
@@ -564,9 +786,12 @@ MachineNix := [].{
 			"  environment.systemPackages = [",
 		].concat(package_lines).concat([
 			"  ];",
-		]).concat(user_lines).concat(service_lines).concat([
-			"}",
-		])
+		]).concat(user_lines)
+			.concat(service_lines)
+			.concat(secret_config_lines)
+			.concat([
+				"}",
+			])
 		Str.join_with(lines, "\n")
 	}
 }
