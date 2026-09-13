@@ -14,6 +14,7 @@ PlanCheck := [].{
 	ExpectedOutcome : [FailsWith(Plugin.Error), Succeeds(List(PlanExpectation))]
 	PlanExpectation : [
 		ContainsArtifact(Plugin.Artifact),
+		ContainsRunProgramArguments({ arguments : List(Str), program : Str }),
 		ContainsStep(Plugin.ExecutionStep),
 		ContainsStepsInOrder(List(Plugin.ExecutionStep)),
 		WritesAtPathExactly({ contents : List(Str), path : Str }),
@@ -75,6 +76,20 @@ PlanCheck := [].{
 				List.any(
 					actual_plan.artifacts,
 					|actual| PlanCheck.artifacts_equal(actual, expected),
+				)
+			ContainsRunProgramArguments(expected) =>
+				List.any(
+					actual_plan.steps,
+					|step|
+						match step {
+							RunProgram(actual) =>
+								actual.program == expected.program and
+									List.all(
+										expected.arguments,
+										|argument| actual.arguments.contains(argument),
+									)
+							_ => Bool.False
+						},
 				)
 			ContainsStep(expected) =>
 				List.any(

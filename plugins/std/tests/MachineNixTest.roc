@@ -199,6 +199,188 @@ expect {
 	)
 }
 
+# A secret-bearing machine imports sops-nix and stages its encrypted source.
+expect {
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\build app {
+		\\  environment: server
+		\\  run: ["touch", "app"]
+		\\  output: "app"
+		\\}
+		\\
+		\\secret api-key {
+		\\  provider: sops
+		\\  file: "secrets/api-key.json"
+		\\}
+		\\
+		\\service web {
+		\\  artifact: "app"
+		\\  secrets: ["api-key"]
+		\\  restart: on-failure
+		\\}
+		\\
+		\\machine agent {
+		\\  environment: server
+		\\  system: "x86_64-linux"
+		\\  users: []
+		\\  services: ["web", "openssh"]
+		\\}
+	expected_flake =
+		\\{
+		\\  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+		\\  inputs.sops-nix = {
+		\\    url = "github:Mic92/sops-nix";
+		\\    inputs.nixpkgs.follows = "nixpkgs";
+		\\  };
+		\\  outputs = { nixpkgs, sops-nix, ... }:
+		\\    let
+		\\      system = "x86_64-linux";
+		\\      pkgs = import nixpkgs {
+		\\        inherit system;
+		\\        overlays = [
+		\\        ];
+		\\      };
+		\\      machine = nixpkgs.lib.nixosSystem {
+		\\        inherit system;
+		\\        modules = [
+		\\          { nixpkgs.pkgs = pkgs; }
+		\\          ./machine.nix
+		\\          sops-nix.nixosModules.sops
+		\\          ./services/web
+		\\        ];
+		\\      };
+		\\    in {
+		\\      nixosConfigurations."agent" = machine;
+		\\      kaiMachines."agent" = {
+		\\        kind = "machine";
+		\\        name = "agent";
+		\\        inherit system;
+		\\        closure = machine.config.system.build.toplevel;
+		\\      };
+		\\    };
+		\\}
+	expected_module =
+		\\{ pkgs, ... }:
+		\\{
+		\\  boot.loader.grub.enable = false;
+		\\  fileSystems."/" = {
+		\\    device = "/dev/root";
+		\\    fsType = "auto";
+		\\  };
+		\\  system.stateVersion = "25.05";
+		\\  environment.systemPackages = [
+		\\  ];
+		\\  services."openssh".enable = true;
+		\\  # Native OpenSSH is required, and this key must already exist.
+		\\  # Its recipient must have encrypted every SOPS file.
+		\\  sops.age.sshKeyPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
+		\\  sops.secrets."api-key" = {
+		\\    format = "binary";
+		\\    sopsFile = ./secrets/api-key.json;
+		\\  };
+		\\}
+	PlanCheck.plan(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["machine", "agent"],
+		Succeeds([
+			WritesExactly({
+				contents: expected_flake,
+				path: ".kai/machines/agent/flake.nix",
+			}),
+			WritesExactly({
+				contents: expected_module,
+				path: ".kai/machines/agent/machine.nix",
+			}),
+			ContainsRunProgramArguments({
+				arguments: [
+					"secrets/api-key.json",
+					".kai/machines/agent/secrets.tmp/api-key.json",
+				],
+				program: "sh",
+			}),
+			ContainsStep(
+				RunProgram({
+					arguments: [
+						"-T",
+						"--",
+						".kai/machines/agent/secrets.tmp",
+						".kai/machines/agent/secrets",
+					],
+					program: "mv",
+				}),
+			),
+		]),
+	)
+}
+
+# Secret-bearing machines require OpenSSH and an existing recipient key.
+expect {
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\build app {
+		\\  environment: server
+		\\  run: ["touch", "app"]
+		\\  output: "app"
+		\\}
+		\\
+		\\secret api-key {
+		\\  provider: sops
+		\\  file: "secrets/api-key.json"
+		\\}
+		\\
+		\\service web {
+		\\  artifact: "app"
+		\\  secrets: ["api-key"]
+		\\  restart: on-failure
+		\\}
+		\\
+		\\machine agent {
+		\\  environment: server
+		\\  system: "x86_64-linux"
+		\\  users: []
+		\\  services: ["web"]
+		\\}
+	expected_error = Str.join_with(
+		[
+			"machines with secrets require the native NixOS service 'openssh' ",
+			"and an existing /etc/ssh/ssh_host_ed25519_key whose recipient ",
+			"encrypted the secret files",
+		],
+		"",
+	)
+
+	PlanCheck.plan(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["machine", "agent"],
+		FailsWith(
+			PlanningFailed({
+				backend: "nix",
+				command: "machine",
+				location: None,
+				message: expected_error,
+				plugin: "std",
+			}),
+		),
+	)
+}
+
 # Machine metadata records its closure, flake attribute, and target after first
 # invalidating any metadata left by an older build.
 expect {

@@ -18,10 +18,15 @@ Service := [].{
 			description: "Build a service declared in the Kaifile.",
 			examples: ["kai service <my-service>"],
 			kaifile_block_example: KaifileBlockExample([
+				\\secret <my-secret> {
+				\\	provider: sops
+				\\	file: "secrets/my-secret.json"
+				\\}
+				\\
 				\\service <my-service> {
-				\\	artifact: "my-artifact",
-				\\	secrets: [],
-				\\	restart: on-failure,
+				\\	artifact: "my-artifact"
+				\\	secrets: ["my-secret"]
+				\\	restart: on-failure
 				\\}
 				,
 			]),
