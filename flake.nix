@@ -363,7 +363,14 @@
               pkgs.gzip
               pkgs.llvmPackages.bintools
               pkgs.file
+              pkgs.qemu_test
+              pkgs.OVMF.fd
             ];
+
+            shellHook = ''
+              export KAI_OVMF_CODE="${pkgs.OVMF.fd}/FV/OVMF_CODE.fd"
+              export KAI_OVMF_VARS="${pkgs.OVMF.fd}/FV/OVMF_VARS.fd"
+            '';
           };
         }
       );
