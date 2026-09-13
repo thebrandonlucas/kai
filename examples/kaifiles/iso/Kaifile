@@ -1,0 +1,11 @@
+# Build a bootable rescue ISO with `kai iso rescue`.
+environment recovery {
+  packages: ["curl"]
+}
+
+machine rescue {
+  environment: recovery
+  system: "x86_64-linux"
+  users: ["admin"]
+  services: ["openssh"]
+}

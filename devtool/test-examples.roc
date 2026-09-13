@@ -13,8 +13,15 @@ import pf.OsStr
 import Examples
 
 main! : List(OsStr) => Try({}, _)
-main! = |args|
-	match args.drop_first(1).map(OsStr.display) {
-		[directory] => Examples.run!(directory)
-		_ => Err(InvalidArguments("Usage: kai-test-examples DIRECTORY"))
+main! = |args| {
+	directories = args.drop_first(1).map(OsStr.display)
+	if directories.is_empty() {
+		Err(
+			InvalidArguments(
+				"Usage: kai-test-examples DIRECTORY [DIRECTORY...]",
+			),
+		)
+	} else {
+		Examples.run!(directories)
 	}
+}

@@ -1,4 +1,5 @@
-# Source inputs are locked by `kai update` and exposed only to builds that select them.
+# Build from a locked source input with `kai build license`.
+# Source inputs are locked by `kai update` and exposed only to selected builds.
 source kai {
   url: "github:thebrandonlucas/kai/d2355d304f3ad952b6f5a45e8c1d75de5768e7a6"
 }

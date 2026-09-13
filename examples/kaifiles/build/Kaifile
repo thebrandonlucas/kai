@@ -1,4 +1,4 @@
-# You can build artifacts using the build command!
+# Build the wisecow artifact with `kai build wisecow`.
 #
 # This one combines `cowsay` and `fortune` to give you a
 # `wisecow` binary.

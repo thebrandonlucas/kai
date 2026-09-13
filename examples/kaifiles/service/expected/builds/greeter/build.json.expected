@@ -1,0 +1,1 @@
+{"inputs":[],"name":"greeter","output":"greeter","pkgs":["coreutils"],"run":["sh","-c","printf '#!/bin/sh\\necho hello\\n' > greeter && chmod +x greeter"],"system":"{{system}}"}

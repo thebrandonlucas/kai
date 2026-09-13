@@ -1,0 +1,12 @@
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  outputs = inputs@{ nixpkgs, ... }: {
+    kaiSources = {  };
+    legacyPackages."{{system}}" = nixpkgs.legacyPackages."{{system}}";
+    devShells."{{system}}".default = nixpkgs.legacyPackages."{{system}}".mkShell {
+      packages = [
+              nixpkgs."legacyPackages"."{{system}}"."coreutils"
+      ];
+    };
+  };
+}

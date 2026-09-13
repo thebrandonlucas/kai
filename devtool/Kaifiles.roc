@@ -87,6 +87,10 @@ Kaifiles := [].{
 	check! = |binary, lock, platform_name, system, fixture, smoke| {
 		path = Path.display(fixture.kaifile)
 		directory = fixture.directory
+		if !Kaifiles.supports_system!(directory, system)? {
+			Stdout.line!("skipped on ${system}: ${path}")?
+			return Ok({})
+		}
 		args = Path.read_utf8!(Path.join(directory, "args"))?
 			.split_on("\n")
 			.map(Str.trim)
@@ -133,6 +137,20 @@ Kaifiles := [].{
 				Kaifiles.full_integration_command_kinds.contains(command_kind)
 			[] => Bool.False
 		}
+
+	supports_system! = |directory, system| {
+		path = Path.join(directory, "systems")
+		if Path.exists!(path)? {
+			Ok(
+				Path.read_utf8!(path)?
+					.split_on("\n")
+					.map(Str.trim)
+					.contains(system),
+			)
+		} else {
+			Ok(Bool.True)
+		}
+	}
 
 	expected_outputs! = |root| Kaifiles.expected_entries!(Path.list!(root)?, "")
 

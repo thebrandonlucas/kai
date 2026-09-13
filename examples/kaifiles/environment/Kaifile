@@ -1,3 +1,4 @@
+# Run the moo task with `kai run moo`.
 # Environment blocks name reusable package collections.
 environment cow {
   packages: ["cowsay"]

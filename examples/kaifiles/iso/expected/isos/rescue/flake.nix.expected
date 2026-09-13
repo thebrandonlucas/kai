@@ -1,0 +1,29 @@
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  outputs = { nixpkgs, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [
+        ];
+      };
+      machine = nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = [
+          { nixpkgs.pkgs = pkgs; }
+          ({ lib, modulesPath, ... }: {
+            imports = [
+              (modulesPath + "/installer/cd-dvd/"
+                + "installation-cd-minimal.nix")
+            ];
+            image.baseName = lib.mkForce "rescue";
+          })
+          ./machine.nix
+        ];
+      };
+    in {
+      nixosConfigurations."rescue" = machine;
+      kaiIsos."rescue" = machine.config.system.build.isoImage;
+    };
+}
