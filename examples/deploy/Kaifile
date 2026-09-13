@@ -1,0 +1,12 @@
+# Deploy this NixOS machine with `kai deploy production`.
+environment server {
+  packages: ["curl"]
+}
+
+machine production {
+  environment: server
+  system: "x86_64-linux"
+  users: ["operator"]
+  services: ["openssh"]
+  target: "root@server.example.com"
+}

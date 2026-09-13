@@ -9,6 +9,7 @@ Machine := [].{
 		Kaifile.required("system", String),
 		Kaifile.optional("users", StringList),
 		Kaifile.optional("services", StringList),
+		Kaifile.optional("target", String),
 	]
 
 	name_rules : List(Plugin.TextRule)

@@ -1,6 +1,7 @@
 package
 	[
 		Build,
+		Deploy,
 		Generations,
 		Image,
 		Machine,
