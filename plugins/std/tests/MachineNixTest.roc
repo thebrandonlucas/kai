@@ -5,6 +5,26 @@ import util.PlanCheck
 
 MachineNixTest := [].{}
 
+check_profile_failure = |kaifile, message|
+	PlanCheck.plan(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["machine", "agent"],
+		FailsWith(
+			PlanningFailed({
+				backend: "nix",
+				command: "machine",
+				location: None,
+				message,
+				plugin: "std",
+			}),
+		),
+	)
+
 # A machine renders a flake and NixOS module with its overlay, packages, users,
 # and native NixOS services.
 expect {
@@ -84,6 +104,80 @@ expect {
 				path: ".kai/machines/agent/machine.nix",
 			}),
 		]),
+	)
+}
+
+# A Limine single-disk machine uses stable filesystem labels and grants only
+# its first user wheel access.
+expect {
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\machine agent {
+		\\  environment: server
+		\\  system: "x86_64-linux"
+		\\  users: ["agent", "guest"]
+		\\  bootloader: "limine"
+		\\  storage: "single-disk"
+		\\}
+	expected_module =
+		\\{ pkgs, ... }:
+		\\{
+		\\  boot.loader.grub.enable = false;
+		\\  boot.loader.limine.enable = true;
+		\\  boot.loader.efi.canTouchEfiVariables = true;
+		\\  fileSystems."/" = {
+		\\    device = "/dev/disk/by-label/KAI_ROOT";
+		\\    fsType = "ext4";
+		\\  };
+		\\  fileSystems."/boot" = {
+		\\    device = "/dev/disk/by-label/KAI_BOOT";
+		\\    fsType = "vfat";
+		\\  };
+		\\  system.stateVersion = "25.05";
+		\\  environment.systemPackages = [
+		\\  ];
+		\\  users.users."agent".isNormalUser = true;
+		\\  users.users."guest".isNormalUser = true;
+		\\  users.users."agent".extraGroups = [ "wheel" ];
+		\\}
+
+	PlanCheck.plan(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["machine", "agent"],
+		Succeeds([
+			WritesExactly({
+				contents: expected_module,
+				path: ".kai/machines/agent/machine.nix",
+			}),
+		]),
+	)
+}
+
+# An installable machine requires a user who can administer it.
+expect {
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\machine agent {
+		\\  environment: server
+		\\  system: "x86_64-linux"
+		\\  bootloader: "limine"
+		\\  storage: "single-disk"
+		\\}
+
+	check_profile_failure(
+		kaifile,
+		"machine installation profile requires at least one user",
 	)
 }
 
@@ -304,6 +398,46 @@ expect {
 				}),
 			),
 		]),
+	)
+}
+
+# Machine planning rejects an incomplete installation profile.
+expect {
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\machine agent {
+		\\  environment: server
+		\\  system: "x86_64-linux"
+		\\  bootloader: "limine"
+		\\}
+
+	check_profile_failure(
+		kaifile,
+		"machine bootloader and storage must be specified together",
+	)
+}
+
+# Machine planning rejects unsupported installation profiles.
+expect {
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\machine agent {
+		\\  environment: server
+		\\  system: "x86_64-linux"
+		\\  bootloader: "grub"
+		\\  storage: "btrfs"
+		\\}
+
+	error_start = "unsupported machine installation profile "
+	check_profile_failure(
+		kaifile,
+		"${error_start}'grub/btrfs'; expected 'limine/single-disk'",
 	)
 }
 

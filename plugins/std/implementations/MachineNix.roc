@@ -26,8 +26,11 @@ MachineNix := [].{
 		target_system : Str,
 	}
 
+	InstallationProfile : [LimineSingleDisk, NoInstallationProfile]
+
 	MachineSpec := {
 		generated_services : List(Str),
+		installation_profile : InstallationProfile,
 		locked_overlays : List(Str),
 		name : Str,
 		overlays : List(Str),
@@ -168,6 +171,10 @@ MachineNix := [].{
 			}
 		users = MachineNix.optional_strings(input.command_fields, "users")?
 		services = MachineNix.optional_strings(input.command_fields, "services")?
+		installation_profile = MachineNix.parse_installation_profile(
+			input.command_fields,
+			users,
+		)?
 		failures = Plugin.validate_text(name, MachineBlock.name_rules)
 			.concat(Plugin.validate_string_list(pkgs, NixBackend.package_rules))
 			.concat(MachineBlock.user_failures(users))
@@ -211,6 +218,7 @@ MachineNix := [].{
 		Ok(
 			MachineNix.MachineSpec.{
 				generated_services,
+				installation_profile,
 				locked_overlays,
 				name,
 				overlays,
@@ -284,6 +292,7 @@ MachineNix := [].{
 			spec.pkgs,
 			spec.users,
 			native_services,
+			spec.installation_profile,
 		)
 		metadata = MachineNix.render_metadata(machine_metadata)
 		Ok(
@@ -465,6 +474,43 @@ MachineNix := [].{
 	service_module_lines = |services|
 		services.map(|service| "          ./services/${service.name}")
 
+	parse_installation_profile :
+		Fields.ParsedFields,
+		List(Str) ->
+			Try(
+				InstallationProfile,
+				Plugin.BackendPlanningDiagnostic,
+			)
+	parse_installation_profile = |fields, users| {
+		bootloader = Fields.maybe_string(fields, "bootloader") ?? None
+		storage = Fields.maybe_string(fields, "storage") ?? None
+		match (bootloader, storage) {
+			(None, None) => Ok(NoInstallationProfile)
+			(Some("limine"), Some("single-disk")) if users.is_empty() => Err({
+				byte_offset: None,
+				message: "machine installation profile requires at least one user",
+			})
+			(Some("limine"), Some("single-disk")) => Ok(LimineSingleDisk)
+			(None, Some(_)) | (Some(_), None) => Err({
+				byte_offset: None,
+				message: "machine bootloader and storage must be specified together",
+			})
+			(Some(selected_bootloader), Some(selected_storage)) => Err({
+				byte_offset: None,
+				message: Str.join_with(
+					[
+						"unsupported machine installation profile '",
+						selected_bootloader,
+						"/",
+						selected_storage,
+						"'; expected 'limine/single-disk'",
+					],
+					"",
+				),
+			})
+		}
+	}
+
 	optional_strings :
 		Fields.ParsedFields, Str -> Try(List(Str), Plugin.BackendPlanningDiagnostic)
 	optional_strings = |fields, field|
@@ -543,14 +589,42 @@ MachineNix := [].{
 		Str.join_with(lines, "\n")
 	}
 
-	render_module : List(Str), List(Str), List(Str) -> Str
-	render_module = |pkgs, users, services| {
+	render_module : List(Str), List(Str), List(Str), InstallationProfile -> Str
+	render_module = |pkgs, users, services, profile| {
 		package_lines = pkgs.map(
 			|pkg| "    pkgs.${NixBackend.render_attribute_path(pkg)}",
 		)
 		user_lines = users.map(
 			|user| "  users.users.\"${user}\".isNormalUser = true;",
 		)
+		admin_lines = match (profile, users) {
+			(LimineSingleDisk, [first, ..]) => [
+				"  users.users.\"${first}\".extraGroups = [ \"wheel\" ];",
+			]
+			_ => []
+		}
+		boot_lines = match profile {
+			NoInstallationProfile => [
+				"  boot.loader.grub.enable = false;",
+				"  fileSystems.\"/\" = {",
+				"    device = \"/dev/root\";",
+				"    fsType = \"auto\";",
+				"  };",
+			]
+			LimineSingleDisk => [
+				"  boot.loader.grub.enable = false;",
+				"  boot.loader.limine.enable = true;",
+				"  boot.loader.efi.canTouchEfiVariables = true;",
+				"  fileSystems.\"/\" = {",
+				"    device = \"/dev/disk/by-label/KAI_ROOT\";",
+				"    fsType = \"ext4\";",
+				"  };",
+				"  fileSystems.\"/boot\" = {",
+				"    device = \"/dev/disk/by-label/KAI_BOOT\";",
+				"    fsType = \"vfat\";",
+				"  };",
+			]
+		}
 		service_lines = services.map(
 			|service| {
 				service_attr = NixBackend.render_attribute_path(service)
@@ -560,16 +634,12 @@ MachineNix := [].{
 		lines = [
 			"{ pkgs, ... }:",
 			"{",
-			"  boot.loader.grub.enable = false;",
-			"  fileSystems.\"/\" = {",
-			"    device = \"/dev/root\";",
-			"    fsType = \"auto\";",
-			"  };",
+		].concat(boot_lines).concat([
 			"  system.stateVersion = \"25.05\";",
 			"  environment.systemPackages = [",
-		].concat(package_lines).concat([
+		]).concat(package_lines).concat([
 			"  ];",
-		]).concat(user_lines).concat(service_lines).concat([
+		]).concat(user_lines).concat(admin_lines).concat(service_lines).concat([
 			"}",
 		])
 		Str.join_with(lines, "\n")
