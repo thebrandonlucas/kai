@@ -2,11 +2,13 @@
 import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
+import blocks.Source as SourceBlock
 import commands.Installer as InstallerCommand
 import MachineNix
 
 InstallerNix := [].{
 	InstallerServices : List(Plugin.Artifact)
+	SourceInputs : List(SourceBlock.Input)
 	InstallerSteps : List(Plugin.ExecutionStep)
 
 	implementation : Plugin.Implementation
@@ -213,6 +215,7 @@ InstallerNix := [].{
 						spec.target_system,
 						spec.locked_overlays,
 						spec.overlays,
+						spec.sources,
 						services,
 					),
 					MachineNix.render_module(
@@ -230,8 +233,9 @@ InstallerNix := [].{
 		)
 	}
 
-	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
-	render_flake = |name, system, locked_overlays, overlays, services| {
+	render_flake :
+		Str, Str, List(Str), List(Str), SourceInputs, InstallerServices -> Str
+	render_flake = |name, system, locked_overlays, overlays, sources, services| {
 		overlay_lines = overlays.map(
 			|overlay|
 				"          ${
@@ -256,14 +260,17 @@ InstallerNix := [].{
 		lines = [
 			"{",
 			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-		].concat(NixBackend.input_lines(locked_overlays)).concat([
-			"  outputs = { ${outputs_args}, ... }:",
-			"    let",
-			"      system = \"${system}\";",
-			"      pkgs = import nixpkgs {",
-			"        inherit system;",
-			"        overlays = [",
-		]).concat(overlay_lines).concat([
+		]
+			.concat(NixBackend.input_lines(locked_overlays))
+			.concat(NixBackend.source_input_lines(sources))
+			.concat([
+				"  outputs = { ${outputs_args}, ... }:",
+				"    let",
+				"      system = \"${system}\";",
+				"      pkgs = import nixpkgs {",
+				"        inherit system;",
+				"        overlays = [",
+			]).concat(overlay_lines).concat([
 			"        ];",
 			"      };",
 			"      target = nixpkgs.lib.nixosSystem {",
@@ -344,6 +351,8 @@ InstallerNix := [].{
 				\\target_closure=@kai-target-closure@
 				\\installer_user='${user}'
 				\\minimum_disk_bytes=17179869184
+				\\install_root=/mnt/kai-installer
+				\\root_mounted=0
 				\\live_disk=
 				\\
 				\\fail() {
@@ -353,7 +362,10 @@ InstallerNix := [].{
 				\\
 				\\cleanup() {
 				\\  set +e
-				\\  mountpoint --quiet /mnt && umount --recursive -- /mnt
+				\\  if [ "$root_mounted" = 1 ]; then
+				\\    umount --recursive -- "$install_root"
+				\\  fi
+				\\  rmdir -- "$install_root" 2>/dev/null || true
 				\\}
 				\\
 				\\trap cleanup EXIT
@@ -382,6 +394,11 @@ InstallerNix := [].{
 				\\  return 1
 				\\}
 				\\
+				\\has_zfs_member() {
+				\\  lsblk_rows --output FSTYPE -- "$1" |
+				\\    grep --fixed-strings --line-regexp --quiet zfs_member
+				\\}
+				\\
 				\\list_disks() {
 				\\  while read -r path type removable readonly size; do
 				\\    [ "$type" = disk ] || continue
@@ -390,6 +407,7 @@ InstallerNix := [].{
 				\\    [ "$size" -ge "$minimum_disk_bytes" ] || continue
 				\\    [ "$path" != "$live_disk" ] || continue
 				\\    has_holders "$path" && continue
+				\\    has_zfs_member "$path" && continue
 				\\    mounts=$(lsblk_rows --output MOUNTPOINTS -- "$path") || continue
 				\\    if [[ ! "$mounts" =~ [^[:space:]] ]]; then
 				\\      printf '%s\\n' "$path"
@@ -418,6 +436,8 @@ InstallerNix := [].{
 				\\    fail "Selected disk is smaller than 16 GiB: $candidate"
 				\\  ! has_holders "$candidate" ||
 				\\    fail "Selected disk has active holders: $candidate"
+				\\  ! has_zfs_member "$candidate" ||
+				\\    fail "Selected disk contains a ZFS member: $candidate"
 				\\  mounts=$(lsblk_rows --output MOUNTPOINTS -- "$candidate") ||
 				\\    fail "Cannot inspect mounts on: $candidate"
 				\\  [[ ! "$mounts" =~ [^[:space:]] ]] ||
@@ -463,6 +483,9 @@ InstallerNix := [].{
 				\\  fail "The installer lock payload is missing."
 				\\live_source=$(findfs LABEL=KAI_INSTALLER 2>/dev/null || true)
 				\\live_disk=$(parent_disk "$live_source")
+				\\mkdir -p -- "$install_root"
+				\\! mountpoint --quiet "$install_root" ||
+				\\  fail "Installer mount path is already in use: $install_root"
 				\\disks=$(list_disks)
 				\\[ -n "$disks" ] ||
 				\\  fail "No unmounted, non-removable whole disks are available."
@@ -505,18 +528,21 @@ InstallerNix := [].{
 				\\  fail "Root partition did not appear: $root_partition"
 				\\mkfs.vfat -F 32 -n KAI_BOOT -- "$boot_partition"
 				\\mkfs.ext4 -F -L KAI_ROOT -- "$root_partition"
-				\\mount -- "$root_partition" /mnt
-				\\mkdir -p -- /mnt/boot
-				\\mount -- "$boot_partition" /mnt/boot
-				\\nixos-install --root /mnt --system "$target_closure" --no-root-passwd
+				\\mount -- "$root_partition" "$install_root"
+				\\root_mounted=1
+				\\mkdir -p -- "$install_root/boot"
+				\\mount -- "$boot_partition" "$install_root/boot"
+				\\nixos-install --root "$install_root" --system "$target_closure" \\
+				\\  --no-root-passwd
 				\\src=/etc/kai-installer
-				\\dst=/mnt/etc/kai
+				\\dst=$install_root/etc/kai
 				\\install -D -m 0644 -- "$src/Kaifile" "$dst/Kaifile"
 				\\install -D -m 0644 -- "$src/flake.lock" "$dst/Kaifile.lock"
 				\\printf '\\nSet the password for %s.\\n' "$installer_user"
-				\\nixos-enter --root /mnt -c 'passwd ${user}'
+				\\nixos-enter --root "$install_root" -c 'passwd ${user}'
 				\\sync
-				\\umount --recursive -- /mnt
+				\\umount --recursive -- "$install_root"
+				\\root_mounted=0
 				\\printf '\\nInstallation complete.\\n'
 				\\if gum confirm 'Reboot now?'; then
 				\\  reboot

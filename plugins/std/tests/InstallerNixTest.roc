@@ -5,6 +5,10 @@ import util.PlanCheck
 InstallerNixTest := [].{}
 
 valid_kaifile =
+	\\source tools {
+	\\  url: "github:acme/tools"
+	\\}
+	\\
 	\\environment desktop {
 	\\  packages: ["kai", "curl"]
 	\\  overlays: ["github:thebrandonlucas/kai"]
@@ -55,6 +59,10 @@ expect
 			WritesContaining({
 				contents: "device = \"/dev/disk/by-label/KAI_ROOT\";",
 				path: ".kai/installers/desktop/machine.nix",
+			}),
+			WritesContaining({
+				contents: "inputs.\"kai-source-tools\".url = \"github:acme/tools\";",
+				path: ".kai/installers/desktop/flake.nix",
 			}),
 			WritesContaining({
 				contents: "target = nixpkgs.lib.nixosSystem",
@@ -234,6 +242,14 @@ expect
 				path: ".kai/installers/desktop/installer.sh",
 			}),
 			WritesContaining({
+				contents: "Selected disk contains a ZFS member",
+				path: ".kai/installers/desktop/installer.sh",
+			}),
+			WritesContaining({
+				contents: "install_root=/mnt/kai-installer",
+				path: ".kai/installers/desktop/installer.sh",
+			}),
+			WritesContaining({
 				contents: "Type $disk to confirm:",
 				path: ".kai/installers/desktop/installer.sh",
 			}),
@@ -250,11 +266,11 @@ expect
 				path: ".kai/installers/desktop/installer.sh",
 			}),
 			WritesContaining({
-				contents: "nixos-install --root /mnt --system \"$target_closure\"",
+				contents: "nixos-install --root \"$install_root\"",
 				path: ".kai/installers/desktop/installer.sh",
 			}),
 			WritesContaining({
-				contents: "nixos-enter --root /mnt -c 'passwd blu'",
+				contents: "nixos-enter --root \"$install_root\" -c 'passwd blu'",
 				path: ".kai/installers/desktop/installer.sh",
 			}),
 			WritesContaining({

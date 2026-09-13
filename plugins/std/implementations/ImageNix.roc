@@ -1,11 +1,13 @@
 # An implementation for building machine images with nix.
 import kai.Plugin
 import backends.Nix as NixBackend
+import blocks.Source as SourceBlock
 import commands.Image as ImageCommand
 import MachineNix
 
 ImageNix := [].{
 	ImageServices : List(Plugin.Artifact)
+	SourceInputs : List(SourceBlock.Input)
 	ImageSteps : List(Plugin.ExecutionStep)
 
 	implementation : Plugin.Implementation
@@ -147,6 +149,7 @@ ImageNix := [].{
 						spec.target_system,
 						spec.locked_overlays,
 						spec.overlays,
+						spec.sources,
 						services,
 					),
 					NixBackend.render_nixos_module(
@@ -161,8 +164,9 @@ ImageNix := [].{
 		)
 	}
 
-	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
-	render_flake = |name, system, locked_overlays, overlays, services| {
+	render_flake :
+		Str, Str, List(Str), List(Str), SourceInputs, ImageServices -> Str
+	render_flake = |name, system, locked_overlays, overlays, sources, services| {
 		overlay_lines = overlays.map(
 			|overlay|
 				"          ${NixBackend.overlay_expression(locked_overlays, overlay, 0)}",
@@ -171,14 +175,17 @@ ImageNix := [].{
 		lines = [
 			"{",
 			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-		].concat(NixBackend.input_lines(locked_overlays)).concat([
-			"  outputs = { ${outputs_args}, ... }:",
-			"    let",
-			"      system = \"${system}\";",
-			"      pkgs = import nixpkgs {",
-			"        inherit system;",
-			"        overlays = [",
-		]).concat(overlay_lines).concat([
+		]
+			.concat(NixBackend.input_lines(locked_overlays))
+			.concat(NixBackend.source_input_lines(sources))
+			.concat([
+				"  outputs = { ${outputs_args}, ... }:",
+				"    let",
+				"      system = \"${system}\";",
+				"      pkgs = import nixpkgs {",
+				"        inherit system;",
+				"        overlays = [",
+			]).concat(overlay_lines).concat([
 			"        ];",
 			"      };",
 			"      machine = nixpkgs.lib.nixosSystem {",
