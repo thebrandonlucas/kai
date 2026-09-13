@@ -5,6 +5,7 @@ package
 		EnvironmentNixTest,
 		GenerationsNixTest,
 		ImageNixTest,
+		IsoNixTest,
 		MachineNixTest,
 		ServiceNixTest,
 		ShellNixTest,

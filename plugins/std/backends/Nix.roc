@@ -174,6 +174,36 @@ Nix := [].{
 	run : List(Str) -> Plugin.ExecutionStep
 	run = |arguments| RunProgram({ arguments, program: backend.name })
 
+	render_nixos_module : List(Str), List(Str), List(Str) -> Str
+	render_nixos_module = |pkgs, users, services| {
+		package_lines = pkgs.map(|pkg|
+			"    pkgs.${Nix.render_attribute_path(pkg)}")
+		user_lines = users.map(|user|
+			"  users.users.\"${user}\".isNormalUser = true;")
+		service_lines = services.map(
+			|service|
+				Str.join_with(
+					[
+						"  services.",
+						Nix.render_attribute_path(service),
+						".enable = true;",
+					],
+					"",
+				),
+		)
+		lines = [
+			"{ pkgs, ... }:",
+			"{",
+			"  system.stateVersion = \"25.05\";",
+			"  environment.systemPackages = [",
+		].concat(package_lines).concat([
+			"  ];",
+		]).concat(user_lines).concat(service_lines).concat([
+			"}",
+		])
+		Str.join_with(lines, "\n")
+	}
+
 	lock_steps : Str -> List(Plugin.ExecutionStep)
 	lock_steps = |flake_path|
 		[
