@@ -5,6 +5,7 @@ package
 		EnvironmentNix,
 		GenerationsNix,
 		ImageNix,
+		InstallerNix,
 		IsoNix,
 		MachineNix,
 		RollbackNix,

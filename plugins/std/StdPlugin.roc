@@ -14,6 +14,7 @@ import commands.Build as BuildCommand
 import commands.Deploy as DeployCommand
 import commands.Generations as GenerationsCommand
 import commands.Image as ImageCommand
+import commands.Installer as InstallerCommand
 import commands.Iso as IsoCommand
 import commands.Machine as MachineCommand
 import commands.Rollback as RollbackCommand
@@ -28,6 +29,7 @@ import implementations.BuildNix
 import implementations.DeployNix
 import implementations.GenerationsNix
 import implementations.ImageNix
+import implementations.InstallerNix
 import implementations.IsoNix
 import implementations.MachineNix
 import implementations.RollbackNix
@@ -91,6 +93,7 @@ StdPlugin := [].{
 			BuildCommand.command,
 			DeployCommand.command,
 			ImageCommand.command,
+			InstallerCommand.command,
 			IsoCommand.command,
 			MachineCommand.command,
 			RunCommand.command,
@@ -115,6 +118,7 @@ StdPlugin := [].{
 		DeployNix.implementation,
 		GenerationsNix.implementation,
 		ImageNix.implementation,
+		InstallerNix.implementation,
 		IsoNix.implementation,
 		MachineNix.implementation,
 		RollbackNix.implementation,

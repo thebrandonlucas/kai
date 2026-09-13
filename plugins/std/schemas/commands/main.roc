@@ -4,6 +4,7 @@ package
 		Deploy,
 		Generations,
 		Image,
+		Installer,
 		Iso,
 		Machine,
 		Rollback,
