@@ -8,6 +8,8 @@ import blocks.Service as ServiceBlock
 import commands.Service as ServiceCommand
 
 ServiceNix := [].{
+	SecretSpec := { file : Str, name : Str }
+
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
@@ -32,7 +34,7 @@ ServiceNix := [].{
 				byte_offset: None,
 				message: "validated service block is missing 'artifact'",
 			}
-		secrets = Fields.get_strings(input.command_fields, "secrets") ? |_|
+		secret_names = Fields.get_strings(input.command_fields, "secrets") ? |_|
 			{
 				byte_offset: None,
 				message: "validated service block is missing 'secrets'",
@@ -49,7 +51,7 @@ ServiceNix := [].{
 					BuildBlock.artifact_name_rules,
 				),
 			)
-			.concat(ServiceBlock.secret_failures(secrets))
+			.concat(ServiceBlock.secret_failures(secret_names))
 			.concat(ServiceBlock.restart_failures(restart))
 		Plugin.implementation_validation(failures)?
 		if input.host.os != LINUX {
@@ -58,7 +60,7 @@ ServiceNix := [].{
 				message: "NixOS service modules are supported only on Linux",
 			})
 		} else {
-			ServiceNix.validate_secrets(input, secrets)?
+			secrets = ServiceNix.resolve_secrets(input, secret_names)?
 			prerequisite_commands = ServiceNix.prerequisite_commands(artifact_name)
 			match input.prerequisite_artifacts {
 				Resolved(artifacts) => {
@@ -84,7 +86,7 @@ ServiceNix := [].{
 										{ key: "backend", value: NixBackend.backend.name },
 										{ key: "build", value: build.name },
 										{ key: "target.system", value: target.system },
-									],
+									].concat(ServiceNix.secret_attributes(secrets)),
 									kind: "kai.nixos.service/v1",
 									name,
 									path: output_path,
@@ -155,6 +157,15 @@ ServiceNix := [].{
 				description: "service: build ${artifact}",
 			},
 		]
+
+	secret_attributes : List(SecretSpec) -> List(Plugin.ArtifactAttribute)
+	secret_attributes = |secrets|
+		secrets.map(
+			|secret| {
+				key: "secret.${secret.name}.file",
+				value: secret.file,
+			},
+		)
 
 	find_build :
 		List(Plugin.Artifact),
@@ -248,16 +259,16 @@ ServiceNix := [].{
 			}
 		}
 
-	validate_secrets :
+	resolve_secrets :
 		Plugin.CommandPlanningInput,
 		List(Str) ->
 			Try(
-				{},
+				List(SecretSpec),
 				Plugin.BackendPlanningDiagnostic,
 			)
-	validate_secrets = |input, names|
+	resolve_secrets = |input, names|
 		match names {
-			[] => Ok({})
+			[] => Ok([])
 			[first, .. as rest] => {
 				entries = Plugin.blocks_of_kind(input, ["secret"])
 				matches = entries.keep_if(
@@ -284,15 +295,27 @@ ServiceNix := [].{
 						message: "service references ambiguous secret '${first}'",
 					})
 				}?
-				provision = Fields.get_string(entry.fields, "provision") ? |_|
+				provider = Fields.get_string(entry.fields, "provider") ? |_|
 					{
 						byte_offset: None,
-						message: "validated secret '${first}' is missing 'provision'",
+						message: "validated secret '${first}' is missing 'provider'",
 					}
-				Plugin.implementation_validation(
-					SecretBlock.provision_failures(provision),
-				)?
-				ServiceNix.validate_secrets(input, rest)
+				file = Fields.get_string(entry.fields, "file") ? |_|
+					{
+						byte_offset: None,
+						message: "validated secret '${first}' is missing 'file'",
+					}
+				failures = SecretBlock.provider_failures(provider)
+					.concat(SecretBlock.file_failures(file))
+					.concat(
+						SecretBlock.workspace_file_failures(
+							file,
+							input.workspace_root,
+						),
+					)
+				Plugin.implementation_validation(failures)?
+				remaining = ServiceNix.resolve_secrets(input, rest)?
+				Ok([{ file, name: first }].concat(remaining))
 			}
 		}
 
@@ -337,36 +360,49 @@ ServiceNix := [].{
 		)
 	}
 
-	render_module : Str, List(Str), Str -> Str
+	render_module : Str, List(SecretSpec), Str -> Str
 	render_module = |name, secrets, restart| {
-		credential_lines = secrets.map(|secret|
-			"        \"${secret}:/run/kai/secrets/${secret}\"")
+		argument_line = if secrets.is_empty() "{ ... }:" else "{ config, ... }:"
+		sops_lines = secrets.map(
+			|secret| {
+				sops_attribute = "  sops.secrets.\"${secret.name}\".restartUnits"
+				"${sops_attribute} = [ \"${name}.service\" ];"
+			},
+		)
+		credential_lines = secrets.map(
+			|secret| {
+				path = NixBackend.nix_interpolation(
+					"config.sops.secrets.\"${secret.name}\".path",
+				)
+				"        \"${secret.name}:${path}\""
+			},
+		)
 		Str.join_with(
 			[
-				"{ ... }:",
+				argument_line,
 				"{",
-				"  systemd.tmpfiles.rules = [",
-				"    \"d /run/kai/secrets 0700 root root -\"",
-				"  ];",
-				"  systemd.services.\"${name}\" = {",
-				"    wantedBy = [ \"multi-user.target\" ];",
-				"    serviceConfig = {",
-				"      Type = \"exec\";",
-				"      ExecStart = \"${NixBackend.nix_interpolation("./artifact")}\";",
-				"      Restart = \"${restart}\";",
-				"      DynamicUser = true;",
-				"      NoNewPrivileges = true;",
-				"      PrivateDevices = true;",
-				"      PrivateTmp = true;",
-				"      ProtectControlGroups = true;",
-				"      ProtectHome = true;",
-				"      ProtectKernelModules = true;",
-				"      ProtectKernelTunables = true;",
-				"      ProtectSystem = \"strict\";",
-				"      RestrictSUIDSGID = true;",
-				"      UMask = \"0077\";",
-				"      LoadCredential = [",
 			]
+				.concat(sops_lines)
+				.concat([
+					"  systemd.services.\"${name}\" = {",
+					"    wantedBy = [ \"multi-user.target\" ];",
+					"    serviceConfig = {",
+					"      Type = \"exec\";",
+					"      ExecStart = \"${NixBackend.nix_interpolation("./artifact")}\";",
+					"      Restart = \"${restart}\";",
+					"      DynamicUser = true;",
+					"      NoNewPrivileges = true;",
+					"      PrivateDevices = true;",
+					"      PrivateTmp = true;",
+					"      ProtectControlGroups = true;",
+					"      ProtectHome = true;",
+					"      ProtectKernelModules = true;",
+					"      ProtectKernelTunables = true;",
+					"      ProtectSystem = \"strict\";",
+					"      RestrictSUIDSGID = true;",
+					"      UMask = \"0077\";",
+					"      LoadCredential = [",
+				])
 				.concat(credential_lines)
 				.concat([
 					"      ];",

@@ -277,6 +277,67 @@ expect {
 	)
 }
 
+# Images reject service artifacts that need secrets because decryption is bound
+# to an existing key on the deployed machine.
+expect {
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\build app {
+		\\  environment: server
+		\\  run: ["touch", "web"]
+		\\  output: "web"
+		\\}
+		\\
+		\\secret api-key {
+		\\  provider: sops
+		\\  file: "secrets/api-key.json"
+		\\}
+		\\
+		\\service web {
+		\\  artifact: "app"
+		\\  secrets: ["api-key"]
+		\\  restart: on-failure
+		\\}
+		\\
+		\\machine agent {
+		\\  environment: server
+		\\  system: "x86_64-linux"
+		\\  users: []
+		\\  services: ["web"]
+		\\}
+	expected_error = Str.join_with(
+		[
+			"machine images do not support secret-bearing service artifacts; ",
+			"machine deployments with secrets require native OpenSSH and an ",
+			"existing /etc/ssh/ssh_host_ed25519_key whose recipient encrypted ",
+			"the files",
+		],
+		"",
+	)
+
+	PlanCheck.plan(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["image", "agent"],
+		FailsWith(
+			PlanningFailed({
+				backend: "nix",
+				command: "image",
+				location: None,
+				message: expected_error,
+				plugin: "std",
+			}),
+		),
+	)
+}
+
 # Image metadata is invalidated before the exact final metadata is written.
 expect {
 	kaifile =

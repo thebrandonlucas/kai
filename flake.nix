@@ -216,7 +216,10 @@
         mkWrappedPackage pkgs {
           pname = "kai";
           inherit binary;
-          runtimeInputs = [ pkgs.nix ];
+          runtimeInputs = [
+            pkgs.nix
+            pkgs.sops
+          ];
         };
 
       mkXkaiPackage =
@@ -230,6 +233,8 @@
           ];
         };
 
+      # Release archives contain only Kai; their runtime environment must provide
+      # Nix and sops. Secret staging diagnoses a missing sops executable.
       mkReleaseArchive =
         pkgs: binary: targetSystem:
         pkgs.runCommand "kai-${version}-${targetSystem}.tar.gz"
@@ -357,6 +362,7 @@
               pkgs.gzip
               pkgs.llvmPackages.bintools
               pkgs.file
+              pkgs.sops
             ];
           };
         }

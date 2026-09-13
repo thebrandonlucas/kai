@@ -96,6 +96,22 @@ ImageNix := [].{
 			}?
 		native_services = spec.services.keep_if(|service|
 			!spec.generated_services.contains(service))
+		secrets = MachineNix.collect_secrets(services, input.workspace_root)?
+		if !secrets.is_empty() {
+			return Err({
+				byte_offset: None,
+				message: Str.join_with(
+					[
+						"machine images do not support secret-bearing service ",
+						"artifacts; machine deployments with secrets require ",
+						"native OpenSSH and an existing ",
+						"/etc/ssh/ssh_host_ed25519_key whose recipient encrypted ",
+						"the files",
+					],
+					"",
+				),
+			})
+		}
 		schema : U64
 		schema = 1
 		metadata = Json.to_str({
