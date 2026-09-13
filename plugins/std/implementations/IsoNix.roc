@@ -1,44 +1,35 @@
-# An implementation for building machine images with nix.
+# An implementation for building bootable machine ISOs with Nix.
 import kai.Plugin
 import backends.Nix as NixBackend
-import commands.Image as ImageCommand
+import commands.Iso as IsoCommand
 import MachineNix
 
-ImageNix := [].{
+IsoNix := [].{
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
-		command: ImageCommand.command_syntax.name,
-		plan: ImageNix.plan,
+		command: IsoCommand.command_syntax.name,
+		plan: IsoNix.plan,
 		validator: NoValidation,
 	}
 
-	image_output_path : Str, Str -> Str
-	image_output_path = |workspace_root, name|
-		Plugin.workspace_path(workspace_root, "artifacts/images/${name}/result")
+	iso_output_path : Str, Str -> Str
+	iso_output_path = |workspace_root, name|
+		Plugin.workspace_path(workspace_root, "artifacts/isos/${name}/result")
 
-	image_file_path : Str, Str -> Str
-	image_file_path = |workspace_root, name|
-		"${ImageNix.image_output_path(workspace_root, name)}/${name}.qcow2"
+	iso_file_path : Str, Str -> Str
+	iso_file_path = |workspace_root, name|
+		"${IsoNix.iso_output_path(workspace_root, name)}/iso/${name}.iso"
 
-	image_flake_path : Str, Str -> Str
-	image_flake_path = |workspace_root, name|
-		Plugin.workspace_path(workspace_root, "images/${name}")
+	iso_flake_path : Str, Str -> Str
+	iso_flake_path = |workspace_root, name|
+		Plugin.workspace_path(workspace_root, "isos/${name}")
 
-	image_metadata_path : Str, Str -> Str
-	image_metadata_path = |workspace_root, name|
-		Plugin.workspace_path(
-			workspace_root,
-			"artifacts/images/${name}/metadata.json",
-		)
-
-	image_steps :
-		Str, Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
-	image_steps = |workspace_root, name, flake, module_text, metadata, services| {
-		flake_path = ImageNix.image_flake_path(workspace_root, name)
-		metadata_path = ImageNix.image_metadata_path(workspace_root, name)
+	iso_steps :
+		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
+	iso_steps = |workspace_root, name, flake, module_text, services| {
+		flake_path = IsoNix.iso_flake_path(workspace_root, name)
 		[
-			WriteFile({ contents: "", path: metadata_path }),
 			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
 			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
 		]
@@ -49,17 +40,16 @@ ImageNix := [].{
 					contents: "",
 					path: Plugin.workspace_path(
 						workspace_root,
-						"artifacts/images/${name}/.keep",
+						"artifacts/isos/${name}/.keep",
 					),
 				}),
 				NixBackend.run([
 					"build",
-					"path:${flake_path}#kaiImages.\"${name}\".image",
+					"path:${flake_path}#kaiIsos.\"${name}\"",
 					"--no-update-lock-file",
 					"--out-link",
-					ImageNix.image_output_path(workspace_root, name),
+					IsoNix.iso_output_path(workspace_root, name),
 				]),
-				WriteFile({ contents: metadata, path: metadata_path }),
 			])
 	}
 
@@ -70,10 +60,10 @@ ImageNix := [].{
 				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
-		spec = MachineNix.machine_spec(input, "image")?
+		spec = MachineNix.machine_spec(input, "iso")?
 		prerequisite_commands = MachineNix.service_prerequisite_commands(
 			spec.generated_services,
-			"image",
+			"iso",
 		)
 		services = match input.prerequisite_artifacts {
 			NotResolved =>
@@ -96,42 +86,25 @@ ImageNix := [].{
 			}?
 		native_services = spec.services.keep_if(|service|
 			!spec.generated_services.contains(service))
-		schema : U64
-		schema = 1
-		metadata = Json.to_str({
-			backend: NixBackend.backend.name,
-			flake_attribute: "kaiImages.\"${spec.name}\".image",
-			flake_path: ImageNix.image_flake_path(input.workspace_root, spec.name),
-			format: "qcow2",
-			kind: "machine-image",
-			metadata_path: ImageNix.image_metadata_path(input.workspace_root, spec.name),
-			name: spec.name,
-			output_path: ImageNix.image_file_path(input.workspace_root, spec.name),
-			schema,
-			target_architecture: spec.target_architecture,
-			target_system: spec.target_system,
-		})
 		Ok(
 			Plugin.BackendCommandPlan.{
 				artifacts: [
 					{
-						attributes: [
-							{ key: "backend", value: NixBackend.backend.name },
-							{ key: "format", value: "qcow2" },
-							{ key: "target.architecture", value: spec.target_architecture },
-							{ key: "target.system", value: spec.target_system },
-						],
-						kind: "kai.machine.image/v1",
+						attributes: [{ key: "format", value: "iso" }],
+						kind: "kai.machine.iso/v1",
 						name: spec.name,
-						path: ImageNix.image_file_path(input.workspace_root, spec.name),
+						path: IsoNix.iso_file_path(
+							input.workspace_root,
+							spec.name,
+						),
 					},
 				],
 				prerequisite_commands,
 				requested_packages: spec.pkgs,
-				steps: ImageNix.image_steps(
+				steps: IsoNix.iso_steps(
 					input.workspace_root,
 					spec.name,
-					ImageNix.render_flake(
+					IsoNix.render_flake(
 						spec.name,
 						spec.target_system,
 						spec.locked_overlays,
@@ -143,7 +116,6 @@ ImageNix := [].{
 						spec.users,
 						native_services,
 					),
-					metadata,
 					services,
 				),
 			},
@@ -174,12 +146,12 @@ ImageNix := [].{
 			"        inherit system;",
 			"        modules = [",
 			"          { nixpkgs.pkgs = pkgs; }",
-			"          ({ modulesPath, ... }: {",
+			"          ({ lib, modulesPath, ... }: {",
 			"            imports = [",
-			"              (modulesPath + \"/profiles/qemu-guest.nix\")",
-			"              (modulesPath + \"/virtualisation/disk-image.nix\")",
+			"              (modulesPath + \"/installer/cd-dvd/\"",
+			"                + \"installation-cd-minimal.nix\")",
 			"            ];",
-			"            image.baseName = \"${name}\";",
+			"            image.baseName = lib.mkForce \"${name}\";",
 			"          })",
 			"          ./machine.nix",
 		]).concat(MachineNix.service_module_lines(services)).concat([
@@ -187,13 +159,7 @@ ImageNix := [].{
 			"      };",
 			"    in {",
 			"      nixosConfigurations.\"${name}\" = machine;",
-			"      kaiImages.\"${name}\" = {",
-			"        kind = \"machine-image\";",
-			"        name = \"${name}\";",
-			"        format = \"qcow2\";",
-			"        inherit system;",
-			"        image = machine.config.system.build.image;",
-			"      };",
+			"      kaiIsos.\"${name}\" = machine.config.system.build.isoImage;",
 			"    };",
 			"}",
 		])
