@@ -8,3 +8,5 @@
     - [rules.md](./docs/rules.md) for development rules
     - [design.md](./docs/design.md) for design and architecture
     - [vision.md](./docs/vision.md) for project purpose and goals
+- Put backend-specific shared helpers in their corresponding backend module,
+  e.g. `plugins/std/backends/Nix.roc`, instead of a standalone helper module.
