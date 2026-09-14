@@ -17,10 +17,8 @@ print_usage! = |_| {
 	Ok({})
 }
 
-runtime_platform_name = Str.join_with(
-	["F1JVZPYfWP71s8vk6tHcV1Qx", "1Ef6CZkwswGoCn8VHZmL"],
-	"",
-)
+runtime_platform_name =
+	\\F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL
 
 runtime_platform_url = Str.join_with(
 	[

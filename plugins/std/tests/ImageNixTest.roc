@@ -290,20 +290,21 @@ expect {
 		\\  users: ["agent"]
 		\\  services: ["openssh"]
 		\\}
-	expected_metadata = Str.join_with(
-		[
-			"{\"backend\":\"nix\",",
-			"\"flake_attribute\":\"kaiImages.\\\"agent\\\".image\",",
-			"\"flake_path\":\".kai/images/agent\",",
-			"\"format\":\"qcow2\",\"kind\":\"machine-image\",",
-			"\"metadata_path\":\".kai/artifacts/images/agent/metadata.json\",",
-			"\"name\":\"agent\",",
-			"\"output_path\":\".kai/artifacts/images/agent/result/agent.qcow2\",",
-			"\"schema\":1,\"target_architecture\":\"x86_64\",",
-			"\"target_system\":\"x86_64-linux\"}",
-		],
-		"",
-	)
+	schema : U64
+	schema = 1
+	expected_metadata = Json.to_str({
+		backend: "nix",
+		flake_attribute: "kaiImages.\"agent\".image",
+		flake_path: ".kai/images/agent",
+		format: "qcow2",
+		kind: "machine-image",
+		metadata_path: ".kai/artifacts/images/agent/metadata.json",
+		name: "agent",
+		output_path: ".kai/artifacts/images/agent/result/agent.qcow2",
+		schema,
+		target_architecture: "x86_64",
+		target_system: "x86_64-linux",
+	})
 	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
@@ -372,6 +373,9 @@ expect {
 		\\  users: []
 		\\  services: []
 		\\}
+	cross_architecture_error =
+		\\cross-architecture NixOS machine builds are not supported;
+		\\target 'x86_64-linux' must match the host architecture
 	PlanCheck.plan(
 		{
 			definitions: [StdPlugin.plugin],
@@ -403,13 +407,7 @@ expect {
 					backend: "nix",
 					command: "image",
 					location: None,
-					message: Str.join_with(
-						[
-							"cross-architecture NixOS machine builds are not supported; ",
-							"target 'x86_64-linux' must match the host architecture",
-						],
-						"",
-					),
+					message: cross_architecture_error,
 					plugin: "std",
 				}),
 			),

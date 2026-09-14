@@ -355,11 +355,9 @@ expect {
 		\\  users: []
 		\\  services: []
 		\\}
-	error_start =
-		"cross-architecture NixOS machine builds are not supported; "
-	error_target =
-		"target 'x86_64-linux' must match the host architecture"
-	expected_error = "${error_start}${error_target}"
+	expected_error =
+		\\cross-architecture NixOS machine builds are not supported;
+		\\target 'x86_64-linux' must match the host architecture
 
 	PlanCheck.plan(
 		{

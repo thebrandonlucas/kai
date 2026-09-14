@@ -101,6 +101,18 @@ Nix := [].{
 	nix_interpolation : Str -> Str
 	nix_interpolation = |expression| Str.join_with(["$", "{", expression, "}"], "")
 
+	artifact_path_characters_message =
+		\\artifact path may contain only ASCII letters, digits, '/', '.', '_', and '-'
+
+	package_path_segments_message =
+		\\shell package attribute paths must not contain empty segments
+
+	unsafe_package_path_message =
+		\\shell package attribute paths contain characters unsafe for Nix output
+
+	unsafe_overlay_message =
+		\\shell overlay references contain characters unsafe for Nix output
+
 	artifact_path_rules : List(Plugin.TextRule)
 	artifact_path_rules = [
 		NonemptyText("artifact path must not be empty"),
@@ -118,13 +130,7 @@ Nix := [].{
 				ExactByte('-'),
 				ExactByte('/'),
 			],
-			message: Str.join_with(
-				[
-					"artifact path may contain only ASCII letters, digits, ",
-					"'/', '.', '_', and '-'",
-				],
-				"",
-			),
+			message: artifact_path_characters_message,
 		}),
 	]
 
@@ -132,26 +138,10 @@ Nix := [].{
 	package_rules = [
 		AllStrings(NonemptyText("shell package names must not be empty")),
 		AllStrings(
-			DotSeparatedNonemptySegments(
-				Str.join_with(
-					[
-						"shell package attribute paths must not contain ",
-						"empty segments",
-					],
-					"",
-				),
-			),
+			DotSeparatedNonemptySegments(package_path_segments_message),
 		),
 		AllStrings(
-			safe_string_rule(
-				Str.join_with(
-					[
-						"shell package attribute paths contain characters ",
-						"unsafe for Nix output",
-					],
-					"",
-				),
-			),
+			safe_string_rule(unsafe_package_path_message),
 		),
 	]
 
@@ -159,15 +149,7 @@ Nix := [].{
 	overlay_rules = [
 		AllStrings(NonemptyText("shell overlay references must not be empty")),
 		AllStrings(
-			safe_string_rule(
-				Str.join_with(
-					[
-						"shell overlay references contain characters unsafe ",
-						"for Nix output",
-					],
-					"",
-				),
-			),
+			safe_string_rule(unsafe_overlay_message),
 		),
 	]
 

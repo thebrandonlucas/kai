@@ -6,6 +6,9 @@ import kai.Plugin
 Source := [].{
 	Input := { name : Str, url : Str }
 
+	name_characters_message =
+		\\source name may contain only ASCII letters, digits, '.', '_', and '-'
+
 	name_rules : List(Plugin.TextRule)
 	name_rules = [
 		NonemptyText("source name must not be empty"),
@@ -22,13 +25,7 @@ Source := [].{
 				ExactByte('_'),
 				ExactByte('-'),
 			],
-			message: Str.join_with(
-				[
-					"source name may contain only ASCII letters, digits, ",
-					"'.', '_', and '-'",
-				],
-				"",
-			),
+			message: name_characters_message,
 		}),
 	]
 

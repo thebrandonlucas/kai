@@ -1,9 +1,10 @@
 # Invariants that should always be true about the code to maintain conceptual
 # integrity.
 #
-# Currently there are 2:
+# Currently there are 3:
 # - Enforce each code module to have a top-level explainer comment
 # - Limit line length to 80
+# - Reject direct static literal-list Str.join_with calls
 #
 # Inspired by [tidy.zig]
 import pf.Path
@@ -11,12 +12,12 @@ import pf.Stderr
 
 Tidy := [].{
 	Violation := {
-		kind : [LineTooLong(U64), MissingModuleComment],
+		kind : [LineTooLong(U64), MissingModuleComment, StaticLiteralJoin],
 		line : U64,
 	}
 
 	Diagnostic := {
-		kind : [LineTooLong(U64), MissingModuleComment],
+		kind : [LineTooLong(U64), MissingModuleComment, StaticLiteralJoin],
 		line : U64,
 		path : Str,
 	}
@@ -33,6 +34,8 @@ Tidy := [].{
 
 	line_limit : U64
 	line_limit = 80
+
+	static_join_name = "Str.join_with".to_utf8()
 
 	ansi_escape = Str.from_utf8_lossy([27])
 	ansi_red = "${Tidy.ansi_escape}[31m"
@@ -109,10 +112,369 @@ Tidy := [].{
 			},
 		)
 
+	byte_at = |bytes, index| bytes.get(index) ?? 0
+
+	is_whitespace = |byte|
+		byte == ' ' or byte == '\t' or byte == '\n' or byte == '\r'
+
+	skip_comment = |bytes, index|
+		if index >= bytes.len() or Tidy.byte_at(bytes, index) == '\n' {
+			index
+		} else {
+			Tidy.skip_comment(bytes, index + 1)
+		}
+
+	skip_trivia = |bytes, index|
+		if index >= bytes.len() {
+			index
+		} else {
+			byte = Tidy.byte_at(bytes, index)
+			if Tidy.is_whitespace(byte) {
+				Tidy.skip_trivia(bytes, index + 1)
+			} else if byte == '#' {
+				Tidy.skip_trivia(bytes, Tidy.skip_comment(bytes, index))
+			} else {
+				index
+			}
+		}
+
+	bytes_match = |bytes, index, expected, expected_index|
+		if expected_index >= expected.len() {
+			Bool.True
+		} else if
+			index >= bytes.len() or
+				Tidy.byte_at(bytes, index) != Tidy.byte_at(expected, expected_index)
+				{
+					Bool.False
+				} else {
+					Tidy.bytes_match(bytes, index + 1, expected, expected_index + 1)
+				}
+
+	is_identifier_byte = |byte|
+		(byte >= 'a' and byte <= 'z') or
+			(byte >= 'A' and byte <= 'Z') or
+				(byte >= '0' and byte <= '9') or
+					byte == '_' or
+						byte == '.'
+
+	has_static_join_name = |bytes, index|
+		(index == 0 or !Tidy.is_identifier_byte(Tidy.byte_at(bytes, index - 1))) and
+			Tidy.bytes_match(bytes, index, Tidy.static_join_name, 0)
+
+	string_end = |bytes, index|
+		if index >= bytes.len() or Tidy.byte_at(bytes, index) == '\n' {
+			index
+		} else if Tidy.byte_at(bytes, index) == '"' {
+			index + 1
+		} else if Tidy.byte_at(bytes, index) == '\\' {
+			Tidy.string_end(bytes, index + 2)
+		} else {
+			Tidy.string_end(bytes, index + 1)
+		}
+
+	static_string_end = |bytes, index|
+		if index >= bytes.len() {
+			NotStatic
+		} else {
+			byte = Tidy.byte_at(bytes, index)
+			if byte == '"' {
+				StaticEnd(index + 1)
+			} else if byte == '\n' {
+				NotStatic
+			} else if byte == '\\' {
+				Tidy.static_string_end(bytes, index + 2)
+			} else if byte == '$' and Tidy.byte_at(bytes, index + 1) == '{' {
+				NotStatic
+			} else {
+				Tidy.static_string_end(bytes, index + 1)
+			}
+		}
+
+	skip_indentation = |bytes, index|
+		if
+			Tidy.byte_at(bytes, index) == ' ' or
+				Tidy.byte_at(bytes, index) == '\t'
+				{
+					Tidy.skip_indentation(bytes, index + 1)
+				} else {
+					index
+				}
+
+	static_line_string_end = |bytes, index|
+		if index >= bytes.len() {
+			StaticEnd(index)
+		} else {
+			byte = Tidy.byte_at(bytes, index)
+			if byte == '\n' {
+				next = Tidy.skip_indentation(bytes, index + 1)
+				if
+					Tidy.byte_at(bytes, next) == '\\' and
+						Tidy.byte_at(bytes, next + 1) == '\\'
+						{
+							Tidy.static_line_string_end(bytes, next + 2)
+						} else {
+							StaticEnd(index)
+						}
+			} else if byte == '\\' {
+				Tidy.static_line_string_end(bytes, index + 2)
+			} else if byte == '$' and Tidy.byte_at(bytes, index + 1) == '{' {
+				NotStatic
+			} else {
+				Tidy.static_line_string_end(bytes, index + 1)
+			}
+		}
+
+	static_literal_end = |bytes, index|
+		if Tidy.byte_at(bytes, index) == '"' {
+			Tidy.static_string_end(bytes, index + 1)
+		} else if
+			Tidy.byte_at(bytes, index) == '\\' and
+				Tidy.byte_at(bytes, index + 1) == '\\'
+				{
+					Tidy.static_line_string_end(bytes, index + 2)
+				} else {
+					NotStatic
+				}
+
+	static_list_end = |bytes, raw_index, count| {
+		index = Tidy.skip_trivia(bytes, raw_index)
+		match Tidy.static_literal_end(bytes, index) {
+			NotStatic => NotStatic
+			StaticEnd(end_index) => {
+				after_string = Tidy.skip_trivia(bytes, end_index)
+				next_count = count + 1
+				if Tidy.byte_at(bytes, after_string) == ']' {
+					StaticEnd({ count: next_count, index: after_string + 1 })
+				} else if Tidy.byte_at(bytes, after_string) != ',' {
+					NotStatic
+				} else {
+					after_comma = Tidy.skip_trivia(bytes, after_string + 1)
+					if Tidy.byte_at(bytes, after_comma) == ']' {
+						StaticEnd({ count: next_count, index: after_comma + 1 })
+					} else {
+						Tidy.static_list_end(bytes, after_comma, next_count)
+					}
+				}
+			}
+		}
+	}
+
+	is_static_join = |bytes, start| {
+		after_name = Tidy.skip_trivia(bytes, start + Tidy.static_join_name.len())
+		if Tidy.byte_at(bytes, after_name) != '(' {
+			Bool.False
+		} else {
+			list_start = Tidy.skip_trivia(bytes, after_name + 1)
+			if Tidy.byte_at(bytes, list_start) != '[' {
+				Bool.False
+			} else {
+				match Tidy.static_list_end(bytes, list_start + 1, 0) {
+					NotStatic => Bool.False
+					StaticEnd(list) => {
+						after_list = Tidy.skip_trivia(bytes, list.index)
+						if
+							list.count < 2 or
+								Tidy.byte_at(bytes, after_list) != ','
+								{
+									Bool.False
+								} else {
+									separator = Tidy.skip_trivia(bytes, after_list + 1)
+									match Tidy.static_literal_end(bytes, separator) {
+										NotStatic => Bool.False
+										StaticEnd(separator_end) => {
+											after_separator = Tidy.skip_trivia(
+												bytes,
+												separator_end,
+											)
+											closing = if
+												Tidy.byte_at(bytes, after_separator) == ','
+													{
+														Tidy.skip_trivia(bytes, after_separator + 1)
+													} else {
+														after_separator
+													}
+											Tidy.byte_at(bytes, closing) == ')'
+										}
+									}
+								}
+					}
+				}
+			}
+		}
+	}
+
+	char_end = |bytes, index|
+		if index >= bytes.len() or Tidy.byte_at(bytes, index) == '\n' {
+			index
+		} else if Tidy.byte_at(bytes, index) == '\'' {
+			index + 1
+		} else if Tidy.byte_at(bytes, index) == '\\' {
+			Tidy.char_end(bytes, index + 2)
+		} else {
+			Tidy.char_end(bytes, index + 1)
+		}
+
+	interpolation_end = |bytes, index, depth, limit|
+		if index >= limit {
+			limit
+		} else {
+			byte = Tidy.byte_at(bytes, index)
+			if byte == '"' {
+				Tidy.interpolation_end(
+					bytes,
+					Tidy.string_end(bytes, index + 1),
+					depth,
+					limit,
+				)
+			} else if byte == '\'' {
+				Tidy.interpolation_end(
+					bytes,
+					Tidy.char_end(bytes, index + 1),
+					depth,
+					limit,
+				)
+			} else if byte == '#' {
+				Tidy.interpolation_end(
+					bytes,
+					Tidy.skip_comment(bytes, index),
+					depth,
+					limit,
+				)
+			} else if byte == '\\' and Tidy.byte_at(bytes, index + 1) == '\\' {
+				Tidy.interpolation_end(
+					bytes,
+					Tidy.skip_comment(bytes, index),
+					depth,
+					limit,
+				)
+			} else if byte == '{' {
+				Tidy.interpolation_end(bytes, index + 1, depth + 1, limit)
+			} else if byte == '}' and depth == 1 {
+				index
+			} else if byte == '}' {
+				Tidy.interpolation_end(bytes, index + 1, depth - 1, limit)
+			} else {
+				Tidy.interpolation_end(bytes, index + 1, depth, limit)
+			}
+		}
+
+	line_through = |bytes, index, end, line|
+		if index >= end {
+			line
+		} else {
+			next_line = if Tidy.byte_at(bytes, index) == '\n' line + 1 else line
+			Tidy.line_through(bytes, index + 1, end, next_line)
+		}
+
+	scan_string = |bytes, index, line, violations, limit|
+		if index >= limit {
+			violations
+		} else {
+			byte = Tidy.byte_at(bytes, index)
+			if byte == '"' or byte == '\n' {
+				Tidy.scan_static_joins(bytes, index + 1, line, violations, limit)
+			} else if byte == '\\' {
+				Tidy.scan_string(bytes, index + 2, line, violations, limit)
+			} else if byte == '$' and Tidy.byte_at(bytes, index + 1) == '{' {
+				closing = Tidy.interpolation_end(bytes, index + 2, 1, limit)
+				found = Tidy.scan_static_joins(
+					bytes,
+					index + 2,
+					line,
+					violations,
+					closing,
+				)
+				next_line = Tidy.line_through(bytes, index + 2, closing, line)
+				Tidy.scan_string(bytes, closing + 1, next_line, found, limit)
+			} else {
+				Tidy.scan_string(bytes, index + 1, line, violations, limit)
+			}
+		}
+
+	scan_line_string = |bytes, index, line, violations, limit|
+		if index >= limit {
+			violations
+		} else {
+			byte = Tidy.byte_at(bytes, index)
+			if byte == '\n' {
+				Tidy.scan_static_joins(bytes, index, line, violations, limit)
+			} else if byte == '\\' {
+				Tidy.scan_line_string(bytes, index + 2, line, violations, limit)
+			} else if byte == '$' and Tidy.byte_at(bytes, index + 1) == '{' {
+				closing = Tidy.interpolation_end(bytes, index + 2, 1, limit)
+				found = Tidy.scan_static_joins(
+					bytes,
+					index + 2,
+					line,
+					violations,
+					closing,
+				)
+				next_line = Tidy.line_through(bytes, index + 2, closing, line)
+				Tidy.scan_line_string(bytes, closing + 1, next_line, found, limit)
+			} else {
+				Tidy.scan_line_string(bytes, index + 1, line, violations, limit)
+			}
+		}
+
+	scan_static_joins = |bytes, index, line, violations, limit|
+		if index >= limit {
+			violations
+		} else {
+			byte = Tidy.byte_at(bytes, index)
+			if byte == '"' {
+				Tidy.scan_string(bytes, index + 1, line, violations, limit)
+			} else if byte == '\'' {
+				Tidy.scan_static_joins(
+					bytes,
+					Tidy.char_end(bytes, index + 1),
+					line,
+					violations,
+					limit,
+				)
+			} else if byte == '#' {
+				Tidy.scan_static_joins(
+					bytes,
+					Tidy.skip_comment(bytes, index),
+					line,
+					violations,
+					limit,
+				)
+			} else if byte == '\\' and Tidy.byte_at(bytes, index + 1) == '\\' {
+				Tidy.scan_line_string(bytes, index + 2, line, violations, limit)
+			} else if
+				Tidy.has_static_join_name(bytes, index) and
+					Tidy.is_static_join(bytes, index)
+					{
+						Tidy.scan_static_joins(
+							bytes,
+							index + Tidy.static_join_name.len(),
+							line,
+							violations.append({ kind: StaticLiteralJoin, line }),
+							limit,
+						)
+					} else {
+						next_line = if byte == '\n' line + 1 else line
+						Tidy.scan_static_joins(
+							bytes,
+							index + 1,
+							next_line,
+							violations,
+							limit,
+						)
+					}
+		}
+
+	static_join_violations = |source| {
+		bytes = source.to_utf8()
+		Tidy.scan_static_joins(bytes, 0, 1, [], bytes.len())
+	}
+
 	check_file : Str -> List(Violation)
 	check_file = |source| {
 		lines = Tidy.indexed_lines(source)
-		Tidy.comment_violations(lines).concat(Tidy.line_violations(lines))
+		Tidy.comment_violations(lines)
+			.concat(Tidy.line_violations(lines))
+			.concat(Tidy.static_join_violations(source))
 	}
 
 	discover! = |path| {
@@ -179,14 +541,21 @@ Tidy := [].{
 			|diagnostic|
 				match diagnostic.kind {
 					MissingModuleComment => Bool.True
-					LineTooLong(_) => Bool.False
+					_ => Bool.False
 				},
 		)
 		long_lines = diagnostics.keep_if(
 			|diagnostic|
 				match diagnostic.kind {
-					MissingModuleComment => Bool.False
 					LineTooLong(_) => Bool.True
+					_ => Bool.False
+				},
+		)
+		static_joins = diagnostics.keep_if(
+			|diagnostic|
+				match diagnostic.kind {
+					StaticLiteralJoin => Bool.True
+					_ => Bool.False
 				},
 		)
 
@@ -212,11 +581,24 @@ Tidy := [].{
 				line = U64.to_str(diagnostic.line)
 				width = match diagnostic.kind {
 					LineTooLong(found) => found
-					MissingModuleComment => 0
+					_ => 0
 				}
 				Stderr.line!(
 					"  ${diagnostic.path}:${line} (${U64.to_str(width)} codepoints)",
 				)?
+			}
+		}
+		if !static_joins.is_empty() {
+			if !missing_comments.is_empty() or !long_lines.is_empty() {
+				Stderr.line!("")?
+			}
+			header = "Direct static literal-list Str.join_with calls (${
+				U64.to_str(static_joins.len())
+			}):"
+			Stderr.line!(Tidy.colorize(Tidy.ansi_red, header))?
+			for diagnostic in static_joins {
+				line = U64.to_str(diagnostic.line)
+				Stderr.line!("  ${diagnostic.path}:${line}")?
 			}
 		}
 		if !diagnostics.is_empty() {
@@ -225,6 +607,10 @@ Tidy := [].{
 		Stderr.line!("Checks:")?
 		Tidy.print_check!("Module comments", missing_comments.is_empty())?
 		Tidy.print_check!("80-codepoint line limit", long_lines.is_empty())?
+		Tidy.print_check!(
+			"No direct static literal-list Str.join_with calls",
+			static_joins.is_empty(),
+		)?
 
 		count = diagnostics.len()
 		label = if count == 1 "violation" else "violations"

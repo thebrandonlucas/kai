@@ -195,14 +195,9 @@ MachineNix := [].{
 				}
 				CrossArchitectureMachine => {
 					byte_offset: None,
-					message: Str.join_with(
-						[
-							"cross-architecture NixOS machine builds are not ",
-							"supported; target '${system}' must match the host ",
-							"architecture",
-						],
-						"",
-					),
+					message: \\cross-architecture NixOS machine builds are not supported;
+						\\target '${system}' must match the host architecture
+					,
 				}
 			}
 		generated_services = services.keep_if(

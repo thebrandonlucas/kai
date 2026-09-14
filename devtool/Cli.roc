@@ -47,21 +47,16 @@ Cli := [].{
 	}
 
 	usage : Str
-	usage = Str.join_with(
-		[
-			"Usage: kai-devtool <command> [arguments]",
-			"",
-			"Commands:",
-			"  build-release",
-			"  kaifiles",
-			"  kaifiles-smoke",
-			"  prepare-release NAME VERSION",
-			"  prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR",
-			"  tidy [ROC_FILE...]",
-			"  help",
-		],
-		"\n",
-	)
+	usage =
+		\\Usage: kai-devtool <command> [arguments]
+		\\
+		\\Commands:
+		\\  build-release
+		\\  kaifiles
+		\\  prepare-release NAME VERSION
+		\\  prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR
+		\\  tidy [ROC_FILE...]
+		\\  help
 
 	parse : List(Str) -> Try(Command, Error)
 	parse = |args|
