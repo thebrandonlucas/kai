@@ -306,6 +306,18 @@ pub fn build(b: *std.Build) void {
     const run_kaifiles = addDevtoolCommand(b, devtool, "kaifiles", &.{});
     kaifiles_step.dependOn(&run_kaifiles.step);
 
+    const kaifiles_smoke_step = b.step(
+        "kaifiles-smoke",
+        "Run lightweight Kaifiles and compare their generated outputs",
+    );
+    const run_kaifiles_smoke = addDevtoolCommand(
+        b,
+        devtool,
+        "kaifiles-smoke",
+        &.{},
+    );
+    kaifiles_smoke_step.dependOn(&run_kaifiles_smoke.step);
+
     const build_fuzz = b.addSystemCommand(&.{ "roc", "build", "--fuzz" });
     build_fuzz.addFileArg(b.path("fuzz/Config.roc"));
     build_fuzz.addFileInput(b.path("xkai/parser/main.roc"));

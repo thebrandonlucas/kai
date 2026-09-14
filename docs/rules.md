@@ -1,4 +1,6 @@
 - After every change, run `zig build ci`. This should pass on every commit.
+- After changing examples, run `zig build kaifiles-smoke`. Run the full
+  `zig build kaifiles` integration suite occasionally.
 - Do not commit changes unless explicitly instructed. Never push. Never create issues. Never open PRs.
 - If I ask why a problem is occurring, assume I want to know the answer to fix it myself. Don't fix or edit files without being told to.
 - Don't make "fix" commits in a PR with fresh code. Fix commits are for PRs with bugs that already existed.

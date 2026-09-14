@@ -6,14 +6,20 @@ import pf.Path
 import pf.Stdout
 
 Kaifiles := [].{
-	run! = || {
+	full_integration_command_kinds = ["image", "iso", "machine"]
+
+	run! = || Kaifiles.run_suite!(Bool.False)
+
+	run_smoke! = || Kaifiles.run_suite!(Bool.True)
+
+	run_suite! = |smoke| {
 		workspace = Kaifiles.workspace!()?
-		result = Kaifiles.run_in!(workspace)
+		result = Kaifiles.run_in!(workspace, smoke)
 		Path.delete_all!(workspace)?
 		result
 	}
 
-	run_in! = |workspace| {
+	run_in! = |workspace, smoke| {
 		root = Env.cwd!()?
 		binary = Kaifiles.build_kai!(root, workspace)?
 		directory = Path.join(root, "examples/kaifiles")
@@ -26,9 +32,16 @@ Kaifiles := [].{
 			system = Kaifiles.system(host)?
 			platform_name = Kaifiles.platform_name(host)?
 			for fixture in kaifiles {
-				Kaifiles.check!(binary, lock, platform_name, system, fixture)?
+				Kaifiles.check!(
+					binary,
+					lock,
+					platform_name,
+					system,
+					fixture,
+					smoke,
+				)?
 			}
-			Stdout.line!("tested ${U64.to_str(kaifiles.len())} Kaifiles")?
+			Stdout.line!("processed ${U64.to_str(kaifiles.len())} Kaifiles")?
 			Ok({})
 		}
 	}
@@ -71,43 +84,55 @@ Kaifiles := [].{
 			}
 		}
 
-	check! = |binary, lock, platform_name, system, fixture| {
+	check! = |binary, lock, platform_name, system, fixture, smoke| {
 		path = Path.display(fixture.kaifile)
 		directory = fixture.directory
 		args = Path.read_utf8!(Path.join(directory, "args"))?
 			.split_on("\n")
 			.map(Str.trim)
 			.keep_if(|arg| !arg.is_empty())
-		expected_root = Path.join(directory, "expected")
-		platform_expected = Path.join(expected_root, platform_name)
-		expected_directory = if Path.is_dir!(platform_expected)? {
-			platform_expected
-		} else {
-			expected_root
-		}
-		expected_outputs = Kaifiles.expected_outputs!(expected_directory)?
 		if args.is_empty() {
 			Err(EmptyKaifileArguments(path))
-		} else if expected_outputs.is_empty() {
-			Err(EmptyExpectedOutputs(path))
-		} else {
-			workspace = Kaifiles.workspace!()?
-			result = Kaifiles.run_example!(
-				binary,
-				args,
-				expected_outputs,
-				fixture.kaifile,
-				lock,
-				path,
-				system,
-				workspace,
-			)
-			Path.delete_all!(workspace)?
-			_ = result?
-			Stdout.line!("tested: ${path}")?
+		} else if smoke and Kaifiles.is_full_integration(args) {
+			Stdout.line!("skipped (full integration): ${path}")?
 			Ok({})
+		} else {
+			expected_root = Path.join(directory, "expected")
+			platform_expected = Path.join(expected_root, platform_name)
+			expected_directory = if Path.is_dir!(platform_expected)? {
+				platform_expected
+			} else {
+				expected_root
+			}
+			expected_outputs = Kaifiles.expected_outputs!(expected_directory)?
+			if expected_outputs.is_empty() {
+				Err(EmptyExpectedOutputs(path))
+			} else {
+				workspace = Kaifiles.workspace!()?
+				result = Kaifiles.run_example!(
+					binary,
+					args,
+					expected_outputs,
+					fixture.kaifile,
+					lock,
+					path,
+					system,
+					workspace,
+				)
+				Path.delete_all!(workspace)?
+				_ = result?
+				Stdout.line!("tested: ${path}")?
+				Ok({})
+			}
 		}
 	}
+
+	is_full_integration = |args|
+		match args {
+			[command_kind, ..] =>
+				Kaifiles.full_integration_command_kinds.contains(command_kind)
+			[] => Bool.False
+		}
 
 	expected_outputs! = |root| Kaifiles.expected_entries!(Path.list!(root)?, "")
 
