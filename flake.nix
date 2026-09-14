@@ -289,6 +289,10 @@
         common // releaseArchives;
     in
     {
+      overlays.default = final: _: {
+        kai = self.packages.${final.stdenv.hostPlatform.system}.kai;
+      };
+
       packages = forAllSystems packagesFor;
 
       apps = forAllSystems (
@@ -315,10 +319,12 @@
         system:
         let
           pkgs = pkgsFor system;
+          overlayPkgs = pkgs.extend self.overlays.default;
           kai = self.packages.${system}.kai;
           xkai = self.packages.${system}.xkai;
         in
         {
+          overlay-package = overlayPkgs.kai;
           package = kai;
           xkai-package = xkai;
 
@@ -357,7 +363,14 @@
               pkgs.gzip
               pkgs.llvmPackages.bintools
               pkgs.file
+              pkgs.qemu_test
+              pkgs.OVMF.fd
             ];
+
+            shellHook = ''
+              export KAI_OVMF_CODE="${pkgs.OVMF.fd}/FV/OVMF_CODE.fd"
+              export KAI_OVMF_VARS="${pkgs.OVMF.fd}/FV/OVMF_VARS.fd"
+            '';
           };
         }
       );

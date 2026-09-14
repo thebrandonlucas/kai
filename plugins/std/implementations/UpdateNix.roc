@@ -33,6 +33,7 @@ UpdateNix := [].{
 		flake = UpdateNix.render_update_flake(overlays, sources)
 		flake_path = Plugin.workspace_path(input.workspace_root, "flake.nix")
 		lock_path = Plugin.workspace_path(input.workspace_root, "flake.lock")
+		kaifile_lock_path = "${input.kaifile_path}.lock"
 		Ok(
 			Plugin.BackendCommandPlan.{
 				artifacts: [],
@@ -46,17 +47,17 @@ UpdateNix := [].{
 						"--flake",
 						"path:${input.workspace_root}",
 						"--reference-lock-file",
-						"Kaifile.lock",
+						kaifile_lock_path,
 						"--output-lock-file",
-						"Kaifile.lock",
+						kaifile_lock_path,
 					]),
-					PrintLine("wrote: Kaifile.lock"),
+					PrintLine("wrote: ${kaifile_lock_path}"),
 					NixBackend.run([
 						"flake",
 						"lock",
 						"path:${input.workspace_root}",
 						"--reference-lock-file",
-						"Kaifile.lock",
+						kaifile_lock_path,
 						"--output-lock-file",
 						lock_path,
 					]),

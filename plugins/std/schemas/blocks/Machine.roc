@@ -10,6 +10,8 @@ Machine := [].{
 		Kaifile.optional("users", StringList),
 		Kaifile.optional("services", StringList),
 		Kaifile.optional("target", String),
+		Kaifile.optional("bootloader", String),
+		Kaifile.optional("storage", String),
 	]
 
 	name_rules : List(Plugin.TextRule)

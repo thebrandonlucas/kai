@@ -204,27 +204,29 @@ Nix := [].{
 		Str.join_with(lines, "\n")
 	}
 
-	lock_steps : Str -> List(Plugin.ExecutionStep)
-	lock_steps = |flake_path|
+	lock_steps : Str, Str -> List(Plugin.ExecutionStep)
+	lock_steps = |flake_path, kaifile_path| {
+		lock_path = "${kaifile_path}.lock"
 		[
 			Nix.run([
 				"flake",
 				"lock",
 				"path:${flake_path}",
 				"--reference-lock-file",
-				"Kaifile.lock",
+				lock_path,
 				"--output-lock-file",
-				"Kaifile.lock",
+				lock_path,
 			]),
 			Nix.run([
 				"flake",
 				"lock",
 				"path:${flake_path}",
 				"--reference-lock-file",
-				"Kaifile.lock",
+				lock_path,
 				"--output-lock-file",
 				"${flake_path}/flake.lock",
 			]),
 		]
+	}
 
 }

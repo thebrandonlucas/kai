@@ -1,10 +1,15 @@
 # An implementation for building bootable machine ISOs with Nix.
 import kai.Plugin
 import backends.Nix as NixBackend
+import blocks.Source as SourceBlock
 import commands.Iso as IsoCommand
 import MachineNix
 
 IsoNix := [].{
+	IsoServices : List(Plugin.Artifact)
+	SourceInputs : List(SourceBlock.Input)
+	IsoSteps : List(Plugin.ExecutionStep)
+
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
@@ -25,16 +30,22 @@ IsoNix := [].{
 	iso_flake_path = |workspace_root, name|
 		Plugin.workspace_path(workspace_root, "isos/${name}")
 
-	iso_steps :
-		Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
-	iso_steps = |workspace_root, name, flake, module_text, services| {
+	iso_steps : Str, Str, Str, Str, Str, IsoServices -> IsoSteps
+	iso_steps = |
+		workspace_root,
+		kaifile_path,
+		name,
+		flake,
+		module_text,
+		services,
+	| {
 		flake_path = IsoNix.iso_flake_path(workspace_root, name)
 		[
 			WriteFile({ contents: flake, path: "${flake_path}/flake.nix" }),
 			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
 		]
 			.concat(MachineNix.service_copy_steps(flake_path, services))
-			.concat(NixBackend.lock_steps(flake_path))
+			.concat(NixBackend.lock_steps(flake_path, kaifile_path))
 			.concat([
 				WriteFile({
 					contents: "",
@@ -103,12 +114,14 @@ IsoNix := [].{
 				requested_packages: spec.pkgs,
 				steps: IsoNix.iso_steps(
 					input.workspace_root,
+					input.kaifile_path,
 					spec.name,
 					IsoNix.render_flake(
 						spec.name,
 						spec.target_system,
 						spec.locked_overlays,
 						spec.overlays,
+						spec.sources,
 						services,
 					),
 					NixBackend.render_nixos_module(
@@ -122,8 +135,8 @@ IsoNix := [].{
 		)
 	}
 
-	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
-	render_flake = |name, system, locked_overlays, overlays, services| {
+	render_flake : Str, Str, List(Str), List(Str), SourceInputs, IsoServices -> Str
+	render_flake = |name, system, locked_overlays, overlays, sources, services| {
 		overlay_lines = overlays.map(
 			|overlay|
 				"          ${NixBackend.overlay_expression(locked_overlays, overlay, 0)}",
@@ -132,14 +145,17 @@ IsoNix := [].{
 		lines = [
 			"{",
 			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-		].concat(NixBackend.input_lines(locked_overlays)).concat([
-			"  outputs = { ${outputs_args}, ... }:",
-			"    let",
-			"      system = \"${system}\";",
-			"      pkgs = import nixpkgs {",
-			"        inherit system;",
-			"        overlays = [",
-		]).concat(overlay_lines).concat([
+		]
+			.concat(NixBackend.input_lines(locked_overlays))
+			.concat(NixBackend.source_input_lines(sources))
+			.concat([
+				"  outputs = { ${outputs_args}, ... }:",
+				"    let",
+				"      system = \"${system}\";",
+				"      pkgs = import nixpkgs {",
+				"        inherit system;",
+				"        overlays = [",
+			]).concat(overlay_lines).concat([
 			"        ];",
 			"      };",
 			"      machine = nixpkgs.lib.nixosSystem {",

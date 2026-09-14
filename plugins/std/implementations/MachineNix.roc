@@ -3,10 +3,15 @@ import parser.Fields
 import kai.Plugin
 import backends.Nix as NixBackend
 import blocks.Machine as MachineBlock
+import blocks.Source as SourceBlock
 import commands.Machine as MachineCommand
 import EnvironmentNix
 
 MachineNix := [].{
+	MachineServices : List(Plugin.Artifact)
+	SourceInputs : List(SourceBlock.Input)
+	MachineSteps : List(Plugin.ExecutionStep)
+
 	implementation : Plugin.Implementation
 	implementation = Plugin.Implementation.{
 		backend: NixBackend.backend.name,
@@ -26,13 +31,17 @@ MachineNix := [].{
 		target_system : Str,
 	}
 
+	InstallationProfile : [LimineSingleDisk, NoInstallationProfile]
+
 	MachineSpec := {
 		generated_services : List(Str),
+		installation_profile : InstallationProfile,
 		locked_overlays : List(Str),
 		name : Str,
 		overlays : List(Str),
 		pkgs : List(Str),
 		services : List(Str),
+		sources : List(SourceBlock.Input),
 		target_architecture : Str,
 		target_system : Str,
 		users : List(Str),
@@ -107,8 +116,16 @@ MachineNix := [].{
 	}
 
 	machine_steps :
-		Str, Str, Str, Str, Str, List(Plugin.Artifact) -> List(Plugin.ExecutionStep)
-	machine_steps = |root, name, flake, module_text, metadata, services| {
+		Str, Str, Str, Str, Str, Str, MachineServices -> MachineSteps
+	machine_steps = |
+		root,
+		kaifile_path,
+		name,
+		flake,
+		module_text,
+		metadata,
+		services,
+	| {
 		flake_path = MachineNix.machine_flake_path(root, name)
 		metadata_path = MachineNix.machine_metadata_path(root, name)
 		[
@@ -118,7 +135,7 @@ MachineNix := [].{
 			WriteFile({ contents: module_text, path: "${flake_path}/machine.nix" }),
 		]
 			.concat(MachineNix.service_copy_steps(flake_path, services))
-			.concat(NixBackend.lock_steps(flake_path))
+			.concat(NixBackend.lock_steps(flake_path, kaifile_path))
 			.concat([
 				WriteFile({
 					contents: "",
@@ -161,6 +178,7 @@ MachineNix := [].{
 			}
 		overlays = EnvironmentNix.extract_overlays(environment)?
 		locked_overlays = EnvironmentNix.all_overlays(input)?
+		sources = EnvironmentNix.all_sources(input)?
 		system = Fields.get_string(input.command_fields, "system") ? |_|
 			{
 				byte_offset: None,
@@ -168,6 +186,10 @@ MachineNix := [].{
 			}
 		users = MachineNix.optional_strings(input.command_fields, "users")?
 		services = MachineNix.optional_strings(input.command_fields, "services")?
+		installation_profile = MachineNix.parse_installation_profile(
+			input.command_fields,
+			users,
+		)?
 		failures = Plugin.validate_text(name, MachineBlock.name_rules)
 			.concat(Plugin.validate_string_list(pkgs, NixBackend.package_rules))
 			.concat(MachineBlock.user_failures(users))
@@ -211,11 +233,13 @@ MachineNix := [].{
 		Ok(
 			MachineNix.MachineSpec.{
 				generated_services,
+				installation_profile,
 				locked_overlays,
 				name,
 				overlays,
 				pkgs,
 				services,
+				sources,
 				target_architecture: target.architecture,
 				target_system: target.system,
 				users,
@@ -278,12 +302,14 @@ MachineNix := [].{
 			spec.target_system,
 			spec.locked_overlays,
 			spec.overlays,
+			spec.sources,
 			services,
 		)
 		module_text = MachineNix.render_module(
 			spec.pkgs,
 			spec.users,
 			native_services,
+			spec.installation_profile,
 		)
 		metadata = MachineNix.render_metadata(machine_metadata)
 		Ok(
@@ -307,6 +333,7 @@ MachineNix := [].{
 				requested_packages: spec.pkgs,
 				steps: MachineNix.machine_steps(
 					input.workspace_root,
+					input.kaifile_path,
 					spec.name,
 					flake,
 					module_text,
@@ -465,6 +492,43 @@ MachineNix := [].{
 	service_module_lines = |services|
 		services.map(|service| "          ./services/${service.name}")
 
+	parse_installation_profile :
+		Fields.ParsedFields,
+		List(Str) ->
+			Try(
+				InstallationProfile,
+				Plugin.BackendPlanningDiagnostic,
+			)
+	parse_installation_profile = |fields, users| {
+		bootloader = Fields.maybe_string(fields, "bootloader") ?? None
+		storage = Fields.maybe_string(fields, "storage") ?? None
+		match (bootloader, storage) {
+			(None, None) => Ok(NoInstallationProfile)
+			(Some("limine"), Some("single-disk")) if users.is_empty() => Err({
+				byte_offset: None,
+				message: "machine installation profile requires at least one user",
+			})
+			(Some("limine"), Some("single-disk")) => Ok(LimineSingleDisk)
+			(None, Some(_)) | (Some(_), None) => Err({
+				byte_offset: None,
+				message: "machine bootloader and storage must be specified together",
+			})
+			(Some(selected_bootloader), Some(selected_storage)) => Err({
+				byte_offset: None,
+				message: Str.join_with(
+					[
+						"unsupported machine installation profile '",
+						selected_bootloader,
+						"/",
+						selected_storage,
+						"'; expected 'limine/single-disk'",
+					],
+					"",
+				),
+			})
+		}
+	}
+
 	optional_strings :
 		Fields.ParsedFields, Str -> Try(List(Str), Plugin.BackendPlanningDiagnostic)
 	optional_strings = |fields, field|
@@ -501,8 +565,9 @@ MachineNix := [].{
 		})
 	}
 
-	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
-	render_flake = |name, system, locked_overlays, overlays, services| {
+	render_flake :
+		Str, Str, List(Str), List(Str), SourceInputs, MachineServices -> Str
+	render_flake = |name, system, locked_overlays, overlays, sources, services| {
 		overlay_lines = overlays.map(
 			|overlay|
 				"          ${NixBackend.overlay_expression(locked_overlays, overlay, 0)}",
@@ -511,14 +576,17 @@ MachineNix := [].{
 		lines = [
 			"{",
 			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-		].concat(NixBackend.input_lines(locked_overlays)).concat([
-			"  outputs = { ${outputs_args}, ... }:",
-			"    let",
-			"      system = \"${system}\";",
-			"      pkgs = import nixpkgs {",
-			"        inherit system;",
-			"        overlays = [",
-		]).concat(overlay_lines).concat([
+		]
+			.concat(NixBackend.input_lines(locked_overlays))
+			.concat(NixBackend.source_input_lines(sources))
+			.concat([
+				"  outputs = { ${outputs_args}, ... }:",
+				"    let",
+				"      system = \"${system}\";",
+				"      pkgs = import nixpkgs {",
+				"        inherit system;",
+				"        overlays = [",
+			]).concat(overlay_lines).concat([
 			"        ];",
 			"      };",
 			"      machine = nixpkgs.lib.nixosSystem {",
@@ -543,14 +611,42 @@ MachineNix := [].{
 		Str.join_with(lines, "\n")
 	}
 
-	render_module : List(Str), List(Str), List(Str) -> Str
-	render_module = |pkgs, users, services| {
+	render_module : List(Str), List(Str), List(Str), InstallationProfile -> Str
+	render_module = |pkgs, users, services, profile| {
 		package_lines = pkgs.map(
 			|pkg| "    pkgs.${NixBackend.render_attribute_path(pkg)}",
 		)
 		user_lines = users.map(
 			|user| "  users.users.\"${user}\".isNormalUser = true;",
 		)
+		admin_lines = match (profile, users) {
+			(LimineSingleDisk, [first, ..]) => [
+				"  users.users.\"${first}\".extraGroups = [ \"wheel\" ];",
+			]
+			_ => []
+		}
+		boot_lines = match profile {
+			NoInstallationProfile => [
+				"  boot.loader.grub.enable = false;",
+				"  fileSystems.\"/\" = {",
+				"    device = \"/dev/root\";",
+				"    fsType = \"auto\";",
+				"  };",
+			]
+			LimineSingleDisk => [
+				"  boot.loader.grub.enable = false;",
+				"  boot.loader.limine.enable = true;",
+				"  boot.loader.efi.canTouchEfiVariables = true;",
+				"  fileSystems.\"/\" = {",
+				"    device = \"/dev/disk/by-label/KAI_ROOT\";",
+				"    fsType = \"ext4\";",
+				"  };",
+				"  fileSystems.\"/boot\" = {",
+				"    device = \"/dev/disk/by-label/KAI_BOOT\";",
+				"    fsType = \"vfat\";",
+				"  };",
+			]
+		}
 		service_lines = services.map(
 			|service| {
 				service_attr = NixBackend.render_attribute_path(service)
@@ -560,16 +656,12 @@ MachineNix := [].{
 		lines = [
 			"{ pkgs, ... }:",
 			"{",
-			"  boot.loader.grub.enable = false;",
-			"  fileSystems.\"/\" = {",
-			"    device = \"/dev/root\";",
-			"    fsType = \"auto\";",
-			"  };",
+		].concat(boot_lines).concat([
 			"  system.stateVersion = \"25.05\";",
 			"  environment.systemPackages = [",
-		].concat(package_lines).concat([
+		]).concat(package_lines).concat([
 			"  ];",
-		]).concat(user_lines).concat(service_lines).concat([
+		]).concat(user_lines).concat(admin_lines).concat(service_lines).concat([
 			"}",
 		])
 		Str.join_with(lines, "\n")

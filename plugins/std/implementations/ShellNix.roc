@@ -75,7 +75,7 @@ ShellNix := [].{
 				prerequisite_commands: [],
 				requested_packages: pkgs,
 				steps: [WriteFile({ contents: flake, path: flake_path })]
-					.concat(NixBackend.lock_steps(input.workspace_root))
+					.concat(NixBackend.lock_steps(input.workspace_root, input.kaifile_path))
 					.concat([
 						NixBackend.run([
 							"develop",

@@ -1,0 +1,13 @@
+# Build a guided full-disk NixOS installer with `kai installer desktop`.
+environment desktop {
+  packages: ["kai"]
+  overlays: ["github:thebrandonlucas/kai"]
+}
+
+machine desktop {
+  environment: desktop
+  system: "x86_64-linux"
+  users: ["kai"]
+  bootloader: "limine"
+  storage: "single-disk"
+}

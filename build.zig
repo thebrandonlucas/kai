@@ -477,27 +477,52 @@ pub fn build(b: *std.Build) void {
         &.{ "nix", "flake", "check" },
     );
 
+    const installer_smoke_step = b.step(
+        "installer-smoke",
+        "Build and boot the guided installer ISO in an isolated VM",
+    );
+
     switch (b.graph.host.result.os.tag) {
-        .linux => _ = addCiCommand(
-            b,
-            ci_step,
-            &nix_flake_check.step,
-            "build Linux release outputs",
-            &.{
-                "nix",
-                "build",
-                ".#release-x86_64-linux",
-                ".#release-aarch64-linux",
-                "--no-link",
-            },
-        ),
-        .macos => _ = addCiCommand(
-            b,
-            ci_step,
-            &nix_flake_check.step,
-            "skip Linux release outputs on Darwin",
-            &.{ "echo", "Skipping Linux-only release output builds on Darwin" },
-        ),
+        .linux => {
+            const installer_smoke = addCiCommand(
+                b,
+                ci_step,
+                &nix_flake_check.step,
+                "boot installer ISO in QEMU",
+                &.{ "bash", "tests/installer-smoke.sh" },
+            );
+            installer_smoke_step.dependOn(&installer_smoke.step);
+            _ = addCiCommand(
+                b,
+                ci_step,
+                &nix_flake_check.step,
+                "build Linux release outputs",
+                &.{
+                    "nix",
+                    "build",
+                    ".#release-x86_64-linux",
+                    ".#release-aarch64-linux",
+                    "--no-link",
+                },
+            );
+        },
+        .macos => {
+            const skip_installer_smoke = addCiCommand(
+                b,
+                ci_step,
+                &nix_flake_check.step,
+                "skip installer smoke test on Darwin",
+                &.{ "echo", "Skipping Linux-only installer smoke test" },
+            );
+            installer_smoke_step.dependOn(&skip_installer_smoke.step);
+            _ = addCiCommand(
+                b,
+                ci_step,
+                &nix_flake_check.step,
+                "skip Linux release outputs on Darwin",
+                &.{ "echo", "Skipping Linux-only release output builds on Darwin" },
+            );
+        },
         else => @panic("zig build ci supports only Linux and Darwin hosts"),
     }
 

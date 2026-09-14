@@ -17,15 +17,21 @@ PlanCheck := [].{
 		ContainsStep(Plugin.ExecutionStep),
 		ContainsStepsInOrder(List(Plugin.ExecutionStep)),
 		WritesAtPathExactly({ contents : List(Str), path : Str }),
+		WritesContaining({ contents : Str, path : Str }),
 		WritesExactly({ contents : Str, path : Str }),
+		WritesNotContaining({ contents : Str, path : Str }),
 	]
 
 	plan : Input, Invocation, ExpectedOutcome -> Bool
 	plan = |input, invocation, expected|
+		PlanCheck.plan_at(input, "Kaifile", invocation, expected)
+
+	plan_at : Input, Str, Invocation, ExpectedOutcome -> Bool
+	plan_at = |input, kaifile_path, invocation, expected|
 		match Plugin.plan_registry(
 			input.definitions,
 			input.kaifile,
-			"Kaifile",
+			kaifile_path,
 			invocation,
 			input.host.os,
 			input.host.arch,
@@ -99,21 +105,28 @@ PlanCheck := [].{
 				)
 				contents == expected.contents
 			}
-			WritesExactly(expected) => {
-				matching = actual_plan.steps.keep_if(
-					|step|
-						match step {
-							WriteFile(write) => write.path == expected.path
-							_ => Bool.False
-						},
-				)
-				match matching {
-					[WriteFile(actual)] =>
-						actual.contents == expected.contents and
-							actual.path == expected.path
-					_ => Bool.False
-				}
+			WritesContaining(expected) =>
+				PlanCheck.write_matches(actual_plan, expected, |contents|
+					contents.contains(expected.contents))
+			WritesExactly(expected) =>
+				PlanCheck.write_matches(actual_plan, expected, |contents|
+					contents == expected.contents)
+			WritesNotContaining(expected) =>
+				PlanCheck.write_matches(actual_plan, expected, |contents|
+					!contents.contains(expected.contents))
 			}
+
+	write_matches = |actual_plan, expected, predicate|
+		match actual_plan.steps.keep_if(
+			|step|
+				match step {
+					WriteFile(write) => write.path == expected.path
+					_ => Bool.False
+				},
+		) {
+			[WriteFile(actual)] =>
+				actual.path == expected.path and predicate(actual.contents)
+			_ => Bool.False
 		}
 
 	contains_steps_in_order :
