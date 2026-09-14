@@ -17,16 +17,16 @@
               (modulesPath + "/profiles/qemu-guest.nix")
               (modulesPath + "/virtualisation/disk-image.nix")
             ];
-            image.baseName = "agent";
+            image.baseName = "server";
           })
           ./machine.nix
         ];
       };
     in {
-      nixosConfigurations."agent" = machine;
-      kaiImages."agent" = {
+      nixosConfigurations."server" = machine;
+      kaiImages."server" = {
         kind = "machine-image";
-        name = "agent";
+        name = "server";
         format = "qcow2";
         inherit system;
         image = machine.config.system.build.image;

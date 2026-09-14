@@ -1,9 +1,9 @@
-# Build a bootable rescue ISO with `kai iso rescue`.
+# Build a bootable NixOS ISO with `kai iso server`.
 environment recovery {
   packages: ["curl"]
 }
 
-machine rescue {
+machine server {
   environment: recovery
   system: "x86_64-linux"
   users: ["admin"]

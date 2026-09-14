@@ -1,9 +1,9 @@
-# Build a typed NixOS deployment closure with `kai machine agent`.
+# Build a typed NixOS deployment closure with `kai machine server`.
 environment server {
   packages: ["curl"]
 }
 
-machine agent {
+machine server {
   environment: server
   system: "x86_64-linux"
   users: ["agent"]
