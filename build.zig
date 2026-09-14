@@ -482,7 +482,7 @@ pub fn build(b: *std.Build) void {
     ci_step.dependOn(test_examples_step);
     build_release.step.dependOn(ci_step);
 
-    const nix_flake_check = addCiCommand(
+    _ = addCiCommand(
         b,
         ci_step,
         test_step,
@@ -494,7 +494,7 @@ pub fn build(b: *std.Build) void {
         .linux => _ = addCiCommand(
             b,
             ci_step,
-            &nix_flake_check.step,
+            test_step,
             "build Linux release outputs",
             &.{
                 "nix",
@@ -507,7 +507,7 @@ pub fn build(b: *std.Build) void {
         .macos => _ = addCiCommand(
             b,
             ci_step,
-            &nix_flake_check.step,
+            test_step,
             "skip Linux release outputs on Darwin",
             &.{ "echo", "Skipping Linux-only release output builds on Darwin" },
         ),
