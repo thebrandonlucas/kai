@@ -26,13 +26,8 @@ Guix := [].{
 		AllStrings(NonemptyText("shell package specifications must not be empty")),
 		AllStrings(
 			DisallowedPrefix({
-				message: Str.join_with(
-					[
-						"shell package specifications must not ",
-						"begin with '-'",
-					],
-					"",
-				),
+				message: \\shell package specifications must not begin with '-'
+				,
 				prefix: "-",
 			}),
 		),

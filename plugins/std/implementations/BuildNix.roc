@@ -156,13 +156,8 @@ BuildNix := [].{
 		} else {
 			".git\\n.kai\\n/${workspace_root}"
 		}
-		escaped_source = Str.join_with(
-			[
-				"lib.escapeShellArg (toString ",
-				"(builtins.getAttr name flake.kaiSources))",
-			],
-			"",
-		)
+		escaped_source =
+			\\lib.escapeShellArg (toString (builtins.getAttr name flake.kaiSources))
 		Str.join_with(
 			[
 				"let",

@@ -13,6 +13,9 @@ Build := [].{
 		Kaifile.required("output", String),
 	]
 
+	artifact_name_characters_message =
+		\\artifact name may contain only ASCII letters, digits, '.', '_', and '-'
+
 	artifact_name_rules : List(Plugin.TextRule)
 	artifact_name_rules = [
 		NonemptyText("artifact name must not be empty"),
@@ -29,13 +32,7 @@ Build := [].{
 				ExactByte('_'),
 				ExactByte('-'),
 			],
-			message: Str.join_with(
-				[
-					"artifact name may contain only ASCII letters, digits, ",
-					"'.', '_', and '-'",
-				],
-				"",
-			),
+			message: artifact_name_characters_message,
 		}),
 	]
 

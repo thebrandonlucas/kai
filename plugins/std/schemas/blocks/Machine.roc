@@ -12,6 +12,9 @@ Machine := [].{
 		Kaifile.optional("target", String),
 	]
 
+	name_characters_message =
+		\\machine name may contain only ASCII letters, digits, '.', '_', and '-'
+
 	name_rules : List(Plugin.TextRule)
 	name_rules = [
 		NonemptyText("machine name must not be empty"),
@@ -28,13 +31,7 @@ Machine := [].{
 				ExactByte('_'),
 				ExactByte('-'),
 			],
-			message: Str.join_with(
-				[
-					"machine name may contain only ASCII letters, digits, ",
-					"'.', '_', and '-'",
-				],
-				"",
-			),
+			message: name_characters_message,
 		}),
 	]
 
@@ -56,13 +53,9 @@ Machine := [].{
 					ExactByte('_'),
 					ExactByte('-'),
 				],
-				message: Str.join_with(
-					[
-						"machine service names may contain only ASCII letters, ",
-						"digits, '.', '_', and '-'",
-					],
-					"",
-				),
+				message: \\machine service names may contain only ASCII letters,
+					\\digits, '.', '_', and '-'
+				,
 			}),
 		),
 	]

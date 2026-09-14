@@ -63,13 +63,9 @@ Plugin := [].{
 				ExactByte('_'),
 				ExactByte('-'),
 			],
-			message: Str.join_with(
-				[
-					"KAI_DIR must be one relative top-level directory name ",
-					"containing only ASCII letters, digits, '.', '_', and '-'",
-				],
-				"",
-			),
+			message: \\KAI_DIR must be one relative top-level directory name
+				\\containing only ASCII letters, digits, '.', '_', and '-'
+			,
 		}),
 	]
 
@@ -2325,13 +2321,8 @@ Plugin := [].{
 								return Err(
 									fail(
 										None,
-										Str.join_with(
-											[
-												"prerequisite commands changed after",
-												"artifacts resolved",
-											],
-											" ",
-										),
+										\\prerequisite commands changed after artifacts resolved
+										,
 									),
 								)
 							}

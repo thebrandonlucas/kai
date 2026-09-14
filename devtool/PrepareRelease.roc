@@ -252,13 +252,8 @@ PrepareRelease := [].{
 		]) {
 			Err(_) => {
 				Stderr.line!(
-					Str.join_with(
-						[
-							"error: push status is ambiguous; ",
-							"local release state was retained",
-						],
-						"",
-					),
+					\\error: push status is ambiguous; local release state was retained
+					,
 				)?
 				Stderr.line!("error: inspect with: git ls-remote origin ${ref}")?
 				Stderr.line!("error: return with: git switch master")?
@@ -418,13 +413,8 @@ PrepareRelease := [].{
 									Ok({}) => Ok({})
 									Err(_) => {
 										Stderr.line!(
-											Str.join_with(
-												[
-													"error: release branch was pushed, ",
-													"but local cleanup failed",
-												],
-												"",
-											),
+											\\error: release branch was pushed, but local cleanup failed
+											,
 										)?
 										Stderr.line!("error: inspect remote branch: ${release_branch}")?
 										Stderr.line!("error: pull request: ${url}")?
