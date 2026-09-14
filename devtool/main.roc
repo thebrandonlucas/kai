@@ -259,6 +259,7 @@ main! = |args|
 		Ok(Cli.Command.Help) => Stdout.line!(Cli.usage)
 		Ok(Cli.Command.BuildRelease) => build_release!()
 		Ok(Cli.Command.Kaifiles) => Kaifiles.run!()
+		Ok(Cli.Command.KaifilesSmoke) => Kaifiles.run_smoke!()
 		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(
 			name,
 			version,
@@ -276,6 +277,7 @@ parse_cases = [
 	{ args: ["help"], expected: Ok(Cli.Command.Help) },
 	{ args: ["build-release"], expected: Ok(Cli.Command.BuildRelease) },
 	{ args: ["kaifiles"], expected: Ok(Cli.Command.Kaifiles) },
+	{ args: ["kaifiles-smoke"], expected: Ok(Cli.Command.KaifilesSmoke) },
 	{
 		args: ["prepare-release", "μοριων", "0.0.3"],
 		expected: Ok(
@@ -294,6 +296,10 @@ parse_cases = [
 		expected: Err(Cli.Error.ArgumentsNotAllowed("kaifiles")),
 	},
 	{
+		args: ["kaifiles-smoke", "extra"],
+		expected: Err(Cli.Error.ArgumentsNotAllowed("kaifiles-smoke")),
+	},
+	{
 		args: ["prepare-release", "only-name"],
 		expected: Err(Cli.Error.ExpectedArguments("prepare-release")),
 	},
@@ -304,6 +310,7 @@ usage_lines = [
 	"Usage: kai-devtool <command> [arguments]",
 	"build-release",
 	"kaifiles",
+	"kaifiles-smoke",
 	"prepare-release NAME VERSION",
 	"prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR",
 	"tidy ROC_FILE...",

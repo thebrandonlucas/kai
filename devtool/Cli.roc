@@ -4,6 +4,7 @@ Cli := [].{
 		BuildRelease,
 		Help,
 		Kaifiles,
+		KaifilesSmoke,
 		PrepareRelease({ name : Str, version : Str }),
 		PrepareXkai({ bundle_dir : Str, output_dir : Str, source_dir : Str }),
 		Tidy(List(Str)),
@@ -14,6 +15,7 @@ Cli := [].{
 				(BuildRelease, BuildRelease) => Bool.True
 				(Help, Help) => Bool.True
 				(Kaifiles, Kaifiles) => Bool.True
+				(KaifilesSmoke, KaifilesSmoke) => Bool.True
 				(PrepareRelease(left_args), PrepareRelease(right_args))
 					=> left_args == right_args
 				(PrepareXkai(left_args), PrepareXkai(right_args))
@@ -52,6 +54,7 @@ Cli := [].{
 			"Commands:",
 			"  build-release",
 			"  kaifiles",
+			"  kaifiles-smoke",
 			"  prepare-release NAME VERSION",
 			"  prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR",
 			"  tidy [ROC_FILE...]",
@@ -67,6 +70,7 @@ Cli := [].{
 			["help"] => Ok(Help)
 			["build-release"] => Ok(BuildRelease)
 			["kaifiles"] => Ok(Kaifiles)
+			["kaifiles-smoke"] => Ok(KaifilesSmoke)
 			["prepare-release", name, version] => Ok(PrepareRelease({ name, version }))
 			["prepare-xkai", bundle_dir, source_dir, output_dir] => Ok(
 				PrepareXkai({ bundle_dir, output_dir, source_dir }),
@@ -77,6 +81,7 @@ Cli := [].{
 					"help" => Err(ArgumentsNotAllowed(first))
 					"build-release" => Err(ArgumentsNotAllowed(first))
 					"kaifiles" => Err(ArgumentsNotAllowed(first))
+					"kaifiles-smoke" => Err(ArgumentsNotAllowed(first))
 					"prepare-release" => Err(ExpectedArguments(first))
 					"prepare-xkai" => Err(ExpectedPrepareXkaiArguments)
 					unknown => Err(UnknownCommand(unknown))
