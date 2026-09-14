@@ -1,0 +1,27 @@
+{
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  outputs = { nixpkgs, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [
+        ];
+      };
+      machine = nixpkgs.lib.nixosSystem {
+        inherit system;
+        modules = [
+          { nixpkgs.pkgs = pkgs; }
+          ./machine.nix
+        ];
+      };
+    in {
+      nixosConfigurations."server" = machine;
+      kaiMachines."server" = {
+        kind = "machine";
+        name = "server";
+        inherit system;
+        closure = machine.config.system.build.toplevel;
+      };
+    };
+}

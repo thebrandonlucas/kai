@@ -296,7 +296,7 @@ pub fn build(b: *std.Build) void {
     );
     const test_examples = std.Build.Step.Run.create(b, "run Kaifile examples test");
     test_examples.addFileArg(examples_devtool);
-    test_examples.addArg("examples/kaifiles");
+    test_examples.addArgs(&.{ "examples/kaifiles", "examples/plans" });
     test_examples_step.dependOn(&test_examples.step);
 
     const kaifiles_step = b.step(
@@ -479,9 +479,10 @@ pub fn build(b: *std.Build) void {
         "Run tests and build representative applications",
     );
     ci_step.dependOn(test_step);
+    ci_step.dependOn(test_examples_step);
     build_release.step.dependOn(ci_step);
 
-    const nix_flake_check = addCiCommand(
+    _ = addCiCommand(
         b,
         ci_step,
         test_step,
@@ -493,7 +494,7 @@ pub fn build(b: *std.Build) void {
         .linux => _ = addCiCommand(
             b,
             ci_step,
-            &nix_flake_check.step,
+            test_step,
             "build Linux release outputs",
             &.{
                 "nix",
@@ -506,7 +507,7 @@ pub fn build(b: *std.Build) void {
         .macos => _ = addCiCommand(
             b,
             ci_step,
-            &nix_flake_check.step,
+            test_step,
             "skip Linux release outputs on Darwin",
             &.{ "echo", "Skipping Linux-only release output builds on Darwin" },
         ),

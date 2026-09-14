@@ -1,9 +1,9 @@
-# Deploy this NixOS machine with `kai deploy production`.
+# Deploy this NixOS machine with `kai deploy server`.
 environment server {
   packages: ["curl"]
 }
 
-machine production {
+machine server {
   environment: server
   system: "x86_64-linux"
   users: ["operator"]

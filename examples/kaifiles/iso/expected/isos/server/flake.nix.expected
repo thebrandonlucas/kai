@@ -12,16 +12,18 @@
         inherit system;
         modules = [
           { nixpkgs.pkgs = pkgs; }
+          ({ lib, modulesPath, ... }: {
+            imports = [
+              (modulesPath + "/installer/cd-dvd/"
+                + "installation-cd-minimal.nix")
+            ];
+            image.baseName = lib.mkForce "server";
+          })
           ./machine.nix
         ];
       };
     in {
-      nixosConfigurations."agent" = machine;
-      kaiMachines."agent" = {
-        kind = "machine";
-        name = "agent";
-        inherit system;
-        closure = machine.config.system.build.toplevel;
-      };
+      nixosConfigurations."server" = machine;
+      kaiIsos."server" = machine.config.system.build.isoImage;
     };
 }

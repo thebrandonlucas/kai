@@ -1,0 +1,35 @@
+let
+  config = builtins.fromJSON (builtins.readFile ./build.json);
+  flake = builtins.getFlake (toString ./.);
+  pkgs = builtins.getAttr config.system flake.legacyPackages;
+  lib = pkgs.lib;
+  resolvePackage = name:
+    lib.attrByPath (lib.splitString "." name)
+      (throw ("Kai build package '" + name + "' was not found"))
+      pkgs;
+  source = pkgs.nix-gitignore.gitignoreFilterRecursiveSource
+    (_: _: true) ".git\n.kai" ../../../.;
+  inputLinks = lib.concatMapStringsSep "\n" (name:
+    "ln -s -- ${lib.escapeShellArg (toString (builtins.getAttr name flake.kaiSources))} .kai/inputs/${lib.escapeShellArg name}"
+  ) config.inputs;
+in
+pkgs.runCommand ("kai-build-" + config.name)
+  { nativeBuildInputs = map resolvePackage config.pkgs; }
+  ''
+    cp -R ${source}/. .
+    chmod -R u+w .
+    mkdir -p .kai/inputs
+    ${inputLinks}
+    artifact=${lib.escapeShellArg config.output}
+    rm -rf -- "$artifact"
+    ${lib.escapeShellArgs config.run}
+    if [ ! -e "$artifact" ]; then
+      echo "Kai build output does not exist: $artifact" >&2
+      exit 1
+    fi
+    if [ -d "$artifact" ]; then
+      cp -R -- "$artifact" "$out"
+    else
+      cp -- "$artifact" "$out"
+    fi
+  ''

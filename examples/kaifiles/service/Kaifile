@@ -1,0 +1,25 @@
+# Build a hardened NixOS service module with `kai service greeter`.
+environment tools {
+  packages: ["coreutils"]
+}
+
+build greeter {
+  environment: tools
+  run: [
+    "sh",
+    "-c",
+    "printf '#!/bin/sh\\necho hello\\n' > greeter && chmod +x greeter"
+  ]
+  output: "greeter"
+}
+
+# Kai provisions the value at runtime; secrets never belong in the Kaifile.
+secret greeting {
+  provision: runtime
+}
+
+service greeter {
+  artifact: "greeter"
+  secrets: ["greeting"]
+  restart: on-failure
+}

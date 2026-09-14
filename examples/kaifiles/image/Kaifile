@@ -1,9 +1,9 @@
-# Build a generic QCOW2 image from the same machine definition.
+# Build a generic QCOW2 image with `kai image server`.
 environment server {
   packages: ["curl"]
 }
 
-machine agent {
+machine server {
   environment: server
   system: "x86_64-linux"
   users: ["agent"]

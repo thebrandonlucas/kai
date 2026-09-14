@@ -1,3 +1,4 @@
+# Enter this overlaid environment with `kai shell`.
 # Overlays add packages that are not provided directly by nixpkgs.
 shell {
   packages: ["rocpkgs.nightly"]
