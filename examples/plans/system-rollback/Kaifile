@@ -1,2 +1,0 @@
-# Roll back local NixOS with `kai system rollback`.
-# This command needs no Kaifile blocks.

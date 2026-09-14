@@ -1,9 +1,0 @@
-# Update and lock project inputs with `kai update`.
-source kai {
-  url: "github:thebrandonlucas/kai"
-}
-
-environment roc {
-  packages: ["rocpkgs.nightly"]
-  overlays: ["github:thebrandonlucas/roc-overlay"]
-}
