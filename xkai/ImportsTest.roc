@@ -26,6 +26,7 @@ main! = |_| {
 	}
 }
 
+# An import line yields its relative import path.
 expect {
 	ImportCheck.line(
 		"import \"parts/environment.kai\"",

@@ -4,6 +4,7 @@ import util.PlanCheck
 
 SwitchNixTest := [].{}
 
+# A local switch builds, confirms, and activates the only local machine.
 expect {
 	kaifile =
 		\\environment base {
@@ -60,6 +61,7 @@ expect {
 	)
 }
 
+# A remote switch confirms before activating the machine through SSH.
 expect {
 	kaifile =
 		\\environment base {

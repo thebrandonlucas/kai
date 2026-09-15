@@ -1,8 +1,9 @@
 # Invariants that should always be true about the code to maintain conceptual
 # integrity.
 #
-# Currently there are 3:
-# - Enforce each code module to have a top-level explainer comment
+# Currently there are 5:
+# - Enforce each code module and expect test to have an explainer comment
+# - Require every plugin implementation to have a planning expect test
 # - Limit line length to 80
 # - Reject direct static literal-list Str.join_with calls
 #
@@ -11,16 +12,16 @@ import pf.Path
 import pf.Stderr
 
 Tidy := [].{
-	Violation := {
-		kind : [LineTooLong(U64), MissingModuleComment, StaticLiteralJoin],
-		line : U64,
-	}
+	Kind : [
+		LineTooLong(U64),
+		MissingExpectComment,
+		MissingImplementationTest(Str),
+		MissingModuleComment,
+		StaticLiteralJoin,
+	]
 
-	Diagnostic := {
-		kind : [LineTooLong(U64), MissingModuleComment, StaticLiteralJoin],
-		line : U64,
-		path : Str,
-	}
+	Violation := { kind : Kind, line : U64 }
+	Diagnostic := { kind : Kind, line : U64, path : Str }
 
 	excluded_directories = [
 		".direnv",
@@ -76,6 +77,27 @@ Tidy := [].{
 		trimmed = line.trim()
 		trimmed == "package" or trimmed.starts_with("package ")
 	}
+
+	is_expect = |line| {
+		trimmed = line.trim()
+		trimmed == "expect" or trimmed.starts_with("expect ")
+	}
+
+	expect_comment_violations = |lines, previous|
+		match lines {
+			[] => []
+			[first, .. as rest] => {
+				trimmed = first.text.trim()
+				current = if trimmed.is_empty() previous else trimmed
+				violation = if Tidy.is_expect(trimmed) and
+					!Tidy.has_module_comment(previous) {
+					[{ kind: MissingExpectComment, line: first.line }]
+				} else {
+					[]
+				}
+				violation.concat(Tidy.expect_comment_violations(rest, current))
+			}
+		}
 
 	comment_violations = |lines| {
 		first_code = lines.keep_if(
@@ -473,6 +495,7 @@ Tidy := [].{
 	check_file = |source| {
 		lines = Tidy.indexed_lines(source)
 		Tidy.comment_violations(lines)
+			.concat(Tidy.expect_comment_violations(lines, ""))
 			.concat(Tidy.line_violations(lines))
 			.concat(Tidy.static_join_violations(source))
 	}
@@ -507,6 +530,55 @@ Tidy := [].{
 			}
 		}
 
+	implementation_test_path = |path| {
+		parts = path.split_on("/")
+		filename = parts.last() ?? ""
+		stem = Str.from_utf8_lossy(filename.to_utf8().drop_last(4))
+		"${Str.join_with(parts.drop_last(2), "/")}/tests/${stem}Test.roc"
+	}
+
+	implementation_diagnostics! = |paths|
+		match paths {
+			[] => Ok([])
+			[path, .. as rest] => {
+				raw_path = Path.display(path)
+				source = Path.read_utf8!(path)?
+				current = if raw_path.contains("/implementations/") and
+					source.contains("implementation = Plugin.Implementation.{") {
+					test_path = Tidy.implementation_test_path(raw_path)
+					test_parts = test_path.split_on("/")
+					test_root = "${Str.join_with(test_parts.drop_last(1), "/")}/main.roc"
+					test_name = Str.from_utf8_lossy(
+						(test_parts.last() ?? "").to_utf8().drop_last(4),
+					)
+					valid = if Path.is_file!(Path.utf8(test_path))? and
+						Path.is_file!(Path.utf8(test_root))? {
+						test_source = Path.read_utf8!(Path.utf8(test_path))?
+						root_source = Path.read_utf8!(Path.utf8(test_root))?
+						root_source.contains(test_name) and
+							test_source.contains("PlanCheck.") and
+								List.any(
+									Tidy.indexed_lines(test_source),
+									|line| Tidy.is_expect(line.text),
+								)
+					} else {
+						Bool.False
+					}
+					if valid [] else [
+						Tidy.Diagnostic.{
+							kind: MissingImplementationTest(test_path),
+							line: 1,
+							path: raw_path,
+						},
+					]
+				} else {
+					[]
+				}
+				remaining = Tidy.implementation_diagnostics!(rest)?
+				Ok(current.concat(remaining))
+			}
+		}
+
 	check_paths! = |paths|
 		match paths {
 			[] => Ok([])
@@ -519,11 +591,12 @@ Tidy := [].{
 				}
 				source = Path.read_utf8!(path)?
 				diagnostics = Tidy.check_file(source).map(
-					|violation| {
-						kind: violation.kind,
-						line: violation.line,
-						path: display_path,
-					},
+					|violation|
+						Tidy.Diagnostic.{
+							kind: violation.kind,
+							line: violation.line,
+							path: display_path,
+						},
 				)
 				remaining = Tidy.check_paths!(rest)?
 				Ok(diagnostics.concat(remaining))
@@ -540,7 +613,7 @@ Tidy := [].{
 		missing_comments = diagnostics.keep_if(
 			|diagnostic|
 				match diagnostic.kind {
-					MissingModuleComment => Bool.True
+					MissingExpectComment | MissingModuleComment => Bool.True
 					_ => Bool.False
 				},
 		)
@@ -558,9 +631,16 @@ Tidy := [].{
 					_ => Bool.False
 				},
 		)
+		missing_tests = diagnostics.keep_if(
+			|diagnostic|
+				match diagnostic.kind {
+					MissingImplementationTest(_) => Bool.True
+					_ => Bool.False
+				},
+		)
 
 		if !missing_comments.is_empty() {
-			header = "Missing module comments (${
+			header = "Missing module or expect comments (${
 				U64.to_str(missing_comments.len())
 			}):"
 			Stderr.line!(Tidy.colorize(Tidy.ansi_red, header))?
@@ -601,11 +681,23 @@ Tidy := [].{
 				Stderr.line!("  ${diagnostic.path}:${line}")?
 			}
 		}
+		if !missing_tests.is_empty() {
+			Stderr.line!("")?
+			Stderr.line!(Tidy.colorize(Tidy.ansi_red, "Missing implementation tests:"))?
+			for diagnostic in missing_tests {
+				test_path = match diagnostic.kind {
+					MissingImplementationTest(path) => path
+					_ => ""
+				}
+				Stderr.line!("  ${diagnostic.path} -> ${test_path}")?
+			}
+		}
 		if !diagnostics.is_empty() {
 			Stderr.line!("")?
 		}
 		Stderr.line!("Checks:")?
-		Tidy.print_check!("Module comments", missing_comments.is_empty())?
+		Tidy.print_check!("Module and expect comments", missing_comments.is_empty())?
+		Tidy.print_check!("Implementation tests", missing_tests.is_empty())?
 		Tidy.print_check!("80-codepoint line limit", long_lines.is_empty())?
 		Tidy.print_check!(
 			"No direct static literal-list Str.join_with calls",
@@ -620,12 +712,19 @@ Tidy := [].{
 	}
 
 	run! = |paths| {
-		roc_files = if paths.is_empty() {
+		whole_repository = paths.is_empty()
+		roc_files = if whole_repository {
 			Tidy.discover!(Path.utf8("."))?
 		} else {
 			paths.map(Path.utf8)
 		}
-		diagnostics = Tidy.check_paths!(roc_files)?
+		file_diagnostics = Tidy.check_paths!(roc_files)?
+		implementation_diagnostics = if whole_repository {
+			Tidy.implementation_diagnostics!(roc_files)?
+		} else {
+			[]
+		}
+		diagnostics = file_diagnostics.concat(implementation_diagnostics)
 		Tidy.print_report!(diagnostics)?
 		if diagnostics.is_empty() {
 			Ok({})

@@ -363,6 +363,7 @@ pub fn build(b: *std.Build) void {
     );
     const tidy_check = addDevtoolCommand(b, devtool, "tidy", &.{});
     tidy_step.dependOn(&tidy_check.step);
+    tidy_step.dependOn(test_examples_step);
 
     const check_step = b.step(
         "check",
@@ -473,6 +474,22 @@ pub fn build(b: *std.Build) void {
     });
     test_standard_plugin.step.dependOn(check_step);
     test_step.dependOn(&test_standard_plugin.step);
+
+    const test_guix_plugin = b.addSystemCommand(&.{
+        "roc",
+        "test",
+        "plugins/guix/tests/main.roc",
+    });
+    test_guix_plugin.step.dependOn(check_step);
+    test_step.dependOn(&test_guix_plugin.step);
+
+    const test_split_plugin = b.addSystemCommand(&.{
+        "roc",
+        "test",
+        "examples/plugins/split-plugin/tests/main.roc",
+    });
+    test_split_plugin.step.dependOn(check_step);
+    test_step.dependOn(&test_split_plugin.step);
 
     const ci_step = b.step(
         "ci",

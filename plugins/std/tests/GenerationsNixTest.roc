@@ -4,6 +4,7 @@ import util.PlanCheck
 
 GenerationsNixTest := [].{}
 
+# Generations asks nixos-rebuild to list the local system generations.
 expect {
 	PlanCheck.plan(
 		{

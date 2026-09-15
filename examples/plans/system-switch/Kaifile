@@ -1,0 +1,11 @@
+# Activate this machine with `kai system switch`.
+environment base {
+  packages: []
+}
+
+machine workstation {
+  environment: base
+  system: "x86_64-linux"
+  users: []
+  services: []
+}
