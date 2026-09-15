@@ -4,6 +4,7 @@ import util.PlanCheck
 
 IsoNixTest := [].{}
 
+# An ISO command renders and builds the selected machine as a bootable image.
 expect {
 	kaifile =
 		\\environment recovery {

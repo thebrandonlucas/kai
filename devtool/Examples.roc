@@ -331,8 +331,7 @@ Examples := [].{
 				current = match first {
 					CommandGroup(group) =>
 						Examples.leaf_command_paths(group.commands, path)
-					CommandOnly(_) => []
-					CommandWithBlock(_) => [path]
+					CommandOnly(_) | CommandWithBlock(_) => [path]
 				}
 				current.concat(Examples.leaf_command_paths(rest, prefix))
 			}

@@ -7,6 +7,7 @@ package
 		ImageNixTest,
 		IsoNixTest,
 		MachineNixTest,
+		RollbackNixTest,
 		ServiceNixTest,
 		ShellNixTest,
 		SwitchNixTest,
