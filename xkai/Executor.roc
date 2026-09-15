@@ -667,6 +667,273 @@ Executor := [].{
 			if answer == "y" or answer == "yes" Ok(Continue) else Ok(Stop)
 		}
 
+	normalized_relative_path : Str -> Bool
+	normalized_relative_path = |path|
+		!path.is_empty() and !path.starts_with("/") and
+			List.all(
+				path.split_on("/"),
+				|part| !part.is_empty() and part != "." and part != "..",
+			)
+
+	path_has_symlink! = |parts, parent|
+		match parts {
+			[] => Ok(Bool.False)
+			[first, .. as rest] => {
+				path = if parent.is_empty() first else "${parent}/${first}"
+				if Path.is_sym_link!(Path.utf8(path))? {
+					Ok(Bool.True)
+				} else {
+					Executor.path_has_symlink!(rest, path)
+				}
+			}
+		}
+
+	unique_stage_file_names = |files, names|
+		match files {
+			[] => Bool.True
+			[first, .. as rest] =>
+				if names.contains(first.name) {
+					Bool.False
+				} else {
+					Executor.unique_stage_file_names(rest, names.append(first.name))
+				}
+			}
+
+	stage_files_plan_valid = |stage, workspace_root|
+		stage.directory.starts_with("${workspace_root}/") and
+			Executor.normalized_relative_path(stage.directory) and
+				List.all(
+					stage.files,
+					|file|
+						Executor.normalized_relative_path(file.source) and
+							Executor.normalized_relative_path(file.name) and
+								!file.name.contains("/"),
+				) and
+					Executor.unique_stage_file_names(stage.files, [])
+
+	validator_arguments = |arguments, absolute_path|
+		arguments.map(
+			|argument|
+				match argument {
+					Literal(value) => OsStr.utf8(value)
+					StagedFilePath => Path.to_os_str(absolute_path)
+				},
+		)
+
+	process_failure_message = |message, problem|
+		match problem {
+			NonZeroExitCode({ stderr_utf8_lossy, .. }) => {
+				detail = stderr_utf8_lossy.trim()
+				if detail.is_empty() message else "${message}: ${detail}"
+			}
+			_ => message
+		}
+
+	validate_staged_file! = |path, validators, message|
+		match validators {
+			[] => Ok({})
+			[first, .. as rest] => {
+				absolute_path = Path.join(Env.cwd!()?, path)
+				base_command = Cmd.new_str(first.program).args(
+					Executor.validator_arguments(first.arguments, absolute_path),
+				)
+				command = match first.environment {
+					NoFileEnvironment => base_command
+					StagedFileEnvironment(name) => base_command.env(
+						OsStr.utf8(name),
+						Path.to_os_str(absolute_path),
+					)
+				}
+				match command.exec_output!() {
+					Ok(output) if output.stdout_utf8.trim() == first.expected_stdout =>
+						Executor.validate_staged_file!(path, rest, message)
+					Ok(_) => Err(FileStagingFailed(message))
+					Err(problem) => Err(
+						FileStagingFailed(
+							Executor.process_failure_message(message, problem),
+						),
+					)
+				}
+			}
+		}
+
+	validate_stage_source! = |source, workspace_root, validators, message| {
+		if source == workspace_root or source.starts_with("${workspace_root}/") {
+			return Err(
+				FileStagingFailed(
+					"staged file source must be outside the Kai workspace",
+				),
+			)
+		}
+		if Executor.path_has_symlink!(source.split_on("/"), "")? or
+			!Path.is_file!(Path.utf8(source))? {
+			return Err(
+				FileStagingFailed(
+					"staged file source must be a regular path without symlinks",
+				),
+			)
+		}
+		Executor.validate_staged_file!(source, validators, message)
+	}
+
+	validate_stage_sources! = |files, workspace_root, validators, message|
+		match files {
+			[] => Ok({})
+			[first, .. as rest] => {
+				Executor.validate_stage_source!(
+					first.source,
+					workspace_root,
+					validators,
+					message,
+				)?
+				Executor.validate_stage_sources!(
+					rest,
+					workspace_root,
+					validators,
+					message,
+				)
+			}
+		}
+
+	require_stage_programs! = |validators|
+		match validators {
+			[] => Ok({})
+			[first, .. as rest] =>
+				if Cmd.check_available!(first.program) {
+					Executor.require_stage_programs!(rest)
+				} else {
+					Err(
+						FileStagingFailed(
+							"cannot stage files: '${first.program}' was not found",
+						),
+					)
+				}
+			}
+
+	run_stage_program! = |program, arguments, message|
+		match Cmd.new_str(program).args_str(arguments).exec_output!() {
+			Ok(_) => Ok({})
+			Err(problem) => Err(
+				FileStagingFailed(
+					Executor.process_failure_message(message, problem),
+				),
+			)
+		}
+
+	clear_stage_directory! = |path| {
+		if Path.is_sym_link!(Path.utf8(path))? {
+			Err(FileStagingFailed("staged files path must not be a symlink"))
+		} else {
+			Executor.run_stage_program!(
+				"rm",
+				["-rf", "--", path],
+				"failed to clear staged files",
+			)
+		}
+	}
+
+	write_staged_files! = |files, temporary_path, validators, message|
+		match files {
+			[] => Ok({})
+			[first, .. as rest] => {
+				destination = "${temporary_path}/${first.name}"
+				Executor.run_stage_program!(
+					"cp",
+					[
+						"--no-dereference",
+						"--remove-destination",
+						"--",
+						first.source,
+						destination,
+					],
+					"failed to copy staged file",
+				)?
+				if Path.is_sym_link!(Path.utf8(destination))? or
+					!Path.is_file!(Path.utf8(destination))? {
+					return Err(
+						FileStagingFailed("staged file must be a regular file"),
+					)
+				}
+				Executor.validate_staged_file!(destination, validators, message)?
+				Executor.write_staged_files!(rest, temporary_path, validators, message)
+			}
+		}
+
+	cleanup_stage_directory! = |path| {
+		_ = Cmd.new_str("rm").args_str(["-rf", "--", path]).exec_output!()
+		{}
+	}
+
+	stage_files! = |stage, workspace_root| {
+		match Env.platform!().os {
+			LINUX => {}
+			_ => return Err(
+				FileStagingFailed("external file staging is supported only on Linux"),
+			)
+		}
+		if !Executor.stage_files_plan_valid(stage, workspace_root) {
+			return Err(FileStagingFailed("invalid staged files execution step"))
+		}
+		temporary_path = "${stage.directory}.tmp"
+		# TODO: Use descriptor-relative no-follow staging when basic-cli exposes it.
+		if Executor.path_has_symlink!(stage.directory.split_on("/"), "")? or
+			Executor.path_has_symlink!(temporary_path.split_on("/"), "")? {
+			return Err(FileStagingFailed("staged files path must not contain symlinks"))
+		}
+		Executor.clear_stage_directory!(temporary_path)?
+		if stage.files.is_empty() {
+			return Executor.clear_stage_directory!(stage.directory)
+		}
+		Executor.require_stage_programs!(stage.validators)?
+		Executor.validate_stage_sources!(
+			stage.files,
+			workspace_root,
+			stage.validators,
+			stage.source_validation_error,
+		)?
+		Executor.run_stage_program!(
+			"mkdir",
+			["-p", "--", temporary_path],
+			"failed to create staged files directory",
+		)?
+		stage_result = Executor.write_staged_files!(
+			stage.files,
+			temporary_path,
+			stage.validators,
+			stage.staged_validation_error,
+		)
+		match stage_result {
+			Err(problem) => {
+				Executor.cleanup_stage_directory!(temporary_path)
+				Err(problem)
+			}
+			Ok({}) => {
+				publish_result = {
+					Executor.clear_stage_directory!(stage.directory)?
+					Executor.run_stage_program!(
+						"mv",
+						["-T", "--", temporary_path, stage.directory],
+						"failed to publish staged files",
+					)
+				}
+				match publish_result {
+					Ok({}) => Ok({})
+					Err(problem) => {
+						Executor.cleanup_stage_directory!(temporary_path)
+						Err(problem)
+					}
+				}
+			}
+		}
+	}
+
+	file_staging_error! = |json, message|
+		if json {
+			Executor.json_error!("file_staging_failed", message, "")
+		} else {
+			Stderr.line!(message)
+		}
+
 	execute_step! :
 		Plugin.ExecutionStep, Str, Bool, Bool, Bool => Try(ExecutionControl, _)
 	execute_step! = |step, workspace_root, json, color, assume_yes|
@@ -692,7 +959,16 @@ Executor := [].{
 				Executor.run_program!(json, color, program, arguments)?
 				Ok(Continue)
 			}
-		}
+			StageExternalFiles(stage) =>
+				match Executor.stage_files!(stage, workspace_root) {
+					Ok({}) => Ok(Continue)
+					Err(FileStagingFailed(message)) => {
+						Executor.file_staging_error!(json, message)?
+						Err(Exit(1))
+					}
+					Err(problem) => Err(problem)
+				}
+			}
 
 	emit_process! = |output| {
 		for (kind, bytes) in [

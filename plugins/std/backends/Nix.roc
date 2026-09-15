@@ -156,6 +156,57 @@ Nix := [].{
 	run : List(Str) -> Plugin.ExecutionStep
 	run = |arguments| RunProgram({ arguments, program: backend.name })
 
+	# SOPS is a secret-file encryption tool. In its binary JSON format, the
+	# original file becomes one encrypted `data` value and `sops` holds metadata
+	# such as the recipients that can unwrap the file's data key. This expression
+	# checks that exact envelope without decrypting it.
+	sops_binary_json_expression : Str
+	sops_binary_json_expression =
+		\\let
+		\\  value = builtins.fromJSON (
+		\\    builtins.readFile (builtins.getEnv "KAI_SECRET_FILE")
+		\\  );
+		\\in
+		\\if builtins.isAttrs value
+		\\  && builtins.attrNames value == [ "data" "sops" ]
+		\\  && builtins.isString value.data
+		\\  && builtins.match
+		\\    "ENC[[]AES256_GCM,data:[^,]+,iv:[^,]+,tag:[^,]+,type:str[]]"
+		\\    value.data != null
+		\\then "true"
+		\\else "false"
+
+	# `filestatus` first asks SOPS whether the document is encrypted. That also
+	# accepts structured JSON documents, so the Nix expression then narrows the
+	# accepted shape to SOPS binary JSON. The executor runs both checks before
+	# and after staging; neither validator needs the plaintext or private key.
+	sops_binary_json_validators : List(Plugin.FileValidator)
+	sops_binary_json_validators = [
+		{
+			arguments: [
+				Literal("filestatus"),
+				Literal("--input-type"),
+				Literal("json"),
+				StagedFilePath,
+			],
+			environment: NoFileEnvironment,
+			expected_stdout: "{\"encrypted\":true}",
+			program: "sops",
+		},
+		{
+			arguments: [
+				Literal("eval"),
+				Literal("--impure"),
+				Literal("--raw"),
+				Literal("--expr"),
+				Literal(Nix.sops_binary_json_expression),
+			],
+			environment: StagedFileEnvironment("KAI_SECRET_FILE"),
+			expected_stdout: "true",
+			program: "nix",
+		},
+	]
+
 	render_nixos_module : List(Str), List(Str), List(Str) -> Str
 	render_nixos_module = |pkgs, users, services| {
 		package_lines = pkgs.map(|pkg|

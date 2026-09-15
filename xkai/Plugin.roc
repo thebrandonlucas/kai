@@ -18,11 +18,30 @@ Plugin := [].{
 	workspace_path : Str, Str -> Str
 	workspace_path = |workspace_root, path| "${workspace_root}/${path}"
 
+	FileValidatorArgument : [Literal(Str), StagedFilePath]
+	FileValidatorEnvironment : [NoFileEnvironment, StagedFileEnvironment(Str)]
+	FileValidator := {
+		arguments : List(FileValidatorArgument),
+		environment : FileValidatorEnvironment,
+		expected_stdout : Str,
+		program : Str,
+	}
+	StagedFile := { name : Str, source : Str }
+
 	# Side effects to be performed later by the executor.
 	ExecutionStep := [
 		Confirm(Str),
 		PrintLine(Str),
 		RunProgram({ arguments : List(Str), program : Str }),
+		StageExternalFiles(
+			{
+				directory : Str,
+				files : List(StagedFile),
+				source_validation_error : Str,
+				staged_validation_error : Str,
+				validators : List(FileValidator),
+			},
+		),
 		WriteFile({ contents : Str, path : Str }),
 	].{
 		encoder_for : _
