@@ -429,6 +429,16 @@ Plugin := [].{
 		location : SourceLocation,
 	}
 
+	BackendBody := {
+		body : Str,
+		location : SourceLocation,
+	}
+	BackendBodySelection : [BackendBody(BackendBody), NoBackendBody]
+	NamedBackendBody := {
+		body : BackendBody,
+		name : Str,
+	}
+
 	BlockHost : [AllHosts, HostOnly(Str)]
 
 	ParsedBlock := {
@@ -1080,7 +1090,14 @@ Plugin := [].{
 			SelectorDiagnostic,
 		)
 	parse_block = |schema, header, block, host| {
-		fields = Fields.parse(Kaifile.body(schema), block.body) ? |diagnostic| {
+		extracted = Blocks.extract(block.body, "backend") ? |diagnostic| {
+			location: At(
+				Plugin.translate_location(block, diagnostic.location.byte_offset),
+			),
+			message: "invalid backend block",
+		}
+		body_shape = Kaifile.body(schema)
+		fields = Fields.parse(body_shape, extracted.remaining) ? |diagnostic| {
 			location: At(Plugin.translate_location(block, diagnostic.byte_offset)),
 			message: Fields.describe(diagnostic),
 		}
@@ -1103,6 +1120,127 @@ Plugin := [].{
 					Ok(first)
 				} else {
 					Plugin.find_parsed_block(rest, selected)
+				}
+			}
+
+	backend_body_for_selection =
+		|selection, implementations, command, backend|
+			match selection {
+				Missing => Ok(NoBackendBody)
+				Selected(block) =>
+					Plugin.backend_body_for_block(
+						block,
+						implementations,
+						command,
+						backend,
+					)
+				SelectedWithReference(
+					{ reference_field: _, referenced_block: _, selected_block },
+				) =>
+					Plugin.backend_body_for_block(
+						selected_block,
+						implementations,
+						command,
+						backend,
+					)
+				}
+
+	backend_body_for_block = |block, implementations, command, backend| {
+		extracted = Blocks.extract(block.body, "backend") ? |diagnostic| {
+			location: At(
+				Plugin.translate_location(block, diagnostic.location.byte_offset),
+			),
+			message: "invalid backend block",
+		}
+		backends = extracted.blocks.map(
+			|backend_block| {
+				body: {
+					body: backend_block.body,
+					location: Plugin.translate_location(
+						block,
+						backend_block.location.byte_offset,
+					),
+				},
+				name: backend_block.header.last() ?? "",
+			},
+		)
+		Plugin.validate_unique_backend_bodies(backends, [])?
+		Plugin.validate_registered_backend_bodies(
+			backends,
+			implementations,
+			command,
+		)?
+		if backends.is_empty() {
+			Ok(NoBackendBody)
+		} else {
+			match Plugin.find_backend_body(backends, backend) {
+				Some(body) => Ok(BackendBody(body))
+				None => Err({
+					location: At(block.location),
+					message: "selected backend '${backend}' has no backend block",
+				})
+			}
+		}
+	}
+
+	validate_unique_backend_bodies :
+		List(NamedBackendBody), List(Str) -> Try({}, SelectorDiagnostic)
+	validate_unique_backend_bodies = |backends, seen|
+		match backends {
+			[] => Ok({})
+			[first, .. as rest] =>
+				if seen.contains(first.name) {
+					Err({
+						location: At(first.body.location),
+						message: "duplicate backend block '${first.name}'",
+					})
+				} else {
+					Plugin.validate_unique_backend_bodies(
+						rest,
+						seen.append(first.name),
+					)
+				}
+			}
+
+	validate_registered_backend_bodies =
+		|backends, implementations, command|
+			match backends {
+				[] => Ok({})
+				[first, .. as rest] =>
+					match Plugin.find_implementation(
+						implementations,
+						command,
+						first.name,
+					) {
+						Ok(_) =>
+							Plugin.validate_registered_backend_bodies(
+								rest,
+								implementations,
+								command,
+							)
+						Err(NotFound) => Err({
+							location: At(first.body.location),
+							message: Str.join_with(
+								[
+									"backend '${first.name}' has no implementation",
+									"for command '${command}'",
+								],
+								" ",
+							),
+						})
+					}
+				}
+
+	find_backend_body :
+		List(NamedBackendBody), Str -> [None, Some(BackendBody)]
+	find_backend_body = |backends, name|
+		match backends {
+			[] => None
+			[first, .. as rest] =>
+				if first.name == name {
+					Some(first.body)
+				} else {
+					Plugin.find_backend_body(rest, name)
 				}
 			}
 
@@ -1137,6 +1275,7 @@ Plugin := [].{
 	PrerequisiteArtifacts : [NotResolved, Resolved(List(Artifact))]
 
 	CommandPlanningInput := {
+		backend_body : BackendBodySelection,
 		backend_target : [BackendTarget(Str), NoBackendTarget],
 		command_arguments : List(Str),
 		command_fields : Fields.ParsedFields,
@@ -1275,6 +1414,7 @@ Plugin := [].{
 				Plugin.implementation_validation(failures)?
 				Ok(
 					Plugin.CommandPlanningInput.{
+						backend_body: input.backend_body,
 						backend_target,
 						command_arguments: input.command_arguments,
 						command_fields: input.command_fields,
@@ -2275,7 +2415,15 @@ Plugin := [].{
 								})
 							}
 						}?
+						backend_body = Plugin.backend_body_for_selection(
+							selection,
+							plugin_definition.implementations,
+							selected_command_name,
+							backend.name,
+						) ? |diagnostic|
+							fail(diagnostic.location, diagnostic.message)
 						input = Plugin.CommandPlanningInput.{
+							backend_body,
 							backend_target: NoBackendTarget,
 							command_arguments: normalized_invocation.args,
 							command_fields: parsed.command_fields,
@@ -2290,6 +2438,7 @@ Plugin := [].{
 							fail(
 								Plugin.implementation_location(
 									selection,
+									backend_body,
 									diagnostic.byte_offset,
 								),
 								diagnostic.message,
@@ -2320,6 +2469,7 @@ Plugin := [].{
 						} else {
 							with_prerequisite_artifacts = plan_implementation(
 								Plugin.CommandPlanningInput.{
+									backend_body: validated_input.backend_body,
 									backend_target: validated_input.backend_target,
 									command_arguments: validated_input.command_arguments,
 									command_fields: validated_input.command_fields,
@@ -2579,18 +2729,25 @@ Plugin := [].{
 		{ backend, command: command_name, location, message, plugin }
 
 	implementation_location : BlockSelection,
+	BackendBodySelection,
 	[At(U64), None] -> [
 		At(SourceLocation),
 		None,
 	]
-	implementation_location = |selection, relative|
-		match (selection, relative) {
-			(Selected(block), At(byte_offset)) =>
+	implementation_location = |selection, backend_body, relative|
+		match (selection, backend_body, relative) {
+			(_, BackendBody(block), At(byte_offset)) =>
+				Plugin.relative_location(
+					{ body: block.body, location: block.location },
+					byte_offset,
+				)
+			(Selected(block), NoBackendBody, At(byte_offset)) =>
 				Plugin.relative_location(block, byte_offset)
 			(
 				SelectedWithReference(
 					{ reference_field: _, referenced_block: _, selected_block },
 				),
+				NoBackendBody,
 				At(byte_offset),
 			) => Plugin.relative_location(selected_block, byte_offset)
 			_ => None
