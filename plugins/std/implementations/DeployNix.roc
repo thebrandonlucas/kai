@@ -61,6 +61,7 @@ DeployNix := [].{
 				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
+		_ = NixBackend.package_source(input.backend_config)?
 		selection = DeployNix.declared_target(
 			input.command_arguments,
 			input.command_fields,

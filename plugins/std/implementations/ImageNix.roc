@@ -145,6 +145,7 @@ ImageNix := [].{
 					ImageNix.render_flake(
 						spec.name,
 						spec.target_system,
+						spec.package_source,
 						spec.locked_overlays,
 						spec.overlays,
 						services,
@@ -162,17 +163,18 @@ ImageNix := [].{
 		)
 	}
 
-	render_flake : Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
-	render_flake = |name, system, locked_overlays, overlays, services| {
+	render_flake :
+		Str, Str, Str, List(Str), List(Str), List(Plugin.Artifact) -> Str
+	render_flake = |name, system, source, locked, overlays, services| {
 		overlay_lines = overlays.map(
 			|overlay|
-				"          ${NixBackend.overlay_expression(locked_overlays, overlay, 0)}",
+				"          ${NixBackend.overlay_expression(locked, overlay, 0)}",
 		)
-		outputs_args = NixBackend.overlay_outputs_args(locked_overlays)
+		outputs_args = NixBackend.overlay_outputs_args(locked)
 		lines = [
 			"{",
-			"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
-		].concat(NixBackend.input_lines(locked_overlays)).concat([
+			"  inputs.nixpkgs.url = \"${source}\";",
+		].concat(NixBackend.input_lines(locked)).concat([
 			"  outputs = { ${outputs_args}, ... }:",
 			"    let",
 			"      system = \"${system}\";",

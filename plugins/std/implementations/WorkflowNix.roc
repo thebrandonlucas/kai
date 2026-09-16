@@ -20,6 +20,7 @@ WorkflowNix := [].{
 				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
+		_ = NixBackend.package_source(input.backend_config)?
 		steps = Fields.get_strings(input.command_fields, "steps") ? |_| {
 			byte_offset: None,
 			message: "validated workflow block is missing 'steps'",

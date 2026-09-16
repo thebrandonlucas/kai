@@ -18,7 +18,8 @@ GenerationsNix := [].{
 				Plugin.BackendCommandPlan,
 				Plugin.BackendPlanningDiagnostic,
 			)
-	plan = |_|
+	plan = |input| {
+		_ = NixBackend.package_source(input.backend_config)?
 		Ok(
 			Plugin.BackendCommandPlan.{
 				artifacts: [],
@@ -32,4 +33,5 @@ GenerationsNix := [].{
 				],
 			},
 		)
+	}
 }

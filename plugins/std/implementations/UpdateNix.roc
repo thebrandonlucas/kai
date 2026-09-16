@@ -12,9 +12,9 @@ UpdateNix := [].{
 		validator: NoValidation,
 	}
 
-	render_update_flake = |overlays, sources|
+	render_update_flake = |overlays, sources, package_source|
 		Str.join_with(
-			["{", "  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";"]
+			["{", "  inputs.nixpkgs.url = \"${package_source}\";"]
 				.concat(NixBackend.input_lines(overlays))
 				.concat(NixBackend.source_input_lines(sources))
 				.concat(["  outputs = _: {};", "}"]),
@@ -30,7 +30,8 @@ UpdateNix := [].{
 	plan = |input| {
 		overlays = EnvironmentNix.all_overlays(input)?
 		sources = EnvironmentNix.all_sources(input)?
-		flake = UpdateNix.render_update_flake(overlays, sources)
+		package_source = NixBackend.package_source(input.backend_config)?
+		flake = UpdateNix.render_update_flake(overlays, sources, package_source)
 		flake_path = Plugin.workspace_path(input.workspace_root, "flake.nix")
 		lock_path = Plugin.workspace_path(input.workspace_root, "flake.lock")
 		Ok(

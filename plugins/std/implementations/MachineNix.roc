@@ -9,6 +9,7 @@ import EnvironmentNix
 
 MachineNix := [].{
 	SecretSpec := { file : Str, name : Str }
+	ServiceArtifacts : List(Plugin.Artifact)
 
 	MachineStepsInput := {
 		flake : Str,
@@ -43,6 +44,7 @@ MachineNix := [].{
 		locked_overlays : List(Str),
 		name : Str,
 		overlays : List(Str),
+		package_source : Str,
 		pkgs : List(Str),
 		services : List(Str),
 		target_architecture : Str,
@@ -200,6 +202,7 @@ MachineNix := [].{
 			}
 		overlays = EnvironmentNix.extract_overlays(environment)?
 		locked_overlays = EnvironmentNix.all_overlays(input)?
+		package_source = NixBackend.package_source(input.backend_config)?
 		assignments = NixBackend.parse_assignments(input.backend_body)?
 		system = Fields.get_string(input.command_fields, "system") ? |_|
 			{
@@ -250,6 +253,7 @@ MachineNix := [].{
 				locked_overlays,
 				name,
 				overlays,
+				package_source,
 				pkgs,
 				services,
 				target_architecture: target.architecture,
@@ -325,6 +329,7 @@ MachineNix := [].{
 		flake = MachineNix.render_flake(
 			spec.name,
 			spec.target_system,
+			spec.package_source,
 			spec.locked_overlays,
 			spec.overlays,
 			services,
@@ -672,14 +677,14 @@ MachineNix := [].{
 	}
 
 	render_flake :
-		Str, Str, List(Str), List(Str), List(Plugin.Artifact), List(SecretSpec) -> Str
+		Str, Str, Str, List(Str), List(Str), ServiceArtifacts, List(SecretSpec) -> Str
 	render_flake =
-		|name, system, locked_overlays, overlays, services, secrets| {
+		|name, system, source, locked, overlays, services, secrets| {
 			overlay_lines = overlays.map(
 				|overlay|
-					"          ${NixBackend.overlay_expression(locked_overlays, overlay, 0)}",
+					"          ${NixBackend.overlay_expression(locked, overlay, 0)}",
 			)
-			outputs_args = NixBackend.overlay_outputs_args(locked_overlays)
+			outputs_args = NixBackend.overlay_outputs_args(locked)
 			# sops-nix is the NixOS integration that decrypts SOPS files during
 			# activation and exposes them as runtime files instead of store paths.
 			sops_input_lines = if secrets.is_empty() {
@@ -700,9 +705,9 @@ MachineNix := [].{
 			}
 			lines = [
 				"{",
-				"  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-unstable\";",
+				"  inputs.nixpkgs.url = \"${source}\";",
 			].concat(sops_input_lines)
-				.concat(NixBackend.input_lines(locked_overlays))
+				.concat(NixBackend.input_lines(locked))
 				.concat([
 					"  outputs = { ${outputs_args}${sops_outputs_arg}, ... }:",
 					"    let",

@@ -137,6 +137,8 @@ Examples := [].{
 			[] => Ok(Examples.Inspection.{ block_names: [], hosts: [] })
 			[first, .. as rest] => {
 				current = match first.header {
+					["backend", _] if allow_hosts =>
+						Ok(Examples.Inspection.{ block_names: [], hosts: [] })
 					["on", "linux"] if allow_hosts =>
 						Examples.inspect_host(first, path, LINUX, X64)
 					["on", "macos"] if allow_hosts =>
@@ -181,6 +183,7 @@ Examples := [].{
 			[] => Ok([])
 			[first, .. as rest] => {
 				current_result = match first.header {
+					["backend", _] if allow_hosts => Ok([])
 					["secret", _] | ["secret", _, _] => Ok([])
 					_ => if allow_hosts {
 						match first.header {
