@@ -1,5 +1,7 @@
 # Kai - A friendly frontend for determinate computing
 
+[![Join the Kai Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/pnANfSe4V)
+
 > WARNING: Hobby project under rapid development. Use at your own risk!
 
 Kai is a CLI that makes using determinate systems easy, friendly, and fun.
