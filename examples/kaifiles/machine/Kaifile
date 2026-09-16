@@ -8,4 +8,7 @@ machine server {
   system: "x86_64-linux"
   users: ["agent"]
   services: ["openssh"]
+  backend nix {
+    networking.hostName: "kai-server"
+  }
 }

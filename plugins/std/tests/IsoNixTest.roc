@@ -4,7 +4,7 @@ import util.PlanCheck
 
 IsoNixTest := [].{}
 
-# An ISO command renders and builds the selected machine as a bootable image.
+# An ISO renders the selected machine and propagates its backend Nix options.
 expect {
 	kaifile =
 		\\environment recovery {
@@ -16,6 +16,9 @@ expect {
 		\\  system: "x86_64-linux"
 		\\  users: ["admin"]
 		\\  services: ["openssh"]
+		\\  backend nix {
+		\\    networking.hostName: "rescue-iso"
+		\\  }
 		\\}
 	expected_flake =
 		\\{
@@ -50,6 +53,11 @@ expect {
 	expected_module =
 		\\{ pkgs, ... }:
 		\\{
+		\\  imports = [
+		\\    {
+		\\      "networking"."hostName" = "rescue-iso";
+		\\    }
+		\\  ];
 		\\  system.stateVersion = "25.05";
 		\\  environment.systemPackages = [
 		\\    pkgs."curl"

@@ -439,7 +439,9 @@ Plugin := [].{
 		name : Str,
 	}
 
-	BlockHost : [AllHosts, HostOnly(Str)]
+	HostArchitecture : [AnyArchitecture, OnlyArchitecture(HostArch)]
+	HostPredicate := { architecture : HostArchitecture, os : HostOs }
+	BlockHost : [AllHosts, HostOnly(HostPredicate)]
 
 	ParsedBlock := {
 		fields : Fields.ParsedFields,
@@ -498,7 +500,8 @@ Plugin := [].{
 
 	# Select a Kaifile block for the command.
 	select_command_block : BlockSelector
-	select_command_block = |text, blocks, command, choice, args, os, _|
+	select_command_block = |text, blocks, command, choice, args, os, arch| {
+		host = { arch, os }
 		match command {
 			CommandGroup(_) | CommandOnly(_) => Ok(Missing)
 			CommandWithBlock(
@@ -523,7 +526,7 @@ Plugin := [].{
 										block_name,
 										name,
 										choice,
-										os,
+										host,
 										explicit_backend_block,
 									)?
 									parsed = Plugin.find_parsed_block(
@@ -560,7 +563,7 @@ Plugin := [].{
 										Kaifile.block_name(related),
 										related_name,
 										choice,
-										os,
+										host,
 										explicit_backend_block,
 									)?
 									Ok(
@@ -577,7 +580,7 @@ Plugin := [].{
 										primary,
 										name,
 										choice,
-										os,
+										host,
 										explicit_backend_block,
 									)
 								_ => Err({
@@ -590,7 +593,7 @@ Plugin := [].{
 								text,
 								[block_name],
 								choice,
-								os,
+								host,
 								explicit_backend_block,
 							)
 						}
@@ -599,7 +602,7 @@ Plugin := [].{
 							text,
 							[block_name],
 							choice,
-							os,
+							host,
 							explicit_backend_block,
 						)
 					ByOptionalArgument({ argument: _, when_provided }) => {
@@ -613,21 +616,21 @@ Plugin := [].{
 											text,
 											[block_name],
 											choice,
-											os,
+											host,
 										)
 									ExplicitBackend(backend) =>
 										match Plugin.select_block_header(
 											text,
 											[named_block, backend.name],
 											DefaultBackend(backend),
-											os,
+											host,
 										)? {
 											Missing =>
 												Plugin.select_block_header(
 													text,
 													[block_name],
 													choice,
-													os,
+													host,
 												)
 											Selected(selected) => Ok(Selected(selected))
 											_ => Err({
@@ -642,7 +645,7 @@ Plugin := [].{
 									named,
 									name,
 									choice,
-									os,
+									host,
 									explicit_backend_block,
 								)
 							_ => Err({
@@ -654,6 +657,7 @@ Plugin := [].{
 				}
 			}
 		}
+	}
 
 	same_block_key : Block, Block -> Bool
 	same_block_key = |left, right|
@@ -734,12 +738,12 @@ Plugin := [].{
 		Block,
 		Str,
 		BackendChoice,
-		HostOs,
+		Host,
 		ExplicitBackendBlock -> Try(
 			BlockSelection,
 			SelectorDiagnostic,
 		)
-	select_named_block = |text, schema, name, choice, os, backend_block| {
+	select_named_block = |text, schema, name, choice, host, backend_block| {
 		Plugin.selector_validation(
 			Plugin.validate_text(name, Kaifile.name_rules(schema)),
 		)?
@@ -748,7 +752,7 @@ Plugin := [].{
 			Kaifile.block_name(schema),
 			name,
 			choice,
-			os,
+			host,
 			backend_block,
 		)?
 		Ok(Selected(block))
@@ -759,18 +763,18 @@ Plugin := [].{
 		Str,
 		Str,
 		BackendChoice,
-		HostOs,
+		Host,
 		ExplicitBackendBlock -> Try(
 			LocatedBlock,
 			SelectorDiagnostic,
 		)
 	select_required_named_block =
-		|text, block, name, choice, os, explicit_backend_block|
+		|text, block, name, choice, host, explicit_backend_block|
 			match Plugin.select_with_backend_fallback(
 				text,
 				[block, name],
 				choice,
-				os,
+				host,
 				explicit_backend_block,
 			)? {
 				Missing => Err({
@@ -785,18 +789,18 @@ Plugin := [].{
 		Str,
 		List(Str),
 		BackendChoice,
-		HostOs,
+		Host,
 		ExplicitBackendBlock -> Try(
 			BlockSelection,
 			SelectorDiagnostic,
 		)
 	select_with_backend_fallback =
-		|text, header, choice, os, explicit_backend_block| {
+		|text, header, choice, host, explicit_backend_block| {
 			selection = Plugin.select_block_header(
 				text,
 				header,
 				choice,
-				os,
+				host,
 			)?
 			match (selection, choice, explicit_backend_block) {
 				(Missing, ExplicitBackend(backend), TryBackendThenShared) =>
@@ -804,7 +808,7 @@ Plugin := [].{
 						text,
 						header,
 						DefaultBackend(backend),
-						os,
+						host,
 					)
 				_ => Ok(selection)
 			}
@@ -816,11 +820,11 @@ Plugin := [].{
 		Str,
 		List(Str),
 		BackendChoice,
-		HostOs -> Try(
+		Host -> Try(
 			BlockSelection,
 			SelectorDiagnostic,
 		)
-	select_block_header = |kaifile_text, header, backend_choice, os| {
+	select_block_header = |kaifile_text, header, backend_choice, host| {
 		block_header = match backend_choice {
 			DefaultBackend(_) => header
 			ExplicitBackend(backend) => header.append(backend.name)
@@ -829,31 +833,43 @@ Plugin := [].{
 			location: At(Plugin.source_location(diagnostic.location)),
 			message: "invalid Kaifile",
 		}
-		host_section = match os {
-			LINUX => HostSection("linux")
-			MACOS => HostSection("macos")
-			_ => NoHostSection
-		}
-		match host_section {
-			NoHostSection => Plugin.select_top_level(blocks, block_header)
-			HostSection(section) => {
-				host_selection = Blocks.select_exact(
-					blocks,
-					["on", section],
-				) ? |selection_error|
-					Plugin.top_level_duplicate(selection_error, "duplicate host block")
-				match host_selection {
+		host_selection = Plugin.select_host_block(blocks, Plugin.host_headers(host))?
+		match host_selection {
+			Missing => Plugin.select_top_level(blocks, block_header)
+			Selected(selected_host) =>
+				match Plugin.select_nested(selected_host, block_header)? {
 					Missing => Plugin.select_top_level(blocks, block_header)
-					Selected(host) =>
-						match Plugin.select_nested(host, block_header)? {
-							Missing => Plugin.select_top_level(blocks, block_header)
-							Selected(block) => Ok(Selected(block))
-							SelectedWithReference(selected) => Ok(SelectedWithReference(selected))
-						}
-					}
+					Selected(block) => Ok(Selected(block))
+					SelectedWithReference(selected) => Ok(SelectedWithReference(selected))
+				}
 			}
-		}
 	}
+
+	host_headers = |host|
+		match (host.os, host.arch) {
+			(LINUX, X86) => [["on", "linux", "x86"], ["on", "linux"]]
+			(LINUX, X64) => [["on", "linux", "x86_64"], ["on", "linux"]]
+			(LINUX, ARM) => [["on", "linux", "arm"], ["on", "linux"]]
+			(LINUX, AARCH64) => [["on", "linux", "aarch64"], ["on", "linux"]]
+			(MACOS, X86) => [["on", "macos", "x86"], ["on", "macos"]]
+			(MACOS, X64) => [["on", "macos", "x86_64"], ["on", "macos"]]
+			(MACOS, ARM) => [["on", "macos", "arm"], ["on", "macos"]]
+			(MACOS, AARCH64) => [["on", "macos", "aarch64"], ["on", "macos"]]
+			(LINUX, _) => [["on", "linux"]]
+			(MACOS, _) => [["on", "macos"]]
+			_ => []
+		}
+
+	select_host_block = |blocks, headers|
+		match headers {
+			[] => Ok(Missing)
+			[first, .. as rest] =>
+				match Blocks.select_exact(blocks, first) ? |error|
+					Plugin.top_level_duplicate(error, "duplicate host block") {
+					Missing => Plugin.select_host_block(blocks, rest)
+					Selected(block) => Ok(Selected(block))
+				}
+			}
 
 	select_top_level :
 		List(Blocks.Block), List(Str) -> Try(BlockSelection, SelectorDiagnostic)
@@ -922,7 +938,8 @@ Plugin := [].{
 		line: location.line,
 	}
 
-	BlockScope : [HostBlockScope(Blocks.Block), TopLevelBlockScope]
+	HostBlock := { block : Blocks.Block, predicate : HostPredicate }
+	BlockScope : [HostBlockScope(HostBlock), TopLevelBlockScope]
 
 	parse_kaifile_blocks : Str,
 	List(Block),
@@ -976,7 +993,7 @@ Plugin := [].{
 								located,
 								match scope {
 									TopLevelBlockScope => AllHosts
-									HostBlockScope(host) => HostOnly(host.header.last() ?? "")
+									HostBlockScope(host_block) => HostOnly(host_block.predicate)
 								},
 							)?
 							Plugin.collect_kaifile_blocks(
@@ -996,6 +1013,11 @@ Plugin := [].{
 								message: "duplicate host block",
 							})
 						} else {
+							predicate = Plugin.parse_host_predicate(first.header) ? |_|
+								{
+									location: At(Plugin.source_location(first.location)),
+									message: "unsupported host predicate",
+								}
 							nested = Blocks.scan(first.body) ? |diagnostic| {
 								location: At(Plugin.nested_location(first, diagnostic.location)),
 								message: "invalid host block",
@@ -1004,7 +1026,7 @@ Plugin := [].{
 								nested,
 								schemas,
 								backend,
-								HostBlockScope(first),
+								HostBlockScope({ block: first, predicate }),
 								Bool.False,
 								[],
 								[],
@@ -1064,9 +1086,36 @@ Plugin := [].{
 				}
 			}
 
-	is_host_section : List(Str) -> Bool
 	is_host_section = |header|
-		header == ["on", "linux"] or header == ["on", "macos"]
+		match header {
+			["on", ..] => Bool.True
+			_ => Bool.False
+		}
+
+	parse_host_predicate = |header|
+		match header {
+			["on", "linux"] => Ok({ architecture: AnyArchitecture, os: LINUX })
+			["on", "macos"] => Ok({ architecture: AnyArchitecture, os: MACOS })
+			["on", "linux", "x86"] => Plugin.exact_host(LINUX, X86)
+			["on", "linux", "x86_64"] => Plugin.exact_host(LINUX, X64)
+			["on", "linux", "arm"] => Plugin.exact_host(LINUX, ARM)
+			["on", "linux", "aarch64"] => Plugin.exact_host(LINUX, AARCH64)
+			["on", "macos", "x86"] => Plugin.exact_host(MACOS, X86)
+			["on", "macos", "x86_64"] => Plugin.exact_host(MACOS, X64)
+			["on", "macos", "arm"] => Plugin.exact_host(MACOS, ARM)
+			["on", "macos", "aarch64"] => Plugin.exact_host(MACOS, AARCH64)
+			_ => Err({})
+		}
+
+	exact_host = |os, architecture|
+		Ok({ architecture: OnlyArchitecture(architecture), os })
+
+	host_matches = |predicate, host|
+		predicate.os == host.os and
+			match predicate.architecture {
+				AnyArchitecture => Bool.True
+				OnlyArchitecture(architecture) => architecture == host.arch
+			}
 
 	block_location : Blocks.Block, BlockScope -> LocatedBlock
 	block_location = |block, scope|
@@ -1075,9 +1124,9 @@ Plugin := [].{
 				body: block.body,
 				location: Plugin.source_location(block.location),
 			}
-			HostBlockScope(host) => {
+			HostBlockScope(host_block) => {
 				body: block.body,
-				location: Plugin.nested_location(host, block.location),
+				location: Plugin.nested_location(host_block.block, block.location),
 			}
 		}
 
@@ -1354,10 +1403,9 @@ Plugin := [].{
 	effective_blocks_of_kind = |input, kinds|
 		Plugin.blocks_of_kind(input, kinds).keep_if(
 			|block|
-				match (block.host, input.host.os) {
-					(AllHosts, _) | (HostOnly("linux"), LINUX) => Bool.True
-					(HostOnly("macos"), MACOS) => Bool.True
-					_ => Bool.False
+				match block.host {
+					AllHosts => Bool.True
+					HostOnly(predicate) => Plugin.host_matches(predicate, input.host)
 				},
 		)
 

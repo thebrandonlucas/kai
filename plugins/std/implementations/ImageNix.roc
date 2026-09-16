@@ -153,6 +153,7 @@ ImageNix := [].{
 						spec.pkgs,
 						spec.users,
 						native_services,
+						spec.assignments,
 					),
 					metadata,
 					services,

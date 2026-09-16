@@ -38,6 +38,7 @@ MachineNix := [].{
 	}
 
 	MachineSpec := {
+		assignments : List(NixBackend.Assignment),
 		generated_services : List(Str),
 		locked_overlays : List(Str),
 		name : Str,
@@ -199,6 +200,7 @@ MachineNix := [].{
 			}
 		overlays = EnvironmentNix.extract_overlays(environment)?
 		locked_overlays = EnvironmentNix.all_overlays(input)?
+		assignments = NixBackend.parse_assignments(input.backend_body)?
 		system = Fields.get_string(input.command_fields, "system") ? |_|
 			{
 				byte_offset: None,
@@ -243,6 +245,7 @@ MachineNix := [].{
 		)
 		Ok(
 			MachineNix.MachineSpec.{
+				assignments,
 				generated_services,
 				locked_overlays,
 				name,
@@ -332,6 +335,7 @@ MachineNix := [].{
 			spec.users,
 			native_services,
 			secrets,
+			spec.assignments,
 		)
 		metadata = MachineNix.render_metadata(machine_metadata)
 		Ok(
@@ -733,8 +737,7 @@ MachineNix := [].{
 			Str.join_with(lines, "\n")
 		}
 
-	render_module : List(Str), List(Str), List(Str), List(SecretSpec) -> Str
-	render_module = |pkgs, users, services, secrets| {
+	render_module = |pkgs, users, services, secrets, assignments| {
 		package_lines = pkgs.map(
 			|pkg| "    pkgs.${NixBackend.render_attribute_path(pkg)}",
 		)
@@ -789,6 +792,7 @@ MachineNix := [].{
 		]).concat(user_lines)
 			.concat(service_lines)
 			.concat(secret_config_lines)
+			.concat(NixBackend.assignment_module_lines(assignments))
 			.concat([
 				"}",
 			])

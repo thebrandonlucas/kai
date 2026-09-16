@@ -11,4 +11,9 @@
   ];
   users.users."agent".isNormalUser = true;
   services."openssh".enable = true;
+  imports = [
+    {
+      "networking"."hostName" = "kai-server";
+    }
+  ];
 }

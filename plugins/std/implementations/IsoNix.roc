@@ -115,6 +115,7 @@ IsoNix := [].{
 						spec.pkgs,
 						spec.users,
 						native_services,
+						spec.assignments,
 					),
 					services,
 				),
