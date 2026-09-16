@@ -87,6 +87,189 @@ expect {
 	)
 }
 
+# Backend Nix assignments render every supported scalar and quote option paths.
+expect {
+	dollar = "$"
+	json_backspace = "\\b"
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\machine agent {
+		\\  environment: server
+		\\  system: "x86_64-linux"
+		\\  users: []
+		\\  services: []
+		\\  backend nix {
+		\\    services.demo-name.enable: true
+		\\    services.demo-name.disabled: false
+		\\    services.demo-name.retries: -12
+		\\    services.demo-name.minimum: -9223372036854775808
+		\\    services.demo-name.maximum: 9223372036854775807
+		\\    services.demo-name.message: "quote: \\" slash: \\\\ ${dollar}{pkgs}"
+		\\    services.demo-name.ctrl: "${json_backspace}"
+		\\    services.demo-name.values: [true, -2, 3, "four"]
+		\\    services.demo-name.empty: []
+		\\  }
+		\\}
+	minimum = "-9223372036854775808"
+	message = "\"quote: \\\" slash: \\\\ \\${dollar}{pkgs}\""
+	expected_module =
+		\\{ pkgs, ... }:
+		\\{
+		\\  boot.loader.grub.enable = false;
+		\\  fileSystems."/" = {
+		\\    device = "/dev/root";
+		\\    fsType = "auto";
+		\\  };
+		\\  system.stateVersion = "25.05";
+		\\  environment.systemPackages = [
+		\\  ];
+		\\  imports = [
+		\\    {
+		\\      "services"."demo-name"."enable" = true;
+		\\      "services"."demo-name"."disabled" = false;
+		\\      "services"."demo-name"."retries" = (-12);
+		\\      "services"."demo-name"."minimum" = (builtins.fromJSON "${minimum}");
+		\\      "services"."demo-name"."maximum" = 9223372036854775807;
+		\\      "services"."demo-name"."message" = ${message};
+		\\      "services"."demo-name"."ctrl" = (builtins.fromJSON "\\\"\\\\b\\\"");
+		\\      "services"."demo-name"."values" = [ true (-2) 3 "four" ];
+		\\      "services"."demo-name"."empty" = [  ];
+		\\    }
+		\\  ];
+		\\}
+
+	PlanCheck.plan(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["machine", "agent"],
+		Succeeds([
+			WritesExactly({
+				contents: expected_module,
+				path: ".kai/machines/agent/machine.nix",
+			}),
+		]),
+	)
+}
+
+# Duplicate backend option paths are rejected at the second assignment.
+expect {
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\machine agent {
+		\\  environment: server
+		\\  system: "x86_64-linux"
+		\\  users: []
+		\\  services: []
+		\\  backend nix {
+		\\    services.demo.enable: true
+		\\    services.demo.enable: false
+		\\  }
+		\\}
+
+	PlanCheck.plan(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["machine", "agent"],
+		FailsWith(
+			PlanningFailed({
+				backend: "nix",
+				command: "machine",
+				location: At({ byte_offset: 180, column: 5, line: 12 }),
+				message: "duplicate NixOS option path 'services.demo.enable'",
+				plugin: "std",
+			}),
+		),
+	)
+}
+
+# Backend option paths reject empty dotted segments.
+expect {
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\machine agent {
+		\\  environment: server
+		\\  system: "x86_64-linux"
+		\\  users: []
+		\\  services: []
+		\\  backend nix {
+		\\    services..demo.enable: true
+		\\  }
+		\\}
+
+	PlanCheck.plan(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["machine", "agent"],
+		FailsWith(
+			PlanningFailed({
+				backend: "nix",
+				command: "machine",
+				location: At({ byte_offset: 149, column: 5, line: 11 }),
+				message: "NixOS option path must contain nonempty dotted segments",
+				plugin: "std",
+			}),
+		),
+	)
+}
+
+# Backend option assignments must be separated after strings and lists.
+expect {
+	kaifile =
+		\\environment server {
+		\\  packages: []
+		\\}
+		\\
+		\\machine agent {
+		\\  environment: server
+		\\  system: "x86_64-linux"
+		\\  users: []
+		\\  services: []
+		\\  backend nix {
+		\\    services.demo.message: "hello"services.demo.enable: true
+		\\  }
+		\\}
+
+	PlanCheck.plan(
+		{
+			definitions: [StdPlugin.plugin],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["machine", "agent"],
+		FailsWith(
+			PlanningFailed({
+				backend: "nix",
+				command: "machine",
+				location: At({ byte_offset: 179, column: 35, line: 11 }),
+				message: "expected whitespace between NixOS option assignments",
+				plugin: "std",
+			}),
+		),
+	)
+}
+
 # A declared Kai service is built first, copied into the machine directory,
 # and imported instead of being enabled as a native NixOS service.
 expect {

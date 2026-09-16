@@ -73,8 +73,8 @@ expect {
 	)
 }
 
-# The image machine module contains environment packages, users, and native
-# NixOS services.
+# The image machine module contains environment packages, users, native
+# NixOS services, and backend Nix assignments from the machine.
 expect {
 	kaifile =
 		\\environment server {
@@ -86,10 +86,18 @@ expect {
 		\\  system: "x86_64-linux"
 		\\  users: ["agent"]
 		\\  services: ["openssh"]
+		\\  backend nix {
+		\\    networking.hostName: "agent-image"
+		\\  }
 		\\}
 	expected_file =
 		\\{ pkgs, ... }:
 		\\{
+		\\  imports = [
+		\\    {
+		\\      "networking"."hostName" = "agent-image";
+		\\    }
+		\\  ];
 		\\  system.stateVersion = "25.05";
 		\\  environment.systemPackages = [
 		\\    pkgs."curl"
