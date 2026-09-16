@@ -17,6 +17,7 @@ RollbackNix := [].{
 		Plugin.BackendPlanningDiagnostic,
 	)
 	plan = |input| {
+		_ = NixBackend.package_source(input.backend_config)?
 		if input.host.os != LINUX {
 			return Err({ byte_offset: None, message: "rollback requires NixOS" })
 		}

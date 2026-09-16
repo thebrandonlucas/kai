@@ -25,6 +25,7 @@ ServiceNix := [].{
 				Plugin.BackendPlanningDiagnostic,
 			)
 	plan = |input| {
+		_ = NixBackend.package_source(input.backend_config)?
 		name = match input.command_arguments {
 			[selected_name] => Ok(selected_name)
 			_ => Err({ byte_offset: None, message: "service requires exactly one name" })

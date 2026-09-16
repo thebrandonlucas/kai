@@ -1,5 +1,6 @@
 # Nix backend capability definitions
 import kai.Plugin
+import parser.Fields
 
 Nix := [].{
 	backend : Plugin.Backend
@@ -97,6 +98,43 @@ Nix := [].{
 		names = overlays.map_with_index(|_, index| "overlay${U64.to_str(index)}")
 		Str.join_with(["nixpkgs"].concat(names), ", ")
 	}
+
+	default_package_source = "github:NixOS/nixpkgs/nixos-unstable"
+
+	package_source = |config|
+		match config {
+			NoBackendBody => Ok(default_package_source)
+			BackendBody(config_body) => {
+				fields = Fields.parse(
+					Fields.object([Fields.required("packages", String)]),
+					config_body.body,
+				) ? |diagnostic| {
+					byte_offset: AtBackendConfig(diagnostic.byte_offset),
+					message: Fields.describe(diagnostic),
+				}
+				source = Fields.get_string(fields, "packages") ? |_| {
+					byte_offset: None,
+					message: "validated Nix backend configuration is missing 'packages'",
+				}
+				failures = Plugin.validate_text(
+					source,
+					[
+						NonemptyText("Nix package source must not be empty"),
+						Nix.safe_string_rule(
+							"Nix package source contains characters unsafe for Nix output",
+						),
+					],
+				)
+				if failures.is_empty() {
+					Ok(source)
+				} else {
+					Err({
+						byte_offset: AtBackendConfig(0),
+						message: Plugin.validation_message(failures),
+					})
+				}
+			}
+		}
 
 	parse_assignments = |selection|
 		match selection {

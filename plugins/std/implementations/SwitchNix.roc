@@ -12,6 +12,7 @@ SwitchNix := [].{
 	}
 
 	plan = |input| {
+		_ = NixBackend.package_source(input.backend_config)?
 		names = Plugin.effective_blocks_of_kind(input, ["machine"]).map(
 			|block|
 				match block.header {

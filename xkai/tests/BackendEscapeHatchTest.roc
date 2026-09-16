@@ -32,29 +32,47 @@ command = Plugin.command_with_block({
 })
 
 capture_plan = |input|
-	match input.backend_body {
-		NoBackendBody => Err({
+	match (input.backend_config, input.backend_body) {
+		(NoBackendBody, _) => Err({
+			byte_offset: None,
+			message: "expected a backend configuration",
+		})
+		(_, NoBackendBody) => Err({
 			byte_offset: None,
 			message: "expected a backend body",
 		})
-		BackendBody(selected) => {
+		(BackendBody(config), BackendBody(selected)) => {
+			config_offset = U64.to_str(config.location.byte_offset)
+			config_line = U64.to_str(config.location.line)
+			config_column = U64.to_str(config.location.column)
 			offset = U64.to_str(selected.location.byte_offset)
 			line = U64.to_str(selected.location.line)
 			column = U64.to_str(selected.location.column)
+			contents = Str.join_with(
+				[
+					"${config_offset}:${config_line}:${config_column}",
+					config.body,
+					"---",
+					"${offset}:${line}:${column}",
+					selected.body,
+				],
+				"\n",
+			)
 			Ok(
 				Plugin.BackendCommandPlan.{
 					artifacts: [],
 					prerequisite_commands: [],
 					requested_packages: [],
 					steps: [
-						WriteFile({
-							contents: "${offset}:${line}:${column}\n${selected.body}",
-							path: "captured-backend-body",
-						}),
+						WriteFile({ contents, path: "captured-backend-body" }),
 					],
 				},
 			)
 		}
+		_ => Err({
+			byte_offset: None,
+			message: "invalid backend selections",
+		})
 	}
 
 implementation = |backend_name|
@@ -75,10 +93,12 @@ definition = Plugin.Definition.{
 	},
 }
 
-# The selected implementation receives only its exact opaque body and its
-# absolute source location.
+# Global configuration stays separate from the selected command's opaque body,
+# and both preserve their absolute source locations.
 expect {
 	kaifile =
+		\\backend beta {global}
+		\\
 		\\escape sample {
 		\\  label: "kept"
 		\\  backend alpha {unused}
@@ -86,7 +106,10 @@ expect {
 		\\last}
 		\\}
 	expected =
-		\\73:4:17
+		\\14:1:15
+		\\global
+		\\---
+		\\96:6:17
 		\\raw { nested } "# }" # comment }
 		\\last
 
@@ -104,5 +127,64 @@ expect {
 				path: "captured-backend-body",
 			}),
 		]),
+	)
+}
+
+# More than one top-level backend configuration is rejected.
+expect {
+	kaifile =
+		\\backend alpha {first}
+		\\backend beta {second}
+		\\escape sample {
+		\\  label: "kept"
+		\\  backend alpha {local}
+		\\}
+
+	PlanCheck.plan(
+		{
+			definitions: [definition],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["escape", "alpha", "sample"],
+		FailsWith(
+			PlanningFailed({
+				backend: "alpha",
+				command: "escape",
+				location: At({ byte_offset: 36, column: 15, line: 2 }),
+				message: "only one top-level backend block is allowed",
+				plugin: "backend-escape-hatch-test",
+			}),
+		),
+	)
+}
+
+# A top-level configuration must name a backend registered by the plugin.
+expect {
+	kaifile =
+		\\backend unknown {config}
+		\\escape sample {
+		\\  label: "kept"
+		\\  backend alpha {local}
+		\\}
+
+	PlanCheck.plan(
+		{
+			definitions: [definition],
+			host: { arch: X64, os: LINUX },
+			kaifile,
+			workspace_root: ".kai",
+		},
+		["escape", "alpha", "sample"],
+		FailsWith(
+			PlanningFailed({
+				backend: "alpha",
+				command: "escape",
+				location: At({ byte_offset: 17, column: 18, line: 1 }),
+				message: "backend configuration references unknown backend 'unknown'",
+				plugin: "backend-escape-hatch-test",
+			}),
+		),
 	)
 }

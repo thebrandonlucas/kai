@@ -1,3 +1,8 @@
+# Configure the package source used by every Nix command.
+backend nix {
+  packages: "github:NixOS/nixpkgs/nixos-unstable-small"
+}
+
 # Nix is the default backend, but it can also be selected explicitly.
 #
 # Run this environment with `kai shell nix`.
