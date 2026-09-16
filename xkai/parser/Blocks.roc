@@ -10,6 +10,16 @@ Blocks := [].{
 		header : List(Str),
 		location : Location,
 	}
+	Extracted := {
+		blocks : List(Block),
+		remaining : Str,
+	}
+	ByteRange := { end : U64, start : U64 }
+	EmbeddedScan := {
+		blocks : List(Block),
+		ranges : List(ByteRange),
+	}
+	EmbeddedHeader : [FoundEmbeddedHeader({ name : Str, opening : U64 }), None]
 	Selection : [Missing, Selected(Block)]
 	SelectionError : [
 		DuplicateHeader(
@@ -32,6 +42,33 @@ Blocks := [].{
 
 	scan : Str -> Try(List(Block), Diagnostic)
 	scan = |source| Blocks.scan_blocks(source.to_utf8(), 0, [])
+
+	# Extract prefixed blocks from mixed body text and mask their complete byte
+	# ranges so the remaining text keeps its original source offsets.
+	extract : Str, Str -> Try(Extracted, Diagnostic)
+	extract = |source, prefix| {
+		bytes = source.to_utf8()
+		scanned = Blocks.scan_embedded(
+			bytes,
+			prefix,
+			0,
+			0,
+			[],
+			[],
+		)?
+		masked = bytes.map_with_index(
+			|byte, index|
+				if byte == '\n' or !Blocks.in_ranges(index, scanned.ranges) {
+					byte
+				} else {
+					' '
+				},
+		)
+		Ok({
+			blocks: scanned.blocks,
+			remaining: Str.from_utf8(masked) ?? "",
+		})
+	}
 
 	select_exact : List(Block), List(Str) -> Try(Selection, SelectionError)
 	select_exact = |blocks, header| Blocks.select_next(blocks, header, Missing)
@@ -88,6 +125,123 @@ Blocks := [].{
 			}
 		}
 	}
+
+	scan_embedded = |bytes, prefix, index, depth, blocks, ranges|
+		if index >= bytes.len() {
+			Ok({ blocks, ranges })
+		} else {
+			byte = Blocks.byte_at(bytes, index)
+			if byte == '"' {
+				rest = Blocks.scan_string(bytes, index + 1, index)?
+				Blocks.scan_embedded(bytes, prefix, rest, depth, blocks, ranges)
+			} else if byte == '#' {
+				Blocks.scan_embedded(
+					bytes,
+					prefix,
+					Blocks.skip_comment(bytes, index),
+					depth,
+					blocks,
+					ranges,
+				)
+			} else if byte == '{' {
+				Blocks.scan_embedded(
+					bytes,
+					prefix,
+					index + 1,
+					depth + 1,
+					blocks,
+					ranges,
+				)
+			} else if byte == '}' and depth > 0 {
+				Blocks.scan_embedded(
+					bytes,
+					prefix,
+					index + 1,
+					depth - 1,
+					blocks,
+					ranges,
+				)
+			} else if depth == 0 and Blocks.is_name_byte(byte) {
+				name_end = Blocks.find_name_end(bytes, index + 1)
+				name = Blocks.slice(bytes, index, name_end)
+				if name != prefix {
+					Blocks.scan_embedded(
+						bytes,
+						prefix,
+						name_end,
+						depth,
+						blocks,
+						ranges,
+					)
+				} else {
+					match Blocks.embedded_header(bytes, name_end) {
+						None =>
+							Blocks.scan_embedded(
+								bytes,
+								prefix,
+								name_end,
+								depth,
+								blocks,
+								ranges,
+							)
+						FoundEmbeddedHeader(header) => {
+							body_start = header.opening + 1
+							body_end = Blocks.scan_body(bytes, body_start, 1)?
+							block = {
+								body: Blocks.slice(bytes, body_start, body_end),
+								header: [prefix, header.name],
+								location: Blocks.location(bytes, body_start),
+							}
+							Blocks.scan_embedded(
+								bytes,
+								prefix,
+								body_end + 1,
+								depth,
+								blocks.append(block),
+								ranges.append({ start: index, end: body_end + 1 }),
+							)
+						}
+					}
+				}
+			} else {
+				Blocks.scan_embedded(
+					bytes,
+					prefix,
+					index + 1,
+					depth,
+					blocks,
+					ranges,
+				)
+			}
+		}
+
+	embedded_header : List(U8), U64 -> EmbeddedHeader
+	embedded_header = |bytes, index| {
+		name_start = Blocks.skip_trivia(bytes, index)
+		if !Blocks.is_name_byte(Blocks.byte_at(bytes, name_start)) {
+			None
+		} else {
+			name_end = Blocks.find_name_end(bytes, name_start + 1)
+			opening = Blocks.skip_trivia(bytes, name_end)
+			if Blocks.byte_at(bytes, opening) == '{' {
+				FoundEmbeddedHeader({
+					name: Blocks.slice(bytes, name_start, name_end),
+					opening,
+				})
+			} else {
+				None
+			}
+		}
+	}
+
+	in_ranges : U64, List(ByteRange) -> Bool
+	in_ranges = |index, ranges|
+		match ranges {
+			[] => Bool.False
+			[first, .. as rest] =>
+				(index >= first.start and index < first.end) or
+					Blocks.in_ranges(index, rest)
+			}
 
 	scan_header : List(U8),
 	U64,
