@@ -1,11 +1,12 @@
 # Invariants that should always be true about the code to maintain conceptual
 # integrity.
 #
-# Currently there are 5:
+# Currently there are 6:
 # - Enforce each code module and expect test to have an explainer comment
 # - Require every plugin implementation to have a planning expect test
 # - Limit line length to 80
 # - Reject direct static literal-list Str.join_with calls
+# - Require character literals in ASCII byte comparisons
 #
 # Inspired by [tidy.zig]
 import pf.Path
@@ -17,6 +18,7 @@ Tidy := [].{
 		MissingExpectComment,
 		MissingImplementationTest(Str),
 		MissingModuleComment,
+		NumericAsciiByteComparison,
 		StaticLiteralJoin,
 	]
 
@@ -182,6 +184,133 @@ Tidy := [].{
 	has_static_join_name = |bytes, index|
 		(index == 0 or !Tidy.is_identifier_byte(Tidy.byte_at(bytes, index - 1))) and
 			Tidy.bytes_match(bytes, index, Tidy.static_join_name, 0)
+
+	identifier_end = |bytes, index|
+		if
+			index < bytes.len() and
+				Tidy.is_identifier_byte(Tidy.byte_at(bytes, index))
+				{
+					Tidy.identifier_end(bytes, index + 1)
+				} else {
+					index
+				}
+
+	is_byte_identifier = |bytes, start, end| {
+		identifier = Str.from_utf8_lossy(
+			bytes.sublist({ start, len: end - start }),
+		)
+		identifier == "byte" or identifier.ends_with("_byte")
+	}
+
+	comparison_end = |bytes, raw_index| {
+		index = Tidy.skip_trivia(bytes, raw_index)
+		first = Tidy.byte_at(bytes, index)
+		second = Tidy.byte_at(bytes, index + 1)
+		if
+			(first == '<' or first == '>') and second == '=' or
+				((first == '=' or first == '!') and second == '=')
+				{
+					ComparisonEnd(index + 2)
+				} else if first == '<' or first == '>' {
+					ComparisonEnd(index + 1)
+				} else {
+					NoComparison
+				}
+	}
+
+	digit_value : U8 -> [Digit(U8), NotDigit]
+	digit_value = |byte|
+		if byte >= '0' and byte <= '9' {
+			Digit(byte - '0')
+		} else if byte >= 'a' and byte <= 'f' {
+			Digit(byte - 'a' + 10)
+		} else if byte >= 'A' and byte <= 'F' {
+			Digit(byte - 'A' + 10)
+		} else {
+			NotDigit
+		}
+
+	ascii_digits_end = |bytes, index, radix, value, found_digit|
+		if Tidy.byte_at(bytes, index) == '_' and found_digit {
+			Tidy.ascii_digits_end(bytes, index + 1, radix, value, found_digit)
+		} else {
+			match Tidy.digit_value(Tidy.byte_at(bytes, index)) {
+				Digit(digit) if digit < radix =>
+					if value > (127 - digit) / radix {
+						NotAsciiNumber
+					} else {
+						Tidy.ascii_digits_end(
+							bytes,
+							index + 1,
+							radix,
+							value * radix + digit,
+							Bool.True,
+						)
+					}
+				_ => if found_digit and value != 0 {
+					AsciiNumberEnd(index)
+				} else {
+					NotAsciiNumber
+				}
+			}
+		}
+
+	ascii_number_end = |bytes, index|
+		if Tidy.byte_at(bytes, index) == '0' {
+			prefix = Tidy.byte_at(bytes, index + 1)
+			if prefix == 'b' or prefix == 'B' {
+				Tidy.ascii_digits_end(bytes, index + 2, 2, 0, Bool.False)
+			} else if prefix == 'o' or prefix == 'O' {
+				Tidy.ascii_digits_end(bytes, index + 2, 8, 0, Bool.False)
+			} else if prefix == 'x' or prefix == 'X' {
+				Tidy.ascii_digits_end(bytes, index + 2, 16, 0, Bool.False)
+			} else {
+				Tidy.ascii_digits_end(bytes, index, 10, 0, Bool.False)
+			}
+		} else {
+			Tidy.ascii_digits_end(bytes, index, 10, 0, Bool.False)
+		}
+
+	is_numeric_ascii_byte_comparison = |bytes, index| {
+		at_boundary = index == 0 or
+			!Tidy.is_identifier_byte(Tidy.byte_at(bytes, index - 1))
+		left_end = Tidy.identifier_end(bytes, index)
+		left_byte = at_boundary and left_end > index and
+			Tidy.is_byte_identifier(bytes, index, left_end)
+		left_violation = if left_byte {
+			match Tidy.comparison_end(bytes, left_end) {
+				NoComparison => Bool.False
+				ComparisonEnd(after_comparison) => {
+					number = Tidy.skip_trivia(bytes, after_comparison)
+					match Tidy.ascii_number_end(bytes, number) {
+						AsciiNumberEnd(_) => Bool.True
+						NotAsciiNumber => Bool.False
+					}
+				}
+			}
+		} else {
+			Bool.False
+		}
+		if left_violation {
+			Bool.True
+		} else if at_boundary {
+			match Tidy.ascii_number_end(bytes, index) {
+				NotAsciiNumber => Bool.False
+				AsciiNumberEnd(number_end) =>
+					match Tidy.comparison_end(bytes, number_end) {
+						NoComparison => Bool.False
+						ComparisonEnd(after_comparison) => {
+							identifier = Tidy.skip_trivia(bytes, after_comparison)
+							end = Tidy.identifier_end(bytes, identifier)
+							end > identifier and
+								Tidy.is_byte_identifier(bytes, identifier, end)
+						}
+					}
+				}
+		} else {
+			Bool.False
+		}
+	}
 
 	string_end = |bytes, index|
 		if index >= bytes.len() or Tidy.byte_at(bytes, index) == '\n' {
@@ -463,6 +592,17 @@ Tidy := [].{
 				)
 			} else if byte == '\\' and Tidy.byte_at(bytes, index + 1) == '\\' {
 				Tidy.scan_line_string(bytes, index + 2, line, violations, limit)
+			} else if Tidy.is_numeric_ascii_byte_comparison(bytes, index) {
+				Tidy.scan_static_joins(
+					bytes,
+					index + 1,
+					line,
+					violations.append({
+						kind: NumericAsciiByteComparison,
+						line,
+					}),
+					limit,
+				)
 			} else if
 				Tidy.has_static_join_name(bytes, index) and
 					Tidy.is_static_join(bytes, index)
@@ -631,6 +771,13 @@ Tidy := [].{
 					_ => Bool.False
 				},
 		)
+		numeric_byte_comparisons = diagnostics.keep_if(
+			|diagnostic|
+				match diagnostic.kind {
+					NumericAsciiByteComparison => Bool.True
+					_ => Bool.False
+				},
+		)
 		missing_tests = diagnostics.keep_if(
 			|diagnostic|
 				match diagnostic.kind {
@@ -681,6 +828,23 @@ Tidy := [].{
 				Stderr.line!("  ${diagnostic.path}:${line}")?
 			}
 		}
+		if !numeric_byte_comparisons.is_empty() {
+			if
+				!missing_comments.is_empty() or
+					!long_lines.is_empty() or
+						!static_joins.is_empty()
+					{
+						Stderr.line!("")?
+					}
+			header = "Numeric ASCII byte comparisons (${
+				U64.to_str(numeric_byte_comparisons.len())
+			}):"
+			Stderr.line!(Tidy.colorize(Tidy.ansi_red, header))?
+			for diagnostic in numeric_byte_comparisons {
+				line = U64.to_str(diagnostic.line)
+				Stderr.line!("  ${diagnostic.path}:${line}")?
+			}
+		}
 		if !missing_tests.is_empty() {
 			Stderr.line!("")?
 			Stderr.line!(Tidy.colorize(Tidy.ansi_red, "Missing implementation tests:"))?
@@ -702,6 +866,10 @@ Tidy := [].{
 		Tidy.print_check!(
 			"No direct static literal-list Str.join_with calls",
 			static_joins.is_empty(),
+		)?
+		Tidy.print_check!(
+			"Character literals in ASCII byte comparisons",
+			numeric_byte_comparisons.is_empty(),
 		)?
 
 		count = diagnostics.len()

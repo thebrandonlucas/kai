@@ -1,4 +1,4 @@
-# Pure plugin model shared by plugins and the CLI.
+# Kaifile parser
 import parser.Fields
 import parser.Blocks
 import Kaifile
@@ -93,7 +93,7 @@ Plugin := [].{
 		failures = Plugin.validate_text(workspace_root, workspace_root_rules)
 		normalized = Str.from_utf8_lossy(
 			Str.to_utf8(workspace_root).map(|byte|
-				if byte >= 65 and byte <= 90 byte + 32 else byte),
+				if byte >= 'A' and byte <= 'Z' byte + 32 else byte),
 		)
 		reserved_roots = [
 			".bzr",
@@ -230,9 +230,9 @@ Plugin := [].{
 			allowed,
 			|matcher|
 				match matcher {
-					AsciiUppercase => byte >= 65 and byte <= 90
-					AsciiLowercase => byte >= 97 and byte <= 122
-					AsciiDigit => byte >= 48 and byte <= 57
+					AsciiUppercase => byte >= 'A' and byte <= 'Z'
+					AsciiLowercase => byte >= 'a' and byte <= 'z'
+					AsciiDigit => byte >= '0' and byte <= '9'
 					ExactByte(expected) => byte == expected
 				},
 		)

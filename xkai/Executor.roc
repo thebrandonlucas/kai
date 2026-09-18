@@ -646,7 +646,7 @@ Executor := [].{
 	ascii_lowercase = |text|
 		Str.from_utf8_lossy(
 			text.to_utf8().map(
-				|byte| if byte >= 65 and byte <= 90 byte + 32 else byte,
+				|byte| if byte >= 'A' and byte <= 'Z' byte + 32 else byte,
 			),
 		)
 

@@ -49,9 +49,9 @@ DeployNix := [].{
 
 	valid_host_byte : U8 -> Bool
 	valid_host_byte = |byte|
-		(byte >= 48 and byte <= 57) or
-			(byte >= 65 and byte <= 90) or
-				(byte >= 97 and byte <= 122) or
+		(byte >= '0' and byte <= '9') or
+			(byte >= 'A' and byte <= 'Z') or
+				(byte >= 'a' and byte <= 'z') or
 					['%', '-', '.', ':', '[', ']', '_'].contains(byte)
 
 	plan :
