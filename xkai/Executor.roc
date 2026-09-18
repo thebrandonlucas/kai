@@ -989,7 +989,7 @@ Executor := [].{
 			[line, .. as rest] => {
 				trimmed = line.trim()
 				next = if trimmed.starts_with("error:") and trimmed != "error:" {
-					trimmed
+					Str.join_with([trimmed].concat(rest), "\n")
 				} else {
 					found
 				}
@@ -1000,11 +1000,11 @@ Executor := [].{
 	nix_root_error : Str -> Str
 	nix_root_error = |stderr| {
 		root = Executor.last_nix_error(stderr.split_on("\n"), "")
-		message = Str.from_utf8_lossy(root.to_utf8().drop_first(6)).trim()
 		if root.is_empty() {
-			"error: Nix command failed"
+			detail = stderr.trim()
+			if detail.is_empty() "error: Nix command failed" else detail
 		} else {
-			"error: Nix reported: ${message}"
+			root
 		}
 	}
 
