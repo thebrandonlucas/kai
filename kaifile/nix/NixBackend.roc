@@ -139,7 +139,7 @@ NixBackend :: [].{
 					}
 				}
 			}
-			Request.Shell(name) => {
+			Request.Shell(name, command) => {
 				$action = Shell(name)
 				shell = project.shells.find_first(|s| s.name == name)
 					.map_err(|_| "unknown shell: ${name}")?
@@ -147,6 +147,11 @@ NixBackend :: [].{
 				$argv = ["nix", "develop"].concat(read_only).append(
 					"${base_ref}#devShells.${target}.${name}",
 				)
+				# A command runs noninteractively inside the shell.
+				if !command.is_empty() {
+					Project.check_argv(command, name)?
+					$argv = $argv.append("--command").concat(command)
+				}
 			}
 			Request.Run(name, extra) => {
 				$action = Run(name)
@@ -1164,13 +1169,13 @@ expect {
 	})
 	NixBackend.preflight(
 		project,
-		Request.Shell("default"),
+		Request.Shell("default", []),
 		"x86_64-linux",
 		TestData.layout,
 	).is_ok()
 		and NixBackend.preflight(
 			project,
-			Request.Shell("foreign"),
+			Request.Shell("foreign", []),
 			"x86_64-linux",
 			TestData.layout,
 		).is_err()
@@ -1179,7 +1184,7 @@ expect {
 # Unsupported declarations take precedence over absent requested targets.
 expect NixBackend.preflight(
 	mk({ ..simple, systems: ["riscv64-linux"] }),
-	Request.Shell("default"),
+	Request.Shell("default", []),
 	"x86_64-linux",
 	TestData.layout,
 ) == Err("unsupported Nix target riscv64-linux")
@@ -1295,7 +1300,7 @@ expect match plan_fixture(
 }
 
 # Aliases use the caller target, never the host's implicit default output shape.
-expect match plan_fixture(Request.Shell("default")) {
+expect match plan_fixture(Request.Shell("default", [])) {
 	Ok({ steps: [plan] }) => plan.action == Shell("default") and plan.argv == [
 		"nix",
 		"develop",
@@ -1304,6 +1309,24 @@ expect match plan_fixture(Request.Shell("default")) {
 		"path:/generated#devShells.x86_64-linux.default",
 	]
 		and plan.artifacts.is_empty()
+	_ => False
+}
+
+# A shell command follows the shell installable, one element per argument.
+expect match plan_fixture(
+	Request.Shell("default", ["git", "a b", "--version"]),
+) {
+	Ok({ steps: [plan] }) => plan.argv == [
+		"nix",
+		"develop",
+		"--no-update-lock-file",
+		"--no-write-lock-file",
+		"path:/generated#devShells.x86_64-linux.default",
+		"--command",
+		"git",
+		"a b",
+		"--version",
+	]
 	_ => False
 }
 
@@ -1348,7 +1371,7 @@ expect match plan_locks {
 # Request selection never shrinks root inputs or causes an implicit relock.
 expect match (
 	plan_fixture(Request.Build("library")),
-	plan_fixture(Request.Shell("default")),
+	plan_fixture(Request.Shell("default", [])),
 ) {
 	(Ok({ steps: [build] }), Ok({ steps: [shell] })) => {
 		build_lock = build.files.find_first(|f| f.path == "/generated/flake.lock")
@@ -1364,12 +1387,14 @@ expect match (
 	_ => False
 }
 
-# Unknown requests and NUL task extras fail before producing any effect recipe.
+# Unknown requests, NUL task extras and empty shell commands fail before
+# producing any effect recipe.
 expect [
-	Request.Shell("missing"),
+	Request.Shell("missing", []),
 	Request.Run("missing", []),
 	Request.Build("missing"),
 	Request.Run("check", [Str.from_utf8([0]) ?? ""]),
+	Request.Shell("default", [""]),
 ]
 	.all(|request| plan_fixture(request).is_err())
 
@@ -1417,7 +1442,7 @@ expect {
 	match Locks.from_nix(project, TestData.layout, native_lock) {
 		Ok(locks) => NixBackend.plan(
 			project,
-			Request.Shell("default"),
+			Request.Shell("default", []),
 			"x86_64-linux",
 			TestData.layout,
 			locks,

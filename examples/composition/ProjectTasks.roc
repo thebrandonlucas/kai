@@ -21,5 +21,9 @@ ProjectTasks :: [].{
 				]),
 			],
 		),
+		Task(
+			"fail",
+			[Use(environment), Run(["python3", "-c", "raise SystemExit(7)"])],
+		),
 	]
 }

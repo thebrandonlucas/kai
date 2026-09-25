@@ -151,7 +151,9 @@ ConfigFixtures := [].{
 				\\ Task("test", [Use("dev"), Run(["git", "--version"])]),
 				\\ Task("args", [Use("dev"), Run(["python3", "-c",
 				\\  "import json, sys; print(json.dumps(sys.argv[1:]))",
-				\\  "configured argument"])])]
+				\\  "configured argument"])]),
+				\\ Task("fail", [Use("dev"),
+				\\  Run(["python3", "-c", "raise SystemExit(7)"])])]
 			,
 		},
 		{
