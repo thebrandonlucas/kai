@@ -246,6 +246,7 @@ pub fn build(b: *std.Build) void {
     const build_devtool = b.addSystemCommand(&roc_build);
     build_devtool.addFileArg(b.path("devtool/main.roc"));
     build_devtool.addFileInput(b.path("devtool/Cli.roc"));
+    build_devtool.addFileInput(b.path("devtool/ConfigFixtures.roc"));
     build_devtool.addFileInput(b.path("devtool/Kaifiles.roc"));
     build_devtool.addFileInput(b.path("devtool/GitHub.roc"));
     build_devtool.addFileInput(b.path("devtool/PrepareRelease.roc"));
@@ -554,6 +555,20 @@ pub fn build(b: *std.Build) void {
         smoke.expectExitCode(0);
         ci_step.dependOn(&smoke.step);
     }
+
+    const config_fixtures_step = b.step(
+        "config-fixtures",
+        "Check Kaifile.roc configs are accepted or rejected at compile time",
+    );
+    const run_config_fixtures = addDevtoolCommand(
+        b,
+        devtool,
+        "config-fixtures",
+        &.{},
+    );
+    run_config_fixtures.step.dependOn(&build_platform_host.step);
+    config_fixtures_step.dependOn(&run_config_fixtures.step);
+    ci_step.dependOn(config_fixtures_step);
     ci_step.dependOn(test_examples_step);
     build_release.step.dependOn(ci_step);
 

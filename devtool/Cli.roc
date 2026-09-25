@@ -2,6 +2,7 @@
 Cli := [].{
 	Command := [
 		BuildRelease,
+		ConfigFixtures,
 		Help,
 		Kaifiles,
 		KaifilesSmoke,
@@ -13,6 +14,7 @@ Cli := [].{
 		is_eq = |left, right|
 			match (left, right) {
 				(BuildRelease, BuildRelease) => Bool.True
+				(ConfigFixtures, ConfigFixtures) => Bool.True
 				(Help, Help) => Bool.True
 				(Kaifiles, Kaifiles) => Bool.True
 				(KaifilesSmoke, KaifilesSmoke) => Bool.True
@@ -52,6 +54,7 @@ Cli := [].{
 		\\
 		\\Commands:
 		\\  build-release
+		\\  config-fixtures
 		\\  kaifiles
 		\\  prepare-release NAME VERSION
 		\\  prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR
@@ -64,6 +67,7 @@ Cli := [].{
 			[] => Ok(Help)
 			["help"] => Ok(Help)
 			["build-release"] => Ok(BuildRelease)
+			["config-fixtures"] => Ok(ConfigFixtures)
 			["kaifiles"] => Ok(Kaifiles)
 			["kaifiles-smoke"] => Ok(KaifilesSmoke)
 			["prepare-release", name, version] => Ok(PrepareRelease({ name, version }))
@@ -75,6 +79,7 @@ Cli := [].{
 				match first {
 					"help" => Err(ArgumentsNotAllowed(first))
 					"build-release" => Err(ArgumentsNotAllowed(first))
+					"config-fixtures" => Err(ArgumentsNotAllowed(first))
 					"kaifiles" => Err(ArgumentsNotAllowed(first))
 					"kaifiles-smoke" => Err(ArgumentsNotAllowed(first))
 					"prepare-release" => Err(ExpectedArguments(first))
