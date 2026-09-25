@@ -484,7 +484,7 @@ Executor := [].{
 
 	run! : List(OsStr), List(Plugin.Definition) => Try({}, _)
 	run! = |args, registry| {
-		display_args = args.drop_first(1).map(OsStr.display)
+		display_args = args.map(OsStr.display)
 		yes_options = Executor.extract_assume_yes(display_args)
 		json = yes_options.args.contains("--json")
 		no_color = yes_options.args.contains("--no-color")
@@ -620,6 +620,11 @@ Executor := [].{
 			assume_yes,
 		)
 
+	# Recursive functions using `?` in this module are annotated to avoid a
+	# compiler hang: https://github.com/roc-lang/roc/issues/11621
+	# Remove this workaround once the Roc pin includes the fix.
+	execute_steps! :
+		List(Plugin.ExecutionStep), Str, Bool, Bool, Bool => Try({}, _)
 	execute_steps! = |steps, workspace_root, json, color, assume_yes|
 		match steps {
 			[] => Ok({})
@@ -675,6 +680,7 @@ Executor := [].{
 				|part| !part.is_empty() and part != "." and part != "..",
 			)
 
+	path_has_symlink! : List(Str), Str => Try(Bool, _)
 	path_has_symlink! = |parts, parent|
 		match parts {
 			[] => Ok(Bool.False)
@@ -729,6 +735,7 @@ Executor := [].{
 			_ => message
 		}
 
+	validate_staged_file! : Str, List(Plugin.FileValidator), Str => Try({}, _)
 	validate_staged_file! = |path, validators, message|
 		match validators {
 			[] => Ok({})
@@ -776,6 +783,8 @@ Executor := [].{
 		Executor.validate_staged_file!(source, validators, message)
 	}
 
+	validate_stage_sources! :
+		List(Plugin.StagedFile), Str, List(Plugin.FileValidator), Str => Try({}, _)
 	validate_stage_sources! = |files, workspace_root, validators, message|
 		match files {
 			[] => Ok({})
@@ -832,6 +841,8 @@ Executor := [].{
 		}
 	}
 
+	write_staged_files! :
+		List(Plugin.StagedFile), Str, List(Plugin.FileValidator), Str => Try({}, _)
 	write_staged_files! = |files, temporary_path, validators, message|
 		match files {
 			[] => Ok({})

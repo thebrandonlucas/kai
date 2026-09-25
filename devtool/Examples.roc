@@ -248,6 +248,10 @@ Examples := [].{
 		Ok({ arch, args, os })
 	}
 
+	# Annotated to avoid a compiler hang:
+	# https://github.com/roc-lang/roc/issues/11621
+	# Remove this workaround once the Roc pin includes the fix.
+	check_invocations : Str, Str, List(_) -> Try({}, _)
 	check_invocations = |source, path, invocations|
 		match invocations {
 			[] => Ok({})

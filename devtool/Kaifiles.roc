@@ -61,6 +61,10 @@ Kaifiles := [].{
 		Ok(binary)
 	}
 
+	# Annotated to avoid a compiler hang:
+	# https://github.com/roc-lang/roc/issues/11621
+	# Remove this workaround once the Roc pin includes the fix.
+	discover! : Path => Try(List(_), _)
 	discover! = |path| {
 		if Path.is_sym_link!(path)? or !Path.is_dir!(path)? {
 			Ok([])

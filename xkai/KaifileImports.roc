@@ -70,26 +70,28 @@ KaifileImports := [].{
 			Err(ImportCycle(active_import_paths.append(normalized_source_path)))
 		} else {
 			source_text = Path.read_utf8!(Path.utf8(normalized_source_path))?
-			expanded_lines = source_text.split_on("\n").map_try(
-				|source_line|
-					match Imports.parse_import_line(source_line) {
-						NotImport => Ok(source_line)
-						InvalidImport => Err(
+			var $expanded_lines = []
+			for source_line in source_text.split_on("\n") {
+				expanded_line = match Imports.parse_import_line(source_line) {
+					NotImport => source_line
+					InvalidImport =>
+						return Err(
 							InvalidImportLine({ path: normalized_source_path, source_line }),
 						)
-						ImportPath(import_path) => {
-							imported_path = KaifileImports.resolve_import_path(
-								normalized_source_path,
-								import_path,
-							)
-							KaifileImports.load_expanded_kaifile!(
-								imported_path,
-								active_import_paths.append(normalized_source_path),
-							)
-						}
-					},
-			)?
-			Ok(Str.join_with(expanded_lines, "\n"))
+					ImportPath(import_path) => {
+						imported_path = KaifileImports.resolve_import_path(
+							normalized_source_path,
+							import_path,
+						)
+						KaifileImports.load_expanded_kaifile!(
+							imported_path,
+							active_import_paths.append(normalized_source_path),
+						)?
+					}
+				}
+				$expanded_lines = $expanded_lines.append(expanded_line)
+			}
+			Ok(Str.join_with($expanded_lines, "\n"))
 		}
 	}
 

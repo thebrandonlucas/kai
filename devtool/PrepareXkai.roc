@@ -93,8 +93,14 @@ PrepareXkai := [].{
 		Ok(text)
 	}
 
+	# Matching instead of `?` avoids a compiler hang:
+	# https://github.com/roc-lang/roc/issues/11621
+	# Remove this workaround once the Roc pin includes the fix.
 	validate_tree! = |root|
-		PrepareXkai.validate_entries!(Path.list!(root)?)
+		match Path.list!(root) {
+			Ok(entries) => PrepareXkai.validate_entries!(entries)
+			Err(error) => Err(error)
+		}
 
 	validate_entries! = |entries|
 		match entries {

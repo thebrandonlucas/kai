@@ -4,14 +4,20 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # Intel macOS is no longer supported by nixos-unstable.
-    nixpkgs-x86-darwin.url = "github:NixOS/nixpkgs/nixpkgs-26.05-darwin";
-
-    # Keep the Roc compiler compatible with basic-cli 0.22.0.
     roc-overlay = {
-      url = "github:thebrandonlucas/roc-overlay/628d8dcfd18f8a5c8a6b7c589573e9dd43a9d303";
+      url = "github:roc-lang/roc-overlay/06198bdac7c2a171c93d0a6f0ddeea562867ee1e";
       inputs.nixpkgs.follows = "nixpkgs";
-      inputs.nixpkgs-darwin.follows = "nixpkgs-x86-darwin";
+    };
+
+    # No basic-cli release supports the pinned Roc yet; build PR #499 from source.
+    basic-cli-src = {
+      url = "github:roc-lang/basic-cli/473caa2cc4f3fe9ce4e4682158bb80ebc2e19169";
+      flake = false;
+    };
+
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay/fb058ecf6d14837ea152a3d5225ce7f88ee5cde1";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
@@ -19,8 +25,9 @@
     {
       self,
       nixpkgs,
-      nixpkgs-x86-darwin,
       roc-overlay,
+      basic-cli-src,
+      rust-overlay,
       ...
     }:
     let
@@ -28,47 +35,84 @@
 
       version = builtins.readFile ./xkai/VERSION;
 
+      rocVersion = "nightly-2026-09-23-c7852fd";
+
+      # Only Linux hosts are built and tested; basic-cli comes from source.
       supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
       ];
       forAllSystems = lib.genAttrs supportedSystems;
       pkgsFor =
         system:
-        import (if system == "x86_64-darwin" then nixpkgs-x86-darwin else nixpkgs) {
+        import nixpkgs {
           inherit system;
-          overlays = [ roc-overlay.overlays.default ];
+          overlays = [ rust-overlay.overlays.default ];
         };
 
       rocTargetFor = {
         x86_64-linux = "x64musl";
         aarch64-linux = "arm64musl";
-        x86_64-darwin = "x64mac";
-        aarch64-darwin = "arm64mac";
       };
 
-      # Roc's macOS linker needs the minimal Darwin sysroot shipped beside its binary.
-      # The pinned overlay currently omits that directory during installation.
-      rocFor =
+      rustTargetFor = {
+        x64musl = "x86_64-unknown-linux-musl";
+        arm64musl = "aarch64-unknown-linux-musl";
+      };
+
+      rocFor = pkgs: roc-overlay.packages.${pkgs.stdenv.hostPlatform.system}.${rocVersion};
+
+      # The basic-cli platform with hosts for every supported Roc target.
+      basicCliFor =
         pkgs:
         let
-          roc = pkgs.rocpkgs.nightly;
+          rustToolchain = pkgs.rust-bin.fromRustupToolchain {
+            channel =
+              (builtins.fromTOML (builtins.readFile "${basic-cli-src}/rust-toolchain.toml")).toolchain.channel;
+            components = [ "llvm-tools-preview" ];
+            targets = lib.attrValues rustTargetFor;
+          };
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = rustToolchain;
+            rustc = rustToolchain;
+          };
+          buildTarget = rocTarget: rustTarget: ''
+            python3 scripts/build.py --target ${rocTarget}
+            # Keep the unstripped host; Kai strips its final executables.
+            cp target/${rustTarget}/release/libhost.a platform/targets/${rocTarget}/libhost.a
+          '';
         in
-        if pkgs.stdenv.hostPlatform.isDarwin then
-          roc.overrideAttrs (oldAttrs: {
-            postInstall = (oldAttrs.postInstall or "") + ''
-              cp -R darwin "$out/bin/darwin"
-            '';
-          })
-        else
-          roc;
+        rustPlatform.buildRustPackage {
+          pname = "basic-cli-platform";
+          version = "0.23.0-pr499";
+          src = basic-cli-src;
+          cargoLock.lockFile = "${basic-cli-src}/Cargo.lock";
+          nativeBuildInputs = [
+            pkgs.python3
+            pkgs.zig_0_16
+          ];
+          postPatch = ''
+            patchShebangs ci scripts
+          '';
+          buildPhase = ''
+            runHook preBuild
+            export CARGO_NET_OFFLINE=true
+            export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
+            ${lib.concatStrings (lib.mapAttrsToList buildTarget rustTargetFor)}
+            runHook postBuild
+          '';
+          # Roc supplies the host's unresolved symbols when linking an app.
+          doCheck = false;
+          dontStrip = true;
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out"
+            cp -R platform/. "$out/"
+            runHook postInstall
+          '';
+        };
 
-      basicCliName = "F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL";
-      basicCliBaseUrl = "https://github.com/roc-lang/basic-cli/releases/download/0.22.0";
-      basicCliUrl = basicCliBaseUrl + "/${basicCliName}.tar.zst";
-
+      # basic-cli imports this package; unpack it where Roc looks for downloads.
       rocHttpName = "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS";
       rocHttpUrl = "https://github.com/roc-lang/http/releases/download/1.0.0/" + "${rocHttpName}.tar.zst";
 
@@ -77,18 +121,12 @@
         {
           pname,
           source,
-          localSource,
           binaryName,
           buildBinaryName ? binaryName,
           prepareXkai ? false,
         }:
         let
           roc = rocFor pkgs;
-
-          basicCli = pkgs.fetchurl {
-            url = basicCliUrl;
-            hash = "sha256-04xUSXYJU4IHIf9/kjbfTghdgokYBFvZDfuTLWUg7kc=";
-          };
 
           rocHttp = pkgs.fetchurl {
             url = rocHttpUrl;
@@ -105,6 +143,7 @@
           nativeBuildInputs = [
             roc
             pkgs.llvmPackages.bintools
+            pkgs.zstd
           ]
           ++ lib.optionals prepareXkai [ pkgs.zig_0_16 ];
           dontConfigure = true;
@@ -114,44 +153,22 @@
 
             runHook preBuild
 
-            export HOME="$TMPDIR"
+            export HOME="$TMPDIR" XDG_CACHE_HOME="$TMPDIR/cache"
 
-            cp ${basicCli} ${basicCliName}.tar.zst
-            cp ${rocHttp} ${rocHttpName}.tar.zst
+            mkdir -p "$XDG_CACHE_HOME/roc/packages/${rocHttpName}"
+            zstd -dc ${rocHttp} | tar -x -C "$XDG_CACHE_HOME/roc/packages/${rocHttpName}"
 
-            roc unbundle ${basicCliName}.tar.zst
-            roc unbundle ${rocHttpName}.tar.zst
-
-            substituteInPlace ${basicCliName}/main.roc \
-              --replace-fail \
-              "${rocHttpUrl}" \
-              "$PWD/${rocHttpName}/main.roc"
+            # Roc apps import the platform from the ignored .basic-cli link.
+            ln -s ${basicCliFor pkgs} .basic-cli
 
             ${lib.optionalString prepareXkai ''
-              substituteInPlace devtool/main.roc \
-                --replace-fail \
-                "${basicCliBaseUrl}" \
-                "$PWD" \
-                --replace-fail \
-                "${basicCliName}.tar.zst" \
-                "${basicCliName}/main.roc"
-
               zig build prepare-xkai --prefix "$TMPDIR/prepared-xkai"
               cp -R "$TMPDIR/prepared-xkai/xkai-source" generated-xkai
+              ln -s ${basicCliFor pkgs} generated-xkai/.basic-cli
             ''}
 
-            cp ${source} ${localSource}
-
-            substituteInPlace ${localSource} \
-              --replace-fail \
-              "${basicCliBaseUrl}" \
-              "$PWD" \
-              --replace-fail \
-              "${basicCliName}.tar.zst" \
-              "${basicCliName}/main.roc"
-
             roc build \
-              ${localSource} \
+              ${source} \
               --opt=size \
               --target=${rocTarget} \
               --output=${buildBinaryName}
@@ -177,7 +194,6 @@
         mkRocBinary pkgs rocTarget {
           pname = "kai";
           source = "xkai/standard-cli.roc";
-          localSource = "xkai/standard-cli-local.roc";
           binaryName = "kai";
         };
 
@@ -186,7 +202,6 @@
         mkRocBinary pkgs rocTarget {
           pname = "xkai";
           source = "generated-xkai/xkai/main.roc";
-          localSource = "generated-xkai/xkai/main-local.roc";
           binaryName = "xkai";
           buildBinaryName = "xkai-dev";
           prepareXkai = true;
@@ -198,6 +213,7 @@
           pname,
           binary,
           runtimeInputs,
+          wrapperArgs ? "",
         }:
         pkgs.runCommand "${pname}-${version}"
           {
@@ -208,7 +224,8 @@
             mkdir -p "$out/bin"
 
             makeWrapper ${binary}/bin/${pname} "$out/bin/${pname}" \
-              --prefix PATH : ${lib.makeBinPath runtimeInputs}
+              --prefix PATH : ${lib.makeBinPath runtimeInputs} \
+              ${wrapperArgs}
           '';
 
       mkKaiPackage =
@@ -231,6 +248,8 @@
             (rocFor pkgs)
             pkgs.llvmPackages.bintools
           ];
+          # Generated apps import the platform that xkai was built against.
+          wrapperArgs = "--set-default XKAI_PLATFORM ${basicCliFor pkgs}/main.roc";
         };
 
       # Release archives contain only Kai; their runtime environment must provide
@@ -276,20 +295,11 @@
             default = kai;
           };
 
-          releaseArchives =
-            if lib.hasSuffix "-linux" system then
-              {
-                release-x86_64-linux = mkReleaseArchive pkgs (mkKaiBinary pkgs "x64musl") "x86_64-linux";
+          releaseArchives = {
+            release-x86_64-linux = mkReleaseArchive pkgs (mkKaiBinary pkgs "x64musl") "x86_64-linux";
 
-                release-aarch64-linux = mkReleaseArchive pkgs (mkKaiBinary pkgs "arm64musl") "aarch64-linux";
-
-              }
-            else
-              {
-                release-x86_64-darwin = mkReleaseArchive pkgs (mkKaiBinary pkgs "x64mac") "x86_64-darwin";
-
-                release-aarch64-darwin = mkReleaseArchive pkgs (mkKaiBinary pkgs "arm64mac") "aarch64-darwin";
-              };
+            release-aarch64-linux = mkReleaseArchive pkgs (mkKaiBinary pkgs "arm64musl") "aarch64-linux";
+          };
         in
         common // releaseArchives;
     in
@@ -364,6 +374,12 @@
               pkgs.file
               pkgs.sops
             ];
+            # Roc apps in this repository import the platform through .basic-cli.
+            shellHook = ''
+              if [ -f flake.nix ] && [ -d xkai ]; then
+                ln -sfn ${basicCliFor pkgs} .basic-cli
+              fi
+            '';
           };
         }
       );

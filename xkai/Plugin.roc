@@ -25,8 +25,12 @@ Plugin := [].{
 		environment : FileValidatorEnvironment,
 		expected_stdout : Str,
 		program : Str,
+	}.{
+		is_eq : _
 	}
-	StagedFile := { name : Str, source : Str }
+	StagedFile := { name : Str, source : Str }.{
+		is_eq : _
+	}
 
 	# Side effects to be performed later by the executor.
 	ExecutionStep := [

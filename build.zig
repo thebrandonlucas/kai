@@ -10,6 +10,11 @@ const SourceTree = struct {
     zig_files: []const []const u8,
 };
 
+// Cached `roc build` object packs can be reused by another app and segfault the
+// compiler (https://github.com/roc-lang/roc/issues/11673). Drop --no-cache
+// once the Roc pin includes https://github.com/roc-lang/roc/pull/11676.
+const roc_build = [_][]const u8{ "roc", "build", "--no-cache" };
+
 const RocRootKind = enum {
     app,
     package,
@@ -218,22 +223,24 @@ pub fn build(b: *std.Build) void {
         _ = source_stage.addCopyFile(b.path(source), source);
     }
 
+    // roc bundle stores files relative to its first .roc file, so stage a
+    // root entry beside xkai/ and plugins/std/.
+    const bundle_stage = b.addWriteFiles();
     const bundle = b.addSystemCommand(&.{ "roc", "bundle", "--output-dir" });
     bundle.setCwd(b.path("."));
     const bundle_dir = bundle.addOutputDirectoryArg("xkai-bundle");
+    bundle.addFileArg(bundle_stage.add("Bundle.roc", "Bundle := [].{}\n"));
     for (sources.xkai_files) |source| {
         if (std.mem.startsWith(u8, source, "xkai/tests/") or
             std.mem.eql(u8, source, "xkai/ImportsTest.roc")) continue;
-        bundle.addArg(source);
-        bundle.addFileInput(b.path(source));
+        bundle.addFileArg(bundle_stage.addCopyFile(b.path(source), source));
     }
     for (sources.standard_plugin_files) |source| {
         if (std.mem.startsWith(u8, source, "plugins/std/tests/")) continue;
-        bundle.addArg(source);
-        bundle.addFileInput(b.path(source));
+        bundle.addFileArg(bundle_stage.addCopyFile(b.path(source), source));
     }
 
-    const build_devtool = b.addSystemCommand(&.{ "roc", "build" });
+    const build_devtool = b.addSystemCommand(&roc_build);
     build_devtool.addFileArg(b.path("devtool/main.roc"));
     build_devtool.addFileInput(b.path("devtool/Cli.roc"));
     build_devtool.addFileInput(b.path("devtool/Kaifiles.roc"));
@@ -252,6 +259,10 @@ pub fn build(b: *std.Build) void {
     prepare.addDirectoryArg(source_stage.getDirectory());
     const generated_tree = prepare.addOutputDirectoryArg("generated-xkai");
     const generated_main = generated_tree.path(b, "xkai/main.roc");
+    // Generated xkai imports the platform from ../.basic-cli.
+    const link_platform = b.addSystemCommand(&.{ "ln", "-sfn" });
+    link_platform.addArg(b.pathFromRoot(".basic-cli"));
+    link_platform.addDirectoryArg(generated_tree.path(b, ".basic-cli"));
     const install_generated_tree = b.addInstallDirectory(.{
         .source_dir = generated_tree,
         .install_dir = .prefix,
@@ -264,7 +275,7 @@ pub fn build(b: *std.Build) void {
     );
     prepare_step.dependOn(&install_generated_tree.step);
 
-    const build_publish_devtool = b.addSystemCommand(&.{ "roc", "build" });
+    const build_publish_devtool = b.addSystemCommand(&roc_build);
     build_publish_devtool.addFileArg(b.path("devtool/publish.roc"));
     build_publish_devtool.addFileInput(b.path("devtool/GitHub.roc"));
     build_publish_devtool.addFileInput(b.path("devtool/GitHubApi.roc"));
@@ -274,7 +285,7 @@ pub fn build(b: *std.Build) void {
     const publish_devtool = build_publish_devtool.addPrefixedOutputFileArg("--output=", "kai-publish-devtool");
     const forwarded_args = b.args orelse &.{};
 
-    const build_examples_devtool = b.addSystemCommand(&.{ "roc", "build" });
+    const build_examples_devtool = b.addSystemCommand(&roc_build);
     build_examples_devtool.addFileArg(b.path("devtool/test-examples.roc"));
     build_examples_devtool.addFileInput(b.path("devtool/Examples.roc"));
     for (sources.roc_files) |source| {
@@ -318,7 +329,8 @@ pub fn build(b: *std.Build) void {
     );
     kaifiles_smoke_step.dependOn(&run_kaifiles_smoke.step);
 
-    const build_fuzz = b.addSystemCommand(&.{ "roc", "build", "--fuzz" });
+    const build_fuzz = b.addSystemCommand(&roc_build);
+    build_fuzz.addArg("--fuzz");
     build_fuzz.addFileArg(b.path("fuzz/Config.roc"));
     build_fuzz.addFileInput(b.path("xkai/parser/main.roc"));
     build_fuzz.addFileInput(b.path("xkai/parser/Blocks.roc"));
@@ -401,6 +413,7 @@ pub fn build(b: *std.Build) void {
         const check_roc = b.addSystemCommand(&.{ "roc", "check" });
         if (std.mem.eql(u8, root, "xkai/main.roc")) {
             check_roc.addFileArg(generated_main);
+            check_roc.step.dependOn(&link_platform.step);
         } else {
             check_roc.addArg(root);
         }
@@ -543,9 +556,10 @@ pub fn build(b: *std.Build) void {
             .{ artifactName(b, app), std.hash.Wyhash.hash(0, app) },
         );
         const output = b.fmt("--output={s}", .{output_path});
-        const build_app = b.addSystemCommand(&.{ "roc", "build" });
+        const build_app = b.addSystemCommand(&roc_build);
         if (std.mem.eql(u8, app, "xkai/main.roc")) {
             build_app.addFileArg(generated_main);
+            build_app.step.dependOn(&link_platform.step);
         } else {
             build_app.addArg(app);
         }
