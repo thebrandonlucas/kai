@@ -191,8 +191,6 @@
           pname,
           source,
           binaryName,
-          buildBinaryName ? binaryName,
-          prepareXkai ? false,
         }:
         let
           roc = rocFor pkgs;
@@ -225,8 +223,7 @@
             roc
             pkgs.llvmPackages.bintools
             pkgs.zstd
-          ]
-          ++ lib.optionals prepareXkai [ pkgs.zig_0_16 ];
+          ];
           dontConfigure = true;
           dontFixup = true;
 
@@ -241,19 +238,13 @@
             # Roc apps import the platform from the ignored .basic-cli link.
             ln -s ${basicCliFor pkgs} .basic-cli
 
-            ${lib.optionalString prepareXkai ''
-              zig build prepare-xkai --prefix "$TMPDIR/prepared-xkai"
-              cp -R "$TMPDIR/prepared-xkai/xkai-source" generated-xkai
-              ln -s ${basicCliFor pkgs} generated-xkai/.basic-cli
-            ''}
-
             roc build \
               ${source} \
               --opt=size \
               --target=${rocTarget} \
-              --output=${buildBinaryName}
+              --output=${binaryName}
 
-            llvm-strip ${buildBinaryName}
+            llvm-strip ${binaryName}
 
             runHook postBuild
           '';
@@ -262,7 +253,7 @@
 
             runHook preInstall
 
-            install -Dm755 ${buildBinaryName} "$out/bin/${binaryName}"
+            install -Dm755 ${binaryName} "$out/bin/${binaryName}"
 
             runHook postInstall
           '';
@@ -275,16 +266,6 @@
           pname = "kai";
           source = "cli/main.roc";
           binaryName = "kai";
-        };
-
-      mkXkaiBinary =
-        pkgs: rocTarget:
-        mkRocBinary pkgs rocTarget {
-          pname = "xkai";
-          source = "generated-xkai/xkai/main.roc";
-          binaryName = "xkai";
-          buildBinaryName = "xkai-dev";
-          prepareXkai = true;
         };
 
       mkWrappedPackage =
@@ -328,19 +309,6 @@
           ];
         };
 
-      mkXkaiPackage =
-        pkgs: binary:
-        mkWrappedPackage pkgs {
-          pname = "xkai";
-          inherit binary;
-          runtimeInputs = [
-            (rocFor pkgs)
-            pkgs.llvmPackages.bintools
-          ];
-          # Generated apps import the platform that xkai was built against.
-          wrapperArgs = "--set-default XKAI_PLATFORM ${basicCliFor pkgs}/main.roc";
-        };
-
       # Release archives contain only Kai; their runtime environment must provide
       # Nix and the pinned Roc compiler (on PATH or as ROC) to load Kaifile.roc.
       mkReleaseArchive =
@@ -375,12 +343,10 @@
           pkgs = pkgsFor system;
 
           nativeKaiBinary = mkKaiBinary pkgs rocTargetFor.${system};
-          nativeXkaiBinary = mkXkaiBinary pkgs rocTargetFor.${system};
           kai = mkKaiPackage pkgs nativeKaiBinary;
-          xkai = mkXkaiPackage pkgs nativeXkaiBinary;
 
           common = {
-            inherit kai xkai;
+            inherit kai;
             default = kai;
             kaifile-platform = kaifilePlatformFor pkgs;
           };
@@ -400,7 +366,6 @@
         system:
         let
           kai = self.packages.${system}.kai;
-          xkai = self.packages.${system}.xkai;
           kaiApp = {
             type = "app";
             program = "${kai}/bin/kai";
@@ -409,10 +374,6 @@
         {
           kai = kaiApp;
           default = kaiApp;
-          xkai = {
-            type = "app";
-            program = "${xkai}/bin/xkai";
-          };
         }
       );
 
@@ -421,21 +382,13 @@
         let
           pkgs = pkgsFor system;
           kai = self.packages.${system}.kai;
-          xkai = self.packages.${system}.xkai;
         in
         {
           package = kai;
-          xkai-package = xkai;
 
           version = pkgs.runCommand "kai-version-check" { } ''
             # Expected output: "${version}"
             test "$(${kai}/bin/kai --version)" = "${version}"
-            touch "$out"
-          '';
-
-          xkai-version = pkgs.runCommand "xkai-version-check" { } ''
-            # Expected output: "xkai version ${version}"
-            test "$(${xkai}/bin/xkai version)" = "xkai version ${version}"
             touch "$out"
           '';
         }
@@ -466,7 +419,7 @@
             ];
             # Roc apps in this repository import the platform through .basic-cli.
             shellHook = ''
-              if [ -f flake.nix ] && [ -d xkai ]; then
+              if [ -f flake.nix ] && [ -d kaifile ]; then
                 ln -sfn ${basicCliFor pkgs} .basic-cli
               fi
             '';

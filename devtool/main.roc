@@ -12,7 +12,6 @@ import pf.Stdout
 
 import Cli
 import ConfigFixtures
-import Kaifiles
 import GitHub
 import KaiBuild
 import KaiBundle
@@ -23,7 +22,6 @@ import KaiRun
 import KaiUpdate
 import KaiWorkflow
 import PrepareRelease
-import PrepareXkai
 import Release
 import Tidy
 
@@ -282,8 +280,6 @@ main! = |args|
 		Ok(Cli.Command.Help) => Stdout.line!(Cli.usage)
 		Ok(Cli.Command.BuildRelease) => build_release!()
 		Ok(Cli.Command.ConfigFixtures) => ConfigFixtures.run!()
-		Ok(Cli.Command.Kaifiles) => Kaifiles.run!()
-		Ok(Cli.Command.KaifilesSmoke) => Kaifiles.run_smoke!()
 		Ok(Cli.Command.KaiBuild(kai)) => KaiBuild.run!(kai)
 		Ok(Cli.Command.KaiBundle(kai)) => KaiBundle.run!(kai)
 		Ok(Cli.Command.KaiEnv(kai)) => KaiEnv.run!(kai)
@@ -296,8 +292,6 @@ main! = |args|
 			name,
 			version,
 		)
-		Ok(Cli.Command.PrepareXkai({ bundle_dir, output_dir, source_dir })) =>
-			PrepareXkai.run!(bundle_dir, source_dir, output_dir)
 		Ok(Cli.Command.Tidy(paths)) => Tidy.run!(paths)
 		Err(error) => Err(InvalidArguments(Cli.error_message(error)))
 	}
@@ -309,8 +303,6 @@ parse_cases = [
 	{ args: ["help"], expected: Ok(Cli.Command.Help) },
 	{ args: ["build-release"], expected: Ok(Cli.Command.BuildRelease) },
 	{ args: ["config-fixtures"], expected: Ok(Cli.Command.ConfigFixtures) },
-	{ args: ["kaifiles"], expected: Ok(Cli.Command.Kaifiles) },
-	{ args: ["kaifiles-smoke"], expected: Ok(Cli.Command.KaifilesSmoke) },
 	{ args: ["kai-update", "kai"], expected: Ok(Cli.Command.KaiUpdate("kai")) },
 	{ args: ["kai-env", "kai"], expected: Ok(Cli.Command.KaiEnv("kai")) },
 	{ args: ["kai-build", "kai"], expected: Ok(Cli.Command.KaiBuild("kai")) },
@@ -343,14 +335,6 @@ parse_cases = [
 		expected: Err(Cli.Error.ArgumentsNotAllowed("build-release")),
 	},
 	{
-		args: ["kaifiles", "extra"],
-		expected: Err(Cli.Error.ArgumentsNotAllowed("kaifiles")),
-	},
-	{
-		args: ["kaifiles-smoke", "extra"],
-		expected: Err(Cli.Error.ArgumentsNotAllowed("kaifiles-smoke")),
-	},
-	{
 		args: ["prepare-release", "only-name"],
 		expected: Err(Cli.Error.ExpectedArguments("prepare-release")),
 	},
@@ -361,8 +345,6 @@ usage_lines = [
 	"Usage: kai-devtool <command> [arguments]",
 	"build-release",
 	"config-fixtures",
-	"kaifiles",
-	"kaifiles-smoke",
 	"kai-build KAI_BINARY",
 	"kai-bundle KAI_BINARY",
 	"kai-env KAI_BINARY",
@@ -372,7 +354,6 @@ usage_lines = [
 	"kai-workflow KAI_BINARY",
 	"kai-update KAI_BINARY",
 	"prepare-release NAME VERSION",
-	"prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR",
 	"tidy ROC_FILE...",
 	"help",
 ]

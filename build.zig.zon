@@ -9,10 +9,10 @@
         ".github",
         "build.zig",
         "build.zig.zon",
+        "cli",
         "devtool",
         "examples",
         "flake.nix",
-        "plugins",
-        "xkai",
+        "kaifile",
     },
 }
