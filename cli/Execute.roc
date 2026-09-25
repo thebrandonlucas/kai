@@ -1,5 +1,6 @@
-# Execute a shell or task request: read the lock authority, obtain the whole
-# pure plan, then run its steps in order. Nothing here writes the lock.
+# Execute a shell or task request: select its backend, then for Nix read the
+# lock authority, obtain the whole pure plan and run its steps in order, or
+# run one Guix shell. Nothing here writes the lock.
 import pf.Cmd
 import pf.Stderr
 
@@ -9,11 +10,65 @@ import ir.Plan
 import ir.Request
 import nix.NixBackend
 import nix.Locks
+import guix.GuixBackend
 
+import Selection
 import Update
 import Workspace
 
 Execute := [].{
+	# Probe only the backends the decision can depend on: Guix only when Nix
+	# is not both fitting and usable, because Auto prefers Nix.
+	select! : Ir, Request, Selection.BackendChoice, Str => Try({}, _)
+	select! = |ir, request, choice, root| {
+		fits = Selection.fitting(choice, request, ir)
+		nix = if fits.contains(Nix) Execute.probe!("nix") else Unchecked
+		guix = match nix {
+			Usable => Unchecked
+			_ => if fits.contains(Guix) Execute.probe!("guix") else Unchecked
+		}
+		observed = { nix, guix }
+		backend = Selection.resolve(choice, request, ir, observed)?
+		Stderr.line!(
+			"kai: ${Selection.explain(choice, request, ir, observed, backend)}",
+		)?
+		match backend {
+			Nix => Execute.request!(ir, request, Workspace.locate!(root)?)
+			Guix => Execute.guix!(ir, request, root)
+		}
+	}
+
+	# A bounded, side-effect-free check that an executable runs at all.
+	probe! : Str => Selection.Probe
+	probe! = |program| {
+		version = Cmd.new_str(program).args_str(["--version"]).timeout_ms(10000)
+		match version.run!() {
+			Ok({ status: Exited(0), .. }) => Usable
+			Ok({ status: Exited(code), .. }) =>
+				Unusable("`${program} --version` exited with code ${code.to_str()}")
+			Ok({ status: Signaled(signal), .. }) =>
+				Unusable("`${program} --version` got signal ${signal.to_str()}")
+			Err(IO(NotFound)) => Missing
+			Err(Timeout(_)) => Unusable("`${program} --version` timed out")
+			Err(err) => Unusable(Str.inspect(err))
+		}
+	}
+
+	# Guix shells use the installed channels and never touch the workspace.
+	guix! : Ir, Request, Str => Try({}, _)
+	guix! = |ir, request, root| {
+		argv = GuixBackend.plan(ir, request).map_err(|message| GuixFailed(message))?
+		Stderr.line!(
+			"kai: this Guix shell uses the installed Guix channels and is not "
+				.concat("pinned by Kai's lock"),
+		)?
+		action = match request {
+			Request.Shell(name, _) => Shell(name)
+			_ => Generate
+		}
+		Execute.child!(argv, action, root)
+	}
+
 	request! : Ir, Request, Layout => Try({}, _)
 	request! = |ir, request, layout| {
 		NixBackend.preflight(ir, request, Update.target, layout)
@@ -56,17 +111,21 @@ Execute := [].{
 			}
 		}
 		Workspace.stage!(step.files, layout)?
-		match step.argv {
+		Execute.child!(step.argv, step.action, layout.project_root)
+	}
+
+	# Run argv from the project root with inherited stdio.
+	child! = |argv, action, root|
+		match argv {
 			[program, .. as args] => {
 				code = Cmd.new_str(program)
 					.args_str(args)
-					.cwd(Workspace.path(layout.project_root))
+					.cwd(Workspace.path(root))
 					.exec_exit_code!()?
-				if code == 0 Ok({}) else Err(ChildExited(step.action, code))
+				if code == 0 Ok({}) else Err(ChildExited(action, code))
 			}
 			[] => Ok({})
 		}
-	}
 
 	# A child's status becomes kai's own; statuses a process cannot exit with,
 	# such as a signal report, become a generic failure.
