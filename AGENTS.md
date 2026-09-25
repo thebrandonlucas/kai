@@ -11,3 +11,6 @@
 - Put backend-specific shared helpers in their corresponding backend module,
   e.g. `kaifile/nix/NixBackend.roc` or `kaifile/guix/GuixBackend.roc`, instead
   of a standalone helper module.
+- Never add an AI agent as an author or co-author of a commit or PR: no
+  `Co-Authored-By`, `Generated with` or similar attribution trailers. The
+  human developer is the sole author.
