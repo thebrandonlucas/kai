@@ -50,6 +50,9 @@ Command : [
 description = Help.describe(Help.kai).concat(
 	\\
 	\\
+	\\Kaifile.roc starts with:
+	\\${Help.header}
+	\\
 	\\Set ROC to choose the Roc compiler (default: roc).
 	\\Put arguments for a shell command or task after --.
 	,

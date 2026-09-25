@@ -583,6 +583,7 @@ pub fn build(b: *std.Build) void {
             build_cli.addFileInput(b.path(source));
         }
     }
+    build_cli.addFileInput(b.path("kaifile/platform-release"));
     build_cli.step.dependOn(test_step);
     for ([_][]const u8{ "check", "ir" }) |command| {
         const smoke = std.Build.Step.Run.create(

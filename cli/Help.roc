@@ -2,8 +2,14 @@
 # settings (inside config) that make those commands work. The kai-help
 # devtool check compiles the settings and runs the commands, so help cannot
 # drift from what kai actually accepts.
+import "../kaifile/platform-release" as platform_release : Str
+
 Help := [].{
 	Page : { summary : Str, examples : List(Str), config : List(Str) }
+
+	# How a Kaifile.roc starts: with the platform bundle this Kai's release
+	# publishes. The URL is one unbroken line, however help wraps.
+	header = "app [config] {\npf: platform \"${platform_release.trim()}\",\n}"
 
 	environment = "Environment(\"dev\", [Tools([\"git\"])]),"
 
