@@ -498,6 +498,14 @@ pub fn build(b: *std.Build) void {
     test_split_plugin.step.dependOn(check_step);
     test_step.dependOn(&test_split_plugin.step);
 
+    const test_blueprint_ir = b.addSystemCommand(&.{
+        "roc",
+        "test",
+        "blueprint/ir/main.roc",
+    });
+    test_blueprint_ir.step.dependOn(check_step);
+    test_step.dependOn(&test_blueprint_ir.step);
+
     const ci_step = b.step(
         "ci",
         "Run tests and build representative applications",
