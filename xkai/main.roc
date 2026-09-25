@@ -1,11 +1,11 @@
 # xkai entry point
 app [main!] {
-	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.22.0/${
-		""
-	}F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL.tar.zst",
+	pf: platform "../.basic-cli/main.roc",
 }
 
+import pf.Env
 import pf.OsStr
+import pf.Stderr
 import pf.Stdout
 
 import Builder
@@ -17,22 +17,8 @@ print_usage! = |_| {
 	Ok({})
 }
 
-runtime_platform_name =
-	\\F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL
-
-runtime_platform_url = Str.join_with(
-	[
-		"https://github.com/roc-lang/basic-cli/releases/download",
-		"0.22.0",
-		"${runtime_platform_name}.tar.zst",
-	],
-	"/",
-)
-
-stock_profile = { platform_url: runtime_platform_url }
-
 main! = |args| {
-	display_args = args.drop_first(1).map(OsStr.display)
+	display_args = args.map(OsStr.display)
 	match Cli.parse(display_args) {
 		Cli.Command.Help => print_usage!({})
 		Cli.Command.Version => {
@@ -40,7 +26,20 @@ main! = |args| {
 			Ok({})
 		}
 		Cli.Command.Build(plugin_paths) =>
-			Builder.build!(plugin_paths, EmbeddedSources.archive, stock_profile)
+			match Env.var_str!(OsStr.utf8("XKAI_PLATFORM")) {
+				Ok(path) =>
+					Builder.build!(
+						plugin_paths,
+						EmbeddedSources.archive,
+						{ platform_url: path },
+					)
+				Err(_) => {
+					Stderr.line!(
+						"error: set XKAI_PLATFORM to the basic-cli platform main.roc",
+					)?
+					Err(Exit(1))
+				}
+			}
 		Cli.Command.Unknown(unknown) => {
 			Stdout.line!("Unknown command ${unknown}")?
 			print_usage!({})

@@ -218,19 +218,21 @@ pub fn build(b: *std.Build) void {
         _ = source_stage.addCopyFile(b.path(source), source);
     }
 
+    // roc bundle stores files relative to its first .roc file, so stage a
+    // root entry beside xkai/ and plugins/std/.
+    const bundle_stage = b.addWriteFiles();
     const bundle = b.addSystemCommand(&.{ "roc", "bundle", "--output-dir" });
     bundle.setCwd(b.path("."));
     const bundle_dir = bundle.addOutputDirectoryArg("xkai-bundle");
+    bundle.addFileArg(bundle_stage.add("Bundle.roc", "Bundle := [].{}\n"));
     for (sources.xkai_files) |source| {
         if (std.mem.startsWith(u8, source, "xkai/tests/") or
             std.mem.eql(u8, source, "xkai/ImportsTest.roc")) continue;
-        bundle.addArg(source);
-        bundle.addFileInput(b.path(source));
+        bundle.addFileArg(bundle_stage.addCopyFile(b.path(source), source));
     }
     for (sources.standard_plugin_files) |source| {
         if (std.mem.startsWith(u8, source, "plugins/std/tests/")) continue;
-        bundle.addArg(source);
-        bundle.addFileInput(b.path(source));
+        bundle.addFileArg(bundle_stage.addCopyFile(b.path(source), source));
     }
 
     const build_devtool = b.addSystemCommand(&.{ "roc", "build" });
@@ -252,6 +254,10 @@ pub fn build(b: *std.Build) void {
     prepare.addDirectoryArg(source_stage.getDirectory());
     const generated_tree = prepare.addOutputDirectoryArg("generated-xkai");
     const generated_main = generated_tree.path(b, "xkai/main.roc");
+    // Generated xkai imports the platform from ../.basic-cli.
+    const link_platform = b.addSystemCommand(&.{ "ln", "-sfn" });
+    link_platform.addArg(b.pathFromRoot(".basic-cli"));
+    link_platform.addDirectoryArg(generated_tree.path(b, ".basic-cli"));
     const install_generated_tree = b.addInstallDirectory(.{
         .source_dir = generated_tree,
         .install_dir = .prefix,
@@ -401,6 +407,7 @@ pub fn build(b: *std.Build) void {
         const check_roc = b.addSystemCommand(&.{ "roc", "check" });
         if (std.mem.eql(u8, root, "xkai/main.roc")) {
             check_roc.addFileArg(generated_main);
+            check_roc.step.dependOn(&link_platform.step);
         } else {
             check_roc.addArg(root);
         }
@@ -546,6 +553,7 @@ pub fn build(b: *std.Build) void {
         const build_app = b.addSystemCommand(&.{ "roc", "build" });
         if (std.mem.eql(u8, app, "xkai/main.roc")) {
             build_app.addFileArg(generated_main);
+            build_app.step.dependOn(&link_platform.step);
         } else {
             build_app.addArg(app);
         }

@@ -81,6 +81,10 @@ Builder := [].{
 
 	load_plugins! = |plugin_paths| Builder.load_plugins_from!(plugin_paths, 0)
 
+	# Annotated to avoid a compiler hang:
+	# https://github.com/roc-lang/roc/issues/11621
+	# Remove this workaround once the Roc pin includes the fix.
+	ensure_directories! : Path, List(Str) => Try({}, _)
 	ensure_directories! = |root, parts|
 		match parts {
 			[] => Ok({})

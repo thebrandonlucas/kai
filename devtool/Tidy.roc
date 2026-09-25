@@ -640,6 +640,10 @@ Tidy := [].{
 			.concat(Tidy.static_join_violations(source))
 	}
 
+	# Annotated to avoid a compiler hang:
+	# https://github.com/roc-lang/roc/issues/11621
+	# Remove this workaround once the Roc pin includes the fix.
+	discover! : Path => Try(List(Path), _)
 	discover! = |path| {
 		if Path.is_sym_link!(path)? {
 			Ok([])

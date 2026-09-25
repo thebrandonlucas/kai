@@ -405,6 +405,10 @@ PublishRelease := [].{
 			expected_assets,
 			token,
 		) ? PublishDraftFailed
-		Stdout.line!("Published ${release.name} (${release.tag_name}).")
+		# Returning this call directly segfaults `roc build` on Roc
+		# nightly-2026-09-23-c7852fd (no upstream issue yet). Return it again once
+		# the Roc pin builds it.
+		Stdout.line!("Published ${release.name} (${release.tag_name}).")?
+		Ok({})
 	}
 }
