@@ -406,8 +406,13 @@ pub fn build(b: *std.Build) void {
     );
     check_step.dependOn(&nix_fmt.step);
 
+    // Configuration apps link the native configuration platform's host.
+    const build_platform_host = b.addSystemCommand(&.{ "zig", "build" });
+    build_platform_host.setCwd(b.path("blueprint/platform"));
+
     for (sources.roc_roots) |root| {
         const check_roc = b.addSystemCommand(&.{ "roc", "check" });
+        check_roc.step.dependOn(&build_platform_host.step);
         if (std.mem.eql(u8, root, "xkai/main.roc")) {
             check_roc.addFileArg(generated_main);
             check_roc.step.dependOn(&link_platform.step);

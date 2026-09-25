@@ -1,0 +1,13 @@
+.{
+    .name = .roc_blueprint,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .fingerprint = 0xce7fa70082a1e74f,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "host",
+        "targets",
+    },
+}

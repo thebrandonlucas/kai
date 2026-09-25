@@ -69,7 +69,11 @@ Tidy := [].{
 
 	is_comment = |line| line.trim().starts_with("#")
 
-	is_platform_dependency = |line| line.trim().starts_with("pf: platform \"")
+	# `roc fmt` keeps these platform header entries on one line.
+	is_platform_header_line = |line| {
+		trimmed = line.trim()
+		trimmed.starts_with("pf: platform \"") or trimmed.contains(": { inputs: [")
+	}
 
 	has_module_comment = |line|
 		(line.starts_with("# ") and line.trim() != "#") or
@@ -128,7 +132,7 @@ Tidy := [].{
 		).keep_if(
 			|line|
 				line.width > Tidy.line_limit and
-					!Tidy.is_platform_dependency(line.text),
+					!Tidy.is_platform_header_line(line.text),
 		).map(
 			|line| {
 				kind: LineTooLong(line.width),
