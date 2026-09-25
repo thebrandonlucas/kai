@@ -69,16 +69,16 @@ def main():
     source = Path(spec["project"])
     safe_tree(source)
     check_inputs(spec["inputs"])
-    work = Path.cwd() / "blueprint-work"
+    work = Path.cwd() / "kai-work"
     shutil.copytree(source, work)
     for path in [work, *work.rglob("*")]:
         path.chmod(path.stat().st_mode | stat.S_IWUSR)
     environment = os.environ.copy()
     environment.update(
         PATH=spec["path"],
-        HOME=str(Path.cwd() / "blueprint-home"),
-        BLUEPRINT_INPUTS=spec["inputs"],
-        BLUEPRINT_ARTIFACTS=spec["artifacts"],
+        HOME=str(Path.cwd() / "kai-home"),
+        KAI_INPUTS=spec["inputs"],
+        KAI_ARTIFACTS=spec["artifacts"],
     )
     Path(environment["HOME"]).mkdir()
     result = subprocess.run(
@@ -119,5 +119,5 @@ if __name__ == "__main__":
     try:
         main()
     except (OSError, ValueError) as error:
-        print(f"blueprint build: {error}", file=sys.stderr)
+        print(f"kai build: {error}", file=sys.stderr)
         raise SystemExit(1)

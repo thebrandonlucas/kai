@@ -1,11 +1,9 @@
-## A platform whose apps are pure configuration. A `Blueprint.roc` provides
+## The Kaifile platform: apps are pure configuration. A `Kaifile.roc` provides
 ## `config`, a list of settings; the platform validates it and prints the
-## blueprint IR as an S-expression, which Kai turns into a
-## working environment. Vendored from lukewilliamboswell/roc-blueprint
-## d4b8c30 under the UPL (see ../LICENSE).
+## Kaifile IR as an S-expression, which Kai turns into a working environment.
 ##
 ## ```roc
-## app [config] { pf: platform "blueprint/platform/main.roc" }
+## app [config] { pf: platform "kaifile/platform/main.roc" }
 ##
 ## config = [
 ## 	Name("my-project"),
@@ -80,7 +78,7 @@ or_crash : Try(Ir, Str) -> Ir
 or_crash = |result|
 	match result {
 		Ok(ir) => ir
-		Err(error) => crash "Invalid Blueprint.roc: ${error}"
+		Err(error) => crash "Invalid Kaifile.roc: ${error}"
 	}
 
 main_for_host! : List(Str) => I32

@@ -7,16 +7,18 @@ import pf.EnvName
 ProjectTasks :: [].{
 	settings : EnvName -> List(Config.Setting)
 	settings = |environment| [
-		Task("fmt", [Use(environment), Run(["python3", "--version"])]),
+		Task("fmt", [Use(environment), Run(["git", "diff", "--check"])]),
 		Task("test", [Use(environment), Run(["git", "--version"])]),
+		# Prints each argument in brackets, so argv boundaries stay visible.
 		Task(
 			"args",
 			[
 				Use(environment),
 				Run([
-					"python3",
+					"sh",
 					"-c",
-					"import json, sys; print(json.dumps(sys.argv[1:]))",
+					"printf '<%s>' \"$@\"; echo",
+					"args",
 					"configured argument",
 				]),
 			],

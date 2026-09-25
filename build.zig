@@ -414,7 +414,7 @@ pub fn build(b: *std.Build) void {
 
     // Configuration apps link the native configuration platform's host.
     const build_platform_host = b.addSystemCommand(&.{ "zig", "build" });
-    build_platform_host.setCwd(b.path("blueprint/platform"));
+    build_platform_host.setCwd(b.path("kaifile/platform"));
 
     for (sources.roc_roots) |root| {
         const check_roc = b.addSystemCommand(&.{ "roc", "check" });
@@ -512,21 +512,21 @@ pub fn build(b: *std.Build) void {
     test_split_plugin.step.dependOn(check_step);
     test_step.dependOn(&test_split_plugin.step);
 
-    const test_blueprint_ir = b.addSystemCommand(&.{
+    const test_kaifile_ir = b.addSystemCommand(&.{
         "roc",
         "test",
-        "blueprint/ir/main.roc",
+        "kaifile/ir/main.roc",
     });
-    test_blueprint_ir.step.dependOn(check_step);
-    test_step.dependOn(&test_blueprint_ir.step);
+    test_kaifile_ir.step.dependOn(check_step);
+    test_step.dependOn(&test_kaifile_ir.step);
 
-    const test_blueprint_nix = b.addSystemCommand(&.{
+    const test_kaifile_nix = b.addSystemCommand(&.{
         "roc",
         "test",
-        "blueprint/nix/main.roc",
+        "kaifile/nix/main.roc",
     });
-    test_blueprint_nix.step.dependOn(check_step);
-    test_step.dependOn(&test_blueprint_nix.step);
+    test_kaifile_nix.step.dependOn(check_step);
+    test_step.dependOn(&test_kaifile_nix.step);
 
     const ci_step = b.step(
         "ci",
