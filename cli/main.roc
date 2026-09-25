@@ -7,6 +7,7 @@ app [main!] {
 	ir: "../kaifile/ir/main.roc",
 	nix: "../kaifile/nix/main.roc",
 	guix: "../kaifile/guix/main.roc",
+	blu: "../kaifile/blu/main.roc",
 }
 
 import pf.Cmd
@@ -121,7 +122,7 @@ cli = |commands, note, text_style|
 			backend: Opt.maybe_str({
 				short: "",
 				long: "backend",
-				help: "Use nix or guix instead of choosing automatically.",
+				help: "Use nix, guix or blu instead of choosing automatically.",
 			}),
 			command: SubCmd.required(
 				commands.concat([
@@ -466,6 +467,7 @@ backend_choice = |value|
 		Err(NoValue) => Ok(Auto)
 		Ok("nix") => Ok(Only(Nix))
 		Ok("guix") => Ok(Only(Guix))
+		Ok("blu") => Ok(Only(Blu))
 		Ok(other) => Err(InvalidBackend(other))
 	}
 
@@ -520,7 +522,7 @@ describe = |err|
 			"another kai update holds ${guard}; if none is running, it is "
 				.concat("safe to remove that directory")
 		AuthorityChanged => "the lock file changed during update; retry kai update"
-		InvalidBackend(value) => "--backend must be nix or guix, not '${value}'"
+		InvalidBackend(value) => "--backend must be nix, guix or blu, not '${value}'"
 		BackendConflict(backend, why) =>
 			"--backend ${Selection.name(backend)} cannot serve this request: ${why}"
 		NoEligibleBackend(reasons) =>

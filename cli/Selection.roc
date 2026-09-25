@@ -5,16 +5,17 @@ import ir.Ir
 import ir.Project
 import ir.Request
 import guix.GuixBackend
+import blu.BluBackend
 
 Selection := [].{
-	BackendId : [Nix, Guix]
+	BackendId : [Nix, Guix, Blu]
 
 	BackendChoice : [Auto, Only(BackendId)]
 
 	## Unchecked means the decision did not depend on that executable.
 	Probe : [Missing, Unusable(Str), Usable, Unchecked]
 
-	Observed : { nix : Probe, guix : Probe }
+	Observed : { nix : Probe, guix : Probe, blu : Probe }
 
 	## Whether a backend can serve the requested closure; unrelated shells,
 	## tasks and builds never matter. Nix planning checks builds itself.
@@ -22,6 +23,7 @@ Selection := [].{
 	fit = |request, ir, backend|
 		match backend {
 			Guix => GuixBackend.plan(ir, request).map_ok(|_| {})
+			Blu => BluBackend.plan(ir, request, "").map_ok(|_| {})
 			Nix => {
 				environment = match request {
 					Request.Shell(name, _) =>
@@ -38,7 +40,8 @@ Selection := [].{
 			}
 		}
 
-	## Candidates that fit, in preference order: Nix before Guix.
+	## Candidates that fit, in preference order: Nix before Guix. Blu is only
+	## chosen by --backend.
 	fitting : BackendChoice, Request, Ir -> List(BackendId)
 	fitting = |choice, request, ir| {
 		candidates = match choice {
@@ -62,7 +65,12 @@ Selection := [].{
 				],
 			)
 	resolve = |choice, request, ir, observed| {
-		probe = |backend| if backend == Nix observed.nix else observed.guix
+		probe = |backend|
+			match backend {
+				Nix => observed.nix
+				Guix => observed.guix
+				Blu => observed.blu
+			}
 		usable = |backend|
 			match probe(backend) {
 				Usable => Bool.True
@@ -151,7 +159,12 @@ Selection := [].{
 	}
 
 	name : BackendId -> Str
-	name = |backend| if backend == Nix "nix" else "guix"
+	name = |backend|
+		match backend {
+			Nix => "nix"
+			Guix => "guix"
+			Blu => "blu"
+		}
 
 	probe_text : Probe -> Str
 	probe_text = |probe|
@@ -203,13 +216,13 @@ fixture = {
 	],
 }
 
-both = { nix: Usable, guix: Usable }
+both = { nix: Usable, guix: Usable, blu: Unchecked }
 
-neither = { nix: Missing, guix: Missing }
+neither = { nix: Missing, guix: Missing, blu: Unchecked }
 
-only_guix = { nix: Missing, guix: Usable }
+only_guix = { nix: Missing, guix: Usable, blu: Unchecked }
 
-only_nix = { nix: Usable, guix: Missing }
+only_nix = { nix: Usable, guix: Missing, blu: Unchecked }
 
 shell = |name| Request.Shell(name, [])
 

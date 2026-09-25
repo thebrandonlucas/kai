@@ -1,6 +1,7 @@
 # Execute a shell, task, build or workflow request: select its backend, then
 # for Nix read the lock authority, obtain the whole pure plan and run its
-# steps in order, or run one Guix shell. Nothing here writes the lock.
+# steps in order, run one Guix shell, or run one blu Blueprint command.
+# Nothing here writes the lock.
 import pf.Cmd
 import pf.Stderr
 import pf.Stdout
@@ -12,6 +13,7 @@ import ir.Request
 import nix.NixBackend
 import nix.Locks
 import guix.GuixBackend
+import blu.BluBackend
 
 import Output
 import Selection
@@ -31,7 +33,8 @@ Execute := [].{
 			Usable => Unchecked
 			_ => if fits.contains(Guix) Execute.probe!("guix") else Unchecked
 		}
-		observed = { nix, guix }
+		blu = if fits.contains(Blu) Execute.probe!("blu") else Unchecked
+		observed = { nix, guix, blu }
 		backend = Selection.resolve(choice, request, ir, observed)?
 		why = Selection.explain(choice, request, ir, observed, backend)
 		Output.note!(
@@ -46,6 +49,7 @@ Execute := [].{
 		match backend {
 			Nix => Execute.request!(ir, request, Workspace.locate!(root)?, mode)
 			Guix => Execute.guix!(ir, request, root, mode)
+			Blu => Execute.blu!(ir, request, root, mode)
 		}
 	}
 
@@ -77,6 +81,21 @@ Execute := [].{
 			_ => Generate
 		}
 		Execute.child!(argv, action, root)
+	}
+
+	# blu reads the IR staged under the workspace; its store and sandbox are
+	# its own, so Kai stages nothing else.
+	blu! : Ir, Request, Str, Output.Mode => Try({}, _)
+	blu! = |ir, request, root, mode| {
+		layout = Workspace.locate!(root)?
+		staged = { ..layout, generated_root: "${layout.workspace}/generated/blu" }
+		plan = BluBackend.plan(ir, request, "${staged.generated_root}/ir.scm")
+			.map_err(|message| RenderFailed(message))?
+		Workspace.prepare!(staged)?
+		for step in plan.steps {
+			Execute.step!(step, staged, mode)?
+		}
+		Ok({})
 	}
 
 	# The whole plan, every workflow step included, is checked before the

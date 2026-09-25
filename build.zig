@@ -397,6 +397,14 @@ pub fn build(b: *std.Build) void {
     test_kaifile_guix.step.dependOn(check_step);
     test_step.dependOn(&test_kaifile_guix.step);
 
+    const test_kaifile_blu = b.addSystemCommand(&.{
+        "roc",
+        "test",
+        "kaifile/blu/main.roc",
+    });
+    test_kaifile_blu.step.dependOn(check_step);
+    test_step.dependOn(&test_kaifile_blu.step);
+
     const test_cli = b.addSystemCommand(&.{ "roc", "test", "cli/main.roc" });
     test_cli.step.dependOn(check_step);
     test_step.dependOn(&test_cli.step);
