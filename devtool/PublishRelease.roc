@@ -303,8 +303,8 @@ PublishRelease := [].{
 			return Err(PublishTargetNotOnMaster)
 		}
 
-		version = Path.read_utf8!(Path.utf8("xkai/VERSION"))?
-		name = Path.read_utf8!(Path.utf8("xkai/RELEASE_NAME"))?
+		version = Path.read_utf8!(Path.utf8("VERSION"))?
+		name = Path.read_utf8!(Path.utf8("RELEASE_NAME"))?
 		manifest = Path.read_utf8!(Path.utf8("build.zig.zon"))?
 		manifest_version =
 			Release.manifest_version(manifest) ? InvalidPublicationManifest

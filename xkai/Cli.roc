@@ -1,5 +1,5 @@
 # xkai pure command definitions
-import "VERSION" as canonical_version : Str
+import "../VERSION" as canonical_version : Str
 
 Cli := [].{
 	Command := [Help, Build(List(Str)), Version, Unknown(Str)].{

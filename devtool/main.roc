@@ -27,7 +27,7 @@ import Release
 import Tidy
 
 validate_metadata! = || {
-	version = Path.read_utf8!(Path.utf8("xkai/VERSION"))?
+	version = Path.read_utf8!(Path.utf8("VERSION"))?
 	if !Release.is_semver(version) {
 		Err(InvalidReleaseVersion(version))
 	} else {
@@ -126,8 +126,8 @@ extract_archive! = |archive, destination| {
 check_x64! = |archive, destination, version| {
 	archive_contents!(archive)?
 	binary = extract_archive!(archive, destination)?
-	output = Cmd.new(Path.to_os_str(binary)).arg_str("version").exec_output!()?
-	expected = "kai version ${version}\n"
+	output = Cmd.new(Path.to_os_str(binary)).arg_str("--version").exec_output!()?
+	expected = "${version}\n"
 	if output.stdout_utf8 == expected {
 		Ok({})
 	} else {

@@ -57,14 +57,23 @@ Load := [].{
 			override
 		}
 		output = Cmd.new_str(compiler).args_str(["version"]).exec_output!()
-			.map_err(|err| CompilerUnavailable(compiler, Str.inspect(err)))?
-		expected = "Roc compiler version ${compiler_version.trim()}"
+			.map_err(|err| CompilerUnavailable(compiler, Load.why(err)))?
+		expected = "Roc compiler version ${Load.pinned_compiler}"
 		actual = output.stdout_utf8.trim()
 		if actual != expected {
 			return Err(CompilerMismatch(compiler, actual))
 		}
 		Ok(compiler)
 	}
+
+	# The compiler this Kai evaluates configuration with.
+	pinned_compiler = compiler_version.trim()
+
+	why = |err|
+		match err {
+			FailedToGetExitCode({ err: NotFound, .. }) => "not found"
+			_ => Str.inspect(err)
+		}
 
 	# Kaifile evaluation has only been verified on an x86_64 Linux host.
 	check_host! : () => Try({}, [UnsupportedHost])
