@@ -166,6 +166,19 @@ fn addDevtoolCommand(
     return run;
 }
 
+fn addNixOutLink(
+    b: *std.Build,
+    prerequisite: *std.Build.Step,
+    installable: []const u8,
+    name: []const u8,
+) std.Build.LazyPath {
+    const build_package = b.addSystemCommand(&.{ "nix", "build", installable, "--out-link" });
+    const out_link = build_package.addOutputFileArg(name);
+    build_package.has_side_effects = true;
+    build_package.step.dependOn(prerequisite);
+    return out_link;
+}
+
 fn artifactName(b: *std.Build, source_path: []const u8) []const u8 {
     const extension_len = ".roc".len;
     const stem = source_path[0 .. source_path.len - extension_len];
@@ -366,19 +379,17 @@ pub fn build(b: *std.Build) void {
     );
     ci_step.dependOn(test_step);
 
-    // Load a real Kaifile.roc through the compiled CLI.
-    const build_cli = b.addSystemCommand(&roc_build);
-    build_cli.addArgs(&.{ "cli/main.roc", "--opt=dev" });
-    const cli_binary = build_cli.addPrefixedOutputFileArg("--output=", "kai");
-    for (sources.roc_files) |source| {
-        if (std.mem.startsWith(u8, source, "cli/") or
-            std.mem.startsWith(u8, source, "kaifile/"))
-        {
-            build_cli.addFileInput(b.path(source));
-        }
-    }
-    build_cli.addFileInput(b.path("kaifile/platform-release"));
-    build_cli.step.dependOn(test_step);
+    // Integration steps run the kai that ships, not a --opt=dev build: the
+    // Nix package's wrapper, and the bare binary a release archive holds for
+    // steps that must not see the wrapper's Nix or seeded Roc cache. Nix
+    // decides what to rebuild, so these always run; new files need `git add`.
+    const cli_binary = addNixOutLink(b, test_step, ".#kai", "kai").path(b, "bin/kai");
+    const bare_binary = addNixOutLink(
+        b,
+        test_step,
+        ".#kai.unwrapped",
+        "kai-unwrapped",
+    ).path(b, "bin/kai");
     // Every maintained example must load and lower to IR.
     const examples = [_][]const u8{
         "examples/artifacts",
@@ -436,12 +447,14 @@ pub fn build(b: *std.Build) void {
 
     // Stubbed Guix checks always run; the real Guix shell is reported as
     // SKIPPED without guix. guix-integration requires it (hosted CI gate).
+    // A Guix-only host installs the release archive, so these run the bare
+    // binary: the package wrapper would put Nix back on PATH.
     const kai_guix_step = b.step(
         "kai-guix",
         "Run kai shell against stub and, if installed, real Guix",
     );
     const run_kai_guix = addDevtoolCommand(b, devtool, "kai-guix", &.{});
-    run_kai_guix.addFileArg(cli_binary);
+    run_kai_guix.addFileArg(bare_binary);
     kai_guix_step.dependOn(&run_kai_guix.step);
     ci_step.dependOn(kai_guix_step);
 
@@ -455,7 +468,7 @@ pub fn build(b: *std.Build) void {
         "kai-guix",
         &.{"--require"},
     );
-    run_guix_integration.addFileArg(cli_binary);
+    run_guix_integration.addFileArg(bare_binary);
     guix_integration_step.dependOn(&run_guix_integration.step);
 
     // Real sandboxed builds; the sandbox probe needs a world-readable /var/tmp.
@@ -483,7 +496,7 @@ pub fn build(b: *std.Build) void {
         "Load a Kaifile.roc through the served and the pre-seeded platform bundle",
     );
     const run_kai_bundle = addDevtoolCommand(b, devtool, "kai-bundle", &.{});
-    run_kai_bundle.addFileArg(cli_binary);
+    run_kai_bundle.addFileArg(bare_binary);
     kai_bundle_step.dependOn(&run_kai_bundle.step);
     ci_step.dependOn(kai_bundle_step);
 

@@ -189,6 +189,7 @@
         pkgs: rocTarget:
         {
           pname,
+          src,
           source,
           binaryName,
         }:
@@ -217,7 +218,7 @@
           pname = "${pname}-${rocTarget}";
           inherit version;
 
-          src = self;
+          inherit src;
 
           nativeBuildInputs = [
             roc
@@ -264,6 +265,16 @@
         pkgs: rocTarget:
         mkRocBinary pkgs rocTarget {
           pname = "kai";
+          # Only what the CLI compiles or embeds, so other edits keep the build.
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions [
+              ./cli
+              ./kaifile
+              ./VERSION
+              ./.roc-version
+            ];
+          };
           source = "cli/main.roc";
           binaryName = "kai";
         };
@@ -279,6 +290,8 @@
         pkgs.runCommand "${pname}-${version}"
           {
             nativeBuildInputs = [ pkgs.makeWrapper ];
+            # The bare binary, as a release archive ships it.
+            passthru.unwrapped = binary;
           }
           ''
 
