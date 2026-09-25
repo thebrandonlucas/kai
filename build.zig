@@ -139,7 +139,10 @@ fn discoverSources(b: *std.Build) SourceTree {
             }
         } else if (std.mem.endsWith(u8, path, ".zig")) {
             zig_files.append(allocator, path) catch @panic("out of memory");
-        } else if (std.mem.endsWith(u8, path, ".nix")) {
+        } else if (std.mem.endsWith(u8, path, ".nix") and
+            // Golden files are exact renderer output, not formatted sources.
+            !std.mem.endsWith(u8, path, ".golden.nix"))
+        {
             nix_files.append(allocator, path) catch @panic("out of memory");
         } else {
             allocator.free(path);
@@ -511,6 +514,14 @@ pub fn build(b: *std.Build) void {
     });
     test_blueprint_ir.step.dependOn(check_step);
     test_step.dependOn(&test_blueprint_ir.step);
+
+    const test_blueprint_nix = b.addSystemCommand(&.{
+        "roc",
+        "test",
+        "blueprint/nix/main.roc",
+    });
+    test_blueprint_nix.step.dependOn(check_step);
+    test_step.dependOn(&test_blueprint_nix.step);
 
     const ci_step = b.step(
         "ci",
