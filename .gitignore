@@ -1,6 +1,7 @@
 .direnv/
 .zig-cache/
-.kai
+**/.kai/*
+!/.kai/lock.json
 .roc-fuzz/
 generated-docs
 zig-out/
