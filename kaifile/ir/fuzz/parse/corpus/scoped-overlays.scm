@@ -1,0 +1,15 @@
+; Explicit ordered stacks inherit; an empty child stack does not clear them.
+((format ((major 2) (minor 0))) (name "scoped-overlays")
+ (systems ("x86_64-linux"))
+ (sources (((name "default") (provider Auto))))
+ (inputs (((name "base") (kind Overlay) (url "path:./overlays/base"))
+   ((name "patch") (kind Overlay) (url "path:./overlays/patch"))))
+ (environments (
+   ((name "base") (parents ()) (overlays ("base"))
+    (tools (((source "default") (name "fixtureTool")))))
+   ((name "patched") (parents ("base")) (tools ())
+    (overlays ("base" "patch")))
+   ((name "inherited") (parents ("patched")) (tools ()) (overlays ()))
+   ((name "minimal") (parents ()) (tools ()) (overlays ()))))
+ (shells (((name "default") (environment "inherited"))
+   ((name "minimal") (environment "minimal")))))

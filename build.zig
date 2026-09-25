@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const SourceTree = struct {
+    fuzz_apps: []const []const u8,
     nix_files: []const []const u8,
     roc_apps: []const []const u8,
     roc_files: []const []const u8,
@@ -58,6 +59,7 @@ fn discoverSources(b: *std.Build) SourceTree {
     const allocator = b.allocator;
     const io = b.graph.io;
 
+    var fuzz_apps = std.ArrayList([]const u8).empty;
     var nix_files = std.ArrayList([]const u8).empty;
     var roc_apps = std.ArrayList([]const u8).empty;
     var roc_files = std.ArrayList([]const u8).empty;
@@ -94,7 +96,14 @@ fn discoverSources(b: *std.Build) SourceTree {
             defer allocator.free(contents);
 
             if (rocRootKind(contents)) |kind| {
-                roc_roots.append(allocator, allocator.dupe(u8, path) catch @panic("out of memory")) catch @panic("out of memory");
+                const copy = allocator.dupe(u8, path) catch @panic("out of memory");
+                // Fuzz targets only build instrumented; `zig build fuzz` owns
+                // them, so ci neither checks nor builds them.
+                if (std.mem.indexOf(u8, path, "/fuzz/") != null) {
+                    fuzz_apps.append(allocator, copy) catch @panic("out of memory");
+                    continue;
+                }
+                roc_roots.append(allocator, copy) catch @panic("out of memory");
                 if (kind == .app) {
                     roc_apps.append(allocator, allocator.dupe(u8, path) catch @panic("out of memory")) catch @panic("out of memory");
                 }
@@ -111,6 +120,7 @@ fn discoverSources(b: *std.Build) SourceTree {
         }
     }
 
+    sortPaths(fuzz_apps.items);
     sortPaths(nix_files.items);
     sortPaths(roc_apps.items);
     sortPaths(roc_files.items);
@@ -118,6 +128,7 @@ fn discoverSources(b: *std.Build) SourceTree {
     sortPaths(zig_files.items);
 
     return .{
+        .fuzz_apps = fuzz_apps.toOwnedSlice(allocator) catch @panic("out of memory"),
         .nix_files = nix_files.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_apps = roc_apps.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_files = roc_files.toOwnedSlice(allocator) catch @panic("out of memory"),
@@ -196,6 +207,7 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileArg(b.path("devtool/main.roc"));
     build_devtool.addFileInput(b.path("devtool/Cli.roc"));
     build_devtool.addFileInput(b.path("devtool/ConfigFixtures.roc"));
+    build_devtool.addFileInput(b.path("devtool/Fuzz.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiBuild.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiBundle.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiEnv.roc"));
@@ -248,6 +260,22 @@ pub fn build(b: *std.Build) void {
     publish_release.addFileArg(publish_devtool);
     publish_release.addArgs(forwarded_args);
     publish_release_step.dependOn(&publish_release.step);
+
+    // Opt-in, for before a release or after touching a parser; not in ci.
+    const fuzz_seconds = b.option(
+        u32,
+        "fuzz-seconds",
+        "Seconds `zig build fuzz` runs each target (default 30)",
+    ) orelse 30;
+    const fuzz_step = b.step(
+        "fuzz",
+        "Build and run each roc-fuzz target; inputs land in zig-out/fuzz",
+    );
+    const run_fuzz = addDevtoolCommand(b, devtool, "fuzz", &.{
+        b.fmt("{d}", .{fuzz_seconds}),
+    });
+    run_fuzz.addArgs(sources.fuzz_apps);
+    fuzz_step.dependOn(&run_fuzz.step);
 
     // All static checks (Roc and Zig).
     const tidy_step = b.step(

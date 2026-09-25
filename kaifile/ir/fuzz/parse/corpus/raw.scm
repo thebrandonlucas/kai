@@ -1,0 +1,1 @@
+((format ((major 2) (minor 0))) (name "r") (requires ("raw")) (inputs (((kind Flake) (name "fu") (url "github:numtide/flake-utils")))) (raw (((backend "nix") (target "flake") (value (Str "{ }"))) ((backend "other") (target "") (value (Bool false))))))

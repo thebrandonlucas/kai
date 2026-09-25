@@ -1,0 +1,1 @@
+((format ((major 2) (minor 0))) (name "e") (requires ("extensions")) (extensions (((kind "service") (name "web") (value (Attrs (((name "cmd") (value (Str "serve"))) ((extra 1) (name "env") (value (Attrs ()))))))))))
