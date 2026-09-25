@@ -1,4 +1,4 @@
-## A Nix system such as "x86_64-linux" or "aarch64-darwin", checked at
+## A Nix system such as "x86_64-linux" or "aarch64-linux", checked at
 ## compile time. Only its shape (`<arch>-<os>`, lowercase letters, digits
 ## and `_`) is checked, so less common systems work too.
 System :: { name : Str }.{
@@ -15,7 +15,7 @@ System :: { name : Str }.{
 			Err(
 				BadQuotedBytes(
 					"\"${raw}\" is not a system; expected <arch>-<os> "
-						.concat("such as \"x86_64-linux\" or \"aarch64-darwin\""),
+						.concat("such as \"x86_64-linux\" or \"aarch64-linux\""),
 				),
 			)
 		}

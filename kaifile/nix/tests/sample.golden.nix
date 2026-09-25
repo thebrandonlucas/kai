@@ -43,8 +43,8 @@
           "default" = environments."dev" { };
           "ci" = environments."base" { };
         };
-        "aarch64-darwin" = let
-          environments = environmentsFor "aarch64-darwin";
+        "aarch64-linux" = let
+          environments = environmentsFor "aarch64-linux";
         in {
           "kai-env-base" = environments."base" { };
           "kai-env-dev" = environments."dev" { };

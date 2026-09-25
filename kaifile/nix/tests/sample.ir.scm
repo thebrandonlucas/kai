@@ -1,6 +1,6 @@
 ((format ((major 2) (minor 0)))
  (name "sample \"quoted\"")
- (systems ("x86_64-linux" "aarch64-darwin"))
+ (systems ("x86_64-linux" "aarch64-linux"))
  (sources (((name "nixpkgs")
             (provider (NixPackages "github:NixOS/nixpkgs/nixos-unstable")))))
  (inputs (((name "roc") (url "github:roc-lang/roc-overlay") (kind Overlay))))

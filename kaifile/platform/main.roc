@@ -7,7 +7,7 @@
 ##
 ## config = [
 ## 	Name("my-project"),
-## 	Systems(["x86_64-linux", "aarch64-darwin"]),
+## 	Systems(["x86_64-linux", "aarch64-linux"]),
 ## 	Packages("stable", From(NixPackages("github:NixOS/nixpkgs/nixos-24.05"))),
 ## 	Environment("dev", [Tools(["git", "python3", "stable#nodejs"])]),
 ## 	Shell("default", [Use("dev")]),

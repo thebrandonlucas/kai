@@ -65,24 +65,6 @@
           "default" = environments."dev" { "shellHook" = "echo \"hi \${USER}\"\nexport FOO=bar\n"; "GREETING" = "hello"; };
           "empty" = environments."empty" { };
         };
-        "x86_64-darwin" = let
-          environments = environmentsFor "x86_64-darwin";
-        in {
-          "kai-env-dev" = environments."dev" { };
-          "kai-env-empty" = environments."empty" { };
-          "kai-env-headless" = environments."headless" { };
-          "default" = environments."dev" { "shellHook" = "echo \"hi \${USER}\"\nexport FOO=bar\n"; "GREETING" = "hello"; };
-          "empty" = environments."empty" { };
-        };
-        "aarch64-darwin" = let
-          environments = environmentsFor "aarch64-darwin";
-        in {
-          "kai-env-dev" = environments."dev" { };
-          "kai-env-empty" = environments."empty" { };
-          "kai-env-headless" = environments."headless" { };
-          "default" = environments."dev" { "shellHook" = "echo \"hi \${USER}\"\nexport FOO=bar\n"; "GREETING" = "hello"; };
-          "empty" = environments."empty" { };
-        };
       };
       "kai" = { "version" = 1; };
     };
