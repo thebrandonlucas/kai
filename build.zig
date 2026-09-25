@@ -248,6 +248,7 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileInput(b.path("devtool/Cli.roc"));
     build_devtool.addFileInput(b.path("devtool/ConfigFixtures.roc"));
     build_devtool.addFileInput(b.path("devtool/Kaifiles.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiBuild.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiEnv.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiGuix.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiHelp.roc"));
@@ -632,6 +633,16 @@ pub fn build(b: *std.Build) void {
     );
     run_guix_integration.addFileArg(cli_binary);
     guix_integration_step.dependOn(&run_guix_integration.step);
+
+    // Real sandboxed builds; the sandbox probe needs a world-readable /var/tmp.
+    const kai_build_step = b.step(
+        "kai-build",
+        "Run kai build with real, sandboxed Nix on examples/artifacts",
+    );
+    const run_kai_build = addDevtoolCommand(b, devtool, "kai-build", &.{});
+    run_kai_build.addFileArg(cli_binary);
+    kai_build_step.dependOn(&run_kai_build.step);
+    ci_step.dependOn(kai_build_step);
 
     const kai_help_step = b.step(
         "kai-help",
