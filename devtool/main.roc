@@ -15,6 +15,7 @@ import ConfigFixtures
 import Kaifiles
 import GitHub
 import KaiEnv
+import KaiGuix
 import KaiHelp
 import KaiRun
 import KaiUpdate
@@ -266,6 +267,7 @@ main! = |args|
 		Ok(Cli.Command.Kaifiles) => Kaifiles.run!()
 		Ok(Cli.Command.KaifilesSmoke) => Kaifiles.run_smoke!()
 		Ok(Cli.Command.KaiEnv(kai)) => KaiEnv.run!(kai)
+		Ok(Cli.Command.KaiGuix({ kai, required })) => KaiGuix.run!(kai, required)
 		Ok(Cli.Command.KaiHelp(kai)) => KaiHelp.run!(kai)
 		Ok(Cli.Command.KaiRun(kai)) => KaiRun.run!(kai)
 		Ok(Cli.Command.KaiUpdate(kai)) => KaiUpdate.run!(kai)
@@ -290,6 +292,10 @@ parse_cases = [
 	{ args: ["kaifiles-smoke"], expected: Ok(Cli.Command.KaifilesSmoke) },
 	{ args: ["kai-update", "kai"], expected: Ok(Cli.Command.KaiUpdate("kai")) },
 	{ args: ["kai-env", "kai"], expected: Ok(Cli.Command.KaiEnv("kai")) },
+	{
+		args: ["kai-guix", "--require", "kai"],
+		expected: Ok(Cli.Command.KaiGuix({ kai: "kai", required: Bool.True })),
+	},
 	{ args: ["kai-help", "kai"], expected: Ok(Cli.Command.KaiHelp("kai")) },
 	{ args: ["kai-run", "kai"], expected: Ok(Cli.Command.KaiRun("kai")) },
 	{
@@ -331,6 +337,7 @@ usage_lines = [
 	"kaifiles",
 	"kaifiles-smoke",
 	"kai-env KAI_BINARY",
+	"kai-guix [--require] KAI_BINARY",
 	"kai-help KAI_BINARY",
 	"kai-run KAI_BINARY",
 	"kai-update KAI_BINARY",

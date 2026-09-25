@@ -249,6 +249,7 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileInput(b.path("devtool/ConfigFixtures.roc"));
     build_devtool.addFileInput(b.path("devtool/Kaifiles.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiEnv.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiGuix.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiHelp.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiRun.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiUpdate.roc"));
@@ -607,6 +608,30 @@ pub fn build(b: *std.Build) void {
     run_kai_env.addFileArg(cli_binary);
     kai_env_step.dependOn(&run_kai_env.step);
     ci_step.dependOn(kai_env_step);
+
+    // Stubbed Guix checks always run; the real Guix shell is reported as
+    // SKIPPED without guix. guix-integration requires it (hosted CI gate).
+    const kai_guix_step = b.step(
+        "kai-guix",
+        "Run kai shell against stub and, if installed, real Guix",
+    );
+    const run_kai_guix = addDevtoolCommand(b, devtool, "kai-guix", &.{});
+    run_kai_guix.addFileArg(cli_binary);
+    kai_guix_step.dependOn(&run_kai_guix.step);
+    ci_step.dependOn(kai_guix_step);
+
+    const guix_integration_step = b.step(
+        "guix-integration",
+        "Run kai shell against real Guix without Nix; fails without guix",
+    );
+    const run_guix_integration = addDevtoolCommand(
+        b,
+        devtool,
+        "kai-guix",
+        &.{"--require"},
+    );
+    run_guix_integration.addFileArg(cli_binary);
+    guix_integration_step.dependOn(&run_guix_integration.step);
 
     const kai_help_step = b.step(
         "kai-help",
