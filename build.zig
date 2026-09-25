@@ -254,6 +254,7 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileInput(b.path("devtool/KaiHelp.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiRun.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiUpdate.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiWorkflow.roc"));
     for (sources.roc_files) |source| {
         if (std.mem.startsWith(u8, source, "kaifile/")) {
             build_devtool.addFileInput(b.path(source));
@@ -643,6 +644,16 @@ pub fn build(b: *std.Build) void {
     run_kai_build.addFileArg(cli_binary);
     kai_build_step.dependOn(&run_kai_build.step);
     ci_step.dependOn(kai_build_step);
+
+    // Real workflows and JSON output, on examples/artifacts like kai-build.
+    const kai_workflow_step = b.step(
+        "kai-workflow",
+        "Run kai workflow and kai --json with real Nix on examples/artifacts",
+    );
+    const run_kai_workflow = addDevtoolCommand(b, devtool, "kai-workflow", &.{});
+    run_kai_workflow.addFileArg(cli_binary);
+    kai_workflow_step.dependOn(&run_kai_workflow.step);
+    ci_step.dependOn(kai_workflow_step);
 
     const kai_help_step = b.step(
         "kai-help",

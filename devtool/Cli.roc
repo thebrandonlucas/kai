@@ -9,6 +9,7 @@ Cli := [].{
 		KaiGuix({ kai : Str, required : Bool }),
 		KaiHelp(Str),
 		KaiRun(Str),
+		KaiWorkflow(Str),
 		KaiUpdate(Str),
 		Kaifiles,
 		KaifilesSmoke,
@@ -27,6 +28,8 @@ Cli := [].{
 				(KaiGuix(left_args), KaiGuix(right_args)) => left_args == right_args
 				(KaiHelp(left_kai), KaiHelp(right_kai)) => left_kai == right_kai
 				(KaiRun(left_kai), KaiRun(right_kai)) => left_kai == right_kai
+				(KaiWorkflow(left_kai), KaiWorkflow(right_kai)) =>
+					left_kai == right_kai
 				(KaiUpdate(left_kai), KaiUpdate(right_kai)) => left_kai == right_kai
 				(Kaifiles, Kaifiles) => Bool.True
 				(KaifilesSmoke, KaifilesSmoke) => Bool.True
@@ -76,6 +79,7 @@ Cli := [].{
 		\\  kai-guix [--require] KAI_BINARY
 		\\  kai-help KAI_BINARY
 		\\  kai-run KAI_BINARY
+		\\  kai-workflow KAI_BINARY
 		\\  kai-update KAI_BINARY
 		\\  prepare-release NAME VERSION
 		\\  prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR
@@ -98,6 +102,7 @@ Cli := [].{
 				Ok(KaiGuix({ kai, required: Bool.True }))
 			["kai-help", kai] => Ok(KaiHelp(kai))
 			["kai-run", kai] => Ok(KaiRun(kai))
+			["kai-workflow", kai] => Ok(KaiWorkflow(kai))
 			["kai-update", kai] => Ok(KaiUpdate(kai))
 			["prepare-release", name, version] => Ok(PrepareRelease({ name, version }))
 			["prepare-xkai", bundle_dir, source_dir, output_dir] => Ok(
@@ -117,6 +122,7 @@ Cli := [].{
 					| "kai-guix"
 					| "kai-help"
 					| "kai-run"
+					| "kai-workflow"
 					| "kai-update" =>
 						Err(ExpectedKaiBinary(first))
 					"prepare-xkai" => Err(ExpectedPrepareXkaiArguments)
