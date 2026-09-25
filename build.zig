@@ -252,6 +252,7 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileInput(b.path("devtool/ConfigFixtures.roc"));
     build_devtool.addFileInput(b.path("devtool/Kaifiles.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiBuild.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiBundle.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiEnv.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiGuix.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiHelp.roc"));
@@ -428,8 +429,17 @@ pub fn build(b: *std.Build) void {
     );
     check_step.dependOn(&nix_fmt.step);
 
+    const platform_bundle_step = b.step(
+        "platform-bundle",
+        "Build the Kaifile platform bundle a release publishes, into zig-out",
+    );
+    const platform_bundle = b.addSystemCommand(&.{
+        "nix", "build", ".#kaifile-platform", "--out-link", "zig-out/kaifile-platform",
+    });
+    platform_bundle_step.dependOn(&platform_bundle.step);
+
     // Configuration apps link the native configuration platform's host.
-    const build_platform_host = b.addSystemCommand(&.{ "zig", "build" });
+    const build_platform_host = b.addSystemCommand(&.{ "zig", "build", "--release" });
     build_platform_host.setCwd(b.path("kaifile/platform"));
 
     for (sources.roc_roots) |root| {
@@ -663,6 +673,15 @@ pub fn build(b: *std.Build) void {
     run_kai_workflow.addFileArg(cli_binary);
     kai_workflow_step.dependOn(&run_kai_workflow.step);
     ci_step.dependOn(kai_workflow_step);
+
+    const kai_bundle_step = b.step(
+        "kai-bundle",
+        "Load a Kaifile.roc through the served and the pre-seeded platform bundle",
+    );
+    const run_kai_bundle = addDevtoolCommand(b, devtool, "kai-bundle", &.{});
+    run_kai_bundle.addFileArg(cli_binary);
+    kai_bundle_step.dependOn(&run_kai_bundle.step);
+    ci_step.dependOn(kai_bundle_step);
 
     const kai_help_step = b.step(
         "kai-help",

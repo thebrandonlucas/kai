@@ -112,6 +112,54 @@
           '';
         };
 
+      # The Kaifile platform as a Roc package bundle, <hash>.tar.zst, which a
+      # release publishes for Kaifile.roc headers to reference by URL; also
+      # unpacked as <hash>/ for kai to seed Roc's package cache with.
+      kaifilePlatformFor =
+        pkgs:
+        pkgs.stdenvNoCC.mkDerivation {
+          name = "kaifile-platform";
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions [
+              ./kaifile/ir
+              ./kaifile/platform
+            ];
+          };
+          nativeBuildInputs = [
+            (rocFor pkgs)
+            pkgs.zig_0_16
+            pkgs.zstd
+          ];
+          dontConfigure = true;
+          dontFixup = true;
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR" XDG_CACHE_HOME="$TMPDIR/cache" ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
+            (cd kaifile/platform && zig build --release)
+            (cd kaifile/platform/targets && sha256sum --quiet -c x64musl.sha256)
+
+            # roc bundle packs only files below main.roc's directory, so the
+            # ir package moves inside the platform.
+            mkdir -p stage/ir stage/targets bundle
+            cp kaifile/platform/*.roc stage/
+            cp kaifile/ir/*.roc stage/ir/
+            cp -R kaifile/platform/targets/x64musl stage/targets/
+            substituteInPlace stage/main.roc --replace-fail '"../ir/main.roc"' '"ir/main.roc"'
+            (cd stage && roc bundle main.roc $(find . -type f ! -path ./main.roc | LC_ALL=C sort) --output-dir ../bundle)
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out"
+            cp bundle/*.tar.zst "$out/"
+            name="$(basename "$out"/*.tar.zst .tar.zst)"
+            mkdir "$out/$name"
+            zstd -dc "$out/$name.tar.zst" | tar -x -C "$out/$name"
+            runHook postInstall
+          '';
+        };
+
       # Packages the apps import (basic-cli imports http; kai imports Weaver,
       # which imports ansi and path); unpacked where Roc looks for downloads.
       rocPackages = [
@@ -260,6 +308,25 @@
               ${wrapperArgs}
           '';
 
+      # Roc checks its package cache before downloading a URL package, so
+      # seeding it with this Kai's platform bundle lets a Kaifile.roc pinned to
+      # that bundle load offline. Best-effort: otherwise Roc downloads it.
+      mkRocCacheSeed =
+        pkgs: platform:
+        pkgs.writeShellScript "kai-seed-roc-cache" ''
+          exec 2>/dev/null
+          PATH=${lib.makeBinPath [ pkgs.coreutils ]}
+          packages="''${XDG_CACHE_HOME:-$HOME/.cache}/roc/packages"
+          for bundle in ${platform}/*/; do
+            hash="$(basename "$bundle")"
+            [ -e "$packages/$hash/main.roc" ] && continue
+            # Publish with a rename like Roc, which also sweeps stale *.tmp.
+            staging="$(mkdir -p "$packages" && mktemp -d "$packages/$hash.XXXXXXXX.tmp")" || continue
+            cp -R --no-preserve=mode "$bundle." "$staging" && mv -T "$staging" "$packages/$hash" || rm -rf "$staging"
+          done
+          true
+        '';
+
       # Kai evaluates Kaifile.roc with the pinned compiler unless ROC is set.
       # GNU coreutils only back up the host's, so tasks keep the user's tools.
       mkKaiPackage =
@@ -271,6 +338,7 @@
           wrapperArgs = lib.concatStringsSep " " [
             "--suffix PATH : ${lib.makeBinPath [ pkgs.coreutils ]}"
             "--set-default ROC ${rocFor pkgs}/bin/roc"
+            "--run ${mkRocCacheSeed pkgs (kaifilePlatformFor pkgs)}"
           ];
         };
 
@@ -328,6 +396,7 @@
           common = {
             inherit kai xkai;
             default = kai;
+            kaifile-platform = kaifilePlatformFor pkgs;
           };
 
           releaseArchives = {
@@ -407,6 +476,7 @@
               pkgs.gzip
               pkgs.llvmPackages.bintools
               pkgs.file
+              pkgs.python3
               pkgs.sops
             ];
             # Roc apps in this repository import the platform through .basic-cli.

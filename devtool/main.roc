@@ -15,6 +15,7 @@ import ConfigFixtures
 import Kaifiles
 import GitHub
 import KaiBuild
+import KaiBundle
 import KaiEnv
 import KaiGuix
 import KaiHelp
@@ -46,17 +47,6 @@ validate_metadata! = || {
 				}),
 			)
 		}
-	}
-}
-
-nix_output_path! = |attribute| {
-	output = Cmd.new_str("nix")
-		.args_str(["build", attribute, "--no-link", "--print-out-paths"])
-		.exec_output!()?
-	paths = output.stdout_utf8.split_on("\n").keep_if(|line| !line.is_empty())
-	match paths {
-		[path] => Ok(Path.utf8(path))
-		_ => Err(UnexpectedNixOutput({ attribute, output: output.stdout_utf8 }))
 	}
 }
 
@@ -170,14 +160,40 @@ generate_checksums! = |root, dist, archive_names| {
 	}
 }
 
+# A release publishes the platform bundle its recorded URL names, so the URL
+# cannot go stale.
+check_platform_url! = |version, bundle| {
+	origin = Cmd.new_str("git")
+		.args_str(["config", "--get", "remote.origin.url"])
+		.exec_output!()?
+		.stdout_utf8
+		.trim()
+	repository = match Release.parse_github_origin(origin) {
+		Ok(repo) => "${repo.owner}/${repo.repository}"
+		Err(_) => return Err(UnsupportedReleaseOrigin(origin))
+	}
+	expected = Release.platform_url(repository, version, bundle.hash)
+	recorded = Path.read_utf8!(Path.utf8(Release.platform_file))?.trim()
+	if recorded == expected {
+		Ok({})
+	} else {
+		Err(StalePlatformUrl({ expected, recorded }))
+	}
+}
+
 build_release_stage! = |root, dist, workspace, version| {
+	Stdout.line!("Building the Kaifile platform bundle through Nix...")?
+	bundle = KaiBundle.platform!()?
+	check_platform_url!(version, bundle)?
+	copy_file!(bundle.archive, Path.join(dist, "${bundle.hash}.tar.zst"))?
+
 	names = Release.archive_names(version)
 	x64_archive = Path.join(dist, names.x64)
 	arm64_archive = Path.join(dist, names.arm64)
 
 	Stdout.line!("Building portable Linux CLI archives through Nix...")?
-	x64_store = nix_output_path!(".#release-x86_64-linux")?
-	arm64_store = nix_output_path!(".#release-aarch64-linux")?
+	x64_store = KaiBundle.nix_output!(".#release-x86_64-linux")?
+	arm64_store = KaiBundle.nix_output!(".#release-aarch64-linux")?
 	copy_file!(x64_store, x64_archive)?
 	copy_file!(arm64_store, arm64_archive)?
 
@@ -187,7 +203,7 @@ build_release_stage! = |root, dist, workspace, version| {
 	check_arm64!(arm64_archive, Path.join(workspace, "arm64-cli-test"))?
 
 	archive_inventory = directory_inventory!(dist)?
-	expected_archives = Release.archive_inventory(version)
+	expected_archives = Release.archive_inventory(version, bundle.hash)
 	if !Release.is_exact_inventory(archive_inventory, expected_archives) {
 		Err(
 			UnexpectedArtifactInventory({
@@ -199,7 +215,7 @@ build_release_stage! = |root, dist, workspace, version| {
 		Stdout.line!("Generating checksums...")?
 		generate_checksums!(root, dist, expected_archives)?
 		inventory = directory_inventory!(dist)?
-		expected = Release.inventory(version)
+		expected = Release.inventory(version, bundle.hash)
 		if Release.is_exact_inventory(inventory, expected) {
 			Ok(expected)
 		} else {
@@ -269,6 +285,7 @@ main! = |args|
 		Ok(Cli.Command.Kaifiles) => Kaifiles.run!()
 		Ok(Cli.Command.KaifilesSmoke) => Kaifiles.run_smoke!()
 		Ok(Cli.Command.KaiBuild(kai)) => KaiBuild.run!(kai)
+		Ok(Cli.Command.KaiBundle(kai)) => KaiBundle.run!(kai)
 		Ok(Cli.Command.KaiEnv(kai)) => KaiEnv.run!(kai)
 		Ok(Cli.Command.KaiGuix({ kai, required })) => KaiGuix.run!(kai, required)
 		Ok(Cli.Command.KaiHelp(kai)) => KaiHelp.run!(kai)
@@ -297,6 +314,7 @@ parse_cases = [
 	{ args: ["kai-update", "kai"], expected: Ok(Cli.Command.KaiUpdate("kai")) },
 	{ args: ["kai-env", "kai"], expected: Ok(Cli.Command.KaiEnv("kai")) },
 	{ args: ["kai-build", "kai"], expected: Ok(Cli.Command.KaiBuild("kai")) },
+	{ args: ["kai-bundle", "kai"], expected: Ok(Cli.Command.KaiBundle("kai")) },
 	{
 		args: ["kai-guix", "--require", "kai"],
 		expected: Ok(Cli.Command.KaiGuix({ kai: "kai", required: Bool.True })),
@@ -346,6 +364,7 @@ usage_lines = [
 	"kaifiles",
 	"kaifiles-smoke",
 	"kai-build KAI_BINARY",
+	"kai-bundle KAI_BINARY",
 	"kai-env KAI_BINARY",
 	"kai-guix [--require] KAI_BINARY",
 	"kai-help KAI_BINARY",

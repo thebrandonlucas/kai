@@ -308,12 +308,15 @@ PublishRelease := [].{
 		manifest = Path.read_utf8!(Path.utf8("build.zig.zon"))?
 		manifest_version =
 			Release.manifest_version(manifest) ? InvalidPublicationManifest
+		platform_url = Path.read_utf8!(Path.utf8(Release.platform_file))?.trim()
+		platform_hash = Release.platform_hash(platform_url, repository_name, version)?
 		release = Release.validate_publication({
 			branch_contains_target: Bool.True,
 			branch_name: "master",
 			canonical_version: version,
 			manifest_version,
 			name,
+			platform_hash,
 			tag_name: "v${version}",
 			target_commit: target,
 		}) ? InvalidPublicationMetadata
