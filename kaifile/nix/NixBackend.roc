@@ -1681,6 +1681,93 @@ expect match NixBackend.update_files(
 	Err(_) => False
 }
 
+# Updating a project with nothing to run still stages only the flake.
+expect match NixBackend.update_files(
+	mk({ ..simple, shells: [] }),
+	"x86_64-linux",
+	TestData.layout,
+) {
+	Ok(files) => files.map(|file| file.path) == ["/generated/flake.nix"]
+	Err(_) => False
+}
+
+# An explicit default package source replaces the backend's nixpkgs pin.
+expect match NixBackend.update_files(
+	mk({
+		..simple,
+		sources: [
+			{
+				name: "default",
+				provider: NixPackages("github:NixOS/nixpkgs/nixos-24.05"),
+			},
+		],
+		environments: [{ ..base, tools: [{ source: "default", name: "git" }] }],
+	}),
+	"x86_64-linux",
+	TestData.layout,
+) {
+	Ok([flake]) =>
+		flake.contents.contains("\"github:NixOS/nixpkgs/nixos-24.05\"")
+			and !flake.contents.contains("nixos-unstable")
+	_ => False
+}
+
+# An empty package source reference is rejected, not rendered.
+expect rejects(
+	{ ..simple, sources: [{ name: "pinned", provider: NixPackages("") }] },
+	"invalid Nix source: pinned",
+)
+
+# Each declared input is staged once, in declaration order, however often
+# environments reuse it.
+expect {
+	overlay = |name| { name, url: "github:example/${name}", kind: Overlay }
+	match NixBackend.update_files(
+		mk({
+			..simple,
+			inputs: [overlay("one"), overlay("two"), overlay("three")],
+			environments: [
+				{ ..base, overlays: ["two", "one"] },
+				{ ..base, name: "other", overlays: ["three", "two"] },
+			],
+			tasks: [{ name: "t", environment: "other", run: ["true"] }],
+		}),
+		"x86_64-linux",
+		TestData.layout,
+	) {
+		Ok([flake]) => {
+			text = flake.contents
+			once = |name| text.split_on("\"github:example/${name}\"").len() == 2
+			before = |left, right|
+				match text.split_on("github:example/${right}\"").first() {
+					Ok(head) => head.contains("github:example/${left}\"")
+					Err(_) => False
+				}
+			["one", "two", "three"].all(once)
+				and before("one", "two")
+					and before("two", "three")
+		}
+		_ => False
+	}
+}
+
+# A remote build source is a locked non-flake input the build reads from.
+expect match NixBackend.update_files(
+	TestData.project({
+		..TestData.data,
+		build_sources: [{ name: "assets", ref: "github:example/assets" }],
+	}),
+	"x86_64-linux",
+	TestData.layout,
+) {
+	Ok([flake, ..]) =>
+		flake.contents.contains(
+			"\"assets\" = { url = \"github:example/assets\"; flake = false; };",
+		)
+			and flake.contents.contains("inputs.\"assets\"")
+	_ => False
+}
+
 # Shared workflow input uses the same supplied authority as atomic requests.
 workflow_project : Ir
 workflow_project = TestData.project(TestData.workflow_data)

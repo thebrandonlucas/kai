@@ -585,16 +585,25 @@ pub fn build(b: *std.Build) void {
     }
     build_cli.addFileInput(b.path("kaifile/platform-release"));
     build_cli.step.dependOn(test_step);
-    for ([_][]const u8{ "check", "ir" }) |command| {
-        const smoke = std.Build.Step.Run.create(
-            b,
-            b.fmt("kai {s} examples/composition", .{command}),
-        );
-        smoke.addFileArg(cli_binary);
-        smoke.addArg(command);
-        smoke.setCwd(b.path("examples/composition"));
-        smoke.expectExitCode(0);
-        ci_step.dependOn(&smoke.step);
+    // Every maintained example must load and lower to IR.
+    const examples = [_][]const u8{
+        "examples/artifacts",
+        "examples/composition",
+        "examples/guix",
+        "examples/overlays",
+    };
+    for (examples) |example| {
+        for ([_][]const u8{ "check", "ir" }) |command| {
+            const smoke = std.Build.Step.Run.create(
+                b,
+                b.fmt("kai {s} {s}", .{ command, example }),
+            );
+            smoke.addFileArg(cli_binary);
+            smoke.addArg(command);
+            smoke.setCwd(b.path(example));
+            smoke.expectExitCode(0);
+            ci_step.dependOn(&smoke.step);
+        }
     }
     const check_root = std.Build.Step.Run.create(b, "kai check Kaifile.roc");
     check_root.addFileArg(cli_binary);
