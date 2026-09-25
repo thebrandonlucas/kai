@@ -261,17 +261,17 @@ Release := [].{
 		}
 	}
 
-	release_files = ["build.zig.zon", "xkai/RELEASE_NAME", "xkai/VERSION"]
+	release_files = ["build.zig.zon", "RELEASE_NAME", "VERSION"]
 
 	are_allowed_release_files : List(Str) -> Bool
 	are_allowed_release_files = |files| {
-		expected_length = if files.contains("xkai/RELEASE_NAME") {
+		expected_length = if files.contains("RELEASE_NAME") {
 			3
 		} else {
 			2
 		}
 		files.contains("build.zig.zon") and
-			files.contains("xkai/VERSION") and
+			files.contains("VERSION") and
 				files.len() == expected_length and
 					List.all(files, |file| Release.release_files.contains(file))
 	}

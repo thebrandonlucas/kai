@@ -13,7 +13,7 @@ import KaifileImports
 import kai.PlanningError
 import kai.Plugin
 
-import "VERSION" as canonical_version : Str
+import "../VERSION" as canonical_version : Str
 
 Executor := [].{
 	version : Str

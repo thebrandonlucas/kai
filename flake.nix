@@ -33,7 +33,7 @@
     let
       inherit (nixpkgs) lib;
 
-      version = builtins.readFile ./xkai/VERSION;
+      version = builtins.readFile ./VERSION;
 
       rocVersion = lib.trim (builtins.readFile ./.roc-version);
 
@@ -112,9 +112,30 @@
           '';
         };
 
-      # basic-cli imports this package; unpack it where Roc looks for downloads.
-      rocHttpName = "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS";
-      rocHttpUrl = "https://github.com/roc-lang/http/releases/download/1.0.0/" + "${rocHttpName}.tar.zst";
+      # Packages the apps import (basic-cli imports http; kai imports Weaver,
+      # which imports ansi and path); unpacked where Roc looks for downloads.
+      rocPackages = [
+        {
+          name = "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS";
+          release = "roc-lang/http/releases/download/1.0.0";
+          hash = "sha256-6e+qlQ5y9vds326vAEJFcvppsEumEnMjV6wEU2ePArQ=";
+        }
+        {
+          name = "7j6KBFBEZ8pNMLQHkx9xiwyZ2PmwQPgKNDPUih6gKe77";
+          release = "lukewilliamboswell/weaver/releases/download/0.9.0";
+          hash = "sha256-GjWtVaxW7tYwwcd8ZNTogTmyKshRC4YE8IksP6ty+Wg=";
+        }
+        {
+          name = "JXLM47L6CzrLXB5HBfqc27VnU6CD4jMm5Mk6dgbbovL";
+          release = "lukewilliamboswell/roc-ansi/releases/download/0.13.0";
+          hash = "sha256-g1Um8JrYgyBSP+3TWkdXVp3hSN29ENPxtXnev5f8vqQ=";
+        }
+        {
+          name = "7YfABZPwJAXtLBY2vm8FqMyGAtNxncCJ65HdNKHFGNnE";
+          release = "roc-lang/path/releases/download/4.0.0";
+          hash = "sha256-Q1SZx/+081fSlW47soAqgSZPby9QyJbJkT+4b3vHUrs=";
+        }
+      ];
 
       mkRocBinary =
         pkgs: rocTarget:
@@ -128,10 +149,22 @@
         let
           roc = rocFor pkgs;
 
-          rocHttp = pkgs.fetchurl {
-            url = rocHttpUrl;
-            hash = "sha256-6e+qlQ5y9vds326vAEJFcvppsEumEnMjV6wEU2ePArQ=";
-          };
+          unpackRocPackage =
+            {
+              name,
+              release,
+              hash,
+            }:
+            let
+              archive = pkgs.fetchurl {
+                url = "https://github.com/${release}/${name}.tar.zst";
+                inherit hash;
+              };
+            in
+            ''
+              mkdir -p "$XDG_CACHE_HOME/roc/packages/${name}"
+              zstd -dc ${archive} | tar -x -C "$XDG_CACHE_HOME/roc/packages/${name}"
+            '';
 
         in
         pkgs.stdenvNoCC.mkDerivation {
@@ -155,8 +188,7 @@
 
             export HOME="$TMPDIR" XDG_CACHE_HOME="$TMPDIR/cache"
 
-            mkdir -p "$XDG_CACHE_HOME/roc/packages/${rocHttpName}"
-            zstd -dc ${rocHttp} | tar -x -C "$XDG_CACHE_HOME/roc/packages/${rocHttpName}"
+            ${lib.concatMapStrings unpackRocPackage rocPackages}
 
             # Roc apps import the platform from the ignored .basic-cli link.
             ln -s ${basicCliFor pkgs} .basic-cli
@@ -193,7 +225,7 @@
         pkgs: rocTarget:
         mkRocBinary pkgs rocTarget {
           pname = "kai";
-          source = "xkai/standard-cli.roc";
+          source = "cli/main.roc";
           binaryName = "kai";
         };
 
@@ -228,14 +260,17 @@
               ${wrapperArgs}
           '';
 
+      # Kai evaluates Kaifile.roc with the pinned compiler unless ROC is set.
+      # GNU coreutils only back up the host's, so tasks keep the user's tools.
       mkKaiPackage =
         pkgs: binary:
         mkWrappedPackage pkgs {
           pname = "kai";
           inherit binary;
-          runtimeInputs = [
-            pkgs.nix
-            pkgs.sops
+          runtimeInputs = [ pkgs.nix ];
+          wrapperArgs = lib.concatStringsSep " " [
+            "--suffix PATH : ${lib.makeBinPath [ pkgs.coreutils ]}"
+            "--set-default ROC ${rocFor pkgs}/bin/roc"
           ];
         };
 
@@ -253,7 +288,7 @@
         };
 
       # Release archives contain only Kai; their runtime environment must provide
-      # Nix and sops. Secret staging diagnoses a missing sops executable.
+      # Nix and the pinned Roc compiler (on PATH or as ROC) to load Kaifile.roc.
       mkReleaseArchive =
         pkgs: binary: targetSystem:
         pkgs.runCommand "kai-${version}-${targetSystem}.tar.gz"
@@ -338,8 +373,8 @@
           xkai-package = xkai;
 
           version = pkgs.runCommand "kai-version-check" { } ''
-            # Expected output: "kai version ${version}"
-            test "$(${kai}/bin/kai version)" = "kai version ${version}"
+            # Expected output: "${version}"
+            test "$(${kai}/bin/kai --version)" = "${version}"
             touch "$out"
           '';
 

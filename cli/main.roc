@@ -33,7 +33,9 @@ import Selection
 import Update
 import Workspace
 
-version = "0.0.7"
+import "../VERSION" as canonical_version : Str
+
+version = canonical_version.trim()
 
 Command : [
 	Check,
@@ -473,10 +475,10 @@ describe = |err|
 		UnsupportedHost =>
 			"evaluating Kaifile.roc currently requires an x86_64 Linux host"
 		CompilerUnavailable(compiler, message) =>
-			"could not run the Roc compiler `${compiler}`; install the pinned "
-				.concat("compiler or set ROC to it:\n${message}")
+			"could not run the Roc compiler `${compiler}` (${message}); "
+				.concat(needs_compiler)
 		CompilerMismatch(compiler, actual) =>
-			"`${compiler}` is ${actual}; Kai needs the pinned Roc compiler"
+			"`${compiler}` is ${actual}; ${needs_compiler}"
 		KaifileInvalid(file) => "${file} did not compile; see the errors above"
 		KaifileFailed(file, output) => "${file} did not compile:\n${output}"
 		BadIr(UnsupportedFormat({ major, minor })) =>
@@ -525,6 +527,10 @@ describe = |err|
 		GuixFailed(message) => "cannot plan the Guix shell: ${message}"
 		other => Str.inspect(other)
 	}
+
+needs_compiler =
+	"kai evaluates Kaifile.roc with Roc ${Load.pinned_compiler}; put it on "
+		.concat("PATH or set ROC to its path")
 
 test_ir = Ir.parse(
 	\\((format ((major 2) (minor 2))) (name "x")

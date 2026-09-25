@@ -9,7 +9,7 @@ import Release
 
 PrepareRelease := [].{
 	validate_metadata! = || {
-		version = Path.read_utf8!(Path.utf8("xkai/VERSION"))?
+		version = Path.read_utf8!(Path.utf8("VERSION"))?
 		if !Release.is_semver(version) {
 			Err(InvalidReleaseVersion(version))
 		} else {
@@ -160,8 +160,8 @@ PrepareRelease := [].{
 				"add",
 				"--",
 				"build.zig.zon",
-				"xkai/RELEASE_NAME",
-				"xkai/VERSION",
+				"RELEASE_NAME",
+				"VERSION",
 			])?
 			staged = PrepareRelease.git_lines!(["diff", "--cached", "--name-only"])?
 			unstaged = PrepareRelease.git_lines!(["diff", "--name-only"])?
@@ -179,8 +179,8 @@ PrepareRelease := [].{
 			Ok(value) => value
 			Err(error) => return Err(InvalidReleaseRewrite(error))
 		}
-		Path.write_utf8!(Path.utf8("xkai/VERSION"), version)?
-		Path.write_utf8!(Path.utf8("xkai/RELEASE_NAME"), name)?
+		Path.write_utf8!(Path.utf8("VERSION"), version)?
+		Path.write_utf8!(Path.utf8("RELEASE_NAME"), name)?
 		Path.write_utf8!(manifest_path, rewritten)?
 		Ok({})
 	}

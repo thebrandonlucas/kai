@@ -225,6 +225,8 @@ pub fn build(b: *std.Build) void {
             std.mem.eql(u8, source, "xkai/ImportsTest.roc")) continue;
         _ = source_stage.addCopyFile(b.path(source), source);
     }
+    // xkai reads the shared version from ../VERSION.
+    _ = source_stage.addCopyFile(b.path("VERSION"), "VERSION");
 
     // roc bundle stores files relative to its first .roc file, so stage a
     // root entry beside xkai/ and plugins/std/.
@@ -238,6 +240,7 @@ pub fn build(b: *std.Build) void {
             std.mem.eql(u8, source, "xkai/ImportsTest.roc")) continue;
         bundle.addFileArg(bundle_stage.addCopyFile(b.path(source), source));
     }
+    bundle.addFileArg(bundle_stage.addCopyFile(b.path("VERSION"), "VERSION"));
     for (sources.standard_plugin_files) |source| {
         if (std.mem.startsWith(u8, source, "plugins/std/tests/")) continue;
         bundle.addFileArg(bundle_stage.addCopyFile(b.path(source), source));
