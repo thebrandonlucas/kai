@@ -35,7 +35,7 @@
 
       version = builtins.readFile ./xkai/VERSION;
 
-      rocVersion = "nightly-2026-09-23-c7852fd";
+      rocVersion = lib.trim (builtins.readFile ./.roc-version);
 
       # Only Linux hosts are built and tested; basic-cli comes from source.
       supportedSystems = [

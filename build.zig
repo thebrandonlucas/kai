@@ -522,11 +522,33 @@ pub fn build(b: *std.Build) void {
     test_kaifile_nix.step.dependOn(check_step);
     test_step.dependOn(&test_kaifile_nix.step);
 
+    const test_cli = b.addSystemCommand(&.{ "roc", "test", "cli/main.roc" });
+    test_cli.step.dependOn(check_step);
+    test_step.dependOn(&test_cli.step);
+
     const ci_step = b.step(
         "ci",
         "Run tests and build representative applications",
     );
     ci_step.dependOn(test_step);
+
+    // Load a real Kaifile.roc through the compiled CLI.
+    const build_cli = b.addSystemCommand(&.{
+        "roc", "build", "cli/main.roc", "--opt=dev",
+    });
+    const cli_binary = build_cli.addPrefixedOutputFileArg("--output=", "kai");
+    build_cli.step.dependOn(test_step);
+    for ([_][]const u8{ "check", "ir" }) |command| {
+        const smoke = std.Build.Step.Run.create(
+            b,
+            b.fmt("kai {s} examples/composition", .{command}),
+        );
+        smoke.addFileArg(cli_binary);
+        smoke.addArg(command);
+        smoke.setCwd(b.path("examples/composition"));
+        smoke.expectExitCode(0);
+        ci_step.dependOn(&smoke.step);
+    }
     ci_step.dependOn(test_examples_step);
     build_release.step.dependOn(ci_step);
 
