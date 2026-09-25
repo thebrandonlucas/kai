@@ -12,16 +12,18 @@ import ConfigFixtures
 
 KaiUpdate := [].{
 	run! = |binary| {
-		root = Path.canonicalize!(Env.cwd!()?)?
-		kai = Path.canonicalize!(Path.utf8(binary))?
-		temporary = Env.create_temp_dir_with_prefix!("kai-update-")?
-		workspace = Path.canonicalize!(temporary)?
-		result = KaiUpdate.run_in!(root, kai, workspace)
-		Path.delete_all!(workspace)?
+		(kai, project) = KaiUpdate.fixture!(binary)?
+		result = KaiUpdate.run_in!(kai, project)
+		Path.delete_all!(project)?
 		result
 	}
 
-	run_in! = |root, kai, project| {
+	# A temporary copy of examples/composition and the absolute kai binary.
+	fixture! = |binary| {
+		root = Path.canonicalize!(Env.cwd!()?)?
+		kai = Path.canonicalize!(Path.utf8(binary))?
+		temporary = Env.create_temp_dir_with_prefix!("kai-fixture-")?
+		project = Path.canonicalize!(temporary)?
 		composition = Path.join(root, "examples/composition")
 		kaifile = Path.read_utf8!(Path.join(composition, "Kaifile.roc"))?
 		# Evaluating an app needs a relative platform path.
@@ -39,6 +41,10 @@ KaiUpdate := [].{
 			Path.join(composition, "ProjectTasks.roc"),
 			Path.join(project, "ProjectTasks.roc"),
 		)?
+		Ok((kai, project))
+	}
+
+	run_in! = |kai, project| {
 		lock = Path.join(project, ".kai/lock.json")
 		update! = || Cmd.new(Path.to_os_str(kai)).arg_str("update")
 			.cwd(project).exec_cmd!()

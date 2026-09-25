@@ -248,6 +248,7 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileInput(b.path("devtool/Cli.roc"));
     build_devtool.addFileInput(b.path("devtool/ConfigFixtures.roc"));
     build_devtool.addFileInput(b.path("devtool/Kaifiles.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiRun.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiUpdate.roc"));
     for (sources.roc_files) |source| {
         if (std.mem.startsWith(u8, source, "kaifile/")) {
@@ -578,6 +579,15 @@ pub fn build(b: *std.Build) void {
     run_kai_update.addFileArg(cli_binary);
     kai_update_step.dependOn(&run_kai_update.step);
     ci_step.dependOn(kai_update_step);
+
+    const kai_run_step = b.step(
+        "kai-run",
+        "Run kai run and kai shell with real Nix on examples/composition",
+    );
+    const run_kai_run = addDevtoolCommand(b, devtool, "kai-run", &.{});
+    run_kai_run.addFileArg(cli_binary);
+    kai_run_step.dependOn(&run_kai_run.step);
+    ci_step.dependOn(kai_run_step);
 
     const config_fixtures_step = b.step(
         "config-fixtures",

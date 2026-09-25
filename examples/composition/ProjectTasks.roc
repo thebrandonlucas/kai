@@ -23,5 +23,6 @@ ProjectTasks :: [].{
 				]),
 			],
 		),
+		Task("fail", [Use(environment), Run(["sh", "-c", "exit 7"])]),
 	]
 }

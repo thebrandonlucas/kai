@@ -151,7 +151,8 @@ ConfigFixtures := [].{
 				\\ Task("test", [Use("dev"), Run(["git", "--version"])]),
 				\\ Task("args", [Use("dev"), Run(["sh", "-c",
 				\\  "printf '<%s>' \\"$@\\"; echo", "args",
-				\\  "configured argument"])])]
+				\\  "configured argument"])]),
+				\\ Task("fail", [Use("dev"), Run(["sh", "-c", "exit 7"])])]
 			,
 		},
 		{
