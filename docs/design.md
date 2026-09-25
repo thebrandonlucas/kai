@@ -1,11 +1,15 @@
-- The architecture is inspired by [Caddy](https://caddyserver.com/docs/architecture). The DSL is simple, like that in `Caddyfile`:
-```kai
-shell nix {
-    packages: ["cowsay", "fortune"]
-}
+- The architecture is inspired by [Caddy](https://caddyserver.com/docs/architecture): the standard `kai` binary should come with everything most users want. Configuration is `Kaifile.roc`, an ordinary Roc app on the Kaifile platform:
+```roc
+app [config] { pf: platform "kaifile/platform/main.roc" }
+
+config = [
+	Name("example"),
+	Environment("dev", [Tools(["cowsay", "fortune"])]),
+	Shell("default", [Use("dev")]),
+]
 ```
-When called by the `kai` CLI, this `Kaifile` produces backend runtime output such as `.kai/flake.nix`, then calls `nix develop` to enter that shell. `.kai` contains backend output only; plugin source and compiler inputs do not persist there. Kai supplies assumed defaults where Nix is more explicit.
-- Kai uses Caddy-like [modularity](https://caddyserver.com/docs/architecture) and aspires to Unix philosophy. There is a standard plugin and users can write custom plugins which augment or replace standard plugin commands via a registry where each plugin must supply generic commands, a "backend" to run on (i.e. `nix` or `guix`) and implementations which connect the two. This setup is powerful, as it allows users to swap commands or add their own. Eventually this could even mean that certain painful parts of `nix` can be rewritten (such as the famously slow evaluator) while the rest of `kai` still uses `nix` under the hood!
+When called by the `kai` CLI, the pipeline is: `Kaifile.roc` -> Roc compiler + Kaifile platform, which lowers and validates `config` at compile time -> Kaifile IR -> a pure backend plan (`kaifile/nix` or `kaifile/guix`) of files and argv -> a small executor in `cli/` that writes backend output such as `.kai/generated/nix/flake.nix` and runs e.g. `nix develop`. Only `kai update` writes the lock, `.kai/lock.json`; the rest of `.kai` is generated output. Kai supplies assumed defaults where Nix is more explicit.
+- Kai aspires to Unix philosophy and Caddy-like [modularity](https://caddyserver.com/docs/architecture): small composable modules and well-defined data boundaries. Configuration is reused through ordinary Roc modules that return settings. Backends are Kai modules selected per request (`nix` or `guix`); adding a command or backend means changing Kai. A runtime extension mechanism, which could eventually let painful parts of `nix` (such as the famously slow evaluator) be replaced while the rest of `kai` still uses `nix`, is deferred.
 - [Work in small steps to stay motivated](https://mitchellh.com/writing/building-large-technical-projects). Avoid big changes where possible.
 - If the programmer tells you to implement a concept, do the minimal amount of work to prove the concept while still following the rules and design philosophy (for example, you may still add a simple test or two).
 - Aspirational dependency culture: vendored, like Roc or Ghostty.
@@ -14,7 +18,7 @@ When called by the `kai` CLI, this `Kaifile` produces backend runtime output suc
     - "the simple and elegant systems tend to be easier and faster to design and get right, more efficient in execution, and much more reliable" — Edsger Dijkstra"
     - "What could go wrong? What's wrong? Which question would we rather ask? The former, because code, like steel, is less expensive to change while it's hot. A problem solved in production is many times more expensive than a problem solved in implementation, or a problem solved in design"
     - "We know that what we ship is solid. We may lack crucial features, but what we have meets our design goals. This is the only way to make steady incremental progress, knowing that the progress we have made is indeed progress."
-- From [Boundaries](https://www.destroyallsoftware.com/talks/boundaries): separate the pure data from side-effects. This makes programs much more predictable and testable. Example from `kai`: `Plugin`s are written as pure data describing which effects to perform, so that we can test the expected results, then an executor actually writes files or calls external commands like `nix`. But the validation happens inside.
+- From [Boundaries](https://www.destroyallsoftware.com/talks/boundaries): separate the pure data from side-effects. This makes programs much more predictable and testable. Example from `kai`: backends turn the Kaifile IR into a pure plan describing which effects to perform, so that we can test the expected results, then an executor actually writes files or calls external commands like `nix`. But the validation happens inside.
 - Style: This repo aspires to the rules set out in [clig.dev](https://clig.dev/)
 
 ## Tests

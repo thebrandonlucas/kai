@@ -2,28 +2,37 @@
 
 Kai releases use a protected release branch. Release preparation pushes only that branch; merging its required pull request triggers publication automatically.
 
+> [!WARNING]
+> `.github/workflows/release.yml` publishes on **any** push to `master` that changes `VERSION`, not only on release-branch merges. A change that bumps `VERSION` must also carry the matching `RELEASE_NAME` and `kaifile/platform-release`, or the release is published under a stale name or fails. Prefer `zig build release`, which updates all of them together.
+
 ## Metadata ownership
 
 - `VERSION` is the canonical persisted semantic version used by Roc, Nix, artifacts, and release automation.
 - `RELEASE_NAME` owns the exact one-line release title, including custom or Unicode names. It is not another version source.
 - `build.zig.zon` contains Zig's required literal version mirror. Release automation updates it and validates exact agreement with `VERSION`.
+- `kaifile/platform-release` records the URL this release publishes the Kaifile platform bundle at, `https://github.com/OWNER/REPOSITORY/releases/download/vX.Y.Z/<hash>.tar.zst`, where `<hash>` is Roc's content hash of the bundle. `kai` embeds it and prints it in `kai --help` as the header a `Kaifile.roc` starts with.
 - The release branch, annotated tag, and GitHub release derive their version and name from this committed metadata. Do not edit them independently.
 
 ## Build artifacts without releasing
 
-From the Nix development shell, build and validate the release artifacts without changing Git state:
+From the Nix development shell on an x86_64 Linux host, build and validate the release artifacts without changing Git state:
 
 ```sh
 zig build build-release
 ```
 
-Artifacts are written to `dist/`. Checksums cover exactly the two portable CLI archives:
+This runs `zig build ci` first. Artifacts are written to `dist/`. Checksums cover the two portable CLI archives and the platform bundle:
 
 ```text
 dist/kai-X.Y.Z-x86_64-linux.tar.gz
 dist/kai-X.Y.Z-aarch64-linux.tar.gz
+dist/<hash>.tar.zst
 dist/SHA256SUMS
 ```
+
+The build fails with `StalePlatformUrl` unless `kaifile/platform-release` names exactly the bundle just built, for the `origin` repository and `VERSION`. Any change to `kaifile/platform` or `kaifile/ir` changes the hash; `zig build release` rewrites the file, and `zig build platform-bundle` builds the bundle into `zig-out/kaifile-platform` for inspection.
+
+Each archive contains only the `kai` binary. At runtime it needs Nix and the Roc compiler named in `.roc-version`, on `PATH` or as `ROC`, to load `Kaifile.roc`; Roc downloads the platform bundle from the recorded URL. The Nix package (`nix run github:OWNER/REPOSITORY`) supplies the compiler and pre-seeds Roc's cache with the bundle. The x86_64 archive is checked by running `kai --version`; the aarch64 archive is checked only for its architecture, and cannot evaluate a `Kaifile.roc` yet.
 
 ## Prepare the protected release pull request
 
@@ -36,9 +45,9 @@ zig build release -- "Kai X.Y.Z" X.Y.Z
 The command:
 
 1. creates `release/vX.Y.Z` from `origin/master` without moving local `master`;
-2. updates only `VERSION`, `RELEASE_NAME`, and `build.zig.zon`;
+2. updates only `VERSION`, `RELEASE_NAME`, `build.zig.zon`, and `kaifile/platform-release` (from the platform bundle it builds);
 3. runs the complete release artifact build;
-4. commits `Release <name> <version>` and pushes only the release branch;
+4. commits `Release <name>` and pushes only the release branch;
 5. restores the clean local `master`; and
 6. prints a compare URL of the form `https://github.com/OWNER/REPOSITORY/compare/master...release%2FvX.Y.Z?expand=1`.
 
@@ -46,13 +55,13 @@ Open that URL, create the required pull request, review it, and merge it. Openin
 
 ## Automatic publication after merge
 
-A merge that changes `VERSION` triggers `.github/workflows/release.yml`. The workflow validates that the merged commit is on `origin/master` and that all committed metadata agrees, then runs:
+A push to `master` that changes `VERSION`, such as the release pull request's merge, triggers `.github/workflows/release.yml`; it can also be run manually. The workflow validates that the merged commit is on `origin/master` and that all committed metadata agrees, then runs:
 
 ```sh
 zig build publish-release
 ```
 
-The Roc publisher rebuilds the artifacts, creates the matching annotated tag using the committed release name, creates a draft GitHub release, uploads both archives and `SHA256SUMS`, and publishes only after every upload succeeds. Matching completed releases are successful no-ops.
+The Roc publisher rebuilds the artifacts, creates the matching annotated tag using the committed release name, creates a draft GitHub release, uploads both archives, the platform bundle and `SHA256SUMS`, and publishes only after every upload succeeds. Matching completed releases are successful no-ops.
 
 `publish-release` is CI-only and is not part of normal local release preparation.
 
