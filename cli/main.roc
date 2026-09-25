@@ -1,7 +1,4 @@
 # kai: developer environments, tasks and builds from a Kaifile.roc.
-#
-# Transitional entry point for the native Roc Kaifile; it replaces the xkai
-# CLI once it covers the supported commands.
 app [main!] {
 	pf: platform "../.basic-cli/main.roc",
 	weaver: "https://github.com/lukewilliamboswell/weaver/releases/download/${

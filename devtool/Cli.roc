@@ -12,10 +12,7 @@ Cli := [].{
 		KaiRun(Str),
 		KaiWorkflow(Str),
 		KaiUpdate(Str),
-		Kaifiles,
-		KaifilesSmoke,
 		PrepareRelease({ name : Str, version : Str }),
-		PrepareXkai({ bundle_dir : Str, output_dir : Str, source_dir : Str }),
 		Tidy(List(Str)),
 	].{
 		is_eq : Command, Command -> Bool
@@ -33,11 +30,7 @@ Cli := [].{
 				(KaiWorkflow(left_kai), KaiWorkflow(right_kai)) =>
 					left_kai == right_kai
 				(KaiUpdate(left_kai), KaiUpdate(right_kai)) => left_kai == right_kai
-				(Kaifiles, Kaifiles) => Bool.True
-				(KaifilesSmoke, KaifilesSmoke) => Bool.True
 				(PrepareRelease(left_args), PrepareRelease(right_args))
-					=> left_args == right_args
-				(PrepareXkai(left_args), PrepareXkai(right_args))
 					=> left_args == right_args
 				(Tidy(left_paths), Tidy(right_paths)) => left_paths == right_paths
 				_ => Bool.False
@@ -48,7 +41,6 @@ Cli := [].{
 		ArgumentsNotAllowed(Str),
 		ExpectedArguments(Str),
 		ExpectedKaiBinary(Str),
-		ExpectedPrepareXkaiArguments,
 		UnknownCommand(Str),
 	].{
 		is_eq : Error, Error -> Bool
@@ -60,8 +52,6 @@ Cli := [].{
 					=> left_name == right_name
 				(ExpectedKaiBinary(left_name), ExpectedKaiBinary(right_name))
 					=> left_name == right_name
-				(ExpectedPrepareXkaiArguments, ExpectedPrepareXkaiArguments)
-					=> Bool.True
 				(UnknownCommand(left_name), UnknownCommand(right_name))
 					=> left_name == right_name
 				_ => Bool.False
@@ -75,7 +65,6 @@ Cli := [].{
 		\\Commands:
 		\\  build-release
 		\\  config-fixtures
-		\\  kaifiles
 		\\  kai-build KAI_BINARY
 		\\  kai-bundle KAI_BINARY
 		\\  kai-env KAI_BINARY
@@ -85,7 +74,6 @@ Cli := [].{
 		\\  kai-workflow KAI_BINARY
 		\\  kai-update KAI_BINARY
 		\\  prepare-release NAME VERSION
-		\\  prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR
 		\\  tidy [ROC_FILE...]
 		\\  help
 
@@ -96,8 +84,6 @@ Cli := [].{
 			["help"] => Ok(Help)
 			["build-release"] => Ok(BuildRelease)
 			["config-fixtures"] => Ok(ConfigFixtures)
-			["kaifiles"] => Ok(Kaifiles)
-			["kaifiles-smoke"] => Ok(KaifilesSmoke)
 			["kai-build", kai] => Ok(KaiBuild(kai))
 			["kai-bundle", kai] => Ok(KaiBundle(kai))
 			["kai-env", kai] => Ok(KaiEnv(kai))
@@ -109,17 +95,12 @@ Cli := [].{
 			["kai-workflow", kai] => Ok(KaiWorkflow(kai))
 			["kai-update", kai] => Ok(KaiUpdate(kai))
 			["prepare-release", name, version] => Ok(PrepareRelease({ name, version }))
-			["prepare-xkai", bundle_dir, source_dir, output_dir] => Ok(
-				PrepareXkai({ bundle_dir, output_dir, source_dir }),
-			)
 			["tidy", .. as paths] => Ok(Tidy(paths))
 			[first, ..] =>
 				match first {
 					"help" => Err(ArgumentsNotAllowed(first))
 					"build-release" => Err(ArgumentsNotAllowed(first))
 					"config-fixtures" => Err(ArgumentsNotAllowed(first))
-					"kaifiles" => Err(ArgumentsNotAllowed(first))
-					"kaifiles-smoke" => Err(ArgumentsNotAllowed(first))
 					"prepare-release" => Err(ExpectedArguments(first))
 					"kai-build"
 					| "kai-bundle"
@@ -130,7 +111,6 @@ Cli := [].{
 					| "kai-workflow"
 					| "kai-update" =>
 						Err(ExpectedKaiBinary(first))
-					"prepare-xkai" => Err(ExpectedPrepareXkaiArguments)
 					unknown => Err(UnknownCommand(unknown))
 				}
 			}
@@ -141,8 +121,6 @@ Cli := [].{
 			ArgumentsNotAllowed(command) => "${command} does not accept arguments"
 			ExpectedArguments(command) => "${command} requires NAME and VERSION"
 			ExpectedKaiBinary(command) => "${command} requires KAI_BINARY"
-			ExpectedPrepareXkaiArguments =>
-				"prepare-xkai requires BUNDLE_DIR SOURCE_DIR OUTPUT_DIR"
 			UnknownCommand(command) => "unknown command: ${command}"
 		}
 

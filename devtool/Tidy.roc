@@ -32,7 +32,6 @@ Tidy := [].{
 		".kai",
 		".zig-cache",
 		"dist",
-		"fuzz",
 		"zig-out",
 	]
 

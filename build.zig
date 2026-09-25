@@ -5,8 +5,6 @@ const SourceTree = struct {
     roc_apps: []const []const u8,
     roc_files: []const []const u8,
     roc_roots: []const []const u8,
-    standard_plugin_files: []const []const u8,
-    xkai_files: []const []const u8,
     zig_files: []const []const u8,
 };
 
@@ -26,7 +24,6 @@ const excluded_source_dirs = [_][]const u8{
     ".kai",
     ".zig-cache",
     "dist",
-    "fuzz",
     "zig-out",
 };
 
@@ -55,41 +52,6 @@ fn sortPaths(paths: [][]const u8) void {
             return std.mem.order(u8, lhs, rhs) == .lt;
         }
     }.lessThan);
-}
-
-fn discoverRegularFiles(
-    b: *std.Build,
-    root: []const u8,
-) []const []const u8 {
-    const allocator = b.allocator;
-    const io = b.graph.io;
-    const root_path = b.fmt(
-        "{s}/{s}",
-        .{ b.build_root.path orelse ".", root },
-    );
-    var root_dir = std.Io.Dir.cwd().openDir(
-        io,
-        root_path,
-        .{ .iterate = true, .follow_symlinks = false },
-    ) catch @panic("failed to open embedded source root");
-    defer root_dir.close(io);
-
-    var files = std.ArrayList([]const u8).empty;
-    var walker = root_dir.walk(allocator) catch
-        @panic("failed to scan embedded source root");
-    defer walker.deinit();
-    while (walker.next(io) catch
-        @panic("failed to scan embedded source root")) |entry|
-    {
-        if (entry.kind != .file) continue;
-        if (std.fs.path.isAbsolute(entry.path)) {
-            @panic("embedded source escaped its root");
-        }
-        const path = b.fmt("{s}/{s}", .{ root, entry.path });
-        files.append(allocator, path) catch @panic("out of memory");
-    }
-    sortPaths(files.items);
-    return files.toOwnedSlice(allocator) catch @panic("out of memory");
 }
 
 fn discoverSources(b: *std.Build) SourceTree {
@@ -160,8 +122,6 @@ fn discoverSources(b: *std.Build) SourceTree {
         .roc_apps = roc_apps.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_files = roc_files.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_roots = roc_roots.toOwnedSlice(allocator) catch @panic("out of memory"),
-        .standard_plugin_files = discoverRegularFiles(b, "plugins/std"),
-        .xkai_files = discoverRegularFiles(b, "xkai"),
         .zig_files = zig_files.toOwnedSlice(allocator) catch @panic("out of memory"),
     };
 }
@@ -219,38 +179,10 @@ fn artifactName(b: *std.Build, source_path: []const u8) []const u8 {
 pub fn build(b: *std.Build) void {
     const sources = discoverSources(b);
 
-    const source_stage = b.addWriteFiles();
-    for (sources.xkai_files) |source| {
-        if (std.mem.startsWith(u8, source, "xkai/tests/") or
-            std.mem.eql(u8, source, "xkai/ImportsTest.roc")) continue;
-        _ = source_stage.addCopyFile(b.path(source), source);
-    }
-    // xkai reads the shared version from ../VERSION.
-    _ = source_stage.addCopyFile(b.path("VERSION"), "VERSION");
-
-    // roc bundle stores files relative to its first .roc file, so stage a
-    // root entry beside xkai/ and plugins/std/.
-    const bundle_stage = b.addWriteFiles();
-    const bundle = b.addSystemCommand(&.{ "roc", "bundle", "--output-dir" });
-    bundle.setCwd(b.path("."));
-    const bundle_dir = bundle.addOutputDirectoryArg("xkai-bundle");
-    bundle.addFileArg(bundle_stage.add("Bundle.roc", "Bundle := [].{}\n"));
-    for (sources.xkai_files) |source| {
-        if (std.mem.startsWith(u8, source, "xkai/tests/") or
-            std.mem.eql(u8, source, "xkai/ImportsTest.roc")) continue;
-        bundle.addFileArg(bundle_stage.addCopyFile(b.path(source), source));
-    }
-    bundle.addFileArg(bundle_stage.addCopyFile(b.path("VERSION"), "VERSION"));
-    for (sources.standard_plugin_files) |source| {
-        if (std.mem.startsWith(u8, source, "plugins/std/tests/")) continue;
-        bundle.addFileArg(bundle_stage.addCopyFile(b.path(source), source));
-    }
-
     const build_devtool = b.addSystemCommand(&roc_build);
     build_devtool.addFileArg(b.path("devtool/main.roc"));
     build_devtool.addFileInput(b.path("devtool/Cli.roc"));
     build_devtool.addFileInput(b.path("devtool/ConfigFixtures.roc"));
-    build_devtool.addFileInput(b.path("devtool/Kaifiles.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiBuild.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiBundle.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiEnv.roc"));
@@ -266,34 +198,10 @@ pub fn build(b: *std.Build) void {
     }
     build_devtool.addFileInput(b.path("devtool/GitHub.roc"));
     build_devtool.addFileInput(b.path("devtool/PrepareRelease.roc"));
-    build_devtool.addFileInput(b.path("devtool/PrepareXkai.roc"));
     build_devtool.addFileInput(b.path("devtool/Release.roc"));
     build_devtool.addFileInput(b.path("devtool/Tidy.roc"));
     build_devtool.addArg("--opt=dev");
     const devtool = build_devtool.addPrefixedOutputFileArg("--output=", "kai-devtool");
-
-    const prepare = std.Build.Step.Run.create(b, "run devtool prepare-xkai");
-    prepare.addFileArg(devtool);
-    prepare.addArg("prepare-xkai");
-    prepare.addDirectoryArg(bundle_dir);
-    prepare.addDirectoryArg(source_stage.getDirectory());
-    const generated_tree = prepare.addOutputDirectoryArg("generated-xkai");
-    const generated_main = generated_tree.path(b, "xkai/main.roc");
-    // Generated xkai imports the platform from ../.basic-cli.
-    const link_platform = b.addSystemCommand(&.{ "ln", "-sfn" });
-    link_platform.addArg(b.pathFromRoot(".basic-cli"));
-    link_platform.addDirectoryArg(generated_tree.path(b, ".basic-cli"));
-    const install_generated_tree = b.addInstallDirectory(.{
-        .source_dir = generated_tree,
-        .install_dir = .prefix,
-        .install_subdir = "xkai-source",
-    });
-
-    const prepare_step = b.step(
-        "prepare-xkai",
-        "Generate the xkai source tree and embedded archive",
-    );
-    prepare_step.dependOn(&install_generated_tree.step);
 
     const build_publish_devtool = b.addSystemCommand(&roc_build);
     build_publish_devtool.addFileArg(b.path("devtool/publish.roc"));
@@ -304,66 +212,6 @@ pub fn build(b: *std.Build) void {
     build_publish_devtool.addArg("--opt=dev");
     const publish_devtool = build_publish_devtool.addPrefixedOutputFileArg("--output=", "kai-publish-devtool");
     const forwarded_args = b.args orelse &.{};
-
-    const build_examples_devtool = b.addSystemCommand(&roc_build);
-    build_examples_devtool.addFileArg(b.path("devtool/test-examples.roc"));
-    build_examples_devtool.addFileInput(b.path("devtool/Examples.roc"));
-    for (sources.roc_files) |source| {
-        if (std.mem.startsWith(u8, source, "plugins/") or
-            std.mem.startsWith(u8, source, "xkai/"))
-        {
-            build_examples_devtool.addFileInput(b.path(source));
-        }
-    }
-    build_examples_devtool.addArg("--opt=dev");
-    const examples_devtool = build_examples_devtool.addPrefixedOutputFileArg(
-        "--output=",
-        "kai-test-examples",
-    );
-
-    const test_examples_step = b.step(
-        "test-examples",
-        "Recursively test every Kaifile example",
-    );
-    const test_examples = std.Build.Step.Run.create(b, "run Kaifile examples test");
-    test_examples.addFileArg(examples_devtool);
-    test_examples.addArgs(&.{ "examples/kaifiles", "examples/plans" });
-    test_examples_step.dependOn(&test_examples.step);
-
-    const kaifiles_step = b.step(
-        "kaifiles",
-        "Run every Kaifile and compare its generated outputs",
-    );
-    const run_kaifiles = addDevtoolCommand(b, devtool, "kaifiles", &.{});
-    kaifiles_step.dependOn(&run_kaifiles.step);
-
-    const kaifiles_smoke_step = b.step(
-        "kaifiles-smoke",
-        "Run lightweight Kaifiles and compare their generated outputs",
-    );
-    const run_kaifiles_smoke = addDevtoolCommand(
-        b,
-        devtool,
-        "kaifiles-smoke",
-        &.{},
-    );
-    kaifiles_smoke_step.dependOn(&run_kaifiles_smoke.step);
-
-    const build_fuzz = b.addSystemCommand(&roc_build);
-    build_fuzz.addArg("--fuzz");
-    build_fuzz.addFileArg(b.path("fuzz/Config.roc"));
-    build_fuzz.addFileInput(b.path("xkai/parser/main.roc"));
-    build_fuzz.addFileInput(b.path("xkai/parser/Blocks.roc"));
-    const fuzz_executable = build_fuzz.addPrefixedOutputFileArg(
-        "--output=",
-        "kai-config-fuzz",
-    );
-
-    const fuzz_step = b.step("fuzz", "Build and run the Config fuzz target");
-    const run_fuzz = std.Build.Step.Run.create(b, "run Config fuzz campaign");
-    run_fuzz.addFileArg(fuzz_executable);
-    run_fuzz.addArg("run");
-    fuzz_step.dependOn(&run_fuzz.step);
 
     const build_release_step = b.step(
         "build-release",
@@ -395,7 +243,6 @@ pub fn build(b: *std.Build) void {
     );
     const tidy_check = addDevtoolCommand(b, devtool, "tidy", &.{});
     tidy_step.dependOn(&tidy_check.step);
-    tidy_step.dependOn(test_examples_step);
 
     const check_step = b.step(
         "check",
@@ -445,12 +292,7 @@ pub fn build(b: *std.Build) void {
     for (sources.roc_roots) |root| {
         const check_roc = b.addSystemCommand(&.{ "roc", "check" });
         check_roc.step.dependOn(&build_platform_host.step);
-        if (std.mem.eql(u8, root, "xkai/main.roc")) {
-            check_roc.addFileArg(generated_main);
-            check_roc.step.dependOn(&link_platform.step);
-        } else {
-            check_roc.addArg(root);
-        }
+        check_roc.addArg(root);
         check_step.dependOn(&check_roc.step);
     }
 
@@ -489,54 +331,6 @@ pub fn build(b: *std.Build) void {
         "Run checks and Roc tests.",
     );
     test_step.dependOn(check_step);
-
-    const test_xkai = b.addSystemCommand(&.{
-        "roc",
-        "test",
-        "xkai/tests/main.roc",
-    });
-    test_xkai.step.dependOn(check_step);
-    test_step.dependOn(&test_xkai.step);
-
-    const test_imports = b.addSystemCommand(&.{
-        "roc",
-        "test",
-        "xkai/ImportsTest.roc",
-    });
-    test_imports.step.dependOn(check_step);
-    test_step.dependOn(&test_imports.step);
-
-    const run_imports = b.addSystemCommand(&.{
-        "roc",
-        "run",
-        "xkai/ImportsTest.roc",
-    });
-    run_imports.step.dependOn(&test_imports.step);
-    test_step.dependOn(&run_imports.step);
-
-    const test_standard_plugin = b.addSystemCommand(&.{
-        "roc",
-        "test",
-        "plugins/std/tests/main.roc",
-    });
-    test_standard_plugin.step.dependOn(check_step);
-    test_step.dependOn(&test_standard_plugin.step);
-
-    const test_guix_plugin = b.addSystemCommand(&.{
-        "roc",
-        "test",
-        "plugins/guix/tests/main.roc",
-    });
-    test_guix_plugin.step.dependOn(check_step);
-    test_step.dependOn(&test_guix_plugin.step);
-
-    const test_split_plugin = b.addSystemCommand(&.{
-        "roc",
-        "test",
-        "examples/plugins/split-plugin/tests/main.roc",
-    });
-    test_split_plugin.step.dependOn(check_step);
-    test_step.dependOn(&test_split_plugin.step);
 
     const test_kaifile_ir = b.addSystemCommand(&.{
         "roc",
@@ -715,7 +509,6 @@ pub fn build(b: *std.Build) void {
     run_config_fixtures.step.dependOn(&build_platform_host.step);
     config_fixtures_step.dependOn(&run_config_fixtures.step);
     ci_step.dependOn(config_fixtures_step);
-    ci_step.dependOn(test_examples_step);
     build_release.step.dependOn(ci_step);
 
     _ = addCiCommand(
@@ -763,12 +556,7 @@ pub fn build(b: *std.Build) void {
         );
         const output = b.fmt("--output={s}", .{output_path});
         const build_app = b.addSystemCommand(&roc_build);
-        if (std.mem.eql(u8, app, "xkai/main.roc")) {
-            build_app.addFileArg(generated_main);
-            build_app.step.dependOn(&link_platform.step);
-        } else {
-            build_app.addArg(app);
-        }
+        build_app.addArg(app);
         build_app.addArgs(&.{ "--opt=dev", output });
         build_app.step.dependOn(&prepare_outputs.step);
         ci_step.dependOn(&build_app.step);

@@ -2,14 +2,11 @@
 .zig-cache/
 **/.kai/*
 !/.kai/lock.json
-.roc-fuzz/
 generated-docs
 zig-out/
 dist/
 result
 result-*
-/examples/plugins/custom-plugin/xkai
-/xkai-dev
 kai
 kai-issues/
 .basic-cli
