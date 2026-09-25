@@ -16,8 +16,45 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # When RELEASE_SYSTEMS lists aarch64-linux, run the full CI natively on
+  # aarch64 for this commit; publish-release refuses that archive unless
+  # this job reports the commit it verified.
+  aarch64:
+    name: Verify aarch64-linux
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    outputs:
+      verified-commit: ${{ steps.verified.outputs.commit }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Check whether the release publishes aarch64-linux
+        id: systems
+        run: |
+          if grep -qx aarch64-linux RELEASE_SYSTEMS; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Nix
+        if: steps.systems.outputs.publish == 'true'
+        uses: cachix/install-nix-action@630ae543ea3a38a9a4166f03376c02c50f408342 # v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Project CI
+        if: steps.systems.outputs.publish == 'true'
+        run: nix develop --command zig build ci
+
+      - name: Record the verified commit
+        id: verified
+        if: steps.systems.outputs.publish == 'true'
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   release:
     name: Publish release
+    needs: aarch64
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -35,4 +72,5 @@ jobs:
       - name: Publish release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KAI_AARCH64_VERIFIED_COMMIT: ${{ needs.aarch64.outputs.verified-commit }}
         run: nix develop --command zig build publish-release

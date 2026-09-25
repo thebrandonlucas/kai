@@ -310,6 +310,15 @@ PublishRelease := [].{
 			Release.manifest_version(manifest) ? InvalidPublicationManifest
 		platform_url = Path.read_utf8!(Path.utf8(Release.platform_file))?.trim()
 		platform_hash = Release.platform_hash(platform_url, repository_name, version)?
+		systems = Release.release_systems(
+			Path.read_utf8!(Path.utf8(Release.systems_file))?,
+		)?
+		# Only a passing native aarch64 CI run of this commit may publish its
+		# archive; release.yml passes that job's verified commit.
+		verified = Env.var_str!(OsStr.utf8(Release.aarch64_verified_env)) ?? ""
+		if systems.contains("aarch64-linux") and verified != target {
+			return Err(Aarch64Unverified(target))
+		}
 		release = Release.validate_publication({
 			branch_contains_target: Bool.True,
 			branch_name: "master",
@@ -317,6 +326,7 @@ PublishRelease := [].{
 			manifest_version,
 			name,
 			platform_hash,
+			systems,
 			tag_name: "v${version}",
 			target_commit: target,
 		}) ? InvalidPublicationMetadata

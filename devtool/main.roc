@@ -185,23 +185,23 @@ build_release_stage! = |root, dist, workspace, version| {
 	check_platform_url!(version, bundle)?
 	copy_file!(bundle.archive, Path.join(dist, "${bundle.hash}.tar.zst"))?
 
-	names = Release.archive_names(version)
-	x64_archive = Path.join(dist, names.x64)
-	arm64_archive = Path.join(dist, names.arm64)
-
-	Stdout.line!("Building portable Linux CLI archives through Nix...")?
-	x64_store = KaiBundle.nix_output!(".#release-x86_64-linux")?
-	arm64_store = KaiBundle.nix_output!(".#release-aarch64-linux")?
-	copy_file!(x64_store, x64_archive)?
-	copy_file!(arm64_store, arm64_archive)?
-
-	Stdout.line!("Checking packaged x86_64 Linux CLI...")?
-	check_x64!(x64_archive, Path.join(workspace, "x64-cli-test"), version)?
-	Stdout.line!("Checking packaged aarch64 Linux CLI...")?
-	check_arm64!(arm64_archive, Path.join(workspace, "arm64-cli-test"))?
+	systems = Release.release_systems(
+		Path.read_utf8!(Path.utf8(Release.systems_file))?,
+	)?
+	for system in systems {
+		archive = Path.join(dist, Release.archive_name(version, system))
+		Stdout.line!("Building and checking the ${system} CLI archive...")?
+		copy_file!(KaiBundle.nix_output!(".#release-${system}")?, archive)?
+		destination = Path.join(workspace, "${system}-cli-test")
+		if system == "x86_64-linux" {
+			check_x64!(archive, destination, version)?
+		} else {
+			check_arm64!(archive, destination)?
+		}
+	}
 
 	archive_inventory = directory_inventory!(dist)?
-	expected_archives = Release.archive_inventory(version, bundle.hash)
+	expected_archives = Release.archive_inventory(version, systems, bundle.hash)
 	if !Release.is_exact_inventory(archive_inventory, expected_archives) {
 		Err(
 			UnexpectedArtifactInventory({
@@ -213,7 +213,7 @@ build_release_stage! = |root, dist, workspace, version| {
 		Stdout.line!("Generating checksums...")?
 		generate_checksums!(root, dist, expected_archives)?
 		inventory = directory_inventory!(dist)?
-		expected = Release.inventory(version, bundle.hash)
+		expected = Release.inventory(version, systems, bundle.hash)
 		if Release.is_exact_inventory(inventory, expected) {
 			Ok(expected)
 		} else {
