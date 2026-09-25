@@ -248,6 +248,12 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileInput(b.path("devtool/Cli.roc"));
     build_devtool.addFileInput(b.path("devtool/ConfigFixtures.roc"));
     build_devtool.addFileInput(b.path("devtool/Kaifiles.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiUpdate.roc"));
+    for (sources.roc_files) |source| {
+        if (std.mem.startsWith(u8, source, "kaifile/")) {
+            build_devtool.addFileInput(b.path(source));
+        }
+    }
     build_devtool.addFileInput(b.path("devtool/GitHub.roc"));
     build_devtool.addFileInput(b.path("devtool/PrepareRelease.roc"));
     build_devtool.addFileInput(b.path("devtool/PrepareXkai.roc"));
@@ -543,6 +549,13 @@ pub fn build(b: *std.Build) void {
     const build_cli = b.addSystemCommand(&roc_build);
     build_cli.addArgs(&.{ "cli/main.roc", "--opt=dev" });
     const cli_binary = build_cli.addPrefixedOutputFileArg("--output=", "kai");
+    for (sources.roc_files) |source| {
+        if (std.mem.startsWith(u8, source, "cli/") or
+            std.mem.startsWith(u8, source, "kaifile/"))
+        {
+            build_cli.addFileInput(b.path(source));
+        }
+    }
     build_cli.step.dependOn(test_step);
     for ([_][]const u8{ "check", "ir" }) |command| {
         const smoke = std.Build.Step.Run.create(
@@ -555,6 +568,16 @@ pub fn build(b: *std.Build) void {
         smoke.expectExitCode(0);
         ci_step.dependOn(&smoke.step);
     }
+
+    // Resolves nixpkgs with real Nix, so it needs network or a warm cache.
+    const kai_update_step = b.step(
+        "kai-update",
+        "Run kai update with real Nix on a copy of examples/composition",
+    );
+    const run_kai_update = addDevtoolCommand(b, devtool, "kai-update", &.{});
+    run_kai_update.addFileArg(cli_binary);
+    kai_update_step.dependOn(&run_kai_update.step);
+    ci_step.dependOn(kai_update_step);
 
     const config_fixtures_step = b.step(
         "config-fixtures",

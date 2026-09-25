@@ -1,6 +1,7 @@
 # kai repo devtool entry point
 app [main!] {
 	pf: platform "../.basic-cli/main.roc",
+	nix: "../kaifile/nix/main.roc",
 }
 
 import pf.Cmd
@@ -13,6 +14,7 @@ import Cli
 import ConfigFixtures
 import Kaifiles
 import GitHub
+import KaiUpdate
 import PrepareRelease
 import PrepareXkai
 import Release
@@ -260,6 +262,7 @@ main! = |args|
 		Ok(Cli.Command.ConfigFixtures) => ConfigFixtures.run!()
 		Ok(Cli.Command.Kaifiles) => Kaifiles.run!()
 		Ok(Cli.Command.KaifilesSmoke) => Kaifiles.run_smoke!()
+		Ok(Cli.Command.KaiUpdate(kai)) => KaiUpdate.run!(kai)
 		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(
 			name,
 			version,
@@ -279,6 +282,8 @@ parse_cases = [
 	{ args: ["config-fixtures"], expected: Ok(Cli.Command.ConfigFixtures) },
 	{ args: ["kaifiles"], expected: Ok(Cli.Command.Kaifiles) },
 	{ args: ["kaifiles-smoke"], expected: Ok(Cli.Command.KaifilesSmoke) },
+	{ args: ["kai-update", "kai"], expected: Ok(Cli.Command.KaiUpdate("kai")) },
+	{ args: ["kai-update"], expected: Err(Cli.Error.ExpectedKaiBinary) },
 	{
 		args: ["prepare-release", "μοριων", "0.0.3"],
 		expected: Ok(
@@ -313,6 +318,7 @@ usage_lines = [
 	"config-fixtures",
 	"kaifiles",
 	"kaifiles-smoke",
+	"kai-update KAI_BINARY",
 	"prepare-release NAME VERSION",
 	"prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR",
 	"tidy ROC_FILE...",
