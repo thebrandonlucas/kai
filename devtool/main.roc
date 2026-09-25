@@ -20,6 +20,7 @@ import KaiGuix
 import KaiHelp
 import KaiRun
 import KaiUpdate
+import KaiWorkflow
 import PrepareRelease
 import PrepareXkai
 import Release
@@ -273,6 +274,7 @@ main! = |args|
 		Ok(Cli.Command.KaiHelp(kai)) => KaiHelp.run!(kai)
 		Ok(Cli.Command.KaiRun(kai)) => KaiRun.run!(kai)
 		Ok(Cli.Command.KaiUpdate(kai)) => KaiUpdate.run!(kai)
+		Ok(Cli.Command.KaiWorkflow(kai)) => KaiWorkflow.run!(kai)
 		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(
 			name,
 			version,
@@ -301,6 +303,10 @@ parse_cases = [
 	},
 	{ args: ["kai-help", "kai"], expected: Ok(Cli.Command.KaiHelp("kai")) },
 	{ args: ["kai-run", "kai"], expected: Ok(Cli.Command.KaiRun("kai")) },
+	{
+		args: ["kai-workflow", "kai"],
+		expected: Ok(Cli.Command.KaiWorkflow("kai")),
+	},
 	{
 		args: ["kai-update"],
 		expected: Err(Cli.Error.ExpectedKaiBinary("kai-update")),
@@ -344,6 +350,7 @@ usage_lines = [
 	"kai-guix [--require] KAI_BINARY",
 	"kai-help KAI_BINARY",
 	"kai-run KAI_BINARY",
+	"kai-workflow KAI_BINARY",
 	"kai-update KAI_BINARY",
 	"prepare-release NAME VERSION",
 	"prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR",
