@@ -1,9 +1,9 @@
 # Load a Kaifile.roc from outside the repository through the platform bundle
-# a release publishes: served from localhost, a built kai checks, updates and
-# runs it; a Nix-installed kai does the same offline, seeding the Roc package
-# cache from the bundle its wrapper names. Each uses a fresh Roc cache, which
-# must end up holding that bundle alone, so loading the platform downloads
-# nothing else.
+# a release publishes: served from localhost, the bare kai a release archive
+# holds checks, updates and runs it; a Nix-installed kai does the same
+# offline, seeding the Roc package cache from the bundle its wrapper names.
+# Each uses a fresh Roc cache, which must end up holding that bundle alone,
+# so loading the platform downloads nothing else.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
