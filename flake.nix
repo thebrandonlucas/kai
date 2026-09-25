@@ -112,6 +112,54 @@
           '';
         };
 
+      # The Kaifile platform as a Roc package bundle, <hash>.tar.zst, which a
+      # release publishes for Kaifile.roc headers to reference by URL; also
+      # unpacked as <hash>/ for kai to seed Roc's package cache with.
+      kaifilePlatformFor =
+        pkgs:
+        pkgs.stdenvNoCC.mkDerivation {
+          name = "kaifile-platform";
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions [
+              ./kaifile/ir
+              ./kaifile/platform
+            ];
+          };
+          nativeBuildInputs = [
+            (rocFor pkgs)
+            pkgs.zig_0_16
+            pkgs.zstd
+          ];
+          dontConfigure = true;
+          dontFixup = true;
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR" XDG_CACHE_HOME="$TMPDIR/cache" ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
+            (cd kaifile/platform && zig build --release)
+            (cd kaifile/platform/targets && sha256sum --quiet -c x64musl.sha256)
+
+            # roc bundle packs only files below main.roc's directory, so the
+            # ir package moves inside the platform.
+            mkdir -p stage/ir stage/targets bundle
+            cp kaifile/platform/*.roc stage/
+            cp kaifile/ir/*.roc stage/ir/
+            cp -R kaifile/platform/targets/x64musl stage/targets/
+            substituteInPlace stage/main.roc --replace-fail '"../ir/main.roc"' '"ir/main.roc"'
+            (cd stage && roc bundle main.roc $(find . -type f ! -path ./main.roc | LC_ALL=C sort) --output-dir ../bundle)
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out"
+            cp bundle/*.tar.zst "$out/"
+            name="$(basename "$out"/*.tar.zst .tar.zst)"
+            mkdir "$out/$name"
+            zstd -dc "$out/$name.tar.zst" | tar -x -C "$out/$name"
+            runHook postInstall
+          '';
+        };
+
       # Packages the apps import (basic-cli imports http; kai imports Weaver,
       # which imports ansi and path); unpacked where Roc looks for downloads.
       rocPackages = [
@@ -260,10 +308,15 @@
               ${wrapperArgs}
           '';
 
-      # Kai evaluates Kaifile.roc with the pinned compiler unless ROC is set.
-      # GNU coreutils only back up the host's, so tasks keep the user's tools.
+      # Kai evaluates Kaifile.roc with the pinned compiler unless ROC is set,
+      # and seeds Roc's package cache with this Kai's unpacked platform bundle,
+      # <hash>/, so a Kaifile.roc pinned to it loads offline. GNU coreutils
+      # only back up the host's, so tasks keep the user's tools.
       mkKaiPackage =
         pkgs: binary:
+        let
+          platform = kaifilePlatformFor pkgs;
+        in
         mkWrappedPackage pkgs {
           pname = "kai";
           inherit binary;
@@ -271,6 +324,7 @@
           wrapperArgs = lib.concatStringsSep " " [
             "--suffix PATH : ${lib.makeBinPath [ pkgs.coreutils ]}"
             "--set-default ROC ${rocFor pkgs}/bin/roc"
+            "--set-default KAI_PLATFORM_BUNDLE \"${platform}/$(basename ${platform}/*.tar.zst .tar.zst)\""
           ];
         };
 
@@ -328,6 +382,7 @@
           common = {
             inherit kai xkai;
             default = kai;
+            kaifile-platform = kaifilePlatformFor pkgs;
           };
 
           releaseArchives = {

@@ -6,6 +6,7 @@ Release := [].{
 		canonical_version : Str,
 		manifest_version : Str,
 		name : Str,
+		platform_hash : Str,
 		tag_name : Str,
 		target_commit : Str,
 	}
@@ -252,7 +253,7 @@ Release := [].{
 			)
 		} else {
 			Ok({
-				assets: Release.inventory(input.canonical_version),
+				assets: Release.inventory(input.canonical_version, input.platform_hash),
 				name: input.name,
 				tag_name: input.tag_name,
 				target_commit: input.target_commit,
@@ -261,19 +262,28 @@ Release := [].{
 		}
 	}
 
-	release_files = ["build.zig.zon", "RELEASE_NAME", "VERSION"]
+	# The file recording the released platform bundle's URL.
+	platform_file = "kaifile/platform-release"
+
+	release_files = [
+		"build.zig.zon",
+		Release.platform_file,
+		"RELEASE_NAME",
+		"VERSION",
+	]
 
 	are_allowed_release_files : List(Str) -> Bool
 	are_allowed_release_files = |files| {
 		expected_length = if files.contains("RELEASE_NAME") {
-			3
+			4
 		} else {
-			2
+			3
 		}
 		files.contains("build.zig.zon") and
 			files.contains("VERSION") and
-				files.len() == expected_length and
-					List.all(files, |file| Release.release_files.contains(file))
+				files.contains(Release.platform_file) and
+					files.len() == expected_length and
+						List.all(files, |file| Release.release_files.contains(file))
 	}
 
 	manifest_version :
@@ -356,17 +366,35 @@ Release := [].{
 		arm64: "kai-${version}-aarch64-linux.tar.gz",
 	}
 
-	archive_inventory : Str -> List(Str)
-	archive_inventory = |version| {
-		names = Release.archive_names(version)
-		[names.x64, names.arm64]
+	# Kaifile.roc headers reference a release's platform bundle by this URL;
+	# Roc names the bundle by its content hash.
+	platform_url : Str, Str, Str -> Str
+	platform_url = |repository, version, hash|
+		"https://github.com/${repository}/releases/download/"
+			.concat("v${version}/${hash}.tar.zst")
+
+	# The bundle hash in a recorded URL for this repository and version.
+	platform_hash : Str, Str, Str -> Try(Str, [UnexpectedPlatformUrl(Str)])
+	platform_hash = |url, repository, version| {
+		hash = (url.split_on("/").last() ?? "").drop_suffix(".tar.zst")
+		expected = Release.platform_url(repository, version, hash)
+		if !hash.is_empty() and expected == url {
+			Ok(hash)
+		} else {
+			Err(UnexpectedPlatformUrl(url))
+		}
 	}
 
-	inventory : Str -> List(Str)
-	inventory = |version| {
+	# Everything SHA256SUMS covers.
+	archive_inventory : Str, Str -> List(Str)
+	archive_inventory = |version, bundle_hash| {
 		names = Release.archive_names(version)
-		["SHA256SUMS", names.arm64, names.x64]
+		[names.x64, names.arm64, "${bundle_hash}.tar.zst"]
 	}
+
+	inventory : Str, Str -> List(Str)
+	inventory = |version, bundle_hash|
+		["SHA256SUMS"].concat(Release.archive_inventory(version, bundle_hash))
 
 	is_exact_inventory : List(Str), List(Str) -> Bool
 	is_exact_inventory = |actual, expected|

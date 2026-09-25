@@ -4,6 +4,7 @@ import pf.Cmd
 import pf.Env
 import pf.OsStr
 import pf.Path
+import pf.Random
 import pf.Stderr
 
 import ir.Ir
@@ -49,6 +50,7 @@ Load := [].{
 	# relative ROC executable belongs to the invocation directory.
 	compiler! : () => Try(Str, _)
 	compiler! = || {
+		_ = Load.seed!()
 		override = Env.var_str!("ROC") ?? "roc"
 		compiler = if override.contains("/") and !override.starts_with("/") {
 			cwd = Env.cwd!()?.to_str()?
@@ -64,6 +66,43 @@ Load := [].{
 			return Err(CompilerMismatch(compiler, actual))
 		}
 		Ok(compiler)
+	}
+
+	# A Nix-installed Kai's wrapper sets KAI_PLATFORM_BUNDLE to its unpacked
+	# platform bundle, <hash>/. Roc checks its package cache before
+	# downloading a URL package, so seeding the cache with that bundle lets a
+	# Kaifile.roc pinned to it load offline. Best-effort and silent: otherwise
+	# Roc downloads it. Publish with a rename like Roc, which also sweeps
+	# stale *.tmp staging directories.
+	seed! : () => Try({}, _)
+	seed! = || {
+		bundle = Env.var_str!("KAI_PLATFORM_BUNDLE")?.drop_suffix("/")
+		hash = bundle.split_on("/").last() ?? ""
+		if ["", ".", ".."].contains(hash) {
+			return Err(InvalidBundle(bundle))
+		}
+		cache = match Env.var_str!("XDG_CACHE_HOME") {
+			Ok(value) if !value.is_empty() => value
+			_ => "${Env.var_str!("HOME")?}/.cache"
+		}
+		store = "${cache}/roc/packages"
+		if Load.path("${store}/${hash}/main.roc").exists!()? {
+			return Ok({})
+		}
+		Load.path(store).create_all!()?
+		staging = "${store}/${hash}.${Random.seed_u64!()?.to_str()}.tmp"
+		Load.path(staging).create_dir!()?
+		copied = Cmd.new_str("cp")
+			.args_str(["-R", "--no-preserve=mode", "--", "${bundle}/.", staging])
+			.exec_output!()
+		result = match copied {
+			Ok(_) => Load.path(staging).rename!(Load.path("${store}/${hash}"))
+			Err(_) => Err(CopyFailed)
+		}
+		if result.is_err() {
+			_ = Load.path(staging).delete_all!()
+		}
+		result
 	}
 
 	# The compiler this Kai evaluates configuration with.
