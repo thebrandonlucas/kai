@@ -9,6 +9,7 @@ app [main!] {
 	}0.9.0/7j6KBFBEZ8pNMLQHkx9xiwyZ2PmwQPgKNDPUih6gKe77.tar.zst",
 	ir: "../kaifile/ir/main.roc",
 	nix: "../kaifile/nix/main.roc",
+	guix: "../kaifile/guix/main.roc",
 }
 
 import pf.Cmd
@@ -27,6 +28,7 @@ import ir.Request
 import Execute
 import Help
 import Load
+import Selection
 import Update
 import Workspace
 
@@ -48,7 +50,12 @@ description = Help.describe(Help.kai).concat(
 	,
 )
 
-Parsed : { file : Try(Str, [NoValue]), no_color : Bool, command : Command }
+Parsed : {
+	file : Try(Str, [NoValue]),
+	no_color : Bool,
+	backend : Try(Str, [NoValue]),
+	command : Command,
+}
 
 # When Kaifile.roc loads, its shells and tasks become subcommands so help and
 # usage errors list what the project defines. Otherwise, or when a name is not
@@ -88,6 +95,11 @@ cli = |shell, run, note, text_style|
 				short: "",
 				long: "no-color",
 				help: "Print plain text without colors.",
+			}),
+			backend: Opt.maybe_str({
+				short: "",
+				long: "backend",
+				help: "Use nix or guix instead of choosing automatically.",
 			}),
 			command: SubCmd.required([
 				shell,
@@ -291,8 +303,8 @@ main! = |args| {
 			_ = Stderr.line!(message)
 			Err(Exit(2))
 		}
-		Ok({ command, .. }) =>
-			match run!(command, located, loaded) {
+		Ok({ command, backend, .. }) =>
+			match run!(command, backend, located, loaded) {
 				Ok({}) => Ok({})
 				Err(err) => {
 					_ = Stderr.line!("kai: ${describe(err)}")
@@ -302,7 +314,8 @@ main! = |args| {
 		}
 }
 
-run! = |command, located, loaded| {
+run! = |command, backend, located, loaded| {
+	choice = backend_choice(backend)?
 	project = located?
 	match command {
 		Check => {
@@ -312,28 +325,39 @@ run! = |command, located, loaded| {
 		}
 		PrintIr => Stdout.write!(loaded?.to_str())
 		UpdateLock => {
+			ir = loaded?
+			Selection.lockable(choice, ir)?
 			layout = Workspace.locate!(project.root)?
-			Update.update!(loaded?, layout)?
+			Update.update!(ir, layout)?
 			Stdout.line!("updated ${layout.lock_path}")
 		}
 		Shell(name, shell_command) =>
-			Execute.request!(
+			Execute.select!(
 				loaded?,
 				Request.Shell(name, shell_command),
-				Workspace.locate!(project.root)?,
+				choice,
+				project.root,
 			)
 		Run(task, args) =>
-			Execute.request!(
-				loaded?,
-				Request.Run(task, args),
-				Workspace.locate!(project.root)?,
-			)
+			Execute.select!(loaded?, Request.Run(task, args), choice, project.root)
 		}
 }
+
+# --backend narrows automatic selection to one backend; commands that do not
+# run a backend still reject an unknown name.
+backend_choice : Try(Str, [NoValue]) -> Try(Selection.BackendChoice, _)
+backend_choice = |value|
+	match value {
+		Err(NoValue) => Ok(Auto)
+		Ok("nix") => Ok(Only(Nix))
+		Ok("guix") => Ok(Only(Guix))
+		Ok(other) => Err(InvalidBackend(other))
+	}
 
 exit_status = |err|
 	match err {
 		ChildExited(_, code) => Execute.exit_code(code)
+		InvalidBackend(_) => 2
 		_ => 1
 	}
 
@@ -379,6 +403,19 @@ describe = |err|
 			"another kai update holds ${guard}; if none is running, it is "
 				.concat("safe to remove that directory")
 		AuthorityChanged => "the lock file changed during update; retry kai update"
+		InvalidBackend(value) => "--backend must be nix or guix, not '${value}'"
+		BackendConflict(backend, why) =>
+			"--backend ${Selection.name(backend)} cannot serve this request: ${why}"
+		NoEligibleBackend(reasons) =>
+			"no backend can serve this request:\n  "
+				.concat(Str.join_with(reasons.keep_if(|r| !r.is_empty()), "\n  "))
+		RequiredBackendUnavailable(backend, probe) =>
+			"this request needs ${Selection.name(backend)}, which "
+				.concat(Selection.probe_text(probe))
+		GuixLockUnsupported =>
+			"locking is not supported for Guix sources; Guix shells use the "
+				.concat("installed Guix channels")
+		GuixFailed(message) => "cannot plan the Guix shell: ${message}"
 		other => Str.inspect(other)
 	}
 
@@ -418,6 +455,10 @@ expect [
 	(
 		["--no-color", "run", "args", "--", "--no-color"],
 		Run("args", ["--no-color"]),
+	),
+	(
+		["--backend", "guix", "shell", "ci", "--", "--backend", "nix"],
+		Shell("ci", ["--backend", "nix"]),
 	),
 ].all(|(args, expected)| parses(test_ir, args, expected))
 
@@ -470,9 +511,19 @@ expect [
 expect requests_no_color(["run", "t", "--no-color"])
 	and !requests_no_color(["run", "t", "--", "--no-color"])
 
-# A failing child's status becomes kai's; every other failure is 1.
+# --backend names one backend; anything else is a usage error.
+expect [
+	(Err(NoValue), Ok(Auto)),
+	(Ok("nix"), Ok(Only(Nix))),
+	(Ok("guix"), Ok(Only(Guix))),
+	(Ok("Guix"), Err(InvalidBackend("Guix"))),
+].all(|(value, expected)| backend_choice(value) == expected)
+
+# A failing child's status becomes kai's, a bad --backend is a usage
+# error, and every other failure is 1.
 expect exit_status(ChildExited(Run("fail"), 7)) == 7
-	and exit_status(NoLock("/p/.kai/lock.json")) == 1
+	and exit_status(InvalidBackend("x")) == 2
+		and exit_status(NoLock("/p/.kai/lock.json")) == 1
 
 help_text = |loaded, args, style|
 	match render(loaded, args, style) {

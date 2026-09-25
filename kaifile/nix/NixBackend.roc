@@ -315,9 +315,23 @@ NixBackend :: [].{
 		project = Project.validate(ir)?
 		check_layout(project, target, layout, !project.builds.is_empty())?
 		inputs = Locks.inputs(project)?
+		guix = project.sources.keep_if(
+			|s|
+				match s.provider {
+					GuixPackages(_) => True
+					_ => False
+				},
+		).map(|s| s.name)
+		# An environment using a Guix source runs only as a Guix shell, which
+		# uses the installed channels, so the Nix lock leaves it out.
+		nix = |name|
+			!project.environments.any(
+				|e| e.name == name and e.tools.any(|t| guix.contains(t.source)),
+			)
 		names = project.shells.map(|s| s.environment)
 			.concat(project.tasks.map(|t| t.environment))
 			.concat(project.builds.map(|b| b.environment))
+			.keep_if(nix)
 		contents = render_selected(
 			project,
 			names,
@@ -958,6 +972,18 @@ expect {
 	})
 	NixBackend.render(project).is_err()
 		and NixBackend.render_environment(project, "dev").is_ok()
+}
+
+# The Nix lock leaves out a shell whose environment uses a Guix source.
+expect {
+	project = mk({
+		..mixed,
+		shells: simple.shells.append({ name: "foreign", environment: "foreign" }),
+	})
+	match NixBackend.update_files(project, "x86_64-linux", TestData.layout) {
+		Ok([flake]) => !flake.contents.contains("foreign")
+		_ => False
+	}
 }
 
 # Inherited stacks stay ordered, deduplicated and scoped to the chosen env.
