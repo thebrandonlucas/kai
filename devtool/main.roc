@@ -10,6 +10,7 @@ import pf.Path
 import pf.Stdout
 
 import Cli
+import ConfigFixtures
 import Kaifiles
 import GitHub
 import PrepareRelease
@@ -256,6 +257,7 @@ main! = |args|
 	match Cli.parse(args.map(OsStr.display)) {
 		Ok(Cli.Command.Help) => Stdout.line!(Cli.usage)
 		Ok(Cli.Command.BuildRelease) => build_release!()
+		Ok(Cli.Command.ConfigFixtures) => ConfigFixtures.run!()
 		Ok(Cli.Command.Kaifiles) => Kaifiles.run!()
 		Ok(Cli.Command.KaifilesSmoke) => Kaifiles.run_smoke!()
 		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(
@@ -274,6 +276,7 @@ parse_cases = [
 	{ args: [], expected: Ok(Cli.Command.Help) },
 	{ args: ["help"], expected: Ok(Cli.Command.Help) },
 	{ args: ["build-release"], expected: Ok(Cli.Command.BuildRelease) },
+	{ args: ["config-fixtures"], expected: Ok(Cli.Command.ConfigFixtures) },
 	{ args: ["kaifiles"], expected: Ok(Cli.Command.Kaifiles) },
 	{ args: ["kaifiles-smoke"], expected: Ok(Cli.Command.KaifilesSmoke) },
 	{
@@ -307,6 +310,7 @@ parse_cases = [
 usage_lines = [
 	"Usage: kai-devtool <command> [arguments]",
 	"build-release",
+	"config-fixtures",
 	"kaifiles",
 	"kaifiles-smoke",
 	"prepare-release NAME VERSION",
