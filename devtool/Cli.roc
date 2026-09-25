@@ -4,6 +4,7 @@ Cli := [].{
 		BuildRelease,
 		ConfigFixtures,
 		Help,
+		KaiBuild(Str),
 		KaiEnv(Str),
 		KaiGuix({ kai : Str, required : Bool }),
 		KaiHelp(Str),
@@ -21,6 +22,7 @@ Cli := [].{
 				(BuildRelease, BuildRelease) => Bool.True
 				(ConfigFixtures, ConfigFixtures) => Bool.True
 				(Help, Help) => Bool.True
+				(KaiBuild(left_kai), KaiBuild(right_kai)) => left_kai == right_kai
 				(KaiEnv(left_kai), KaiEnv(right_kai)) => left_kai == right_kai
 				(KaiGuix(left_args), KaiGuix(right_args)) => left_args == right_args
 				(KaiHelp(left_kai), KaiHelp(right_kai)) => left_kai == right_kai
@@ -69,6 +71,7 @@ Cli := [].{
 		\\  build-release
 		\\  config-fixtures
 		\\  kaifiles
+		\\  kai-build KAI_BINARY
 		\\  kai-env KAI_BINARY
 		\\  kai-guix [--require] KAI_BINARY
 		\\  kai-help KAI_BINARY
@@ -88,6 +91,7 @@ Cli := [].{
 			["config-fixtures"] => Ok(ConfigFixtures)
 			["kaifiles"] => Ok(Kaifiles)
 			["kaifiles-smoke"] => Ok(KaifilesSmoke)
+			["kai-build", kai] => Ok(KaiBuild(kai))
 			["kai-env", kai] => Ok(KaiEnv(kai))
 			["kai-guix", kai] => Ok(KaiGuix({ kai, required: Bool.False }))
 			["kai-guix", "--require", kai] =>
@@ -108,7 +112,12 @@ Cli := [].{
 					"kaifiles" => Err(ArgumentsNotAllowed(first))
 					"kaifiles-smoke" => Err(ArgumentsNotAllowed(first))
 					"prepare-release" => Err(ExpectedArguments(first))
-					"kai-env" | "kai-guix" | "kai-help" | "kai-run" | "kai-update" =>
+					"kai-build"
+					| "kai-env"
+					| "kai-guix"
+					| "kai-help"
+					| "kai-run"
+					| "kai-update" =>
 						Err(ExpectedKaiBinary(first))
 					"prepare-xkai" => Err(ExpectedPrepareXkaiArguments)
 					unknown => Err(UnknownCommand(unknown))
