@@ -21,10 +21,12 @@ import weaver.SubCmd
 import ir.Ir
 
 import Load
+import Update
+import Workspace
 
 version = "0.0.7"
 
-Command : [Check, PrintIr]
+Command : [Check, PrintIr, UpdateLock]
 
 parser = |text_style|
 	Cli.assert_valid(
@@ -45,6 +47,11 @@ parser = |text_style|
 						name: "ir",
 						description: "Print the validated Kaifile IR",
 						value: PrintIr,
+					}),
+					SubCmd.empty({
+						name: "update",
+						description: "Resolve dependency pins into the lock file",
+						value: UpdateLock,
 					}),
 				]),
 			}.Cli,
@@ -94,6 +101,11 @@ run! = |file, command| {
 			Stdout.line!("${project.file} is valid")
 		}
 		PrintIr => Stdout.write!(Load.ir!(project)?.to_str())
+		UpdateLock => {
+			layout = Workspace.locate!(project.root)?
+			Update.update!(Load.ir!(project)?, layout)?
+			Stdout.line!("updated ${layout.lock_path}")
+		}
 	}
 }
 
@@ -118,5 +130,16 @@ describe = |err|
 			"Kaifile.roc needs unsupported features: "
 				.concat(Str.join_with(missing, ", "))
 		InvalidProject(message) => "invalid Kaifile: ${message}"
+		InvalidWorkspace(message) => "invalid workspace: ${message}"
+		UnsafeWorkspace(message) => "unsafe workspace: ${message}"
+		UnsafePath(value) => "refusing unsafe or symlinked path: ${value}"
+		RenderFailed(message) => "cannot generate the Nix files: ${message}"
+		LockFailed(message) => "cannot lock the Nix inputs: ${message}"
+		ExecCmdFailed({ command, exit_code }) =>
+			"`${command}` exited with code ${exit_code.to_str()}"
+		UpdateLocked(guard) =>
+			"another kai update holds ${guard}; if none is running, it is "
+				.concat("safe to remove that directory")
+		AuthorityChanged => "the lock file changed during update; retry kai update"
 		other => Str.inspect(other)
 	}

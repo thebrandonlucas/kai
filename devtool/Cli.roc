@@ -4,6 +4,7 @@ Cli := [].{
 		BuildRelease,
 		ConfigFixtures,
 		Help,
+		KaiUpdate(Str),
 		Kaifiles,
 		KaifilesSmoke,
 		PrepareRelease({ name : Str, version : Str }),
@@ -16,6 +17,7 @@ Cli := [].{
 				(BuildRelease, BuildRelease) => Bool.True
 				(ConfigFixtures, ConfigFixtures) => Bool.True
 				(Help, Help) => Bool.True
+				(KaiUpdate(left_kai), KaiUpdate(right_kai)) => left_kai == right_kai
 				(Kaifiles, Kaifiles) => Bool.True
 				(KaifilesSmoke, KaifilesSmoke) => Bool.True
 				(PrepareRelease(left_args), PrepareRelease(right_args))
@@ -30,6 +32,7 @@ Cli := [].{
 	Error := [
 		ArgumentsNotAllowed(Str),
 		ExpectedArguments(Str),
+		ExpectedKaiBinary,
 		ExpectedPrepareXkaiArguments,
 		UnknownCommand(Str),
 	].{
@@ -40,6 +43,7 @@ Cli := [].{
 					=> left_name == right_name
 				(ExpectedArguments(left_name), ExpectedArguments(right_name))
 					=> left_name == right_name
+				(ExpectedKaiBinary, ExpectedKaiBinary) => Bool.True
 				(ExpectedPrepareXkaiArguments, ExpectedPrepareXkaiArguments)
 					=> Bool.True
 				(UnknownCommand(left_name), UnknownCommand(right_name))
@@ -56,6 +60,7 @@ Cli := [].{
 		\\  build-release
 		\\  config-fixtures
 		\\  kaifiles
+		\\  kai-update KAI_BINARY
 		\\  prepare-release NAME VERSION
 		\\  prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR
 		\\  tidy [ROC_FILE...]
@@ -70,6 +75,7 @@ Cli := [].{
 			["config-fixtures"] => Ok(ConfigFixtures)
 			["kaifiles"] => Ok(Kaifiles)
 			["kaifiles-smoke"] => Ok(KaifilesSmoke)
+			["kai-update", kai] => Ok(KaiUpdate(kai))
 			["prepare-release", name, version] => Ok(PrepareRelease({ name, version }))
 			["prepare-xkai", bundle_dir, source_dir, output_dir] => Ok(
 				PrepareXkai({ bundle_dir, output_dir, source_dir }),
@@ -83,6 +89,7 @@ Cli := [].{
 					"kaifiles" => Err(ArgumentsNotAllowed(first))
 					"kaifiles-smoke" => Err(ArgumentsNotAllowed(first))
 					"prepare-release" => Err(ExpectedArguments(first))
+					"kai-update" => Err(ExpectedKaiBinary)
 					"prepare-xkai" => Err(ExpectedPrepareXkaiArguments)
 					unknown => Err(UnknownCommand(unknown))
 				}
@@ -93,6 +100,7 @@ Cli := [].{
 		match error {
 			ArgumentsNotAllowed(command) => "${command} does not accept arguments"
 			ExpectedArguments(command) => "${command} requires NAME and VERSION"
+			ExpectedKaiBinary => "kai-update requires KAI_BINARY"
 			ExpectedPrepareXkaiArguments =>
 				"prepare-xkai requires BUNDLE_DIR SOURCE_DIR OUTPUT_DIR"
 			UnknownCommand(command) => "unknown command: ${command}"
