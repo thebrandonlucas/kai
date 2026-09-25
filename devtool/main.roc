@@ -12,6 +12,7 @@ import pf.Stdout
 
 import Cli
 import ConfigFixtures
+import Fuzz
 import GitHub
 import KaiBuild
 import KaiBundle
@@ -280,6 +281,7 @@ main! = |args|
 		Ok(Cli.Command.Help) => Stdout.line!(Cli.usage)
 		Ok(Cli.Command.BuildRelease) => build_release!()
 		Ok(Cli.Command.ConfigFixtures) => ConfigFixtures.run!()
+		Ok(Cli.Command.Fuzz({ seconds, apps })) => Fuzz.run!(seconds, apps)
 		Ok(Cli.Command.KaiBuild(kai)) => KaiBuild.run!(kai)
 		Ok(Cli.Command.KaiBundle(kai)) => KaiBundle.run!(kai)
 		Ok(Cli.Command.KaiEnv(kai)) => KaiEnv.run!(kai)

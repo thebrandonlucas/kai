@@ -3,6 +3,7 @@ Cli := [].{
 	Command := [
 		BuildRelease,
 		ConfigFixtures,
+		Fuzz({ seconds : Str, apps : List(Str) }),
 		Help,
 		KaiBuild(Str),
 		KaiBundle(Str),
@@ -20,6 +21,7 @@ Cli := [].{
 			match (left, right) {
 				(BuildRelease, BuildRelease) => Bool.True
 				(ConfigFixtures, ConfigFixtures) => Bool.True
+				(Fuzz(left_args), Fuzz(right_args)) => left_args == right_args
 				(Help, Help) => Bool.True
 				(KaiBuild(left_kai), KaiBuild(right_kai)) => left_kai == right_kai
 				(KaiBundle(left_kai), KaiBundle(right_kai)) => left_kai == right_kai
@@ -65,6 +67,7 @@ Cli := [].{
 		\\Commands:
 		\\  build-release
 		\\  config-fixtures
+		\\  fuzz SECONDS ROC_APP...
 		\\  kai-build KAI_BINARY
 		\\  kai-bundle KAI_BINARY
 		\\  kai-env KAI_BINARY
@@ -84,6 +87,8 @@ Cli := [].{
 			["help"] => Ok(Help)
 			["build-release"] => Ok(BuildRelease)
 			["config-fixtures"] => Ok(ConfigFixtures)
+			["fuzz", seconds, first_app, .. as apps] =>
+				Ok(Fuzz({ seconds, apps: [first_app].concat(apps) }))
 			["kai-build", kai] => Ok(KaiBuild(kai))
 			["kai-bundle", kai] => Ok(KaiBundle(kai))
 			["kai-env", kai] => Ok(KaiEnv(kai))
@@ -101,7 +106,7 @@ Cli := [].{
 					"help" => Err(ArgumentsNotAllowed(first))
 					"build-release" => Err(ArgumentsNotAllowed(first))
 					"config-fixtures" => Err(ArgumentsNotAllowed(first))
-					"prepare-release" => Err(ExpectedArguments(first))
+					"fuzz" | "prepare-release" => Err(ExpectedArguments(first))
 					"kai-build"
 					| "kai-bundle"
 					| "kai-env"
