@@ -146,15 +146,14 @@ ConfigFixtures := [].{
 			body: \\config = [Name("composed"),
 				\\ Systems(["x86_64-linux", "aarch64-linux"]),
 				\\ Environment("base", [Tools(["git"])]),
-				\\ Environment("dev", [Tools(["git", "python3"])]),
+				\\ Environment("dev", [Tools(["git", "coreutils"])]),
 				\\ Shell("default", [Use("dev")]),
-				\\ Task("fmt", [Use("dev"), Run(["python3", "--version"])]),
+				\\ Task("fmt", [Use("dev"), Run(["git", "diff", "--check"])]),
 				\\ Task("test", [Use("dev"), Run(["git", "--version"])]),
-				\\ Task("args", [Use("dev"), Run(["python3", "-c",
-				\\  "import json, sys; print(json.dumps(sys.argv[1:]))",
+				\\ Task("args", [Use("dev"), Run(["sh", "-c",
+				\\  "printf '<%s>' \\"$@\\"; echo", "args",
 				\\  "configured argument"])]),
-				\\ Task("fail", [Use("dev"),
-				\\  Run(["python3", "-c", "raise SystemExit(7)"])])]
+				\\ Task("fail", [Use("dev"), Run(["sh", "-c", "exit 7"])])]
 			,
 		},
 		{

@@ -113,9 +113,9 @@ Execute := [].{
 		Ok({})
 	}
 
-	# Verify local pins, snapshot the project for a build, stage generated
-	# files, then run the argv from the project root. A failing child stops
-	# the plan.
+	# Verify local pins, snapshot the project and install the runner for a
+	# build, stage generated files, then run the argv from the project root. A
+	# failing child stops the plan.
 	step! : Plan.Step, Layout, Output.Mode => Try({}, _)
 	step! = |step, layout, mode| {
 		for operation in step.operations {
@@ -132,7 +132,9 @@ Execute := [].{
 					}
 				}
 				Snapshot(snapshot) => Snapshot.snapshot!(snapshot)?
-			}
+				InstallRunner({ destination }) =>
+					Workspace.install_runner!(destination)?
+				}
 		}
 		Workspace.stage!(step.files, layout)?
 		match step.action {

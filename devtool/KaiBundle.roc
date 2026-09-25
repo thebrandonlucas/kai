@@ -1,13 +1,14 @@
 # Load a Kaifile.roc from outside the repository through the platform bundle
 # a release publishes: served from localhost, the bare kai a release archive
 # holds checks, updates and runs it; a Nix-installed kai does the same
-# offline, from the Roc package cache its wrapper seeds. Each uses a fresh Roc
-# cache.
+# offline, seeding the Roc package cache from the bundle its wrapper names.
+# Each uses a fresh Roc cache.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
 import pf.Path
 import pf.Stdout
+import pf.Tcp
 
 KaiBundle := [].{
 	# Build a flake output and return its store path.
@@ -62,44 +63,78 @@ KaiBundle := [].{
 
 	run_in! = |kai, installed, bundle, version, work| {
 		release_path = "v${version}/${bundle.hash}.tar.zst"
-		Path.create_all!(Path.join(work, "serve/v${version}"))?
-		Path.copy!(bundle.archive, Path.join(work, "serve/${release_path}"))?
-		server = Cmd.new_str("python3")
-			.args_str(["-u", "-m", "http.server", "0", "--bind", "127.0.0.1"])
-			.cwd(Path.join(work, "serve"))
-			.stdout(Pipe)
-			.stderr(Null)
-			.spawn!() ? ServerFailed
-		served = KaiBundle.serve!(server, kai, bundle.hash, release_path, work)
-		server.close!() ? ServerFailed
+		archive = Path.read_bytes!(bundle.archive)?
+		listener = Tcp.listen!("127.0.0.1", 0, 5000)?
+		port = listener.local_port!()?
+		url = "http://127.0.0.1:${port.to_str()}/${release_path}"
+		target = "/${release_path}"
+		served = KaiBundle.project!(
+			kai,
+			url,
+			bundle.hash,
+			Path.join(work, "served"),
+			|command| KaiBundle.serving!(listener, target, archive, command),
+		)
+		listener.close!()?
 		_ = served?
 		# Unreachable, so only the seeded cache can supply the platform.
 		offline = "https://kai.invalid/${release_path}"
 		seeded = Path.join(work, "installed")
-		KaiBundle.project!(installed, offline, bundle.hash, seeded)?
+		KaiBundle.project!(
+			installed,
+			offline,
+			bundle.hash,
+			seeded,
+			|command| Ok(command.exec_output!()?.stdout_utf8),
+		)?
 		Stdout.line!("kai loads the platform bundle served and pre-seeded")
 	}
 
-	serve! = |server, kai, hash, release_path, work| {
-		# "Serving HTTP on 127.0.0.1 port <port> (http://...) ..."
-		port = match server.read!(4096, 10000) ? ServerFailed {
-			Stdout(bytes) =>
-				match Str.from_utf8_lossy(bytes).split_on(" port ") {
-					[_, rest] => rest.split_on(" ").first() ?? ""
-					_ => ""
+	# Run a command while answering its HTTP requests, one connection at a
+	# time: the archive at its path, and 404 for anything else.
+	serving! = |listener, path, archive, command| {
+		child = command.stdout(Capture).stderr(Capture).spawn!()
+			.map_err(|err| ServerFailed(Str.inspect(err)))?
+		while Bool.True {
+			match child.try_wait!().map_err(|err| ServerFailed(Str.inspect(err)))? {
+				[{ status: Exited(0), stdout_bytes, .. }] =>
+					return Ok(Str.from_utf8_lossy(stdout_bytes))
+				[output] => return Err(
+					KaiFailed(
+						Str.inspect(output.status)
+							.concat(Str.from_utf8_lossy(output.stderr_bytes)),
+					),
+				)
+				_ => {}
+			}
+			match listener.accept!(100) {
+				Ok(stream) => {
+					_ = KaiBundle.respond!(stream, path, archive)
 				}
-			_ => ""
+				Err(_) => {}
+			}
 		}
-		if port.is_empty() {
-			return Err(ServerDidNotStart)
+		Err(ServerStopped)
+	}
+
+	respond! = |stream, path, archive| {
+		request = stream.read_line!(8192, 5000)?
+		var $header = request
+		while $header != "\r\n" and $header != "\n" and $header != "" {
+			$header = stream.read_line!(8192, 5000)?
 		}
-		url = "http://127.0.0.1:${port}/${release_path}"
-		KaiBundle.project!(kai, url, hash, Path.join(work, "served"))
+		(status, body) = match request.split_on(" ") {
+			["GET", target, ..] if target == path => ("200 OK", archive)
+			_ => ("404 Not Found", [])
+		}
+		head = "HTTP/1.1 ${status}\r\nContent-Length: ${body.len().to_str()}"
+			.concat("\r\nConnection: close\r\n\r\n")
+		stream.write!(head.to_utf8().concat(body), 30000)
 	}
 
 	# A fresh project and Roc cache (Nix keeps the caller's) whose check must
 	# leave the bundle cached, with no staging directories behind.
-	project! = |kai, url, hash, dir| {
+	project! = |kai, url, hash, dir, execute!| {
 		cache = Path.join(dir, "cache")
 		Path.create_all!(cache)?
 		nix_cache = match Env.var_str!("XDG_CACHE_HOME") {
@@ -112,9 +147,10 @@ KaiBundle := [].{
 		link = Path.display(Path.join(cache, "nix"))
 		Cmd.new_str("ln").args_str(["-s", nix_cache, link]).exec_cmd!()?
 		Path.write_utf8!(Path.join(dir, "Kaifile.roc"), KaiBundle.kaifile(url))?
-		kai! = |args| Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(dir)
-			.env(OsStr.utf8("XDG_CACHE_HOME"), Path.to_os_str(cache))
-			.exec_output!()
+		kai! = |args| execute!(
+			Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(dir)
+				.env(OsStr.utf8("XDG_CACHE_HOME"), Path.to_os_str(cache)),
+		)
 		_ = kai!(["check"])?
 		roc_packages = Path.join(cache, "roc/packages")
 		cached = KaiBundle.names!(roc_packages)?
@@ -123,8 +159,8 @@ KaiBundle := [].{
 		}
 		_ = kai!(["update"])?
 		output = kai!(["run", "version"])?
-		if !output.stdout_utf8.starts_with("git version ") {
-			return Err(WrongTaskOutput(output.stdout_utf8))
+		if !output.starts_with("git version ") {
+			return Err(WrongTaskOutput(output))
 		}
 		Ok({})
 	}

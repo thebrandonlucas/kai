@@ -29,8 +29,6 @@ KaiRun := [].{
 		\\	Raw("nix", "shell:default", Attrs([("shellHook",
 		\\		Str("export KAI_HOOK='ran from the raw shell hook'"))])),
 
-	hook = "import os; print(os.environ.get('KAI_HOOK'))"
-
 	run_in! = |kai, project| {
 		kaifile = Path.join(project, "Kaifile.roc")
 		shell = "\tShell(\"default\", [Use(\"dev\")]),\n"
@@ -54,20 +52,19 @@ KaiRun := [].{
 		published = Path.read_bytes!(lock)?
 		modified = Path.time_modified!(lock)?
 		args = kai!(["run", "args", "--", "first", "two words", "--literal", ""])?
-		expected = "[\"configured argument\", \"first\", \"two words\", "
-			.concat("\"--literal\", \"\"]\n")
+		expected = "<configured argument><first><two words><--literal><>\n"
 		if args.stdout_utf8 != expected {
 			return Err(WrongArgv(args.stdout_utf8))
 		}
 		one = kai!(["run", "args", "--", "one"])?
-		if one.stdout_utf8 != "[\"configured argument\", \"one\"]\n" {
+		if one.stdout_utf8 != "<configured argument><one>\n" {
 			return Err(WrongArgv(one.stdout_utf8))
 		}
 		git = kai!(["shell", "default", "--", "git", "--version"])?
 		if !git.stdout_utf8.starts_with("git version ") {
 			return Err(WrongShellOutput(git.stdout_utf8))
 		}
-		hooked = kai!(["shell", "default", "--", "python3", "-c", KaiRun.hook])?
+		hooked = kai!(["shell", "default", "--", "printenv", "KAI_HOOK"])?
 		if hooked.stdout_utf8 != "ran from the raw shell hook\n" {
 			return Err(ShellHookNotRun(hooked.stdout_utf8))
 		}

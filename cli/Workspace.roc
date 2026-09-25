@@ -192,13 +192,25 @@ Workspace := [].{
 
 	# Rename publication avoids truncation and overwriting hard-linked contents.
 	atomic_write! : Str, Str => Try({}, _)
-	atomic_write! = |destination, contents| {
+	atomic_write! = |destination, contents|
+		Workspace.publish!(destination, |staged| staged.write_utf8!(contents))
+
+	# Builds run this executable (the binary, not a wrapper script) as their
+	# sandboxed runner; see NixBackend.runner_command.
+	install_runner! : Str => Try({}, _)
+	install_runner! = |destination| {
+		Workspace.safe_path!(destination)?
+		executable = Env.exe_path!()?
+		Workspace.publish!(destination, |staged| executable.copy!(staged))
+	}
+
+	publish! = |destination, write!| {
 		temporary = Env.create_temp_dir_in!(
 			Workspace.path(Workspace.parent(destination)),
 			".kai-write-",
 		)?
 		staged = temporary.join("file")
-		result = match staged.write_utf8!(contents) {
+		result = match write!(staged) {
 			Ok({}) =>
 				match Workspace.safe_path!(destination) {
 					Ok({}) => staged.rename!(Workspace.path(destination))

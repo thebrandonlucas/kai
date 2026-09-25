@@ -16,7 +16,7 @@ KaiBuild := [].{
 		(kai, project) = KaiUpdate.fixture!(
 			binary,
 			"artifacts",
-			["assets", "scripts", "src"],
+			["assets", "src"],
 		)?
 		result = KaiBuild.run_in!(kai, project)
 		Path.delete_all!(project)?
@@ -25,33 +25,22 @@ KaiBuild := [].{
 
 	# Test-only builds and a host-side control task, beside the example's own.
 	extra =
-		\\	Build("missing", [Use("dev"), Run(["python3", "-c", ""]),
+		\\	Build("missing", [Use("dev"), Run(["true"]),
 		\\		Output("dist/missing.txt")]),
-		\\	Build("probe", [Use("dev"), Run(["python3", "probe.py"]),
+		\\	Build("probe", [Use("dev"),
+		\\		Run(["bash", "-c", "{ ${KaiBuild.probe}; } > probe.txt"]),
 		\\		Output("probe.txt")]),
-		\\	Task("probe", [Use("dev"), Run(["python3", "probe.py", "--print"])]),
+		\\	Task("probe", [Use("dev"), Run(["bash", "-c", "${KaiBuild.probe}"])]),
 
-	# Reports whether the marker's token is readable and the port connects.
-	probe =
-		\\import json, socket, sys
-		\\from pathlib import Path
-		\\spec = json.loads(Path("probe.json").read_text())
-		\\try:
-		\\    read = Path(spec["marker"]).read_text() == spec["token"]
-		\\    marker = "read" if read else "wrong"
-		\\except OSError:
-		\\    marker = "denied"
-		\\try:
-		\\    socket.create_connection(("127.0.0.1", spec["port"]), 5).close()
-		\\    tcp = "reachable"
-		\\except OSError:
-		\\    tcp = "denied"
-		\\text = f"host-file {marker}" + chr(10) + f"host-TCP {tcp}" + chr(10)
-		\\if sys.argv[1:]:
-		\\    print(text, end="")
-		\\else:
-		\\    Path("probe.txt").write_text(text)
-		\\
+	# Reports whether the marker holds the token and the port connects, from
+	# the marker, token and port in probe.args. Bash opens /dev/tcp itself.
+	probe = "read -r marker token port < probe.args; "
+		.concat("if text=$(cat -- $marker 2>/dev/null); then ")
+		.concat("if [ x$text = x$token ]; then file=read; else file=wrong; fi; ")
+		.concat("else file=denied; fi; ")
+		.concat("if timeout 5 bash -c ': < /dev/tcp/127.0.0.1/'$port 2>/dev/null; ")
+		.concat("then tcp=reachable; else tcp=denied; fi; ")
+		.concat("echo host-file $file; echo host-TCP $tcp")
 
 	run_in! = |kai, project| {
 		kaifile = Path.join(project, "Kaifile.roc")
@@ -172,10 +161,8 @@ KaiBuild := [].{
 		Path.write_utf8!(marker, token)?
 		listener = Tcp.listen!("127.0.0.1", 0, 5000)?
 		port = listener.local_port!()?
-		spec = "{\"marker\": \"${Path.display(marker)}\", \"port\": "
-			.concat("${port.to_str()}, \"token\": \"${token}\"}\n")
-		Path.write_utf8!(Path.join(project, "probe.json"), spec)?
-		Path.write_utf8!(Path.join(project, "probe.py"), KaiBuild.probe)?
+		args = "${Path.display(marker)} ${token} ${port.to_str()}\n"
+		Path.write_utf8!(Path.join(project, "probe.args"), args)?
 		control = kai!(["run", "probe"])?
 		reachable = "host-file read\nhost-TCP reachable\n"
 		if control.stdout_bytes != reachable.to_utf8() {

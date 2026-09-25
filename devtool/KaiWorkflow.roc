@@ -16,18 +16,22 @@ KaiWorkflow := [].{
 		(kai, project) = KaiUpdate.fixture!(
 			binary,
 			"artifacts",
-			["assets", "scripts", "src"],
+			["assets", "src"],
 		)?
 		result = KaiWorkflow.run_in!(kai, project)
 		Path.delete_all!(project)?
 		result
 	}
 
-	# Test-only tasks and workflows, beside the example's own.
+	# Test-only tasks and workflows, beside the example's own: mark appends
+	# its arguments as one line to markers.txt, and edit changes the source
+	# the library is built from.
 	extra =
-		\\	Task("mark", [Use("dev"), Run(["python3", "mark.py"])]),
-		\\	Task("edit", [Use("dev"), Run(["python3", "mark.py", "--edit"])]),
-		\\	Task("fail", [Use("dev"), Run(["python3", "-c", "exit(7)"])]),
+		\\	Task("mark", [Use("dev"),
+		\\		Run(["sh", "-c", "echo \\"$*\\" >> markers.txt", "mark"])]),
+		\\	Task("edit", [Use("dev"),
+		\\		Run(["sh", "-c", "echo edited revision > src/message.txt"])]),
+		\\	Task("fail", [Use("dev"), Run(["sh", "-c", "exit 7"])]),
 		\\	Workflow("order", [RunTask("mark", ["one"]), BuildArtifact("library"),
 		\\		RunTask("mark", ["two"])]),
 		\\	Workflow("stops", [RunTask("mark", ["first"]), RunTask("fail", []),
@@ -36,18 +40,6 @@ KaiWorkflow := [].{
 		\\		RunTask("mark", ["again"])]),
 		\\	Workflow("fresh", [BuildArtifact("library"), RunTask("edit", []),
 		\\		BuildArtifact("app")]),
-
-	# Appends its arguments as one line to markers.txt, or edits the source
-	# the library is built from.
-	mark =
-		\\import sys
-		\\from pathlib import Path
-		\\if sys.argv[1:] == ["--edit"]:
-		\\    Path("src/message.txt").write_text("edited revision" + chr(10))
-		\\else:
-		\\    with open("markers.txt", "a") as markers:
-		\\        markers.write(" ".join(sys.argv[1:]) + chr(10))
-		\\
 
 	# Kai's stdout in JSON mode: whole lines, each a JSON object with a string
 	# type, and no terminal escapes.
@@ -80,7 +72,6 @@ KaiWorkflow := [].{
 			_ => return Err(UnexpectedKaifileEnd)
 		}
 		Path.write_utf8!(kaifile, config)?
-		Path.write_utf8!(Path.join(project, "mark.py"), KaiWorkflow.mark)?
 		file = |relative| Path.join(project, relative)
 		kai! = |args| Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(project)
 			.run!()

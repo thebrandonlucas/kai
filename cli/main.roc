@@ -21,7 +21,9 @@ import weaver.Param
 import weaver.SubCmd
 import ir.Ir
 import ir.Request
+import nix.NixBackend
 
+import BuildRunner
 import Execute
 import Help
 import Load
@@ -368,6 +370,12 @@ is_terminal! = |descriptor|
 main! : List(OsStr) => Try({}, [Exit(I32)])
 main! = |args| {
 	shown = args.map(OsStr.display)
+	# Inside a build's sandbox; never parsed as a command or a Kaifile.
+	match shown {
+		[command, spec] if command == NixBackend.runner_command =>
+			return BuildRunner.run!(spec)
+		_ => {}
+	}
 	mode = if requests(shown, "--json") Json else Human
 	text_style = Help.text_style({
 		terminal: is_terminal!("1") and is_terminal!("2"),

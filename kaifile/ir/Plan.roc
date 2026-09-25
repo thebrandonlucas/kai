@@ -26,9 +26,12 @@ Plan := { steps : List(Step) }.{
 	## Snapshot exclusions are absolute paths or VCS metadata basenames.
 	## The Nix executor also publishes destination + ".isolation.json": caller
 	## /proc/self/ns/{mnt,net} readlink identities, separate from source bytes.
+	## InstallRunner copies the consumer's own executable to destination; the
+	## backend runs it inside each build (see NixBackend.runner_command).
 	## Serialize workspace use; stop on any failed materialization operation.
 	Operation : [
 		VerifyLocal({ path : Str, nar_hash : Str }),
 		Snapshot({ root : Str, destination : Str, exclude : List(Str) }),
+		InstallRunner({ destination : Str }),
 	]
 }

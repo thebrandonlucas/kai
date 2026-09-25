@@ -7,7 +7,6 @@ import ir.Layout
 import ir.Plan
 import Backend
 import Locks
-import "build-runner.py" as build_runner : Str
 
 ## Package names are native Nix attributes, never translated or filtered.
 ## Each environment imports its sources with only its ordered overlay stack.
@@ -189,7 +188,6 @@ NixBackend :: [].{
 			)
 		}
 		inputs = Locks.inputs(project)?
-		snapshot = "${layout.workspace}/snapshot"
 		remaining = charge_rendered(
 			budget,
 			$argv.fold(0, |n, arg| n + arg.to_utf8().len()),
@@ -198,7 +196,7 @@ NixBackend :: [].{
 			project,
 			$names,
 			$builds,
-			snapshot,
+			layout.workspace,
 			Some({ inputs, layout }),
 			remaining,
 		)?
@@ -259,17 +257,19 @@ NixBackend :: [].{
 					layout.lock_path,
 				]
 					.concat(local)
-				$operations = $operations.append(
-					Snapshot({
-						root: layout.project_root,
-						destination: snapshot,
-						exclude,
-					}),
-				)
+				$operations = $operations
+					.append(
+						Snapshot({
+							root: layout.project_root,
+							destination: snapshot,
+							exclude,
+						}),
+					)
+					.append(InstallRunner({ destination: runner_path(layout.workspace) }))
 			}
 			_ => {}
 		}
-		files = staged_files(layout, contents, !builds.is_empty())
+		files = staged_files(layout, contents)
 			.append({
 				path: "${layout.generated_root}/flake.lock",
 				contents: derived.contents,
@@ -331,21 +331,25 @@ NixBackend :: [].{
 			project,
 			names,
 			project.builds,
-			"${layout.workspace}/snapshot",
+			layout.workspace,
 			Some({ inputs, layout }),
 			Unlimited,
 		)?
-		Ok(staged_files(layout, contents, !project.builds.is_empty()))
+		Ok(staged_files(layout, contents))
 	}
 
-	staged_files : Layout, Str, Bool -> List(Plan.File)
-	staged_files = |layout, contents, builds| {
-		files = [{ path: "${layout.generated_root}/flake.nix", contents }]
-		if builds files.append({
-			path: "${layout.generated_root}/build-runner.py",
-			contents: build_runner,
-		}) else files
-	}
+	staged_files : Layout, Str -> List(Plan.File)
+	staged_files = |layout, contents|
+		[{ path: "${layout.generated_root}/flake.nix", contents }]
+
+	## Builds run Kai's own executable, which InstallRunner copies here, as
+	## `<runner> __build-runner <spec>` inside the sandbox. Outside the
+	## generated flake, so the store keeps one copy per Kai, not per flake.
+	runner_path : Str -> Str
+	runner_path = |workspace| "${workspace}/build-runner"
+
+	runner_command : Str
+	runner_command = "__build-runner"
 
 	check_layout : Ir, Str, Layout, Bool -> Try({}, Str)
 	check_layout = |project, target, layout, builds| {
@@ -357,8 +361,18 @@ NixBackend :: [].{
 		isolation = "${snapshot}.isolation.json"
 		# A generated directory may contain the workspace, but an actual file
 		# must never become its ancestor (Snapshot would create it as a dir).
-		files = staged_files(layout, "", builds).map(|file| file.path)
+		files = staged_files(layout, "").map(|file| file.path)
 			.append("${layout.generated_root}/flake.lock")
+		# The runner is a file, so it must not be the generated root or lock
+		# or their ancestor.
+		runner = runner_path(layout.workspace)
+		if
+			builds and [layout.generated_root, layout.lock_path].any(
+				|path| Layout.contains(runner, path),
+			)
+				{
+					return Err("generated files, snapshot and authority must not overlap")
+				}
 		for file in files {
 			if Layout.contains(file, layout.workspace)
 				or [snapshot, isolation, layout.lock_path].any(
@@ -437,7 +451,7 @@ NixBackend :: [].{
 	}
 
 	## Inspection and executable plans share one renderer. Plans supply the full
-	## stable input set and explicit snapshot path; inspection never guesses one.
+	## stable input set and explicit workspace; inspection never guesses one.
 	render_selected : Ir,
 	List(Str),
 	List(Ir.Build),
@@ -447,7 +461,7 @@ NixBackend :: [].{
 		Some({ inputs : List(Locks.Input), layout : Layout }),
 	],
 	RenderBudget -> Try(Str, Str)
-	render_selected = |ir, names, builds, snapshot, staging, budget| {
+	render_selected = |ir, names, builds, workspace, staging, budget| {
 		missing = ir.unsupported_features(backend.features)
 		if !missing.is_empty() {
 			return Err("unsupported features: ${Str.join_with(missing, ", ")}")
@@ -634,7 +648,7 @@ NixBackend :: [].{
 						.map_err(|_| "unknown build environment")?
 					$rendered = append_rendered(
 						$rendered,
-						render_build(build, env, system, snapshot),
+						render_build(build, env, system, workspace),
 					)?
 				}
 				$rendered = append_rendered(
@@ -706,7 +720,8 @@ NixBackend :: [].{
 	## Ordinary, non-fixed-output derivations keep fetching outside user Run.
 	## Runner tool paths are explicit; argv and metadata enter through JSON.
 	render_build : Ir.Build, Ir.Environment, Str, Str -> Str
-	render_build = |build, environment, system, snapshot| {
+	render_build = |build, environment, system, workspace| {
+		snapshot = if workspace.is_empty() "" else "${workspace}/snapshot"
 		sources = source_names(environment)
 		primary = sources.first() ?? "default"
 		overlays = environment.overlays.map(
@@ -743,6 +758,13 @@ NixBackend :: [].{
 			"builtins.fromJSON (builtins.readFile "
 				.concat("${quote("${snapshot}.isolation.json")})")
 		}
+		# Kai itself, imported apart from the flake so each Kai is stored once.
+		runner = if workspace.is_empty() {
+			"builtins.throw \"build execution requires a caller build runner\""
+		} else {
+			"builtins.path { path = /. + ${quote(runner_path(workspace))}; "
+				.concat("name = \"kai-build-runner\"; }")
+		}
 		argv = Str.join_with(build.run.map(quote), " ")
 		lines([
 			"          ${quote(build.name)} = let",
@@ -754,6 +776,7 @@ NixBackend :: [].{
 				"            };",
 				"            pkgs = sets.${quote(primary)};",
 				"            tools = [ ${Str.join_with(tools, " ")} ];",
+				"            runner = ${runner};",
 				"          in pkgs.runCommand ${quote("kai-${build.name}")} {",
 				"            kaiSpec = builtins.toJSON {",
 				"              project = ${project};",
@@ -761,7 +784,8 @@ NixBackend :: [].{
 				"              argv = [ ${argv} ];",
 				"              output = ${quote(build.output)};",
 				"              path = pkgs.lib.makeBinPath (tools ++ "
-					.concat("[ pkgs.python3 pkgs.coreutils pkgs.bash ]);"),
+					.concat("[ pkgs.coreutils pkgs.bash ]);"),
+				"              coreutils = \"\${pkgs.coreutils}/bin\";",
 				"              inputs = pkgs.linkFarm "
 					.concat(quote("kai-inputs-${build.name}"))
 					.concat(" [ ${Str.join_with(inputs, " ")} ];"),
@@ -771,8 +795,7 @@ NixBackend :: [].{
 				"            };",
 				"            passAsFile = [ \"kaiSpec\" ];",
 				"          } ''",
-				"            \${pkgs.python3}/bin/python3 -I \${./build-runner.py} "
-					.concat("\"$kaiSpecPath\""),
+				"            \${runner} ${runner_command} \"$kaiSpecPath\"",
 				"          '';",
 			]),
 		)
@@ -1246,7 +1269,8 @@ expect match plan_fixture(Request.Build("app")) {
 	_ => False
 }
 
-# Inputs are verified before each fresh snapshot, including every excluded root.
+# Inputs are verified before each fresh snapshot, including every excluded root,
+# and Kai installs itself as the runner outside the generated flake.
 expect match plan_fixture(Request.Build("app")) {
 	Ok({ steps: [plan] }) => plan.operations == [
 		VerifyLocal({
@@ -1267,9 +1291,9 @@ expect match plan_fixture(Request.Build("app")) {
 				"/project/assets",
 			],
 		}),
+		InstallRunner({ destination: "/work/build-runner" }),
 	] and plan.files.map(|file| file.path) == [
 		"/generated/flake.nix",
-		"/generated/build-runner.py",
 		"/generated/flake.lock",
 	]
 	_ => False
@@ -1287,8 +1311,11 @@ expect match plan_fixture(Request.Build("app")) {
 						and file.contents.contains(
 							"builtins.readFile \"/work/snapshot.isolation.json\"",
 						)
-							and file.contents.contains("pkgs.runCommand")
-								and !file.contents.contains("outputHash")
+							and file.contents.contains(
+								"\"/work/build-runner\"; name = \"kai-build-runner\";",
+							)
+								and file.contents.contains("pkgs.runCommand")
+									and !file.contents.contains("outputHash")
 		Err(_) => False
 	}
 	_ => False
@@ -1587,7 +1614,7 @@ expect match plan_locks {
 
 # File/directory conflicts fail in pure preflight and both update entry points,
 # before lock reads, VerifyLocal, Snapshot or staging can have effects.
-expect ["flake.nix", "flake.lock", "build-runner.py"].all(
+expect ["flake.nix", "flake.lock"].all(
 	|file| {
 		["", "/child"].all(
 			|suffix| {
@@ -1645,7 +1672,6 @@ expect match NixBackend.update_files(
 ) {
 	Ok(files) => files.map(|file| file.path) == [
 		"/generated/flake.nix",
-		"/generated/build-runner.py",
 	]
 	Err(_) => False
 }
@@ -1779,7 +1805,7 @@ expect {
 				and step.operations.keep_if(
 					|operation| match operation {
 						Snapshot(_) => True
-						VerifyLocal(_) => False
+						_ => False
 					},
 				).len() == 1,
 	) and match plan.steps.first() {
@@ -2107,7 +2133,7 @@ expect {
 		|step| step.operations.keep_if(
 			|operation| match operation {
 				Snapshot(_) => True
-				VerifyLocal(_) => False
+				_ => False
 			},
 		).len(),
 	) == [1, 0, 0, 1, 0, 1, 1]
@@ -2228,7 +2254,7 @@ expect {
 			).is_err()
 }
 
-# A task-safe layout can collide only with a later build's generated runner.
+# A task-safe layout can collide only with a later build's installed runner.
 # Full preflight and planning must catch that collision before the first task.
 expect {
 	project = TestData.project({
@@ -2237,7 +2263,7 @@ expect {
 			{ name: "ci", steps: [RunTask("check", []), BuildArtifact("app")] },
 		],
 	})
-	layout = { ..TestData.layout, workspace: "/generated/build-runner.py" }
+	layout = { ..TestData.layout, generated_root: "/work/build-runner" }
 	locks = plan_locks?
 	NixBackend.preflight(
 		project,

@@ -302,29 +302,15 @@
               ${wrapperArgs}
           '';
 
-      # Roc checks its package cache before downloading a URL package, so
-      # seeding it with this Kai's platform bundle lets a Kaifile.roc pinned to
-      # that bundle load offline. Best-effort: otherwise Roc downloads it.
-      mkRocCacheSeed =
-        pkgs: platform:
-        pkgs.writeShellScript "kai-seed-roc-cache" ''
-          exec 2>/dev/null
-          PATH=${lib.makeBinPath [ pkgs.coreutils ]}
-          packages="''${XDG_CACHE_HOME:-$HOME/.cache}/roc/packages"
-          for bundle in ${platform}/*/; do
-            hash="$(basename "$bundle")"
-            [ -e "$packages/$hash/main.roc" ] && continue
-            # Publish with a rename like Roc, which also sweeps stale *.tmp.
-            staging="$(mkdir -p "$packages" && mktemp -d "$packages/$hash.XXXXXXXX.tmp")" || continue
-            cp -R --no-preserve=mode "$bundle." "$staging" && mv -T "$staging" "$packages/$hash" || rm -rf "$staging"
-          done
-          true
-        '';
-
-      # Kai evaluates Kaifile.roc with the pinned compiler unless ROC is set.
-      # GNU coreutils only back up the host's, so tasks keep the user's tools.
+      # Kai evaluates Kaifile.roc with the pinned compiler unless ROC is set,
+      # and seeds Roc's package cache with this Kai's unpacked platform bundle,
+      # <hash>/, so a Kaifile.roc pinned to it loads offline. GNU coreutils
+      # only back up the host's, so tasks keep the user's tools.
       mkKaiPackage =
         pkgs: binary:
+        let
+          platform = kaifilePlatformFor pkgs;
+        in
         mkWrappedPackage pkgs {
           pname = "kai";
           inherit binary;
@@ -332,7 +318,7 @@
           wrapperArgs = lib.concatStringsSep " " [
             "--suffix PATH : ${lib.makeBinPath [ pkgs.coreutils ]}"
             "--set-default ROC ${rocFor pkgs}/bin/roc"
-            "--run ${mkRocCacheSeed pkgs (kaifilePlatformFor pkgs)}"
+            "--set-default KAI_PLATFORM_BUNDLE \"${platform}/$(basename ${platform}/*.tar.zst .tar.zst)\""
           ];
         };
 
@@ -442,7 +428,6 @@
               pkgs.gzip
               pkgs.llvmPackages.bintools
               pkgs.file
-              pkgs.python3
               pkgs.sops
             ];
             # Roc apps in this repository import the platform through .basic-cli.
