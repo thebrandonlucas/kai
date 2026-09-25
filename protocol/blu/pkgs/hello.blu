@@ -1,0 +1,5 @@
+((name "hello")
+	(inputs ("base"))
+	(build
+		(Run
+			("sh" "-c" "mkdir $out/bin && printf '#!%s/bin/sh\\necho hello from blu\\n' $base > $out/bin/hello && chmod +x $out/bin/hello"))))
