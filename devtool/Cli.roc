@@ -5,6 +5,7 @@ Cli := [].{
 		ConfigFixtures,
 		Help,
 		KaiEnv(Str),
+		KaiHelp(Str),
 		KaiRun(Str),
 		KaiUpdate(Str),
 		Kaifiles,
@@ -20,6 +21,7 @@ Cli := [].{
 				(ConfigFixtures, ConfigFixtures) => Bool.True
 				(Help, Help) => Bool.True
 				(KaiEnv(left_kai), KaiEnv(right_kai)) => left_kai == right_kai
+				(KaiHelp(left_kai), KaiHelp(right_kai)) => left_kai == right_kai
 				(KaiRun(left_kai), KaiRun(right_kai)) => left_kai == right_kai
 				(KaiUpdate(left_kai), KaiUpdate(right_kai)) => left_kai == right_kai
 				(Kaifiles, Kaifiles) => Bool.True
@@ -66,6 +68,7 @@ Cli := [].{
 		\\  config-fixtures
 		\\  kaifiles
 		\\  kai-env KAI_BINARY
+		\\  kai-help KAI_BINARY
 		\\  kai-run KAI_BINARY
 		\\  kai-update KAI_BINARY
 		\\  prepare-release NAME VERSION
@@ -83,6 +86,7 @@ Cli := [].{
 			["kaifiles"] => Ok(Kaifiles)
 			["kaifiles-smoke"] => Ok(KaifilesSmoke)
 			["kai-env", kai] => Ok(KaiEnv(kai))
+			["kai-help", kai] => Ok(KaiHelp(kai))
 			["kai-run", kai] => Ok(KaiRun(kai))
 			["kai-update", kai] => Ok(KaiUpdate(kai))
 			["prepare-release", name, version] => Ok(PrepareRelease({ name, version }))
@@ -98,7 +102,8 @@ Cli := [].{
 					"kaifiles" => Err(ArgumentsNotAllowed(first))
 					"kaifiles-smoke" => Err(ArgumentsNotAllowed(first))
 					"prepare-release" => Err(ExpectedArguments(first))
-					"kai-env" | "kai-run" | "kai-update" => Err(ExpectedKaiBinary(first))
+					"kai-env" | "kai-help" | "kai-run" | "kai-update" =>
+						Err(ExpectedKaiBinary(first))
 					"prepare-xkai" => Err(ExpectedPrepareXkaiArguments)
 					unknown => Err(UnknownCommand(unknown))
 				}

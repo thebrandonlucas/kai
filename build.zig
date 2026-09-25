@@ -249,6 +249,7 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileInput(b.path("devtool/ConfigFixtures.roc"));
     build_devtool.addFileInput(b.path("devtool/Kaifiles.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiEnv.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiHelp.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiRun.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiUpdate.roc"));
     for (sources.roc_files) |source| {
@@ -598,6 +599,15 @@ pub fn build(b: *std.Build) void {
     run_kai_env.addFileArg(cli_binary);
     kai_env_step.dependOn(&run_kai_env.step);
     ci_step.dependOn(kai_env_step);
+
+    const kai_help_step = b.step(
+        "kai-help",
+        "Compile and run the examples in kai help with real Nix",
+    );
+    const run_kai_help = addDevtoolCommand(b, devtool, "kai-help", &.{});
+    run_kai_help.addFileArg(cli_binary);
+    kai_help_step.dependOn(&run_kai_help.step);
+    ci_step.dependOn(kai_help_step);
 
     const config_fixtures_step = b.step(
         "config-fixtures",

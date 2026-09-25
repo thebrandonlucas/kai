@@ -11,11 +11,13 @@ app [main!] {
 	nix: "../kaifile/nix/main.roc",
 }
 
+import pf.Cmd
 import pf.Env
 import pf.OsStr
 import pf.Stderr
 import pf.Stdout
 import weaver.Cli
+import weaver.Help as WeaverHelp
 import weaver.Opt
 import weaver.Param
 import weaver.SubCmd
@@ -23,6 +25,7 @@ import ir.Ir
 import ir.Request
 
 import Execute
+import Help
 import Load
 import Update
 import Workspace
@@ -37,13 +40,15 @@ Command : [
 	Run(Str, List(Str)),
 ]
 
-description =
-	\\Developer environments, tasks and builds from a Kaifile.roc.
+description = Help.describe(Help.kai).concat(
+	\\
 	\\
 	\\Set ROC to choose the Roc compiler (default: roc).
 	\\Put arguments for a shell command or task after --.
+	,
+)
 
-Parsed : { file : Try(Str, [NoValue]), command : Command }
+Parsed : { file : Try(Str, [NoValue]), no_color : Bool, command : Command }
 
 # When Kaifile.roc loads, its shells and tasks become subcommands so help and
 # usage errors list what the project defines. Otherwise, or when a name is not
@@ -79,22 +84,27 @@ cli = |shell, run, note, text_style|
 				long: "file",
 				help: "Read configuration from PATH (default: Kaifile.roc).",
 			}),
+			no_color: Opt.flag({
+				short: "",
+				long: "no-color",
+				help: "Print plain text without colors.",
+			}),
 			command: SubCmd.required([
 				shell,
 				run,
 				SubCmd.empty({
 					name: "check",
-					description: "Validate Kaifile.roc with the Roc compiler",
+					description: Help.describe(Help.check),
 					value: Check,
 				}),
 				SubCmd.empty({
 					name: "ir",
-					description: "Print the validated Kaifile IR",
+					description: Help.describe(Help.ir),
 					value: PrintIr,
 				}),
 				SubCmd.empty({
 					name: "update",
-					description: "Resolve dependency pins into the lock file",
+					description: Help.describe(Help.update),
 					value: UpdateLock,
 				}),
 			]),
@@ -112,9 +122,9 @@ cli = |shell, run, note, text_style|
 		},
 	)
 
-shell_description = "Enter a shell, or run a command inside it"
+shell_description = Help.describe(Help.shell)
 
-run_description = "Run a task in its environment"
+run_description = Help.describe(Help.run)
 
 command_param = Param.str_list({
 	name: "command",
@@ -177,7 +187,7 @@ project_shell = |ir|
 		),
 		{
 			name: "shell",
-			description: "${shell_description} (default: default)",
+			description: shell_description,
 			mapper: |c| c,
 		},
 	)
@@ -216,22 +226,64 @@ requested_file = |args|
 			}
 		}
 
+# --no-color decides how help renders, so it is also found before parsing.
+requests_no_color : List(Str) -> Bool
+requests_no_color = |args|
+	match args {
+		[] | ["--", ..] => Bool.False
+		["--no-color", ..] => Bool.True
+		[_, .. as rest] => requests_no_color(rest)
+	}
+
+# Kai's help lists each command's summary; a command's own help teaches it.
+display : Cli.CliParser(Parsed), List(arg), (arg -> _) -> Try(Parsed, _)
+display = |kai, args, to_raw| {
+	parsed = Cli.parse_or_display_message(kai, args, to_raw)
+	root = |config| WeaverHelp.help_text(config, ["kai"], kai.text_style)
+	match parsed {
+		Err(Help(message)) =>
+			if message == root(kai.config) {
+				summary = { ..kai.config, subcommands: summarized(kai.config) }
+				Err(Help(root(summary)))
+			} else {
+				parsed
+			}
+		_ => parsed
+	}
+}
+
+summarized = |config|
+	match config.subcommands {
+		HasSubcommands({ commands, required }) =>
+			HasSubcommands({
+				commands: commands.map(
+					|(name, command)|
+						(name, { ..command, description: Help.summary(command.description) }),
+				),
+				required,
+			})
+		NoSubcommands => NoSubcommands
+	}
+
+is_terminal! = |descriptor|
+	match Cmd.new_str("test").args_str(["-t", descriptor]).exec_exit_code!() {
+		Ok(0) => Bool.True
+		_ => Bool.False
+	}
+
 main! : List(OsStr) => Try({}, [Exit(I32)])
 main! = |args| {
-	text_style = match Env.var_str!("NO_COLOR") {
-		Ok(value) if !value.is_empty() => Plain
-		_ => Color
-	}
+	text_style = Help.text_style({
+		terminal: is_terminal!("1") and is_terminal!("2"),
+		no_color: Env.var_str!("NO_COLOR") ?? "",
+		flag: requests_no_color(args.map(OsStr.display)),
+	})
 	located = Load.project!(requested_file(args.map(OsStr.display)))
 	loaded = match located {
 		Ok(project) => Load.ir!(project)
 		Err(err) => Err(err)
 	}
-	parsed = Cli.parse_or_display_message(
-		parser(loaded, text_style),
-		args,
-		OsStr.to_raw,
-	)
+	parsed = display(parser(loaded, text_style), args, OsStr.to_raw)
 	match parsed {
 		Err(Help(message)) | Err(Version(message)) =>
 			Stdout.line!(message).map_err(|_| Exit(1))
@@ -338,8 +390,9 @@ test_ir = Ir.parse(
 	,
 )
 
-parse = |loaded, args|
-	Cli.parse_or_display_message(parser(loaded, Plain), args, |a| Utf8(a))
+render = |loaded, args, style| display(parser(loaded, style), args, |a| Utf8(a))
+
+parse = |loaded, args| render(loaded, args, Plain)
 
 parses = |loaded, args, expected|
 	match parse(loaded, args) {
@@ -362,6 +415,10 @@ expect [
 		Shell("ci", ["git", "--version"]),
 	),
 	(["-f", "Kaifile.roc", "run", "args"], Run("args", [])),
+	(
+		["--no-color", "run", "args", "--", "--no-color"],
+		Run("args", ["--no-color"]),
+	),
 ].all(|(args, expected)| parses(test_ir, args, expected))
 
 # Without a configuration the generic parsers accept any name.
@@ -409,6 +466,48 @@ expect [
 	(["check"], Err(NoValue)),
 ].all(|(args, expected)| requested_file(args) == expected)
 
+# --no-color is kai's only before --; after it, the flag is the task's.
+expect requests_no_color(["run", "t", "--no-color"])
+	and !requests_no_color(["run", "t", "--", "--no-color"])
+
 # A failing child's status becomes kai's; every other failure is 1.
 expect exit_status(ChildExited(Run("fail"), 7)) == 7
 	and exit_status(NoLock("/p/.kai/lock.json")) == 1
+
+help_text = |loaded, args, style|
+	match render(loaded, args, style) {
+		Err(Help(message)) => message
+		_ => ""
+	}
+
+# Plain help says what a command accomplishes before Usage, then commands to
+# try and the Kaifile.roc settings that enable them, with no ANSI escapes.
+expect [test_ir, Err(NoKaifile("/x"))].all(
+	|loaded|
+		[
+			([], Help.kai),
+			(["check"], Help.check),
+			(["ir"], Help.ir),
+			(["update"], Help.update),
+			(["shell"], Help.shell),
+			(["run"], Help.run),
+		].all(
+			|(path, page)| {
+				text = help_text(loaded, path.append("--help"), Plain)
+				intro = Str.join_with(text.split_on("\n"), " ")
+					.split_on("Usage:")
+					.first() ?? ""
+				[page.summary].concat(page.examples).concat(page.config)
+					.all(|line| intro.contains(line))
+					and text.split_on("Examples:").len() == 2
+						and !text.contains("\u(001b)")
+			},
+		),
+)
+
+# Color only styles; the words are the same as in plain help.
+expect {
+	colored = help_text(test_ir, ["shell", "--help"], Color)
+	colored.contains("\u(001b)")
+		and colored.contains("kai shell dev -- git --version")
+}
