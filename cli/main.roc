@@ -30,6 +30,7 @@ import BuildRunner
 import Execute
 import Help
 import Load
+import Output
 import Selection
 import Update
 import Workspace
@@ -43,6 +44,7 @@ Command : [
 	Shell(Str, List(Str)),
 	Run(Str, List(Str)),
 	Build(Str),
+	Workflow(Str),
 ]
 
 description = Help.describe(Help.kai).concat(
@@ -56,26 +58,34 @@ description = Help.describe(Help.kai).concat(
 Parsed : {
 	file : Try(Str, [NoValue]),
 	no_color : Bool,
+	json : Bool,
 	backend : Try(Str, [NoValue]),
 	command : Command,
 }
 
-# When Kaifile.roc loads, its shells, tasks and builds become subcommands so
-# help and usage errors list what the project defines. Otherwise, or when a
-# name is not a valid subcommand, the parsers are generic and the help says
-# why.
+# When Kaifile.roc loads, its shells, tasks, builds and workflows become
+# subcommands so help and usage errors list what the project defines.
+# Otherwise, or when a name is not a valid subcommand, the parsers are
+# generic and the help says why.
 parser : Try(Ir, _), [Color, Plain] -> Cli.CliParser(Parsed)
 parser = |loaded, text_style| {
-	generic = |note|
-		Cli.assert_valid(
-			cli(generic_shell, generic_run, generic_build, note, text_style),
-		)
+	generic = |note| {
+		commands = [generic_shell, generic_run, generic_build, generic_workflow]
+		Cli.assert_valid(cli(commands, note, text_style))
+	}
 	match loaded {
 		Ok(ir) => {
-			shell = if ir.shells.is_empty() generic_shell else project_shell(ir)
-			run = if ir.tasks.is_empty() generic_run else project_run(ir)
-			build = if ir.builds.is_empty() generic_build else project_build(ir)
-			cli(shell, run, build, "", text_style) ?? generic(
+			commands = [
+				if ir.shells.is_empty() generic_shell else project_shell(ir),
+				if ir.tasks.is_empty() generic_run else project_run(ir),
+				if ir.builds.is_empty() generic_build else project_build(ir),
+				if ir.workflows.is_empty() {
+					generic_workflow
+				} else {
+					project_workflow(ir)
+				},
+			]
+			cli(commands, "", text_style) ?? generic(
 				"Kaifile.roc names are not all valid subcommands, so they "
 					.concat("aren't listed."),
 			)
@@ -88,7 +98,7 @@ parser = |loaded, text_style| {
 	}
 }
 
-cli = |shell, run, build, note, text_style|
+cli = |commands, note, text_style|
 	Cli.finish(
 		{
 			file: Opt.maybe_str({
@@ -101,31 +111,35 @@ cli = |shell, run, build, note, text_style|
 				long: "no-color",
 				help: "Print plain text without colors.",
 			}),
+			json: Opt.flag({
+				short: "",
+				long: "json",
+				help: "Print kai's own output as JSON Lines.",
+			}),
 			backend: Opt.maybe_str({
 				short: "",
 				long: "backend",
 				help: "Use nix or guix instead of choosing automatically.",
 			}),
-			command: SubCmd.required([
-				shell,
-				run,
-				build,
-				SubCmd.empty({
-					name: "check",
-					description: Help.describe(Help.check),
-					value: Check,
-				}),
-				SubCmd.empty({
-					name: "ir",
-					description: Help.describe(Help.ir),
-					value: PrintIr,
-				}),
-				SubCmd.empty({
-					name: "update",
-					description: Help.describe(Help.update),
-					value: UpdateLock,
-				}),
-			]),
+			command: SubCmd.required(
+				commands.concat([
+					SubCmd.empty({
+						name: "check",
+						description: Help.describe(Help.check),
+						value: Check,
+					}),
+					SubCmd.empty({
+						name: "ir",
+						description: Help.describe(Help.ir),
+						value: PrintIr,
+					}),
+					SubCmd.empty({
+						name: "update",
+						description: Help.describe(Help.update),
+						value: UpdateLock,
+					}),
+				]),
+			),
 		}.Cli,
 		{
 			name: "kai",
@@ -251,6 +265,46 @@ project_build = |ir|
 		{ name: "build", description: build_description, mapper: |c| c },
 	)
 
+workflow_description = Help.describe(Help.workflow)
+
+generic_workflow = SubCmd.finish(
+	Param.str({
+		name: "name",
+		help: "The workflow to run.",
+		default: NoDefault,
+	}),
+	{
+		name: "workflow",
+		description: workflow_description,
+		mapper: |name| Workflow(name),
+	},
+)
+
+project_workflow = |ir|
+	SubCmd.finish(
+		SubCmd.required(
+			ir.workflows.map(
+				|workflow|
+					SubCmd.empty({
+						name: workflow.name,
+						description: Str.join_with(
+							workflow.steps.map(
+								|step|
+									match step {
+										RunTask(task, _) => "run ${task}"
+										BuildArtifact(build) => "build ${build}"
+										RunWorkflow(name) => "workflow ${name}"
+									},
+							),
+							", ",
+						),
+						value: Workflow(workflow.name),
+					}),
+			),
+		),
+		{ name: "workflow", description: workflow_description, mapper: |c| c },
+	)
+
 # Help depends on the configuration, so --file is found before parsing, the
 # way the parser reads it. Arguments after -- belong to a task or command.
 requested_file : List(Str) -> Try(Str, [NoValue])
@@ -266,13 +320,13 @@ requested_file = |args|
 			}
 		}
 
-# --no-color decides how help renders, so it is also found before parsing.
-requests_no_color : List(Str) -> Bool
-requests_no_color = |args|
+# --no-color decides how help renders and --json how even usage errors are
+# reported, so both are also found before parsing.
+requests : List(Str), Str -> Bool
+requests = |args, flag|
 	match args {
 		[] | ["--", ..] => Bool.False
-		["--no-color", ..] => Bool.True
-		[_, .. as rest] => requests_no_color(rest)
+		[arg, .. as rest] => arg == flag or requests(rest, flag)
 	}
 
 # Kai's help lists each command's summary; a command's own help teaches it.
@@ -313,18 +367,20 @@ is_terminal! = |descriptor|
 
 main! : List(OsStr) => Try({}, [Exit(I32)])
 main! = |args| {
+	shown = args.map(OsStr.display)
 	# Inside a build's sandbox; never parsed as a command or a Kaifile.
-	match args.map(OsStr.display) {
+	match shown {
 		[command, spec] if command == NixBackend.runner_command =>
 			return BuildRunner.run!(spec)
 		_ => {}
 	}
+	mode = if requests(shown, "--json") Json else Human
 	text_style = Help.text_style({
 		terminal: is_terminal!("1") and is_terminal!("2"),
 		no_color: Env.var_str!("NO_COLOR") ?? "",
-		flag: requests_no_color(args.map(OsStr.display)),
+		flag: requests(shown, "--no-color") or mode == Json,
 	})
-	located = Load.project!(requested_file(args.map(OsStr.display)))
+	located = Load.project!(requested_file(shown))
 	loaded = match located {
 		Ok(project) => Load.ir!(project)
 		Err(err) => Err(err)
@@ -334,49 +390,70 @@ main! = |args| {
 		Err(Help(message)) | Err(Version(message)) =>
 			Stdout.line!(message).map_err(|_| Exit(1))
 		Err(InvalidUsage(message)) => {
-			_ = Stderr.line!(message)
+			_ = match mode {
+				Human => Stderr.line!(message)
+				Json => Stdout.line!(Output.error("InvalidUsage", message, 2))
+			}
 			Err(Exit(2))
 		}
 		Ok({ command, backend, .. }) =>
-			match run!(command, backend, located, loaded) {
+			match run!(command, backend, located, loaded, mode) {
 				Ok({}) => Ok({})
 				Err(err) => {
-					_ = Stderr.line!("kai: ${describe(err)}")
-					Err(Exit(exit_status(err)))
+					code = exit_status(err)
+					_ = match mode {
+						Human => Stderr.line!("kai: ${describe(err)}")
+						Json =>
+							Stdout.line!(
+								Output.error(Str.inspect(err), describe(err), code),
+							)
+						}
+					Err(Exit(code))
 				}
 			}
 		}
 }
 
-run! = |command, backend, located, loaded| {
+run! = |command, backend, located, loaded, mode| {
 	choice = backend_choice(backend)?
 	project = located?
+	execute! = |request|
+		Execute.select!(loaded?, request, choice, project.root, mode)
 	match command {
 		Check => {
-			Load.check!(project)?
+			Load.check!(project, mode)?
 			_ = loaded?
-			Stdout.line!("${project.file} is valid")
+			valid = "${project.file} is valid"
+			Output.result!(
+				mode,
+				valid,
+				Output.event("check", valid, [("file", Output.text(project.file))]),
+			)
 		}
-		PrintIr => Stdout.write!(loaded?.to_str())
+		PrintIr => {
+			ir = loaded?.to_str()
+			match mode {
+				Human => Stdout.write!(ir)
+				Json => Stdout.line!(Output.event("ir", ir, []))
+			}
+		}
 		UpdateLock => {
 			ir = loaded?
 			Selection.lockable(choice, ir)?
 			layout = Workspace.locate!(project.root)?
 			Update.update!(ir, layout)?
-			Stdout.line!("updated ${layout.lock_path}")
-		}
-		Shell(name, shell_command) =>
-			Execute.select!(
-				loaded?,
-				Request.Shell(name, shell_command),
-				choice,
-				project.root,
+			updated = "updated ${layout.lock_path}"
+			Output.result!(
+				mode,
+				updated,
+				Output.event("update", updated, [("lock", Output.text(layout.lock_path))]),
 			)
-		Run(task, args) =>
-			Execute.select!(loaded?, Request.Run(task, args), choice, project.root)
-		Build(name) =>
-			Execute.select!(loaded?, Request.Build(name), choice, project.root)
 		}
+		Shell(name, shell_command) => execute!(Request.Shell(name, shell_command))
+		Run(task, args) => execute!(Request.Run(task, args))
+		Build(name) => execute!(Request.Build(name))
+		Workflow(name) => execute!(Request.Workflow(name))
+	}
 }
 
 # --backend narrows automatic selection to one backend; commands that do not
@@ -463,7 +540,9 @@ test_ir = Ir.parse(
 	\\  ((name "ci") (environment "dev"))))
 	\\ (tasks (((name "args") (environment "dev") (run ("echo")))))
 	\\ (builds (((name "app") (environment "dev") (inputs ()) (needs ())
-	\\  (run ("true")) (output "out")))))
+	\\  (run ("true")) (output "out"))))
+	\\ (workflows (((name "ci")
+	\\  (steps ((RunTask "args" ()) (BuildArtifact "app")))))))
 	,
 )
 
@@ -493,6 +572,9 @@ expect [
 	),
 	(["-f", "Kaifile.roc", "run", "args"], Run("args", [])),
 	(["build", "app"], Build("app")),
+	(["workflow", "ci"], Workflow("ci")),
+	(["--json", "run", "args", "--", "--json"], Run("args", ["--json"])),
+	(["workflow", "ci", "--json"], Workflow("ci")),
 	(
 		["--no-color", "run", "args", "--", "--no-color"],
 		Run("args", ["--no-color"]),
@@ -508,6 +590,7 @@ expect [
 	(["run", "test", "--", "--json", "--yes"], Run("test", ["--json", "--yes"])),
 	(["shell", "dev", "--", "git"], Shell("dev", ["git"])),
 	(["build", "anything"], Build("anything")),
+	(["workflow", "anything"], Workflow("anything")),
 	(["shell"], Shell("default", [])),
 ].all(|(args, expected)| parses(Err(NoKaifile("/x")), args, expected))
 
@@ -518,6 +601,8 @@ expect [
 	["run"],
 	["build", "missing"],
 	["build"],
+	["workflow", "missing"],
+	["workflow"],
 ].all(
 	|args|
 		match parse(test_ir, args) {
@@ -555,9 +640,16 @@ expect [
 	(["check"], Err(NoValue)),
 ].all(|(args, expected)| requested_file(args) == expected)
 
-# --no-color is kai's only before --; after it, the flag is the task's.
-expect requests_no_color(["run", "t", "--no-color"])
-	and !requests_no_color(["run", "t", "--", "--no-color"])
+# --no-color and --json are kai's only before --; after it, they are the
+# task's.
+expect [
+	(["run", "t", "--no-color"], "--no-color", Bool.True),
+	(["run", "t", "--", "--no-color"], "--no-color", Bool.False),
+	(["--json", "check"], "--json", Bool.True),
+	(["workflow", "ci", "--json"], "--json", Bool.True),
+	(["run", "t", "--", "--json"], "--json", Bool.False),
+	(["run", "t", "--jsonl"], "--json", Bool.False),
+].all(|(args, flag, expected)| requests(args, flag) == expected)
 
 # --backend names one backend; anything else is a usage error.
 expect [
@@ -591,6 +683,7 @@ expect [test_ir, Err(NoKaifile("/x"))].all(
 			(["shell"], Help.shell),
 			(["run"], Help.run),
 			(["build"], Help.build),
+			(["workflow"], Help.workflow),
 		].all(
 			|(path, page)| {
 				text = help_text(loaded, path.append("--help"), Plain)

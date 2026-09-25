@@ -22,7 +22,11 @@ Help := [].{
 	check = {
 		summary: "Compile Kaifile.roc and report whether its configuration is "
 			.concat("valid, without building or running anything."),
-		examples: ["kai check", "kai --file Kaifile.roc check"],
+		examples: [
+			"kai check",
+			"kai --file Kaifile.roc check",
+			"kai --json check",
+		],
 		config: [],
 	}
 
@@ -75,6 +79,22 @@ Help := [].{
 			.concat("of the project, then print its store path."),
 		examples: ["kai update", "kai build copy"],
 		config: [Help.environment, Help.copy_build],
+	}
+
+	ci_workflow = "Workflow(\"ci\", [RunTask(\"test\", []), "
+		.concat("BuildArtifact(\"copy\")]),")
+
+	workflow : Help.Page
+	workflow = {
+		summary: "Run a named workflow's tasks and builds in order, stopping "
+			.concat("at the first step that fails with its exit code."),
+		examples: ["kai update", "kai workflow ci", "kai --json workflow ci"],
+		config: [
+			Help.environment,
+			Help.test_task,
+			Help.copy_build,
+			Help.ci_workflow,
+		],
 	}
 
 	# Weaver drops leading spaces from descriptions, so headings rather than

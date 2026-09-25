@@ -4,12 +4,15 @@ import pf.Cmd
 import pf.Env
 import pf.OsStr
 import pf.Path
+import pf.Stderr
 
 import ir.Ir
 import ir.Project
 import nix.NixBackend
 
 import "../.roc-version" as compiler_version : Str
+
+import Output
 
 Load := [].{
 	# The configuration file and the directory commands resolve paths against.
@@ -71,19 +74,31 @@ Load := [].{
 			_ => Err(UnsupportedHost)
 		}
 
-	# Type-check the whole configuration, reporting compiler diagnostics as-is.
-	# roc exits 2 when it found only warnings.
-	check! : Location => Try({}, _)
-	check! = |project| {
+	# Type-check the whole configuration, reporting compiler diagnostics as-is;
+	# in JSON mode the compiler's stdout goes to stderr instead. roc exits 2
+	# when it found only warnings.
+	check! : Location, Output.Mode => Try({}, _)
+	check! = |project, mode| {
 		Load.check_host!()?
-		checked = Cmd.new_str(Load.compiler!()?)
+		command = Cmd.new_str(Load.compiler!()?)
 			.args_str(["check", project.file])
 			.cwd(Load.path(project.root))
-			.exec_cmd!()
-		match checked {
-			Ok({}) => Ok({})
-			Err(ExecCmdFailed({ exit_code, .. })) if exit_code == 2 => Ok({})
-			Err(_) => Err(KaifileInvalid(project.file))
+		match mode {
+			Human =>
+				match command.exec_cmd!() {
+					Ok({}) => Ok({})
+					Err(ExecCmdFailed({ exit_code, .. })) if exit_code == 2 => Ok({})
+					Err(_) => Err(KaifileInvalid(project.file))
+				}
+			Json => {
+				output = command.stderr(Inherit).run!()?
+				Stderr.write_bytes!(output.stdout_bytes)?
+				if output.status == Exited(0) or output.status == Exited(2) {
+					Ok({})
+				} else {
+					Err(KaifileInvalid(project.file))
+				}
+			}
 		}
 	}
 
