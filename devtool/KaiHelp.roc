@@ -76,7 +76,7 @@ KaiHelp := [].{
 			Path.display(project),
 			Path.display(Path.join(root, "kaifile/platform/main.roc")),
 		)
-		lines = ["Name(\"help\"),", "Systems([\"x86_64-linux\"]),"]
+		lines = ["Name(\"help\"),", "Systems([\"x86_64-linux\", \"aarch64-linux\"]),"]
 			.concat($settings)
 			.map(|line| "\t${line}")
 		header = "app [config] { pf: platform \"${platform_path}\" }"

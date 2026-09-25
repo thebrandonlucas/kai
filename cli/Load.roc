@@ -75,11 +75,13 @@ Load := [].{
 			_ => Str.inspect(err)
 		}
 
-	# Kaifile evaluation has only been verified on an x86_64 Linux host.
-	check_host! : () => Try({}, [UnsupportedHost])
-	check_host! = ||
+	# The host's Nix system. Kai evaluates Kaifile.roc and runs Nix only on
+	# these hosts; Update.target! selects the generated outputs for it.
+	system! : () => Try(Str, [UnsupportedHost])
+	system! = ||
 		match Env.platform!() {
-			{ arch: X64, os: LINUX } => Ok({})
+			{ arch: X64, os: LINUX } => Ok("x86_64-linux")
+			{ arch: AARCH64, os: LINUX } => Ok("aarch64-linux")
 			_ => Err(UnsupportedHost)
 		}
 
@@ -87,7 +89,7 @@ Load := [].{
 	# in JSON mode the compiler's stdout goes to stderr instead.
 	check! : Location, Output.Mode => Try({}, _)
 	check! = |project, mode| {
-		Load.check_host!()?
+		_ = Load.system!()?
 		command = Cmd.new_str(Load.compiler!()?)
 			.args_str(["check", project.file])
 			.cwd(Load.path(project.root))
@@ -108,7 +110,7 @@ Load := [].{
 	# Evaluate the configuration and accept only IR this Kai understands.
 	ir! : Location => Try(Ir, _)
 	ir! = |project| {
-		Load.check_host!()?
+		_ = Load.system!()?
 		output = Cmd.new_str(Load.compiler!()?)
 			.args_str([project.file])
 			.cwd(Load.path(project.root))

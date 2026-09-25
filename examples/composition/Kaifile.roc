@@ -5,7 +5,7 @@ import ProjectTasks
 
 config = [
 	Name("composed"),
-	Systems(["x86_64-linux"]),
+	Systems(["x86_64-linux", "aarch64-linux"]),
 	Environment("base", [Tools(["git"])]),
 	Environment("dev", [Extend("base"), Tools(["python3", "git"])]),
 	Shell("default", [Use("dev")]),

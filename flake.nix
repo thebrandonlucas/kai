@@ -137,14 +137,14 @@
             runHook preBuild
             export HOME="$TMPDIR" XDG_CACHE_HOME="$TMPDIR/cache" ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
             (cd kaifile/platform && zig build --release)
-            (cd kaifile/platform/targets && sha256sum --quiet -c x64musl.sha256)
+            (cd kaifile/platform/targets && sha256sum --quiet -c x64musl.sha256 arm64musl.sha256)
 
             # roc bundle packs only files below main.roc's directory, so the
             # ir package moves inside the platform.
             mkdir -p stage/ir stage/targets bundle
             cp kaifile/platform/*.roc stage/
             cp kaifile/ir/*.roc stage/ir/
-            cp -R kaifile/platform/targets/x64musl stage/targets/
+            cp -R kaifile/platform/targets/{x64musl,arm64musl} stage/targets/
             substituteInPlace stage/main.roc --replace-fail '"../ir/main.roc"' '"ir/main.roc"'
             (cd stage && roc bundle main.roc $(find . -type f ! -path ./main.roc | LC_ALL=C sort) --output-dir ../bundle)
             runHook postBuild

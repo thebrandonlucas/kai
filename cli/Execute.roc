@@ -83,7 +83,8 @@ Execute := [].{
 	# first effect.
 	request! : Ir, Request, Layout, Output.Mode => Try({}, _)
 	request! = |ir, request, layout, mode| {
-		NixBackend.preflight(ir, request, Update.target, layout)
+		target = Update.target!()?
+		NixBackend.preflight(ir, request, target, layout)
 			.map_err(|message| RenderFailed(message))?
 		text = match Update.observe!(layout.lock_path)? {
 			Present(bytes) => Str.from_utf8(bytes)
@@ -92,7 +93,7 @@ Execute := [].{
 		}
 		locks = Locks.decode(text)
 			.map_err(|message| BadLock(layout.lock_path, message))?
-		plan = NixBackend.plan(ir, request, Update.target, layout, locks)
+		plan = NixBackend.plan(ir, request, target, layout, locks)
 			.map_err(|message| RenderFailed(message))?
 		Workspace.prepare!(layout)?
 		var $index = 0

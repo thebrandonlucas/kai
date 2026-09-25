@@ -473,7 +473,7 @@ describe = |err|
 	match err {
 		NoKaifile(location) => "no Kaifile.roc at ${location}"
 		UnsupportedHost =>
-			"evaluating Kaifile.roc currently requires an x86_64 Linux host"
+			"Kai runs only on x86_64 and aarch64 Linux hosts"
 		CompilerUnavailable(compiler, message) =>
 			"could not run the Roc compiler `${compiler}` (${message}); "
 				.concat(needs_compiler)

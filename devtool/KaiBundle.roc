@@ -43,7 +43,7 @@ KaiBundle := [].{
 		\\
 		\\config = [
 		\\	Name("bundled"),
-		\\	Systems(["x86_64-linux"]),
+		\\	Systems(["x86_64-linux", "aarch64-linux"]),
 		\\	Environment("dev", [Tools(["git"])]),
 		\\	Task("version", [Use("dev"), Run(["git", "--version"])]),
 		\\]
