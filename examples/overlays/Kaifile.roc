@@ -3,7 +3,7 @@ app [config] { pf: platform "../../kaifile/platform/main.roc" }
 
 config = [
 	Name("overlays"),
-	Systems(["x86_64-linux"]),
+	Systems(["x86_64-linux", "aarch64-linux"]),
 	Overlay("base", "path:./overlays/base"),
 	Overlay("patch", "path:./overlays/patch"),
 	Environment("base", [Tools(["fixtureTool"]), Overlays(["base"])]),

@@ -12,6 +12,7 @@ const Target = struct {
 
 const targets = [_]Target{
     .{ .dir = "x64musl", .query = .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl } },
+    .{ .dir = "arm64musl", .query = .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .musl } },
 };
 
 pub fn build(b: *std.Build) void {

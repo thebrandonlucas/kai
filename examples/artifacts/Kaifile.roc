@@ -5,7 +5,7 @@ app [config] { pf: platform "../../kaifile/platform/main.roc" }
 
 config = [
 	Name("artifacts"),
-	Systems(["x86_64-linux"]),
+	Systems(["x86_64-linux", "aarch64-linux"]),
 	Environment("dev", [Tools(["coreutils"])]),
 	# An ordinary unsandboxed task checks working-tree source, not an artifact.
 	Task(

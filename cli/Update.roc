@@ -8,18 +8,21 @@ import ir.Layout
 import nix.NixBackend
 import nix.Locks
 
+import Load
 import Workspace
 
 Update := [].{
-	# The system the generated flake is evaluated for; Load.check_host! checks
-	# the separate build host that evaluates Kaifile.roc.
-	target = "x86_64-linux"
+	# The declared system whose generated outputs Kai builds and runs: the
+	# host's own, which the project must list in Systems.
+	target! : () => Try(Str, [UnsupportedHost])
+	target! = Load.system!
 
 	update! : Ir, Layout => Try({}, _)
 	update! = |ir, layout| {
-		files = NixBackend.update_files(ir, Update.target, layout)
+		target = Update.target!()?
+		files = NixBackend.update_files(ir, target, layout)
 			.map_err(|message| RenderFailed(message))?
-		locals = NixBackend.local_checks(ir, Update.target, layout)
+		locals = NixBackend.local_checks(ir, target, layout)
 			.map_err(|message| RenderFailed(message))?
 		Workspace.prepare!(layout)?
 		prior = Update.observe!(layout.lock_path)?

@@ -143,7 +143,8 @@ ConfigFixtures := [].{
 		{
 			name: "EquivalentComposition",
 			expected: Valid,
-			body: \\config = [Name("composed"), Systems(["x86_64-linux"]),
+			body: \\config = [Name("composed"),
+				\\ Systems(["x86_64-linux", "aarch64-linux"]),
 				\\ Environment("base", [Tools(["git"])]),
 				\\ Environment("dev", [Tools(["git", "coreutils"])]),
 				\\ Shell("default", [Use("dev")]),

@@ -164,9 +164,6 @@ NixBackend :: [].{
 			}
 			Request.Build(name) => {
 				$action = Build(name)
-				if target != "x86_64-linux" {
-					return Err("sandboxed builds currently require target x86_64-linux")
-				}
 				$builds = Project.build_closure(project, name)?
 				$names = $builds.map(|b| b.environment)
 				# Namespace witnesses compare caller/build on the same kernel.
@@ -2295,30 +2292,18 @@ expect {
 			Err("generated files, snapshot and authority must not overlap")
 }
 
-# Task-compatible target selection cannot hide a later unsupported build.
+# Builds select the caller target's outputs, like shells and tasks.
 expect {
 	project = { ..workflow_project, systems: ["aarch64-linux"] }
 	locks = plan_locks?
 	NixBackend.plan(
 		project,
-		Request.Run("check", []),
+		Request.Build("app"),
 		"aarch64-linux",
 		TestData.layout,
 		locks,
-	).is_ok() and NixBackend.plan(
-		project,
-		Request.Workflow("verify"),
-		"aarch64-linux",
-		TestData.layout,
-		locks,
-	).map_ok(|plan| plan.steps) ==
-		Err("sandboxed builds currently require target x86_64-linux")
-		and NixBackend.preflight(
-			project,
-			Request.Workflow("verify"),
-			"aarch64-linux",
-			TestData.layout,
-		) == Err("sandboxed builds currently require target x86_64-linux")
+	).map_ok(|plan| plan.steps.map(|step| step.argv.last())) ==
+		Ok([Ok("path:/generated#packages.aarch64-linux.app")])
 }
 
 # Missing or cyclic later build dependencies are whole-project failures,

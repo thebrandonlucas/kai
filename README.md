@@ -50,7 +50,7 @@ app [config] {
 
 config = [
 	Name("hello"),
-	Systems(["x86_64-linux"]),
+	Systems(["x86_64-linux", "aarch64-linux"]),
 	Environment("dev", [Tools(["cowsay", "python3"])]),
 	Shell("default", [Use("dev")]),
 	Task("hello", [Use("dev"), Run(["cowsay", "hello from kai"])]),
@@ -90,7 +90,7 @@ tasks, builds and workflows.
 | Setting | Purpose |
 | --- | --- |
 | `Name(name)` | Project name. Required. |
-| `Systems([...])` | Systems the generated flake declares. Optional; must include `x86_64-linux`, the only system Kai currently runs on. |
+| `Systems([...])` | Systems the generated flake declares. Optional (default `x86_64-linux` and `aarch64-linux`); must include the system of the host Kai runs on. |
 | `Packages(name, source)` | A package source: `Auto`, `From(NixPackages(flakeRef))` or `From(GuixPackages(...))`. Tools use the `default` source (`Auto`: nixpkgs unstable on Nix, the installed channels on Guix) unless written `"source#tool"`. |
 | `Overlay(name, flakeRef)` | A Nix overlay, applied only where an environment selects it. |
 | `Environment(name, [...])` | A set of tools: `Tools([...])`, `Overlays([...])` in order, and `Extend(parent)` to inherit the parent's tools and overlays first. |
@@ -182,9 +182,8 @@ errors 1.
 
 ## Limits
 
-- Linux only. `Kaifile.roc` is evaluated, and shells and builds are generated,
-  on and for `x86_64-linux`. An `aarch64-linux` archive is published but
-  cannot evaluate a `Kaifile.roc` yet.
+- Linux only. Kai runs on `x86_64-linux` and `aarch64-linux`, and generates
+  shells and builds for the system it runs on.
 - Services, machines, deploy, switch, rollback, generations, images, ISOs and
   secrets are not in this version, and the old `Kaifile` format is not read.
   If you need them, stay on

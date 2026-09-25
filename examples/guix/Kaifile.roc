@@ -4,7 +4,7 @@ app [config] { pf: platform "../../kaifile/platform/main.roc" }
 
 config = [
 	Name("guix"),
-	Systems(["x86_64-linux"]),
+	Systems(["x86_64-linux", "aarch64-linux"]),
 	Packages("channels", From(GuixPackages("guix"))),
 	Environment("dev", [Tools(["hello"])]),
 	Environment("channels", [Tools(["channels#hello"])]),
