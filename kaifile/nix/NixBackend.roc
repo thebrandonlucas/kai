@@ -35,8 +35,6 @@ NixBackend :: [].{
 	supported_systems = [
 		"x86_64-linux",
 		"aarch64-linux",
-		"x86_64-darwin",
-		"aarch64-darwin",
 	]
 
 	## Reserved shell prefix keeps aliases distinct from task environment refs.
@@ -1844,13 +1842,14 @@ expect {
 }
 
 # Distinct requests count all rendered systems toward the 16 MiB budget.
-# Four valid near-1-MiB build argv render over budget; three remain below it.
+# Eight valid near-1-MiB build argv, rendered for both systems, exceed the
+# budget; seven remain below it.
 expect {
 	var $payload = "x"
 	while $payload.to_utf8().len() < 1048576 {
 		$payload = $payload.concat($payload)
 	}
-	names = ["one", "two", "three", "four"]
+	names = ["one", "two", "three", "four", "five", "six", "seven", "eight"]
 	project = TestData.project({
 		..TestData.workflow_data,
 		systems: NixBackend.supported_systems,
@@ -1864,11 +1863,7 @@ expect {
 		workflows: [
 			{
 				name: "below",
-				steps: [
-					BuildArtifact("one"),
-					BuildArtifact("two"),
-					BuildArtifact("three"),
-				],
+				steps: names.drop_last(1).map(|name| BuildArtifact(name)),
 			},
 			{ name: "over", steps: names.map(|name| BuildArtifact(name)) },
 		],
@@ -1882,7 +1877,7 @@ expect {
 		locks,
 	)?
 	diagnostic = "workflow plan exceeds 16 MiB of distinct rendered requests"
-	below.steps.len() == 3 and NixBackend.preflight(
+	below.steps.len() == 7 and NixBackend.preflight(
 		project,
 		Request.Workflow("over"),
 		"x86_64-linux",
@@ -2276,18 +2271,18 @@ expect {
 
 # Task-compatible target selection cannot hide a later unsupported build.
 expect {
-	project = { ..workflow_project, systems: ["aarch64-darwin"] }
+	project = { ..workflow_project, systems: ["aarch64-linux"] }
 	locks = plan_locks?
 	NixBackend.plan(
 		project,
 		Request.Run("check", []),
-		"aarch64-darwin",
+		"aarch64-linux",
 		TestData.layout,
 		locks,
 	).is_ok() and NixBackend.plan(
 		project,
 		Request.Workflow("verify"),
-		"aarch64-darwin",
+		"aarch64-linux",
 		TestData.layout,
 		locks,
 	).map_ok(|plan| plan.steps) ==
@@ -2295,7 +2290,7 @@ expect {
 		and NixBackend.preflight(
 			project,
 			Request.Workflow("verify"),
-			"aarch64-darwin",
+			"aarch64-linux",
 			TestData.layout,
 		) == Err("sandboxed builds currently require target x86_64-linux")
 }

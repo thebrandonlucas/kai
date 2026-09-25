@@ -1,7 +1,7 @@
 ((format ((major 2) (minor 0)))
  (name "full")
  (requires ("raw"))
- (systems ("x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"))
+ (systems ("x86_64-linux" "aarch64-linux"))
  (sources (((name "stable")
             (provider (NixPackages "github:NixOS/nixpkgs/nixos-24.05")))))
  (inputs (((name "roc") (url "github:roc-lang/roc-overlay") (kind Overlay))

@@ -532,29 +532,19 @@ pub fn build(b: *std.Build) void {
         &.{ "nix", "flake", "check" },
     );
 
-    switch (b.graph.host.result.os.tag) {
-        .linux => _ = addCiCommand(
-            b,
-            ci_step,
-            test_step,
-            "build Linux release outputs",
-            &.{
-                "nix",
-                "build",
-                ".#release-x86_64-linux",
-                ".#release-aarch64-linux",
-                "--no-link",
-            },
-        ),
-        .macos => _ = addCiCommand(
-            b,
-            ci_step,
-            test_step,
-            "skip Linux release outputs on Darwin",
-            &.{ "echo", "Skipping Linux-only release output builds on Darwin" },
-        ),
-        else => @panic("zig build ci supports only Linux and Darwin hosts"),
-    }
+    _ = addCiCommand(
+        b,
+        ci_step,
+        test_step,
+        "build Linux release outputs",
+        &.{
+            "nix",
+            "build",
+            ".#release-x86_64-linux",
+            ".#release-aarch64-linux",
+            "--no-link",
+        },
+    );
 
     // Avoid shell redirection or mkdir inside a script.
     const prepare_outputs = b.addSystemCommand(&.{

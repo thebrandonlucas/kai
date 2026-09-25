@@ -28,8 +28,6 @@ Lower :: [].{
 	default_systems = [
 		"x86_64-linux",
 		"aarch64-linux",
-		"x86_64-darwin",
-		"aarch64-darwin",
 	]
 
 	lower : List(Config.Setting) -> Try(Ir, Str)
