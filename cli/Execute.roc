@@ -1,8 +1,9 @@
-# Execute a shell or task request: select its backend, then for Nix read the
-# lock authority, obtain the whole pure plan and run its steps in order, or
-# run one Guix shell. Nothing here writes the lock.
+# Execute a shell, task or build request: select its backend, then for Nix
+# read the lock authority, obtain the whole pure plan and run its steps in
+# order, or run one Guix shell. Nothing here writes the lock.
 import pf.Cmd
 import pf.Stderr
+import pf.Stdout
 
 import ir.Ir
 import ir.Layout
@@ -13,6 +14,7 @@ import nix.Locks
 import guix.GuixBackend
 
 import Selection
+import Snapshot
 import Update
 import Workspace
 
@@ -89,8 +91,9 @@ Execute := [].{
 		Ok({})
 	}
 
-	# Verify local pins, stage generated files, then run the argv from the
-	# project root with inherited stdio. A failing child stops the plan.
+	# Verify local pins, snapshot the project and install the runner for a
+	# build, stage generated files, then run the argv from the project root. A
+	# failing child stops the plan.
 	step! : Plan.Step, Layout => Try({}, _)
 	step! = |step, layout| {
 		for operation in step.operations {
@@ -106,12 +109,48 @@ Execute := [].{
 						return Err(LocalChanged(path))
 					}
 				}
-				# Snapshots only materialize builds, which kai cannot run yet.
-				Snapshot(_) => return Err(Unsupported("snapshot operation"))
-			}
+				Snapshot(snapshot) => Snapshot.snapshot!(snapshot)?
+				InstallRunner({ destination }) =>
+					Workspace.install_runner!(destination)?
+				}
 		}
 		Workspace.stage!(step.files, layout)?
-		Execute.child!(step.argv, step.action, layout.project_root)
+		match step.action {
+			Build(name) => Execute.build!(step, name, layout.project_root)
+			_ => Execute.child!(step.argv, step.action, layout.project_root)
+		}
+	}
+
+	# Resolve the requested artifact with the planned command: its store path
+	# on stdout, only after success. Dependency metadata stays descriptive.
+	build! : Plan.Step, Str, Str => Try({}, _)
+	build! = |step, name, root| {
+		for artifact in step.artifacts {
+			Stderr.line!(
+				"building ${artifact.name}: ${artifact.installable} "
+					.concat("(output ${artifact.output})"),
+			)?
+		}
+		artifact = step.artifacts.find_first(|a| a.name == name)
+			.map_err(|_| RenderFailed("the plan has no artifact ${name}"))?
+		(program, args) = match step.argv {
+			[first, .. as rest] => (first, rest)
+			[] => return Err(RenderFailed("the plan has no build command"))
+		}
+		output = Cmd.new_str(program)
+			.args_str(args)
+			.cwd(Workspace.path(root))
+			.stderr(Inherit)
+			.run!()?
+		match output.status {
+			Exited(0) => {
+				Stdout.write_bytes!(output.stdout_bytes)?
+				path = Str.from_utf8_lossy(output.stdout_bytes).trim()
+				Stderr.line!("built ${name}: ${artifact.installable} -> ${path}")
+			}
+			Exited(code) => Err(ChildExited(Build(name), code))
+			Signaled(signal) => Err(ChildExited(Build(name), 128 + signal))
+		}
 	}
 
 	# Run argv from the project root with inherited stdio.

@@ -54,6 +54,9 @@ Help := [].{
 		],
 	}
 
+	copy_build = "Build(\"copy\", [Use(\"dev\"), "
+		.concat("Run([\"cp\", \"Kaifile.roc\", \"out\"]), Output(\"out\")]),")
+
 	run : Help.Page
 	run = {
 		summary: "Run a named task in its environment; arguments after -- are "
@@ -64,6 +67,14 @@ Help := [].{
 			"kai run test -- --build-options",
 		],
 		config: [Help.environment, Help.test_task],
+	}
+
+	build : Help.Page
+	build = {
+		summary: "Build a named artifact in the Nix sandbox from a fresh snapshot "
+			.concat("of the project, then print its store path."),
+		examples: ["kai update", "kai build copy"],
+		config: [Help.environment, Help.copy_build],
 	}
 
 	# Weaver drops leading spaces from descriptions, so headings rather than
