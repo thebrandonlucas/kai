@@ -1,4 +1,4 @@
-//! Builds the roc-blueprint platform host into targets/<target>/libhost.a.
+//! Builds the Kaifile platform host into targets/<target>/libhost.a.
 //!
 //! The musl runtime files beside libhost.a (crt1.o, libc.a, libzigc.a,
 //! libcompiler_rt.a) are not built here; they are vendored, see

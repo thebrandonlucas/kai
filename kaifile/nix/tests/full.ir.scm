@@ -20,5 +20,5 @@
         (value (Attrs (((name "shellHook") (value (Str "echo \"hi ${USER}\"\nexport FOO=bar\n")))
                        ((name "GREETING") (value (Str "hello")))))))
        ((backend "nix") (target "flake")
-        (value (Attrs (((name "blueprint") (value (Attrs (((name "version") (value (Int 1)))))))))))
+        (value (Attrs (((name "kai") (value (Attrs (((name "version") (value (Int 1)))))))))))
        ((backend "guix") (target "whatever") (value (Int 0))))))

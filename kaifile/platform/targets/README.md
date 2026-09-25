@@ -1,6 +1,6 @@
 # Vendored linker inputs
 
-The `roc-blueprint` platform links a fully static musl executable. Only
+The Kaifile platform links a fully static musl executable. Only
 `libhost.a` is built here (`zig build`); everything else is vendored so a
 fresh clone needs no other checkout.
 

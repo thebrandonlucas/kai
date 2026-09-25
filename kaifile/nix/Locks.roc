@@ -125,7 +125,7 @@ Locks := { identity : LockJson, graph : LockJson }.{
 	decode = |text| {
 		envelope = LockJson.decode(text)?
 		if LockJson.field(envelope, "version")? != LockJson.Number("1") {
-			return Err("unsupported Blueprint lock version; run blueprint update")
+			return Err("unsupported Kai lock version; run kai update")
 		}
 		identity = LockJson.field(envelope, "identity")?
 		graph = LockJson.field(envelope, "nix")?
@@ -201,7 +201,7 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		if !equivalent(locks.identity, identity_for(project)?) {
 			return Err(
 				"lock input or ordered-overlay identity changed; "
-					.concat("run blueprint update"),
+					.concat("run kai update"),
 			)
 		}
 		root = root_inputs(locks.graph)?
