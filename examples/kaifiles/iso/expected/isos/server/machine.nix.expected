@@ -1,9 +1,0 @@
-{ pkgs, ... }:
-{
-  system.stateVersion = "25.05";
-  environment.systemPackages = [
-    pkgs."curl"
-  ];
-  users.users."admin".isNormalUser = true;
-  services."openssh".enable = true;
-}

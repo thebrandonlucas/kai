@@ -1,0 +1,5 @@
+((name "base")
+	(inputs ("busybox"))
+	(build
+		(Run
+			("busybox" "sh" "-c" "busybox mkdir $out/bin && for a in $(busybox --list); do busybox ln -s $busybox/bin/busybox $out/bin/$a; done"))))

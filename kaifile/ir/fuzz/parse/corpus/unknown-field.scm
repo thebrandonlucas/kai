@@ -1,0 +1,8 @@
+((name "x") (extra ((nested (1 2 "three")) sym))
+ (format ((major 2) (minor 0)))
+ (sources (((name "default") (provider Auto) (future 1))))
+ (environments (((name "dev") (parents ()) (tools ()) (overlays ())
+   (colour "red"))))
+ (shells (((name "s") (environment "dev") (colour "red"))))
+ (tasks (((name "t") (environment "dev") (run ("true")) (future Tag))))
+ (later 7))

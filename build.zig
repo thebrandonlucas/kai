@@ -1,14 +1,18 @@
 const std = @import("std");
 
 const SourceTree = struct {
+    fuzz_apps: []const []const u8,
     nix_files: []const []const u8,
     roc_apps: []const []const u8,
     roc_files: []const []const u8,
     roc_roots: []const []const u8,
-    standard_plugin_files: []const []const u8,
-    xkai_files: []const []const u8,
     zig_files: []const []const u8,
 };
+
+// Cached `roc build` object packs can be reused by another app and segfault the
+// compiler (https://github.com/roc-lang/roc/issues/11673). Drop --no-cache
+// once the Roc pin includes https://github.com/roc-lang/roc/pull/11676.
+const roc_build = [_][]const u8{ "roc", "build", "--no-cache" };
 
 const RocRootKind = enum {
     app,
@@ -21,7 +25,6 @@ const excluded_source_dirs = [_][]const u8{
     ".kai",
     ".zig-cache",
     "dist",
-    "fuzz",
     "zig-out",
 };
 
@@ -52,45 +55,11 @@ fn sortPaths(paths: [][]const u8) void {
     }.lessThan);
 }
 
-fn discoverRegularFiles(
-    b: *std.Build,
-    root: []const u8,
-) []const []const u8 {
-    const allocator = b.allocator;
-    const io = b.graph.io;
-    const root_path = b.fmt(
-        "{s}/{s}",
-        .{ b.build_root.path orelse ".", root },
-    );
-    var root_dir = std.Io.Dir.cwd().openDir(
-        io,
-        root_path,
-        .{ .iterate = true, .follow_symlinks = false },
-    ) catch @panic("failed to open embedded source root");
-    defer root_dir.close(io);
-
-    var files = std.ArrayList([]const u8).empty;
-    var walker = root_dir.walk(allocator) catch
-        @panic("failed to scan embedded source root");
-    defer walker.deinit();
-    while (walker.next(io) catch
-        @panic("failed to scan embedded source root")) |entry|
-    {
-        if (entry.kind != .file) continue;
-        if (std.fs.path.isAbsolute(entry.path)) {
-            @panic("embedded source escaped its root");
-        }
-        const path = b.fmt("{s}/{s}", .{ root, entry.path });
-        files.append(allocator, path) catch @panic("out of memory");
-    }
-    sortPaths(files.items);
-    return files.toOwnedSlice(allocator) catch @panic("out of memory");
-}
-
 fn discoverSources(b: *std.Build) SourceTree {
     const allocator = b.allocator;
     const io = b.graph.io;
 
+    var fuzz_apps = std.ArrayList([]const u8).empty;
     var nix_files = std.ArrayList([]const u8).empty;
     var roc_apps = std.ArrayList([]const u8).empty;
     var roc_files = std.ArrayList([]const u8).empty;
@@ -127,20 +96,31 @@ fn discoverSources(b: *std.Build) SourceTree {
             defer allocator.free(contents);
 
             if (rocRootKind(contents)) |kind| {
-                roc_roots.append(allocator, allocator.dupe(u8, path) catch @panic("out of memory")) catch @panic("out of memory");
+                const copy = allocator.dupe(u8, path) catch @panic("out of memory");
+                // Fuzz targets only build instrumented; `zig build fuzz` owns
+                // them, so ci neither checks nor builds them.
+                if (std.mem.indexOf(u8, path, "/fuzz/") != null) {
+                    fuzz_apps.append(allocator, copy) catch @panic("out of memory");
+                    continue;
+                }
+                roc_roots.append(allocator, copy) catch @panic("out of memory");
                 if (kind == .app) {
                     roc_apps.append(allocator, allocator.dupe(u8, path) catch @panic("out of memory")) catch @panic("out of memory");
                 }
             }
         } else if (std.mem.endsWith(u8, path, ".zig")) {
             zig_files.append(allocator, path) catch @panic("out of memory");
-        } else if (std.mem.endsWith(u8, path, ".nix")) {
+        } else if (std.mem.endsWith(u8, path, ".nix") and
+            // Golden files are exact renderer output, not formatted sources.
+            !std.mem.endsWith(u8, path, ".golden.nix"))
+        {
             nix_files.append(allocator, path) catch @panic("out of memory");
         } else {
             allocator.free(path);
         }
     }
 
+    sortPaths(fuzz_apps.items);
     sortPaths(nix_files.items);
     sortPaths(roc_apps.items);
     sortPaths(roc_files.items);
@@ -148,12 +128,11 @@ fn discoverSources(b: *std.Build) SourceTree {
     sortPaths(zig_files.items);
 
     return .{
+        .fuzz_apps = fuzz_apps.toOwnedSlice(allocator) catch @panic("out of memory"),
         .nix_files = nix_files.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_apps = roc_apps.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_files = roc_files.toOwnedSlice(allocator) catch @panic("out of memory"),
         .roc_roots = roc_roots.toOwnedSlice(allocator) catch @panic("out of memory"),
-        .standard_plugin_files = discoverRegularFiles(b, "plugins/std"),
-        .xkai_files = discoverRegularFiles(b, "xkai"),
         .zig_files = zig_files.toOwnedSlice(allocator) catch @panic("out of memory"),
     };
 }
@@ -198,6 +177,19 @@ fn addDevtoolCommand(
     return run;
 }
 
+fn addNixOutLink(
+    b: *std.Build,
+    prerequisite: *std.Build.Step,
+    installable: []const u8,
+    name: []const u8,
+) std.Build.LazyPath {
+    const build_package = b.addSystemCommand(&.{ "nix", "build", installable, "--out-link" });
+    const out_link = build_package.addOutputFileArg(name);
+    build_package.has_side_effects = true;
+    build_package.step.dependOn(prerequisite);
+    return out_link;
+}
+
 fn artifactName(b: *std.Build, source_path: []const u8) []const u8 {
     const extension_len = ".roc".len;
     const stem = source_path[0 .. source_path.len - extension_len];
@@ -211,60 +203,32 @@ fn artifactName(b: *std.Build, source_path: []const u8) []const u8 {
 pub fn build(b: *std.Build) void {
     const sources = discoverSources(b);
 
-    const source_stage = b.addWriteFiles();
-    for (sources.xkai_files) |source| {
-        if (std.mem.startsWith(u8, source, "xkai/tests/") or
-            std.mem.eql(u8, source, "xkai/ImportsTest.roc")) continue;
-        _ = source_stage.addCopyFile(b.path(source), source);
-    }
-
-    const bundle = b.addSystemCommand(&.{ "roc", "bundle", "--output-dir" });
-    bundle.setCwd(b.path("."));
-    const bundle_dir = bundle.addOutputDirectoryArg("xkai-bundle");
-    for (sources.xkai_files) |source| {
-        if (std.mem.startsWith(u8, source, "xkai/tests/") or
-            std.mem.eql(u8, source, "xkai/ImportsTest.roc")) continue;
-        bundle.addArg(source);
-        bundle.addFileInput(b.path(source));
-    }
-    for (sources.standard_plugin_files) |source| {
-        if (std.mem.startsWith(u8, source, "plugins/std/tests/")) continue;
-        bundle.addArg(source);
-        bundle.addFileInput(b.path(source));
-    }
-
-    const build_devtool = b.addSystemCommand(&.{ "roc", "build" });
+    const build_devtool = b.addSystemCommand(&roc_build);
     build_devtool.addFileArg(b.path("devtool/main.roc"));
     build_devtool.addFileInput(b.path("devtool/Cli.roc"));
-    build_devtool.addFileInput(b.path("devtool/Kaifiles.roc"));
+    build_devtool.addFileInput(b.path("devtool/ConfigFixtures.roc"));
+    build_devtool.addFileInput(b.path("devtool/Fuzz.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiBuild.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiBundle.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiEnv.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiGuix.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiHelp.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiRun.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiUpdate.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiWorkflow.roc"));
+    for (sources.roc_files) |source| {
+        if (std.mem.startsWith(u8, source, "kaifile/")) {
+            build_devtool.addFileInput(b.path(source));
+        }
+    }
     build_devtool.addFileInput(b.path("devtool/GitHub.roc"));
     build_devtool.addFileInput(b.path("devtool/PrepareRelease.roc"));
-    build_devtool.addFileInput(b.path("devtool/PrepareXkai.roc"));
     build_devtool.addFileInput(b.path("devtool/Release.roc"));
     build_devtool.addFileInput(b.path("devtool/Tidy.roc"));
     build_devtool.addArg("--opt=dev");
     const devtool = build_devtool.addPrefixedOutputFileArg("--output=", "kai-devtool");
 
-    const prepare = std.Build.Step.Run.create(b, "run devtool prepare-xkai");
-    prepare.addFileArg(devtool);
-    prepare.addArg("prepare-xkai");
-    prepare.addDirectoryArg(bundle_dir);
-    prepare.addDirectoryArg(source_stage.getDirectory());
-    const generated_tree = prepare.addOutputDirectoryArg("generated-xkai");
-    const generated_main = generated_tree.path(b, "xkai/main.roc");
-    const install_generated_tree = b.addInstallDirectory(.{
-        .source_dir = generated_tree,
-        .install_dir = .prefix,
-        .install_subdir = "xkai-source",
-    });
-
-    const prepare_step = b.step(
-        "prepare-xkai",
-        "Generate the xkai source tree and embedded archive",
-    );
-    prepare_step.dependOn(&install_generated_tree.step);
-
-    const build_publish_devtool = b.addSystemCommand(&.{ "roc", "build" });
+    const build_publish_devtool = b.addSystemCommand(&roc_build);
     build_publish_devtool.addFileArg(b.path("devtool/publish.roc"));
     build_publish_devtool.addFileInput(b.path("devtool/GitHub.roc"));
     build_publish_devtool.addFileInput(b.path("devtool/GitHubApi.roc"));
@@ -273,65 +237,6 @@ pub fn build(b: *std.Build) void {
     build_publish_devtool.addArg("--opt=dev");
     const publish_devtool = build_publish_devtool.addPrefixedOutputFileArg("--output=", "kai-publish-devtool");
     const forwarded_args = b.args orelse &.{};
-
-    const build_examples_devtool = b.addSystemCommand(&.{ "roc", "build" });
-    build_examples_devtool.addFileArg(b.path("devtool/test-examples.roc"));
-    build_examples_devtool.addFileInput(b.path("devtool/Examples.roc"));
-    for (sources.roc_files) |source| {
-        if (std.mem.startsWith(u8, source, "plugins/") or
-            std.mem.startsWith(u8, source, "xkai/"))
-        {
-            build_examples_devtool.addFileInput(b.path(source));
-        }
-    }
-    build_examples_devtool.addArg("--opt=dev");
-    const examples_devtool = build_examples_devtool.addPrefixedOutputFileArg(
-        "--output=",
-        "kai-test-examples",
-    );
-
-    const test_examples_step = b.step(
-        "test-examples",
-        "Recursively test every Kaifile example",
-    );
-    const test_examples = std.Build.Step.Run.create(b, "run Kaifile examples test");
-    test_examples.addFileArg(examples_devtool);
-    test_examples.addArgs(&.{ "examples/kaifiles", "examples/plans" });
-    test_examples_step.dependOn(&test_examples.step);
-
-    const kaifiles_step = b.step(
-        "kaifiles",
-        "Run every Kaifile and compare its generated outputs",
-    );
-    const run_kaifiles = addDevtoolCommand(b, devtool, "kaifiles", &.{});
-    kaifiles_step.dependOn(&run_kaifiles.step);
-
-    const kaifiles_smoke_step = b.step(
-        "kaifiles-smoke",
-        "Run lightweight Kaifiles and compare their generated outputs",
-    );
-    const run_kaifiles_smoke = addDevtoolCommand(
-        b,
-        devtool,
-        "kaifiles-smoke",
-        &.{},
-    );
-    kaifiles_smoke_step.dependOn(&run_kaifiles_smoke.step);
-
-    const build_fuzz = b.addSystemCommand(&.{ "roc", "build", "--fuzz" });
-    build_fuzz.addFileArg(b.path("fuzz/Config.roc"));
-    build_fuzz.addFileInput(b.path("xkai/parser/main.roc"));
-    build_fuzz.addFileInput(b.path("xkai/parser/Blocks.roc"));
-    const fuzz_executable = build_fuzz.addPrefixedOutputFileArg(
-        "--output=",
-        "kai-config-fuzz",
-    );
-
-    const fuzz_step = b.step("fuzz", "Build and run the Config fuzz target");
-    const run_fuzz = std.Build.Step.Run.create(b, "run Config fuzz campaign");
-    run_fuzz.addFileArg(fuzz_executable);
-    run_fuzz.addArg("run");
-    fuzz_step.dependOn(&run_fuzz.step);
 
     const build_release_step = b.step(
         "build-release",
@@ -356,6 +261,22 @@ pub fn build(b: *std.Build) void {
     publish_release.addArgs(forwarded_args);
     publish_release_step.dependOn(&publish_release.step);
 
+    // Opt-in, for before a release or after touching a parser; not in ci.
+    const fuzz_seconds = b.option(
+        u32,
+        "fuzz-seconds",
+        "Seconds `zig build fuzz` runs each target (default 30)",
+    ) orelse 30;
+    const fuzz_step = b.step(
+        "fuzz",
+        "Build and run each roc-fuzz target; inputs land in zig-out/fuzz",
+    );
+    const run_fuzz = addDevtoolCommand(b, devtool, "fuzz", &.{
+        b.fmt("{d}", .{fuzz_seconds}),
+    });
+    run_fuzz.addArgs(sources.fuzz_apps);
+    fuzz_step.dependOn(&run_fuzz.step);
+
     // All static checks (Roc and Zig).
     const tidy_step = b.step(
         "tidy",
@@ -363,7 +284,6 @@ pub fn build(b: *std.Build) void {
     );
     const tidy_check = addDevtoolCommand(b, devtool, "tidy", &.{});
     tidy_step.dependOn(&tidy_check.step);
-    tidy_step.dependOn(test_examples_step);
 
     const check_step = b.step(
         "check",
@@ -397,13 +317,23 @@ pub fn build(b: *std.Build) void {
     );
     check_step.dependOn(&nix_fmt.step);
 
+    const platform_bundle_step = b.step(
+        "platform-bundle",
+        "Build the Kaifile platform bundle a release publishes, into zig-out",
+    );
+    const platform_bundle = b.addSystemCommand(&.{
+        "nix", "build", ".#kaifile-platform", "--out-link", "zig-out/kaifile-platform",
+    });
+    platform_bundle_step.dependOn(&platform_bundle.step);
+
+    // Configuration apps link the native configuration platform's host.
+    const build_platform_host = b.addSystemCommand(&.{ "zig", "build", "--release" });
+    build_platform_host.setCwd(b.path("kaifile/platform"));
+
     for (sources.roc_roots) |root| {
         const check_roc = b.addSystemCommand(&.{ "roc", "check" });
-        if (std.mem.eql(u8, root, "xkai/main.roc")) {
-            check_roc.addFileArg(generated_main);
-        } else {
-            check_roc.addArg(root);
-        }
+        check_roc.step.dependOn(&build_platform_host.step);
+        check_roc.addArg(root);
         check_step.dependOn(&check_roc.step);
     }
 
@@ -443,60 +373,191 @@ pub fn build(b: *std.Build) void {
     );
     test_step.dependOn(check_step);
 
-    const test_xkai = b.addSystemCommand(&.{
+    const test_kaifile_ir = b.addSystemCommand(&.{
         "roc",
         "test",
-        "xkai/tests/main.roc",
+        "kaifile/ir/main.roc",
     });
-    test_xkai.step.dependOn(check_step);
-    test_step.dependOn(&test_xkai.step);
+    test_kaifile_ir.step.dependOn(check_step);
+    test_step.dependOn(&test_kaifile_ir.step);
 
-    const test_imports = b.addSystemCommand(&.{
+    const test_kaifile_nix = b.addSystemCommand(&.{
         "roc",
         "test",
-        "xkai/ImportsTest.roc",
+        "kaifile/nix/main.roc",
     });
-    test_imports.step.dependOn(check_step);
-    test_step.dependOn(&test_imports.step);
+    test_kaifile_nix.step.dependOn(check_step);
+    test_step.dependOn(&test_kaifile_nix.step);
 
-    const run_imports = b.addSystemCommand(&.{
-        "roc",
-        "run",
-        "xkai/ImportsTest.roc",
-    });
-    run_imports.step.dependOn(&test_imports.step);
-    test_step.dependOn(&run_imports.step);
-
-    const test_standard_plugin = b.addSystemCommand(&.{
+    const test_kaifile_guix = b.addSystemCommand(&.{
         "roc",
         "test",
-        "plugins/std/tests/main.roc",
+        "kaifile/guix/main.roc",
     });
-    test_standard_plugin.step.dependOn(check_step);
-    test_step.dependOn(&test_standard_plugin.step);
+    test_kaifile_guix.step.dependOn(check_step);
+    test_step.dependOn(&test_kaifile_guix.step);
 
-    const test_guix_plugin = b.addSystemCommand(&.{
+    const test_kaifile_blu = b.addSystemCommand(&.{
         "roc",
         "test",
-        "plugins/guix/tests/main.roc",
+        "kaifile/blu/main.roc",
     });
-    test_guix_plugin.step.dependOn(check_step);
-    test_step.dependOn(&test_guix_plugin.step);
+    test_kaifile_blu.step.dependOn(check_step);
+    test_step.dependOn(&test_kaifile_blu.step);
 
-    const test_split_plugin = b.addSystemCommand(&.{
-        "roc",
-        "test",
-        "examples/plugins/split-plugin/tests/main.roc",
-    });
-    test_split_plugin.step.dependOn(check_step);
-    test_step.dependOn(&test_split_plugin.step);
+    const test_cli = b.addSystemCommand(&.{ "roc", "test", "cli/main.roc" });
+    test_cli.step.dependOn(check_step);
+    test_step.dependOn(&test_cli.step);
 
     const ci_step = b.step(
         "ci",
         "Run tests and build representative applications",
     );
     ci_step.dependOn(test_step);
-    ci_step.dependOn(test_examples_step);
+
+    // Integration steps run the kai that ships, not a --opt=dev build: the
+    // Nix package's wrapper, and the bare binary a release archive holds for
+    // steps that must not see the wrapper's Nix or seeded Roc cache. Nix
+    // decides what to rebuild, so these always run; new files need `git add`.
+    const cli_binary = addNixOutLink(b, test_step, ".#kai", "kai").path(b, "bin/kai");
+    const bare_binary = addNixOutLink(
+        b,
+        test_step,
+        ".#kai.unwrapped",
+        "kai-unwrapped",
+    ).path(b, "bin/kai");
+    // Every maintained example must load and lower to IR.
+    const examples = [_][]const u8{
+        "examples/artifacts",
+        "examples/composition",
+        "examples/guix",
+        "examples/overlays",
+    };
+    for (examples) |example| {
+        for ([_][]const u8{ "check", "ir" }) |command| {
+            const smoke = std.Build.Step.Run.create(
+                b,
+                b.fmt("kai {s} {s}", .{ command, example }),
+            );
+            smoke.addFileArg(cli_binary);
+            smoke.addArg(command);
+            smoke.setCwd(b.path(example));
+            smoke.expectExitCode(0);
+            ci_step.dependOn(&smoke.step);
+        }
+    }
+    const check_root = std.Build.Step.Run.create(b, "kai check Kaifile.roc");
+    check_root.addFileArg(cli_binary);
+    check_root.addArg("check");
+    check_root.setCwd(b.path("."));
+    check_root.expectExitCode(0);
+    ci_step.dependOn(&check_root.step);
+
+    // Resolves nixpkgs with real Nix, so it needs network or a warm cache.
+    const kai_update_step = b.step(
+        "kai-update",
+        "Run kai update with real Nix on a copy of examples/composition",
+    );
+    const run_kai_update = addDevtoolCommand(b, devtool, "kai-update", &.{});
+    run_kai_update.addFileArg(cli_binary);
+    kai_update_step.dependOn(&run_kai_update.step);
+    ci_step.dependOn(kai_update_step);
+
+    const kai_run_step = b.step(
+        "kai-run",
+        "Run kai run and kai shell with real Nix on examples/composition",
+    );
+    const run_kai_run = addDevtoolCommand(b, devtool, "kai-run", &.{});
+    run_kai_run.addFileArg(cli_binary);
+    kai_run_step.dependOn(&run_kai_run.step);
+    ci_step.dependOn(kai_run_step);
+
+    const kai_env_step = b.step(
+        "kai-env",
+        "Run kai shell and kai run with real Nix on examples/overlays",
+    );
+    const run_kai_env = addDevtoolCommand(b, devtool, "kai-env", &.{});
+    run_kai_env.addFileArg(cli_binary);
+    kai_env_step.dependOn(&run_kai_env.step);
+    ci_step.dependOn(kai_env_step);
+
+    // Stubbed Guix checks always run; the real Guix shell is reported as
+    // SKIPPED without guix. guix-integration requires it (hosted CI gate).
+    // A Guix-only host installs the release archive, so these run the bare
+    // binary: the package wrapper would put Nix back on PATH.
+    const kai_guix_step = b.step(
+        "kai-guix",
+        "Run kai shell against stub and, if installed, real Guix",
+    );
+    const run_kai_guix = addDevtoolCommand(b, devtool, "kai-guix", &.{});
+    run_kai_guix.addFileArg(bare_binary);
+    kai_guix_step.dependOn(&run_kai_guix.step);
+    ci_step.dependOn(kai_guix_step);
+
+    const guix_integration_step = b.step(
+        "guix-integration",
+        "Run kai shell against real Guix without Nix; fails without guix",
+    );
+    const run_guix_integration = addDevtoolCommand(
+        b,
+        devtool,
+        "kai-guix",
+        &.{"--require"},
+    );
+    run_guix_integration.addFileArg(bare_binary);
+    guix_integration_step.dependOn(&run_guix_integration.step);
+
+    // Real sandboxed builds; the sandbox probe needs a world-readable /var/tmp.
+    const kai_build_step = b.step(
+        "kai-build",
+        "Run kai build with real, sandboxed Nix on examples/artifacts",
+    );
+    const run_kai_build = addDevtoolCommand(b, devtool, "kai-build", &.{});
+    run_kai_build.addFileArg(cli_binary);
+    kai_build_step.dependOn(&run_kai_build.step);
+    ci_step.dependOn(kai_build_step);
+
+    // Real workflows and JSON output, on examples/artifacts like kai-build.
+    const kai_workflow_step = b.step(
+        "kai-workflow",
+        "Run kai workflow and kai --json with real Nix on examples/artifacts",
+    );
+    const run_kai_workflow = addDevtoolCommand(b, devtool, "kai-workflow", &.{});
+    run_kai_workflow.addFileArg(cli_binary);
+    kai_workflow_step.dependOn(&run_kai_workflow.step);
+    ci_step.dependOn(kai_workflow_step);
+
+    const kai_bundle_step = b.step(
+        "kai-bundle",
+        "Load a Kaifile.roc through the served and the pre-seeded platform bundle",
+    );
+    const run_kai_bundle = addDevtoolCommand(b, devtool, "kai-bundle", &.{});
+    run_kai_bundle.addFileArg(bare_binary);
+    kai_bundle_step.dependOn(&run_kai_bundle.step);
+    ci_step.dependOn(kai_bundle_step);
+
+    const kai_help_step = b.step(
+        "kai-help",
+        "Compile and run the examples in kai help with real Nix",
+    );
+    const run_kai_help = addDevtoolCommand(b, devtool, "kai-help", &.{});
+    run_kai_help.addFileArg(cli_binary);
+    kai_help_step.dependOn(&run_kai_help.step);
+    ci_step.dependOn(kai_help_step);
+
+    const config_fixtures_step = b.step(
+        "config-fixtures",
+        "Check Kaifile.roc configs are accepted or rejected at compile time",
+    );
+    const run_config_fixtures = addDevtoolCommand(
+        b,
+        devtool,
+        "config-fixtures",
+        &.{},
+    );
+    run_config_fixtures.step.dependOn(&build_platform_host.step);
+    config_fixtures_step.dependOn(&run_config_fixtures.step);
+    ci_step.dependOn(config_fixtures_step);
     build_release.step.dependOn(ci_step);
 
     _ = addCiCommand(
@@ -507,29 +568,19 @@ pub fn build(b: *std.Build) void {
         &.{ "nix", "flake", "check" },
     );
 
-    switch (b.graph.host.result.os.tag) {
-        .linux => _ = addCiCommand(
-            b,
-            ci_step,
-            test_step,
-            "build Linux release outputs",
-            &.{
-                "nix",
-                "build",
-                ".#release-x86_64-linux",
-                ".#release-aarch64-linux",
-                "--no-link",
-            },
-        ),
-        .macos => _ = addCiCommand(
-            b,
-            ci_step,
-            test_step,
-            "skip Linux release outputs on Darwin",
-            &.{ "echo", "Skipping Linux-only release output builds on Darwin" },
-        ),
-        else => @panic("zig build ci supports only Linux and Darwin hosts"),
-    }
+    _ = addCiCommand(
+        b,
+        ci_step,
+        test_step,
+        "build Linux release outputs",
+        &.{
+            "nix",
+            "build",
+            ".#release-x86_64-linux",
+            ".#release-aarch64-linux",
+            "--no-link",
+        },
+    );
 
     // Avoid shell redirection or mkdir inside a script.
     const prepare_outputs = b.addSystemCommand(&.{
@@ -543,12 +594,8 @@ pub fn build(b: *std.Build) void {
             .{ artifactName(b, app), std.hash.Wyhash.hash(0, app) },
         );
         const output = b.fmt("--output={s}", .{output_path});
-        const build_app = b.addSystemCommand(&.{ "roc", "build" });
-        if (std.mem.eql(u8, app, "xkai/main.roc")) {
-            build_app.addFileArg(generated_main);
-        } else {
-            build_app.addArg(app);
-        }
+        const build_app = b.addSystemCommand(&roc_build);
+        build_app.addArg(app);
         build_app.addArgs(&.{ "--opt=dev", output });
         build_app.step.dependOn(&prepare_outputs.step);
         ci_step.dependOn(&build_app.step);

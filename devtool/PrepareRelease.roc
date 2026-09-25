@@ -5,11 +5,12 @@ import pf.Path
 import pf.Stderr
 import pf.Stdout
 
+import KaiBundle
 import Release
 
 PrepareRelease := [].{
 	validate_metadata! = || {
-		version = Path.read_utf8!(Path.utf8("xkai/VERSION"))?
+		version = Path.read_utf8!(Path.utf8("VERSION"))?
 		if !Release.is_semver(version) {
 			Err(InvalidReleaseVersion(version))
 		} else {
@@ -160,8 +161,9 @@ PrepareRelease := [].{
 				"add",
 				"--",
 				"build.zig.zon",
-				"xkai/RELEASE_NAME",
-				"xkai/VERSION",
+				Release.platform_file,
+				"RELEASE_NAME",
+				"VERSION",
 			])?
 			staged = PrepareRelease.git_lines!(["diff", "--cached", "--name-only"])?
 			unstaged = PrepareRelease.git_lines!(["diff", "--name-only"])?
@@ -172,20 +174,24 @@ PrepareRelease := [].{
 			}
 		}
 	}
-	write_release_metadata! = |name, version| {
+	write_release_metadata! = |name, version, repository| {
 		manifest_path = Path.utf8("build.zig.zon")
 		manifest = Path.read_utf8!(manifest_path)?
 		rewritten = match Release.rewrite_manifest(manifest, version) {
 			Ok(value) => value
 			Err(error) => return Err(InvalidReleaseRewrite(error))
 		}
-		Path.write_utf8!(Path.utf8("xkai/VERSION"), version)?
-		Path.write_utf8!(Path.utf8("xkai/RELEASE_NAME"), name)?
+		Path.write_utf8!(Path.utf8("VERSION"), version)?
+		Path.write_utf8!(Path.utf8("RELEASE_NAME"), name)?
 		Path.write_utf8!(manifest_path, rewritten)?
+		# Record the URL this release will publish the platform bundle at.
+		bundle = KaiBundle.platform!()?
+		url = Release.platform_url(repository, version, bundle.hash)
+		Path.write_utf8!(Path.utf8(Release.platform_file), "${url}\n")?
 		Ok({})
 	}
-	build_release_branch! = |name, version, tag, branch| {
-		PrepareRelease.write_release_metadata!(name, version)?
+	build_release_branch! = |name, version, tag, branch, repository| {
+		PrepareRelease.write_release_metadata!(name, version, repository)?
 		Stdout.line!("Building and checking ${name} (${version})...")?
 		Cmd.new_str("zig").args_str(["build", "build-release"]).exec_cmd!()?
 		PrepareRelease.verify_release_changes!()?
@@ -320,6 +326,10 @@ PrepareRelease := [].{
 			Err(_) => return Err(UnsupportedReleaseOrigin(configured_origin))
 		}
 		origin = PrepareRelease.validate_release_origin!(configured_origin)?
+		repository = match Release.parse_github_origin(origin) {
+			Ok(repo) => "${repo.owner}/${repo.repository}"
+			Err(_) => return Err(UnsupportedReleaseOrigin(origin))
+		}
 		PrepareRelease.git!([
 			"fetch",
 			"--quiet",
@@ -388,6 +398,7 @@ PrepareRelease := [].{
 					version,
 					tag,
 					release_branch,
+					repository,
 				) {
 					Err(error) =>
 						PrepareRelease.fail_and_rollback!(

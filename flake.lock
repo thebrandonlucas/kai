@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "basic-cli-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1790218076,
+        "narHash": "sha256-oUyMyAJYNGw13Bugz6AZuf8NvLE5qsuVD5/Gj8TtMdk=",
+        "owner": "roc-lang",
+        "repo": "basic-cli",
+        "rev": "473caa2cc4f3fe9ce4e4682158bb80ebc2e19169",
+        "type": "github"
+      },
+      "original": {
+        "owner": "roc-lang",
+        "repo": "basic-cli",
+        "rev": "473caa2cc4f3fe9ce4e4682158bb80ebc2e19169",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1784497964,
@@ -16,13 +33,13 @@
         "type": "github"
       }
     },
-    "nixpkgs-x86-darwin": {
+    "nixpkgs-darwin": {
       "locked": {
-        "lastModified": 1784755387,
-        "narHash": "sha256-uxq8JKEE6bjRst96QKwH5snLXC5QkrqoY+CYuhGqGQg=",
+        "lastModified": 1787940818,
+        "narHash": "sha256-vFzVv78WlyEbTyV5BbrnicnV159wC0YPOcBe3QagyBI=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "2b7a84e696b76759b60bea1eafd62fa34fb96a6e",
+        "rev": "f6107e546a5012172d93e79f1f7950da02ad798f",
         "type": "github"
       },
       "original": {
@@ -37,30 +54,50 @@
         "nixpkgs": [
           "nixpkgs"
         ],
-        "nixpkgs-darwin": [
-          "nixpkgs-x86-darwin"
-        ]
+        "nixpkgs-darwin": "nixpkgs-darwin"
       },
       "locked": {
-        "lastModified": 1786628829,
-        "narHash": "sha256-B8Dwg25eiIoHKJANWdGsEtX4BSbv9z3uPvTYTTnMu1I=",
-        "owner": "thebrandonlucas",
+        "lastModified": 1790217927,
+        "narHash": "sha256-fhatlsqelliHOfoT723TYQb8DzxSn698DpobgiARHIM=",
+        "owner": "roc-lang",
         "repo": "roc-overlay",
-        "rev": "628d8dcfd18f8a5c8a6b7c589573e9dd43a9d303",
+        "rev": "06198bdac7c2a171c93d0a6f0ddeea562867ee1e",
         "type": "github"
       },
       "original": {
-        "owner": "thebrandonlucas",
+        "owner": "roc-lang",
         "repo": "roc-overlay",
-        "rev": "628d8dcfd18f8a5c8a6b7c589573e9dd43a9d303",
+        "rev": "06198bdac7c2a171c93d0a6f0ddeea562867ee1e",
         "type": "github"
       }
     },
     "root": {
       "inputs": {
+        "basic-cli-src": "basic-cli-src",
         "nixpkgs": "nixpkgs",
-        "nixpkgs-x86-darwin": "nixpkgs-x86-darwin",
-        "roc-overlay": "roc-overlay"
+        "roc-overlay": "roc-overlay",
+        "rust-overlay": "rust-overlay"
+      }
+    },
+    "rust-overlay": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790149037,
+        "narHash": "sha256-01WcSplVEmQt13QUZLfWez27JO+2lyYWX+yTitvkF3g=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "fb058ecf6d14837ea152a3d5225ce7f88ee5cde1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "fb058ecf6d14837ea152a3d5225ce7f88ee5cde1",
+        "type": "github"
       }
     }
   },
