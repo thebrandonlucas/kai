@@ -40,6 +40,7 @@ Command : [
 	UpdateLock,
 	Shell(Str, List(Str)),
 	Run(Str, List(Str)),
+	Build(Str),
 ]
 
 description = Help.describe(Help.kai).concat(
@@ -57,33 +58,35 @@ Parsed : {
 	command : Command,
 }
 
-# When Kaifile.roc loads, its shells and tasks become subcommands so help and
-# usage errors list what the project defines. Otherwise, or when a name is not
-# a valid subcommand, the parsers are generic and the help says why.
+# When Kaifile.roc loads, its shells, tasks and builds become subcommands so
+# help and usage errors list what the project defines. Otherwise, or when a
+# name is not a valid subcommand, the parsers are generic and the help says
+# why.
 parser : Try(Ir, _), [Color, Plain] -> Cli.CliParser(Parsed)
 parser = |loaded, text_style| {
 	generic = |note|
 		Cli.assert_valid(
-			cli(generic_shell, generic_run, note, text_style),
+			cli(generic_shell, generic_run, generic_build, note, text_style),
 		)
 	match loaded {
 		Ok(ir) => {
 			shell = if ir.shells.is_empty() generic_shell else project_shell(ir)
 			run = if ir.tasks.is_empty() generic_run else project_run(ir)
-			cli(shell, run, "", text_style) ?? generic(
+			build = if ir.builds.is_empty() generic_build else project_build(ir)
+			cli(shell, run, build, "", text_style) ?? generic(
 				"Kaifile.roc names are not all valid subcommands, so they "
 					.concat("aren't listed."),
 			)
 		}
 		Err(NoKaifile(_)) => generic("There is no Kaifile.roc here.")
 		Err(_) => generic(
-			"Kaifile.roc could not be loaded, so its shells and tasks aren't "
-				.concat("listed; run `kai check` for details."),
+			"Kaifile.roc could not be loaded, so its shells, tasks and builds "
+				.concat("aren't listed; run `kai check` for details."),
 		)
 	}
 }
 
-cli = |shell, run, note, text_style|
+cli = |shell, run, build, note, text_style|
 	Cli.finish(
 		{
 			file: Opt.maybe_str({
@@ -104,6 +107,7 @@ cli = |shell, run, note, text_style|
 			command: SubCmd.required([
 				shell,
 				run,
+				build,
 				SubCmd.empty({
 					name: "check",
 					description: Help.describe(Help.check),
@@ -137,6 +141,8 @@ cli = |shell, run, note, text_style|
 shell_description = Help.describe(Help.shell)
 
 run_description = Help.describe(Help.run)
+
+build_description = Help.describe(Help.build)
 
 command_param = Param.str_list({
 	name: "command",
@@ -221,6 +227,26 @@ project_run = |ir|
 			),
 		),
 		{ name: "run", description: run_description, mapper: |c| c },
+	)
+
+generic_build = SubCmd.finish(
+	Param.str({ name: "name", help: "The build to run.", default: NoDefault }),
+	{ name: "build", description: build_description, mapper: |name| Build(name) },
+)
+
+project_build = |ir|
+	SubCmd.finish(
+		SubCmd.required(
+			ir.builds.map(
+				|build|
+					SubCmd.empty({
+						name: build.name,
+						description: "Output ${build.output} [${build.environment}]",
+						value: Build(build.name),
+					}),
+			),
+		),
+		{ name: "build", description: build_description, mapper: |c| c },
 	)
 
 # Help depends on the configuration, so --file is found before parsing, the
@@ -340,6 +366,8 @@ run! = |command, backend, located, loaded| {
 			)
 		Run(task, args) =>
 			Execute.select!(loaded?, Request.Run(task, args), choice, project.root)
+		Build(name) =>
+			Execute.select!(loaded?, Request.Build(name), choice, project.root)
 		}
 }
 
@@ -391,11 +419,13 @@ describe = |err|
 		BadLock(path, message) =>
 			"cannot read the lock file ${path}: ${message}; run `kai update`"
 		LocalChanged(path) => "local source ${path} changed; run `kai update`"
-		Unsupported(what) => "kai cannot execute a ${what} yet"
 		ChildExited(Shell(name), code) =>
 			"shell ${name} exited with code ${code.to_str()}"
 		ChildExited(Run(name), code) =>
 			"task ${name} exited with code ${code.to_str()}"
+		ChildExited(Build(name), code) =>
+			"build ${name} exited with code ${code.to_str()}"
+		SnapshotFailed(message) => message
 		ChildExited(_, code) => "command exited with code ${code.to_str()}"
 		ExecCmdFailed({ command, exit_code }) =>
 			"`${command}` exited with code ${exit_code.to_str()}"
@@ -423,7 +453,9 @@ test_ir = Ir.parse(
 	\\((format ((major 2) (minor 2))) (name "x")
 	\\ (shells (((name "default") (environment "dev"))
 	\\  ((name "ci") (environment "dev"))))
-	\\ (tasks (((name "args") (environment "dev") (run ("echo"))))))
+	\\ (tasks (((name "args") (environment "dev") (run ("echo")))))
+	\\ (builds (((name "app") (environment "dev") (inputs ()) (needs ())
+	\\  (run ("true")) (output "out")))))
 	,
 )
 
@@ -452,6 +484,7 @@ expect [
 		Shell("ci", ["git", "--version"]),
 	),
 	(["-f", "Kaifile.roc", "run", "args"], Run("args", [])),
+	(["build", "app"], Build("app")),
 	(
 		["--no-color", "run", "args", "--", "--no-color"],
 		Run("args", ["--no-color"]),
@@ -466,11 +499,18 @@ expect [
 expect [
 	(["run", "test", "--", "--json", "--yes"], Run("test", ["--json", "--yes"])),
 	(["shell", "dev", "--", "git"], Shell("dev", ["git"])),
+	(["build", "anything"], Build("anything")),
 	(["shell"], Shell("default", [])),
 ].all(|(args, expected)| parses(Err(NoKaifile("/x")), args, expected))
 
 # Project-aware parsing rejects names the configuration does not define.
-expect [["run", "missing"], ["shell", "missing"], ["run"]].all(
+expect [
+	["run", "missing"],
+	["shell", "missing"],
+	["run"],
+	["build", "missing"],
+	["build"],
+].all(
 	|args|
 		match parse(test_ir, args) {
 			Err(InvalidUsage(_)) => Bool.True
@@ -542,6 +582,7 @@ expect [test_ir, Err(NoKaifile("/x"))].all(
 			(["update"], Help.update),
 			(["shell"], Help.shell),
 			(["run"], Help.run),
+			(["build"], Help.build),
 		].all(
 			|(path, page)| {
 				text = help_text(loaded, path.append("--help"), Plain)
