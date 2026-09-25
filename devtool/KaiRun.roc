@@ -10,7 +10,11 @@ import KaiUpdate
 
 KaiRun := [].{
 	run! = |binary| {
-		(kai, project) = KaiUpdate.fixture!(binary)?
+		(kai, project) = KaiUpdate.fixture!(
+			binary,
+			"composition",
+			["ProjectTasks.roc"],
+		)?
 		result = KaiRun.run_in!(kai, project)
 		Path.delete_all!(project)?
 		result

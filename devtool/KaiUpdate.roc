@@ -12,20 +12,25 @@ import ConfigFixtures
 
 KaiUpdate := [].{
 	run! = |binary| {
-		(kai, project) = KaiUpdate.fixture!(binary)?
+		(kai, project) = KaiUpdate.fixture!(
+			binary,
+			"composition",
+			["ProjectTasks.roc"],
+		)?
 		result = KaiUpdate.run_in!(kai, project)
 		Path.delete_all!(project)?
 		result
 	}
 
-	# A temporary copy of examples/composition and the absolute kai binary.
-	fixture! = |binary| {
+	# A temporary copy of an example's Kaifile.roc and listed files or
+	# directories (symlinks preserved), plus the absolute kai binary.
+	fixture! = |binary, example, entries| {
 		root = Path.canonicalize!(Env.cwd!()?)?
 		kai = Path.canonicalize!(Path.utf8(binary))?
 		temporary = Env.create_temp_dir_with_prefix!("kai-fixture-")?
 		project = Path.canonicalize!(temporary)?
-		composition = Path.join(root, "examples/composition")
-		kaifile = Path.read_utf8!(Path.join(composition, "Kaifile.roc"))?
+		source = Path.join(root, "examples/${example}")
+		kaifile = Path.read_utf8!(Path.join(source, "Kaifile.roc"))?
 		# Evaluating an app needs a relative platform path.
 		platform_path = ConfigFixtures.relative(
 			Path.display(project),
@@ -37,10 +42,16 @@ KaiUpdate := [].{
 			_ => return Err(UnexpectedCompositionHeader(kaifile))
 		}
 		Path.write_utf8!(Path.join(project, "Kaifile.roc"), body)?
-		Path.copy!(
-			Path.join(composition, "ProjectTasks.roc"),
-			Path.join(project, "ProjectTasks.roc"),
-		)?
+		for entry in entries {
+			from = Path.join(source, entry)
+			to = Path.join(project, entry)
+			if Path.is_dir!(from)? {
+				options = { symlinks: Preserve, destination: RequireNew }
+				Path.copy_dir_with!(from, to, options)?
+			} else {
+				Path.copy!(from, to)?
+			}
+		}
 		Ok((kai, project))
 	}
 

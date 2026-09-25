@@ -14,6 +14,7 @@ import Cli
 import ConfigFixtures
 import Kaifiles
 import GitHub
+import KaiEnv
 import KaiRun
 import KaiUpdate
 import PrepareRelease
@@ -263,6 +264,7 @@ main! = |args|
 		Ok(Cli.Command.ConfigFixtures) => ConfigFixtures.run!()
 		Ok(Cli.Command.Kaifiles) => Kaifiles.run!()
 		Ok(Cli.Command.KaifilesSmoke) => Kaifiles.run_smoke!()
+		Ok(Cli.Command.KaiEnv(kai)) => KaiEnv.run!(kai)
 		Ok(Cli.Command.KaiRun(kai)) => KaiRun.run!(kai)
 		Ok(Cli.Command.KaiUpdate(kai)) => KaiUpdate.run!(kai)
 		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(
@@ -285,6 +287,7 @@ parse_cases = [
 	{ args: ["kaifiles"], expected: Ok(Cli.Command.Kaifiles) },
 	{ args: ["kaifiles-smoke"], expected: Ok(Cli.Command.KaifilesSmoke) },
 	{ args: ["kai-update", "kai"], expected: Ok(Cli.Command.KaiUpdate("kai")) },
+	{ args: ["kai-env", "kai"], expected: Ok(Cli.Command.KaiEnv("kai")) },
 	{ args: ["kai-run", "kai"], expected: Ok(Cli.Command.KaiRun("kai")) },
 	{
 		args: ["kai-update"],
@@ -324,6 +327,7 @@ usage_lines = [
 	"config-fixtures",
 	"kaifiles",
 	"kaifiles-smoke",
+	"kai-env KAI_BINARY",
 	"kai-run KAI_BINARY",
 	"kai-update KAI_BINARY",
 	"prepare-release NAME VERSION",
