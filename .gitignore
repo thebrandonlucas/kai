@@ -12,3 +12,6 @@ result-*
 kai
 kai-issues/
 .basic-cli
+/blueprint/platform/targets/*/libhost.a
+/blueprint/platform/.zig-cache/
+/blueprint/platform/zig-out/
