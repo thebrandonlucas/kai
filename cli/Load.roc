@@ -4,12 +4,15 @@ import pf.Cmd
 import pf.Env
 import pf.OsStr
 import pf.Path
+import pf.Stderr
 
 import ir.Ir
 import ir.Project
 import nix.NixBackend
 
 import "../.roc-version" as compiler_version : Str
+
+import Output
 
 Load := [].{
 	# The configuration file and the directory commands resolve paths against.
@@ -71,15 +74,26 @@ Load := [].{
 			_ => Err(UnsupportedHost)
 		}
 
-	# Type-check the whole configuration, reporting compiler diagnostics as-is.
-	check! : Location => Try({}, _)
-	check! = |project| {
+	# Type-check the whole configuration, reporting compiler diagnostics as-is;
+	# in JSON mode the compiler's stdout goes to stderr instead.
+	check! : Location, Output.Mode => Try({}, _)
+	check! = |project, mode| {
 		Load.check_host!()?
-		Cmd.new_str(Load.compiler!()?)
+		command = Cmd.new_str(Load.compiler!()?)
 			.args_str(["check", project.file])
 			.cwd(Load.path(project.root))
-			.exec_cmd!()
-			.map_err(|_| KaifileInvalid(project.file))
+		match mode {
+			Human => command.exec_cmd!().map_err(|_| KaifileInvalid(project.file))
+			Json => {
+				output = command.stderr(Inherit).run!()?
+				Stderr.write_bytes!(output.stdout_bytes)?
+				if output.status == Exited(0) {
+					Ok({})
+				} else {
+					Err(KaifileInvalid(project.file))
+				}
+			}
+		}
 	}
 
 	# Evaluate the configuration and accept only IR this Kai understands.
