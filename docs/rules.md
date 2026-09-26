@@ -1,8 +1,11 @@
-- After every change, run `zig build ci`. This should pass on every commit.
-- `zig build ci` includes the real Nix integration steps (`kai-update`,
-  `kai-run`, `kai-env`, `kai-build`, `kai-workflow`, `kai-guix`, `kai-bundle`,
-  `kai-help`, `config-fixtures`); run one alone with `zig build <step>` while
-  iterating. Run `zig build guix-integration` when a real Guix is available.
+- After every change, run `zig build test` plus the integration step(s) for the
+  area you touched. Full `zig build ci` runs on GitHub; run it locally only
+  when asked or before a merge. It should pass on every commit.
+- The real Nix integration steps are `kai-update`, `kai-run`, `kai-env`,
+  `kai-build`, `kai-workflow`, `kai-guix`, `kai-bundle`, `kai-help` and
+  `config-fixtures`, each run with `zig build <step>`; `zig build smoke` runs
+  `kai-update` and `kai-run`. Run `zig build guix-integration` when a real Guix
+  is available.
 - Do not commit changes unless explicitly instructed. Never push. Never create issues. Never open PRs.
 - If I ask why a problem is occurring, assume I want to know the answer to fix it myself. Don't fix or edit files without being told to.
 - Don't make "fix" commits in a PR with fresh code. Fix commits are for PRs with bugs that already existed.
