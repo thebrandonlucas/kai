@@ -36,6 +36,8 @@ platform ""
 		EnvName,
 		FlakeRef,
 		InputName,
+		Plan,
+		Protocol,
 		System,
 		TaskName,
 		Tool,
@@ -63,6 +65,8 @@ import Tool
 import FlakeRef
 import EnvName
 import InputName
+import Plan
+import Protocol
 import System
 import TaskName
 import Val
