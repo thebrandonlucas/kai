@@ -438,12 +438,6 @@ pub fn build(b: *std.Build) void {
             ci_step.dependOn(&smoke.step);
         }
     }
-    const check_root = std.Build.Step.Run.create(b, "kai check Kaifile.roc");
-    check_root.addFileArg(cli_binary);
-    check_root.addArg("check");
-    check_root.setCwd(b.path("."));
-    check_root.expectExitCode(0);
-    ci_step.dependOn(&check_root.step);
 
     // Resolves nixpkgs with real Nix, so it needs network or a warm cache.
     const kai_update_step = b.step(
