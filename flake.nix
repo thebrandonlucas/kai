@@ -5,11 +5,13 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     roc-overlay = {
-      url = "github:roc-lang/roc-overlay/06198bdac7c2a171c93d0a6f0ddeea562867ee1e";
+      url = "github:thebrandonlucas/roc-overlay/75e0d3ae5c9a4d99eb14d2b13cac5a0e22fcd89d";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # No basic-cli release supports the pinned Roc yet; build PR #499 from source.
+    # No basic-cli release supports the pinned Roc yet (0.23.0-rc1 predates
+    # nightly-2026-09-23), so build PR #499 from source; main (e416ec0) has the
+    # same tree. Switch to the first release made for these nightlies.
     basic-cli-src = {
       url = "github:roc-lang/basic-cli/473caa2cc4f3fe9ce4e4682158bb80ebc2e19169";
       flake = false;
@@ -162,6 +164,7 @@
 
       # Packages the apps import (basic-cli imports http; kai imports Weaver,
       # which imports ansi and path); unpacked where Roc looks for downloads.
+      # http stays at 1.0.0, which basic-cli names; 2.0.0 is the same archive.
       rocPackages = [
         {
           name = "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS";

@@ -913,18 +913,17 @@ expect [
 		match (
 			LockJson.decode(with_original_host(host)),
 			LockJson.decode(with_original_host("custom.example")),
+			LockJson.decode(
+				with_original_host("custom.example").replace_each(
+					"\"owner\": \"NixOS\",\n",
+					"\"host\": \"custom.example\", \"owner\": \"NixOS\",\n",
+				),
+			),
 		) {
-			(Ok(default), Ok(custom)) => Locks.validate_graph(default).is_ok()
-				and Locks.validate_graph(custom).is_err()
-					and match LockJson.decode(
-						with_original_host("custom.example").replace_each(
-							"\"owner\": \"NixOS\",\n",
-							"\"host\": \"custom.example\", \"owner\": \"NixOS\",\n",
-						),
-					) {
-						Ok(graph) => Locks.validate_graph(graph).is_ok()
-						Err(_) => False
-					}
+			(Ok(default), Ok(custom), Ok(explicit)) =>
+				Locks.validate_graph(default).is_ok()
+					and Locks.validate_graph(custom).is_err()
+						and Locks.validate_graph(explicit).is_ok()
 			_ => False
 		}
 	},

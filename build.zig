@@ -9,10 +9,7 @@ const SourceTree = struct {
     zig_files: []const []const u8,
 };
 
-// Cached `roc build` object packs can be reused by another app and segfault the
-// compiler (https://github.com/roc-lang/roc/issues/11673). Drop --no-cache
-// once the Roc pin includes https://github.com/roc-lang/roc/pull/11676.
-const roc_build = [_][]const u8{ "roc", "build", "--no-cache" };
+const roc_build = [_][]const u8{ "roc", "build" };
 
 const RocRootKind = enum {
     app,

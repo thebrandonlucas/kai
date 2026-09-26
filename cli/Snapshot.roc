@@ -190,7 +190,6 @@ Snapshot := [].{
 	}
 
 	# Walk with lstat, recreating directories and collecting regular files.
-	# A loop rather than recursion: https://github.com/roc-lang/roc/issues/11621
 	copy_tree! : Str, Path, Snapshot.Exclusions => Try({}, _)
 	copy_tree! = |root, staged, exclusions| {
 		(source_root, target_root) = (root.to_utf8(), Snapshot.bytes(staged))

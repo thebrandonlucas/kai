@@ -28,9 +28,8 @@ Fuzz := [].{
 		out = "zig-out/fuzz/${name}"
 		# A build with type errors still emits a binary but exits 1; roc-fuzz's
 		# own Roc pin warns, which exits 2. Accept warnings, never errors.
-		# --no-cache: https://github.com/roc-lang/roc/issues/11673
 		built = Cmd.new_str("roc")
-			.args_str(["build", "--no-cache", "--fuzz", source, "--output=${out}"])
+			.args_str(["build", "--fuzz", source, "--output=${out}"])
 			.merge_stderr(Bool.True)
 			.run!()?
 		match built.status {

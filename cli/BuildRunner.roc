@@ -202,32 +202,27 @@ BuildRunner := [].{
 	}
 
 	# Reject links and special files anywhere in a tree, its root included.
-	# A loop rather than recursion: https://github.com/roc-lang/roc/issues/11621
-	safe_tree! = |root| {
-		var $pending = [root]
-		while !$pending.is_empty() {
-			path = $pending.last() ?? root
-			$pending = $pending.drop_last(1)
-			match path.type!()? {
-				IsDir => {
-					$pending = $pending.concat(path.list!()?)
+	safe_tree! = |path|
+		match path.type!()? {
+			IsDir => {
+				for entry in path.list!()? {
+					BuildRunner.safe_tree!(entry)?
 				}
-				IsFile => {}
-				IsSymLink => return Err(
-					Refused(
-						"symlink is not allowed in build output/source: ${path.display()}",
-					),
-				)
-				IsOther => return Err(
-					Refused(
-						"special file is not allowed in build output/source: "
-							.concat(path.display()),
-					),
-				)
+				Ok({})
 			}
+			IsFile => Ok({})
+			IsSymLink => Err(
+				Refused(
+					"symlink is not allowed in build output/source: ${path.display()}",
+				),
+			)
+			IsOther => Err(
+				Refused(
+					"special file is not allowed in build output/source: "
+						.concat(path.display()),
+				),
+			)
 		}
-		Ok({})
-	}
 
 	# Allow the generated farm's links, then follow exactly each one's target
 	# (not links within it), rejecting symlinks in any locked source tree.
