@@ -1,10 +1,18 @@
 # Caller-owned paths. Planning validates them without observing the filesystem.
+import Sexpr
+
 Layout := {
 	project_root : Str,
 	workspace : Str,
 	generated_root : Str,
 	lock_path : Str,
 }.{
+	is_eq : _
+
+	encoder_for : _
+
+	parser_for : _
+
 	validate : Layout -> Try({}, Str)
 	validate = |layout| {
 		for path in [
@@ -82,3 +90,14 @@ expect [
 			lock_path: "/work",
 		},
 	).is_err()
+
+# kai sends the layout to the Kaifile app as an S-expression.
+expect {
+	layout = Layout.{
+		project_root: "/project",
+		workspace: "/project/.kai",
+		generated_root: "/project/.kai/generated",
+		lock_path: "/project/.kai/lock.json",
+	}
+	Sexpr.parse(Sexpr.to_str(layout)) == Ok(layout)
+}
