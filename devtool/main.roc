@@ -1,8 +1,7 @@
 # kai repo devtool entry point
 app [main!] {
-	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.22.0/${
-		""
-	}F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL.tar.zst",
+	pf: platform "../.basic-cli/main.roc",
+	nix: "../kaifile/nix/main.roc",
 }
 
 import pf.Cmd
@@ -12,15 +11,23 @@ import pf.Path
 import pf.Stdout
 
 import Cli
-import Kaifiles
+import ConfigFixtures
+import Fuzz
 import GitHub
+import KaiBuild
+import KaiBundle
+import KaiEnv
+import KaiGuix
+import KaiHelp
+import KaiRun
+import KaiUpdate
+import KaiWorkflow
 import PrepareRelease
-import PrepareXkai
 import Release
 import Tidy
 
 validate_metadata! = || {
-	version = Path.read_utf8!(Path.utf8("xkai/VERSION"))?
+	version = Path.read_utf8!(Path.utf8("VERSION"))?
 	if !Release.is_semver(version) {
 		Err(InvalidReleaseVersion(version))
 	} else {
@@ -39,17 +46,6 @@ validate_metadata! = || {
 				}),
 			)
 		}
-	}
-}
-
-nix_output_path! = |attribute| {
-	output = Cmd.new_str("nix")
-		.args_str(["build", attribute, "--no-link", "--print-out-paths"])
-		.exec_output!()?
-	paths = output.stdout_utf8.split_on("\n").keep_if(|line| !line.is_empty())
-	match paths {
-		[path] => Ok(Path.utf8(path))
-		_ => Err(UnexpectedNixOutput({ attribute, output: output.stdout_utf8 }))
 	}
 }
 
@@ -119,8 +115,8 @@ extract_archive! = |archive, destination| {
 check_x64! = |archive, destination, version| {
 	archive_contents!(archive)?
 	binary = extract_archive!(archive, destination)?
-	output = Cmd.new(Path.to_os_str(binary)).arg_str("version").exec_output!()?
-	expected = "kai version ${version}\n"
+	output = Cmd.new(Path.to_os_str(binary)).arg_str("--version").exec_output!()?
+	expected = "${version}\n"
 	if output.stdout_utf8 == expected {
 		Ok({})
 	} else {
@@ -163,24 +159,50 @@ generate_checksums! = |root, dist, archive_names| {
 	}
 }
 
+# A release publishes the platform bundle its recorded URL names, so the URL
+# cannot go stale.
+check_platform_url! = |version, bundle| {
+	origin = Cmd.new_str("git")
+		.args_str(["config", "--get", "remote.origin.url"])
+		.exec_output!()?
+		.stdout_utf8
+		.trim()
+	repository = match Release.parse_github_origin(origin) {
+		Ok(repo) => "${repo.owner}/${repo.repository}"
+		Err(_) => return Err(UnsupportedReleaseOrigin(origin))
+	}
+	expected = Release.platform_url(repository, version, bundle.hash)
+	recorded = Path.read_utf8!(Path.utf8(Release.platform_file))?.trim()
+	if recorded == expected {
+		Ok({})
+	} else {
+		Err(StalePlatformUrl({ expected, recorded }))
+	}
+}
+
 build_release_stage! = |root, dist, workspace, version| {
-	names = Release.archive_names(version)
-	x64_archive = Path.join(dist, names.x64)
-	arm64_archive = Path.join(dist, names.arm64)
+	Stdout.line!("Building the Kaifile platform bundle through Nix...")?
+	bundle = KaiBundle.platform!()?
+	check_platform_url!(version, bundle)?
+	copy_file!(bundle.archive, Path.join(dist, "${bundle.hash}.tar.zst"))?
 
-	Stdout.line!("Building portable Linux CLI archives through Nix...")?
-	x64_store = nix_output_path!(".#release-x86_64-linux")?
-	arm64_store = nix_output_path!(".#release-aarch64-linux")?
-	copy_file!(x64_store, x64_archive)?
-	copy_file!(arm64_store, arm64_archive)?
-
-	Stdout.line!("Checking packaged x86_64 Linux CLI...")?
-	check_x64!(x64_archive, Path.join(workspace, "x64-cli-test"), version)?
-	Stdout.line!("Checking packaged aarch64 Linux CLI...")?
-	check_arm64!(arm64_archive, Path.join(workspace, "arm64-cli-test"))?
+	systems = Release.release_systems(
+		Path.read_utf8!(Path.utf8(Release.systems_file))?,
+	)?
+	for system in systems {
+		archive = Path.join(dist, Release.archive_name(version, system))
+		Stdout.line!("Building and checking the ${system} CLI archive...")?
+		copy_file!(KaiBundle.nix_output!(".#release-${system}")?, archive)?
+		destination = Path.join(workspace, "${system}-cli-test")
+		if system == "x86_64-linux" {
+			check_x64!(archive, destination, version)?
+		} else {
+			check_arm64!(archive, destination)?
+		}
+	}
 
 	archive_inventory = directory_inventory!(dist)?
-	expected_archives = Release.archive_inventory(version)
+	expected_archives = Release.archive_inventory(version, systems, bundle.hash)
 	if !Release.is_exact_inventory(archive_inventory, expected_archives) {
 		Err(
 			UnexpectedArtifactInventory({
@@ -192,7 +214,7 @@ build_release_stage! = |root, dist, workspace, version| {
 		Stdout.line!("Generating checksums...")?
 		generate_checksums!(root, dist, expected_archives)?
 		inventory = directory_inventory!(dist)?
-		expected = Release.inventory(version)
+		expected = Release.inventory(version, systems, bundle.hash)
 		if Release.is_exact_inventory(inventory, expected) {
 			Ok(expected)
 		} else {
@@ -255,17 +277,23 @@ build_release! = || {
 
 main! : List(OsStr) => Try({}, _)
 main! = |args|
-	match Cli.parse(args.drop_first(1).map(OsStr.display)) {
+	match Cli.parse(args.map(OsStr.display)) {
 		Ok(Cli.Command.Help) => Stdout.line!(Cli.usage)
 		Ok(Cli.Command.BuildRelease) => build_release!()
-		Ok(Cli.Command.Kaifiles) => Kaifiles.run!()
-		Ok(Cli.Command.KaifilesSmoke) => Kaifiles.run_smoke!()
+		Ok(Cli.Command.ConfigFixtures) => ConfigFixtures.run!()
+		Ok(Cli.Command.Fuzz({ seconds, apps })) => Fuzz.run!(seconds, apps)
+		Ok(Cli.Command.KaiBuild(kai)) => KaiBuild.run!(kai)
+		Ok(Cli.Command.KaiBundle(kai)) => KaiBundle.run!(kai)
+		Ok(Cli.Command.KaiEnv(kai)) => KaiEnv.run!(kai)
+		Ok(Cli.Command.KaiGuix({ kai, required })) => KaiGuix.run!(kai, required)
+		Ok(Cli.Command.KaiHelp(kai)) => KaiHelp.run!(kai)
+		Ok(Cli.Command.KaiRun(kai)) => KaiRun.run!(kai)
+		Ok(Cli.Command.KaiUpdate(kai)) => KaiUpdate.run!(kai)
+		Ok(Cli.Command.KaiWorkflow(kai)) => KaiWorkflow.run!(kai)
 		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(
 			name,
 			version,
 		)
-		Ok(Cli.Command.PrepareXkai({ bundle_dir, output_dir, source_dir })) =>
-			PrepareXkai.run!(bundle_dir, source_dir, output_dir)
 		Ok(Cli.Command.Tidy(paths)) => Tidy.run!(paths)
 		Err(error) => Err(InvalidArguments(Cli.error_message(error)))
 	}
@@ -276,8 +304,25 @@ parse_cases = [
 	{ args: [], expected: Ok(Cli.Command.Help) },
 	{ args: ["help"], expected: Ok(Cli.Command.Help) },
 	{ args: ["build-release"], expected: Ok(Cli.Command.BuildRelease) },
-	{ args: ["kaifiles"], expected: Ok(Cli.Command.Kaifiles) },
-	{ args: ["kaifiles-smoke"], expected: Ok(Cli.Command.KaifilesSmoke) },
+	{ args: ["config-fixtures"], expected: Ok(Cli.Command.ConfigFixtures) },
+	{ args: ["kai-update", "kai"], expected: Ok(Cli.Command.KaiUpdate("kai")) },
+	{ args: ["kai-env", "kai"], expected: Ok(Cli.Command.KaiEnv("kai")) },
+	{ args: ["kai-build", "kai"], expected: Ok(Cli.Command.KaiBuild("kai")) },
+	{ args: ["kai-bundle", "kai"], expected: Ok(Cli.Command.KaiBundle("kai")) },
+	{
+		args: ["kai-guix", "--require", "kai"],
+		expected: Ok(Cli.Command.KaiGuix({ kai: "kai", required: Bool.True })),
+	},
+	{ args: ["kai-help", "kai"], expected: Ok(Cli.Command.KaiHelp("kai")) },
+	{ args: ["kai-run", "kai"], expected: Ok(Cli.Command.KaiRun("kai")) },
+	{
+		args: ["kai-workflow", "kai"],
+		expected: Ok(Cli.Command.KaiWorkflow("kai")),
+	},
+	{
+		args: ["kai-update"],
+		expected: Err(Cli.Error.ExpectedKaiBinary("kai-update")),
+	},
 	{
 		args: ["prepare-release", "μοριων", "0.0.3"],
 		expected: Ok(
@@ -292,14 +337,6 @@ parse_cases = [
 		expected: Err(Cli.Error.ArgumentsNotAllowed("build-release")),
 	},
 	{
-		args: ["kaifiles", "extra"],
-		expected: Err(Cli.Error.ArgumentsNotAllowed("kaifiles")),
-	},
-	{
-		args: ["kaifiles-smoke", "extra"],
-		expected: Err(Cli.Error.ArgumentsNotAllowed("kaifiles-smoke")),
-	},
-	{
 		args: ["prepare-release", "only-name"],
 		expected: Err(Cli.Error.ExpectedArguments("prepare-release")),
 	},
@@ -309,10 +346,16 @@ parse_cases = [
 usage_lines = [
 	"Usage: kai-devtool <command> [arguments]",
 	"build-release",
-	"kaifiles",
-	"kaifiles-smoke",
+	"config-fixtures",
+	"kai-build KAI_BINARY",
+	"kai-bundle KAI_BINARY",
+	"kai-env KAI_BINARY",
+	"kai-guix [--require] KAI_BINARY",
+	"kai-help KAI_BINARY",
+	"kai-run KAI_BINARY",
+	"kai-workflow KAI_BINARY",
+	"kai-update KAI_BINARY",
 	"prepare-release NAME VERSION",
-	"prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR",
 	"tidy ROC_FILE...",
 	"help",
 ]

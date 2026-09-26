@@ -3,7 +3,7 @@
 #
 # Currently there are 6:
 # - Enforce each code module and expect test to have an explainer comment
-# - Require every plugin implementation to have a planning expect test
+# - Require every backend planner to have executed planning expect tests
 # - Limit line length to 80
 # - Reject direct static literal-list Str.join_with calls
 # - Require character literals in ASCII byte comparisons
@@ -24,6 +24,7 @@ Tidy := [].{
 
 	Violation := { kind : Kind, line : U64 }
 	Diagnostic := { kind : Kind, line : U64, path : Str }
+	Planner : { path : Str, root : Str, tested : Bool }
 
 	excluded_directories = [
 		".direnv",
@@ -31,7 +32,6 @@ Tidy := [].{
 		".kai",
 		".zig-cache",
 		"dist",
-		"fuzz",
 		"zig-out",
 	]
 
@@ -69,7 +69,11 @@ Tidy := [].{
 
 	is_comment = |line| line.trim().starts_with("#")
 
-	is_platform_dependency = |line| line.trim().starts_with("pf: platform \"")
+	# `roc fmt` keeps these platform header entries on one line.
+	is_platform_header_line = |line| {
+		trimmed = line.trim()
+		trimmed.starts_with("pf: platform \"") or trimmed.contains(": { inputs: [")
+	}
 
 	has_module_comment = |line|
 		(line.starts_with("# ") and line.trim() != "#") or
@@ -128,7 +132,7 @@ Tidy := [].{
 		).keep_if(
 			|line|
 				line.width > Tidy.line_limit and
-					!Tidy.is_platform_dependency(line.text),
+					!Tidy.is_platform_header_line(line.text),
 		).map(
 			|line| {
 				kind: LineTooLong(line.width),
@@ -670,65 +674,93 @@ Tidy := [].{
 			}
 		}
 
-	implementation_test_path = |path| {
+	# Backend planners take the IR and a request; `plan : Ir, Request, ...`.
+	is_planner = |source|
+		List.any(
+			Tidy.indexed_lines(source),
+			|line| line.text.starts_with("\tplan : Ir, Request"),
+		)
+
+	relative_path = |raw_path|
+		if raw_path.starts_with("./") {
+			Str.from_utf8_lossy(raw_path.to_utf8().drop_first(2))
+		} else {
+			raw_path
+		}
+
+	# A planner is tested when its own expects call it and its package root,
+	# which must expose it, is a `roc test` root in build.zig.
+	planner_tested! = |path, source, build_source| {
 		parts = path.split_on("/")
-		filename = parts.last() ?? ""
-		stem = Str.from_utf8_lossy(filename.to_utf8().drop_last(4))
-		"${Str.join_with(parts.drop_last(2), "/")}/tests/${stem}Test.roc"
+		stem = Str.from_utf8_lossy((parts.last() ?? "").to_utf8().drop_last(4))
+		directory = parts.drop_last(1)
+		root = if directory.is_empty() {
+			"main.roc"
+		} else {
+			"${Str.join_with(directory, "/")}/main.roc"
+		}
+		tested = if Path.is_file!(Path.utf8(root))? {
+			root_source = Path.read_utf8!(Path.utf8(root))?
+			root_source.contains(stem) and
+				build_source.contains("\"${root}\"") and
+					source.contains("${stem}.plan(") and
+						List.any(
+							Tidy.indexed_lines(source),
+							|line| Tidy.is_expect(line.text),
+						)
+		} else {
+			Bool.False
+		}
+		Ok({ path, root, tested })
 	}
 
-	implementation_diagnostics! = |paths|
+	planners! = |paths, build_source|
 		match paths {
 			[] => Ok([])
 			[path, .. as rest] => {
-				raw_path = Path.display(path)
 				source = Path.read_utf8!(path)?
-				current = if raw_path.contains("/implementations/") and
-					source.contains("implementation = Plugin.Implementation.{") {
-					test_path = Tidy.implementation_test_path(raw_path)
-					test_parts = test_path.split_on("/")
-					test_root = "${Str.join_with(test_parts.drop_last(1), "/")}/main.roc"
-					test_name = Str.from_utf8_lossy(
-						(test_parts.last() ?? "").to_utf8().drop_last(4),
-					)
-					valid = if Path.is_file!(Path.utf8(test_path))? and
-						Path.is_file!(Path.utf8(test_root))? {
-						test_source = Path.read_utf8!(Path.utf8(test_path))?
-						root_source = Path.read_utf8!(Path.utf8(test_root))?
-						root_source.contains(test_name) and
-							test_source.contains("PlanCheck.") and
-								List.any(
-									Tidy.indexed_lines(test_source),
-									|line| Tidy.is_expect(line.text),
-								)
-					} else {
-						Bool.False
-					}
-					if valid [] else [
-						Tidy.Diagnostic.{
-							kind: MissingImplementationTest(test_path),
-							line: 1,
-							path: raw_path,
-						},
-					]
+				current = if Tidy.is_planner(source) {
+					relative = Tidy.relative_path(Path.display(path))
+					[Tidy.planner_tested!(relative, source, build_source)?]
 				} else {
 					[]
 				}
-				remaining = Tidy.implementation_diagnostics!(rest)?
+				remaining = Tidy.planners!(rest, build_source)?
 				Ok(current.concat(remaining))
 			}
 		}
+
+	# An empty planner set fails too, so renaming `plan` cannot go vacuous.
+	implementation_diagnostics! = |paths| {
+		build_source = Path.read_utf8!(Path.utf8("build.zig"))?
+		found = Tidy.planners!(paths, build_source)?
+		if found.is_empty() {
+			Ok([
+				Tidy.Diagnostic.{
+					kind: MissingImplementationTest("plan : Ir, Request"),
+					line: 1,
+					path: "no backend planner found",
+				},
+			])
+		} else {
+			Ok(
+				found.keep_if(|planner| !planner.tested).map(
+					|planner|
+						Tidy.Diagnostic.{
+							kind: MissingImplementationTest(planner.root),
+							line: 1,
+							path: planner.path,
+						},
+				),
+			)
+		}
+	}
 
 	check_paths! = |paths|
 		match paths {
 			[] => Ok([])
 			[path, .. as rest] => {
-				raw_path = Path.display(path)
-				display_path = if raw_path.starts_with("./") {
-					Str.from_utf8_lossy(raw_path.to_utf8().drop_first(2))
-				} else {
-					raw_path
-				}
+				display_path = Tidy.relative_path(Path.display(path))
 				source = Path.read_utf8!(path)?
 				diagnostics = Tidy.check_file(source).map(
 					|violation|
@@ -847,7 +879,7 @@ Tidy := [].{
 		}
 		if !missing_tests.is_empty() {
 			Stderr.line!("")?
-			Stderr.line!(Tidy.colorize(Tidy.ansi_red, "Missing implementation tests:"))?
+			Stderr.line!(Tidy.colorize(Tidy.ansi_red, "Missing backend planner tests:"))?
 			for diagnostic in missing_tests {
 				test_path = match diagnostic.kind {
 					MissingImplementationTest(path) => path
@@ -861,7 +893,7 @@ Tidy := [].{
 		}
 		Stderr.line!("Checks:")?
 		Tidy.print_check!("Module and expect comments", missing_comments.is_empty())?
-		Tidy.print_check!("Implementation tests", missing_tests.is_empty())?
+		Tidy.print_check!("Backend planner tests", missing_tests.is_empty())?
 		Tidy.print_check!("80-codepoint line limit", long_lines.is_empty())?
 		Tidy.print_check!(
 			"No direct static literal-list Str.join_with calls",

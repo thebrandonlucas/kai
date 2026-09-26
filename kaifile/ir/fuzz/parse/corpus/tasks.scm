@@ -1,0 +1,8 @@
+((format ((major 2) (minor 0))) (name "tasks")
+ (systems ("x86_64-linux"))
+ (sources (((name "default") (provider Auto))))
+ (environments (((name "ci") (parents ()) (overlays ())
+   (tools (((source "default") (name "python3")))))))
+ (shells (((name "default") (environment "ci"))))
+ (tasks (((name "test") (environment "ci")
+   (run ("python3" "-c" "print(\"hi\")" "two words" "--literal" ""))))))

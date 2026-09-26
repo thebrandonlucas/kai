@@ -1,13 +1,14 @@
 .direnv/
 .zig-cache/
 .kai
-.roc-fuzz/
 generated-docs
 zig-out/
 dist/
 result
 result-*
-/examples/plugins/custom-plugin/xkai
-/xkai-dev
 kai
 kai-issues/
+.basic-cli
+/kaifile/platform/targets/*/libhost.a
+/kaifile/platform/.zig-cache/
+/kaifile/platform/zig-out/

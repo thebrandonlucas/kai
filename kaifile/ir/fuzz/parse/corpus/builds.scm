@@ -1,0 +1,11 @@
+((format ((major 2) (minor 1)))
+ (name "build-graph")
+ (requires ("sources" "builds"))
+ (systems ("x86_64-linux"))
+ (environments (((name "builder") (parents ()) (tools ()) (overlays ()))))
+ (build_sources (((name "assets") (ref "path:./assets"))))
+ (builds (
+   ((name "library") (environment "builder") (inputs ()) (needs ())
+    (run ("python3" "build.py" "" "$(literal)")) (output "dist/library"))
+   ((name "app") (environment "builder") (inputs ("assets"))
+    (needs ("library")) (run ("python3" "app.py")) (output "dist/app")))))
