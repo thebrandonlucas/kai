@@ -455,6 +455,14 @@ pub fn build(b: *std.Build) void {
     kai_run_step.dependOn(&run_kai_run.step);
     ci_step.dependOn(kai_run_step);
 
+    // The cheap real-Nix checks hosted CI runs on every push.
+    const smoke_step = b.step(
+        "smoke",
+        "Run kai-update and kai-run, the cheap real-Nix checks",
+    );
+    smoke_step.dependOn(kai_update_step);
+    smoke_step.dependOn(kai_run_step);
+
     const kai_env_step = b.step(
         "kai-env",
         "Run kai shell and kai run with real Nix on examples/overlays",

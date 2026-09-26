@@ -1,11 +1,18 @@
 name: CI
 
+# Every branch push runs the fast checks. The full suite runs on pull requests to
+# master once they are ready for review, in merge queues and on demand; a
+# release runs it again through build-release.
 on:
   push:
     branches:
-      - master
+      - "**"
   pull_request:
+    branches:
+      - master
+    types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,8 +22,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A push to a branch with an open ready pull request also runs the full
+  # suite, which repeats these checks.
+  fast:
+    name: fast
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run tests and smoke checks
+        run: nix develop --command zig build test smoke
+
   ci:
     name: ci
+    if: github.event_name != 'push' && github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -36,6 +64,7 @@ jobs:
   # archive only after release.yml's copy of this job passes.
   ci-aarch64:
     name: ci (aarch64-linux)
+    if: github.event_name != 'push' && github.event.pull_request.draft != true
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
 
@@ -55,6 +84,7 @@ jobs:
   # Ubuntu's guix package brings a daemon and its substitute keys.
   guix:
     name: guix
+    if: github.event_name != 'push' && github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
