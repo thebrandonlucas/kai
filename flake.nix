@@ -148,6 +148,7 @@
             cp kaifile/ir/*.roc stage/ir/
             cp -R kaifile/platform/targets/{x64musl,arm64musl} stage/targets/
             substituteInPlace stage/main.roc --replace-fail '"../ir/main.roc"' '"ir/main.roc"'
+            substituteInPlace stage/ir/main.roc --replace-fail '"../platform/api.roc"' '"../api.roc"'
             (cd stage && roc bundle main.roc $(find . -type f ! -path ./main.roc | LC_ALL=C sort) --output-dir ../bundle)
             runHook postBuild
           '';

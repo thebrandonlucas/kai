@@ -3,8 +3,8 @@
 import pf.Cmd
 import pf.Env
 
+import api.Layout
 import ir.Ir
-import ir.Layout
 import nix.NixBackend
 import nix.Locks
 

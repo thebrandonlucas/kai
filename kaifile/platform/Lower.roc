@@ -1,9 +1,9 @@
 # Authoring cardinality checks feed the shared whole-project validator.
 import Config
 import Val
+import Value
 import ir.Ir
 import ir.Project
-import ir.Value
 
 ## Lower authoring settings, then share semantic validation with IR consumers.
 ## Setting cardinality belongs here because the IR stores only one value.

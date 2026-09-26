@@ -1,8 +1,8 @@
 # Versioned authoritative pins. Native lock graphs are decoded, checked and
 # rebased as data. Ordinary plans never resolve or change authoritative pins.
+import api.Layout
 import ir.Ir
 import ir.Project
-import ir.Layout
 import ir.Plan
 import LockJson
 

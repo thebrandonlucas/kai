@@ -1,6 +1,6 @@
 # Canonical configuration data and its versioned, optional-field wire codec.
-import Sexpr
-import Value
+import api.Sexpr
+import api.Value
 
 ## Versioned semantic configuration, independent of provider selection or host.
 ## Major 2 replaces shell packages with reusable environments and source intent.

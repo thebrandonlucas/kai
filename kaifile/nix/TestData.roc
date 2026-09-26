@@ -1,6 +1,6 @@
 # Pure semantic fixtures shared by authoritative-lock and executable-plan tests.
+import api.Layout
 import ir.Ir
-import ir.Layout
 
 TestData :: [].{
 	layout : Layout

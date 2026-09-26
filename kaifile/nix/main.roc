@@ -2,5 +2,6 @@
 package
 	[Backend, NixBackend, Locks, LockJson]
 	{
+		api: "../platform/api.roc",
 		ir: "../ir/main.roc",
 	}

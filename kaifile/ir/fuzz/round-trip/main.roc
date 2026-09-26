@@ -1,12 +1,13 @@
 # Generate major-2 wire records, including arbitrary provider and graph data.
 app [target] {
 	pf: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.4.0-rc1/9k2cfuAWoBfcRBRiVbriXFf1dHktoRBbieifYN7NmTHc.tar.zst",
+	api: "../../../platform/api.roc",
 	ir: "../../main.roc",
 }
 
 import pf.Fuzz
+import api.Value
 import ir.Ir
-import ir.Value
 
 ## Any IR the platform can build must survive `Ir.to_str` then `Ir.parse`
 ## unchanged, whatever characters its strings contain.

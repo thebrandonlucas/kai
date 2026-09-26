@@ -1,6 +1,7 @@
 # kai: developer environments, tasks and builds from a Kaifile.roc.
 app [main!] {
 	pf: platform "../.basic-cli/main.roc",
+	api: "../kaifile/platform/api.roc",
 	weaver: "https://github.com/lukewilliamboswell/weaver/releases/download/${
 		""
 	}0.9.0/7j6KBFBEZ8pNMLQHkx9xiwyZ2PmwQPgKNDPUih6gKe77.tar.zst",

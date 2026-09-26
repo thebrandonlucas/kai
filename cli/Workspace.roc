@@ -4,7 +4,7 @@ import pf.Env
 import pf.OsStr
 import pf.Path
 
-import ir.Layout
+import api.Layout
 import ir.Plan
 
 Workspace := [].{
