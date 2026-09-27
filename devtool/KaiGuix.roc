@@ -107,7 +107,7 @@ KaiGuix := [].{
 				Err(NonZeroExitCode({ exit_code, .. })) if exit_code == 3 => {}
 				other => return Err(GuixStatusLost(Str.inspect(other)))
 			}
-			argv = ["time-machine", "-q", "-C", channels, "--"]
+			argv = ["time-machine", "-C", channels, "--"]
 				.concat(["shell", "-q", "--pure", "hello", "--"])
 				.concat(command)
 			expected = probes.concat(argv.map(|arg| "guix ${arg}"))

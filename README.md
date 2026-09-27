@@ -153,7 +153,7 @@ can serve the request. Guix is used when Nix is not installed, or when the
 environment's tools come from a `GuixPackages` source. `--backend nix` or
 `--backend guix` forces one; Kai never falls back to the other.
 
-On Guix, `kai shell` and `kai run` run `guix time-machine -q -C CHANNELS --
+On Guix, `kai shell` and `kai run` run `guix time-machine -C CHANNELS --
 shell -q --pure` with the environment's tools, at the Guix channel commit
 Kai's lock pins. `kai build` runs `guix build -f` on a generated file whose
 derivation runs the same sandboxed build runner as on Nix, and `kai workflow`

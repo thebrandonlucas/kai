@@ -66,7 +66,7 @@ main! = |args| {
 # `check`, --version and help work even when it does not compile.
 run! = |shown, mode| {
 	if requests(shown, "--version") or requests(shown, "-V") {
-		return Stdout.line!("kai ${version}")
+		return Stdout.line!(version)
 	}
 	located = Load.project!(requested_file(shown))
 	if command_word(shown) == Ok("check") and !asks_help(shown) {

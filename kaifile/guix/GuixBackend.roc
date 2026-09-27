@@ -347,7 +347,7 @@ GuixBackend :: [].{
 					]),
 					Run({
 						what: "build ${name}",
-						argv: ["guix", "time-machine", "-q", "-C", channels, "--"]
+						argv: ["guix", "time-machine", "-C", channels, "--"]
 							.concat(["build", "-f", scm]),
 						output: Artifact({
 							name,
@@ -420,7 +420,7 @@ GuixBackend :: [].{
 		}
 		channels = "${generated}/guix/channels.scm"
 		entries = locked.map(|p| { channel: p.channel, commit: Pinned(p.commit) })
-		argv = ["guix", "time-machine", "-q", "-C", channels, "--"].concat(shell)
+		argv = ["guix", "time-machine", "-C", channels, "--"].concat(shell)
 		Ok(
 			Steps.{
 				steps: [
@@ -557,7 +557,7 @@ expect {
 				[Write([{ path, .. }]), Run({ argv, what, .. })] =>
 					path == channels
 						and what == "shell dev"
-							and argv == ["guix", "time-machine", "-q", "-C", channels, "--"]
+							and argv == ["guix", "time-machine", "-C", channels, "--"]
 								.concat(["shell", "-q", "--pure", "hello", "--", "hello", "a b"])
 				_ => Bool.False
 			}
