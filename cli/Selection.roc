@@ -1,6 +1,9 @@
-# Pure backend selection: which backend serves one request, decided from the
-# configuration's source constraints, --backend and observed executables,
-# before any effect. A chosen backend's failure never falls back to another.
+# Backend selection for one request: each backend that may serve it becomes
+# a candidate, unfit with a reason, planned or failed, before any effect;
+# then the first fitting candidate whose programs run is chosen. A chosen
+# candidate's failure never falls back to another.
+import api.Plan
+import api.Protocol
 import ir.Ir
 import ir.Project
 import ir.Request
@@ -11,10 +14,13 @@ Selection := [].{
 
 	BackendChoice : [Auto, Only(BackendId)]
 
-	## Unchecked means the decision did not depend on that executable.
+	## Unchecked means the decision did not depend on that program.
 	Probe : [Missing, Unusable(Str), Usable, Unchecked]
 
-	Observed : { nix : Probe, guix : Probe }
+	Candidate : Protocol.Candidate
+
+	## Plans the request for one backend, or says why it cannot.
+	Planner : BackendId -> Try(Plan, Str)
 
 	## Whether a backend can serve the requested closure; unrelated shells,
 	## tasks and builds never matter. Nix planning checks builds itself.
@@ -38,68 +44,96 @@ Selection := [].{
 			}
 		}
 
-	## Candidates that fit, in preference order: Nix before Guix.
-	fitting : BackendChoice, Request, Ir -> List(BackendId)
-	fitting = |choice, request, ir| {
-		candidates = match choice {
+	## One candidate per backend in preference order, Nix before Guix, or
+	## only the --backend one. Only a fitting backend is planned.
+	candidates : BackendChoice, Request, Ir, Planner -> List(Candidate)
+	candidates = |choice, request, ir, plan| {
+		backends = match choice {
 			Auto => [Nix, Guix]
 			Only(backend) => [backend]
 		}
-		candidates.keep_if(|b| Selection.fit(request, ir, b).is_ok())
+		backends.map(
+			|backend| {
+				program = Selection.name(backend)
+				outcome = match Selection.fit(request, ir, backend) {
+					Err(why) => Unfit(why)
+					Ok({}) =>
+						match plan(backend) {
+							Ok(planned) => Planned(planned)
+							Err(message) => Failed(message)
+						}
+					}
+				{
+					backend: program,
+					plugin: "std",
+					probes: [{ program, flag: DoubleDashVersion }],
+					outcome,
+				}
+			},
+		)
 	}
 
-	resolve :
+	fits : Candidate -> Bool
+	fits = |candidate|
+		match candidate.outcome {
+			Unfit(_) => Bool.False
+			_ => Bool.True
+		}
+
+	## The first of a candidate's programs that is not usable, else Usable.
+	status : Candidate, (Str -> Probe) -> Probe
+	status = |candidate, probe|
+		candidate.probes
+			.map(|p| probe(p.program))
+			.find_first(|p| p != Usable)
+			?? Usable
+
+	## The first fitting candidate whose programs are all usable; `probe`
+	## answers Unchecked for a program that was not probed.
+	choose :
 		BackendChoice,
-		Request,
-		Ir,
-		Observed ->
+		List(Candidate),
+		(Str -> Probe) ->
 			Try(
-				BackendId,
+				Candidate,
 				[
-					BackendConflict(BackendId, Str),
+					BackendConflict(Str, Str),
 					NoEligibleBackend(List(Str)),
-					RequiredBackendUnavailable(BackendId, Probe),
+					RequiredBackendUnavailable(Str, Probe),
 				],
 			)
-	resolve = |choice, request, ir, observed| {
-		probe = |backend| if backend == Nix observed.nix else observed.guix
-		usable = |backend|
-			match probe(backend) {
-				Usable => Bool.True
-				_ => Bool.False
+	choose = |choice, options, probe| {
+		reason = |candidate|
+			match candidate.outcome {
+				Unfit(why) => why
+				_ => ""
 			}
-		match (choice, Selection.fitting(choice, request, ir)) {
-			(Only(backend), []) => {
-				why = match Selection.fit(request, ir, backend) {
-					Err(message) => message
-					Ok({}) => ""
-				}
-				Err(BackendConflict(backend, why))
-			}
-			(_, [backend]) =>
-				if usable(backend) {
-					Ok(backend)
-				} else {
-					Err(RequiredBackendUnavailable(backend, probe(backend)))
+		match (choice, options.keep_if(Selection.fits)) {
+			(Only(backend), []) =>
+				Err(
+					BackendConflict(
+						Selection.name(backend),
+						options.first().map_ok(reason) ?? "",
+					),
+				)
+			(_, [single]) =>
+				match Selection.status(single, probe) {
+					Usable => Ok(single)
+					other => Err(RequiredBackendUnavailable(single.backend, other))
 				}
 			(_, []) =>
 				Err(
 					NoEligibleBackend(
-						[Nix, Guix].map(
-							|b|
-								match Selection.fit(request, ir, b) {
-									Err(message) => "${Selection.name(b)}: ${message}"
-									Ok({}) => ""
-								},
-						),
+						options.map(|c| "${c.backend}: ${reason(c)}"),
 					),
 				)
-			(_, fits) =>
-				fits.find_first(usable).map_err(
+			(_, fitting) =>
+				fitting.find_first(|c| Selection.status(c, probe) == Usable).map_err(
 					|_|
 						NoEligibleBackend(
-							fits.map(
-								|b| "${Selection.name(b)} ${Selection.probe_text(probe(b))}",
+							fitting.map(
+								|c|
+									"${c.backend} ${Selection.probe_text(Selection.status(c, probe))}",
 							),
 						),
 				)
@@ -133,21 +167,22 @@ Selection := [].{
 	}
 
 	## One line saying which backend runs the request and why.
-	explain :
-		BackendChoice, Request, Ir, Observed, BackendId -> Str
-	explain = |choice, request, ir, observed, backend| {
-		why = match choice {
-			Only(_) => "--backend ${Selection.name(backend)}"
-			Auto =>
-				if Selection.fitting(Auto, request, ir).len() == 1 {
-					"only ${Selection.name(backend)} fits"
-				} else if backend == Nix {
+	explain : BackendChoice, List(Candidate), (Str -> Probe), Candidate -> Str
+	explain = |choice, options, probe, chosen| {
+		why = match (choice, options.keep_if(Selection.fits)) {
+			(Only(_), _) => "--backend ${chosen.backend}"
+			(Auto, [_]) => "only ${chosen.backend} fits"
+			(Auto, fitting) => {
+				first = fitting.first() ?? chosen
+				if first.backend == chosen.backend {
 					"preferred when installed"
 				} else {
-					"nix ${Selection.probe_text(observed.nix)}"
+					probed = Selection.status(first, probe)
+					"${first.backend} ${Selection.probe_text(probed)}"
 				}
 			}
-		"using ${Selection.name(backend)} (${why})"
+		}
+		"using ${chosen.backend} (${why})"
 	}
 
 	name : BackendId -> Str
@@ -213,13 +248,22 @@ only_nix = { nix: Usable, guix: Missing }
 
 shell = |name| Request.Shell(name, [])
 
-outcome = |choice, request, observed|
-	match Selection.resolve(choice, request, fixture, observed) {
-		Ok(backend) => Ok(backend)
-		Err(BackendConflict(backend, _)) => Err(Conflict(backend))
+planned : Selection.BackendId -> Try(Plan, Str)
+planned = |_| Ok(Plan.{ steps: [], next: Done })
+
+probed = |observed| |program|
+	if program == "nix" observed.nix else observed.guix
+
+outcome = |choice, request, observed| {
+	options = Selection.candidates(choice, request, fixture, planned)
+	id = |backend| if backend == "nix" Nix else Guix
+	match Selection.choose(choice, options, probed(observed)) {
+		Ok(chosen) => Ok(id(chosen.backend))
+		Err(BackendConflict(backend, _)) => Err(Conflict(id(backend)))
 		Err(NoEligibleBackend(_)) => Err(NoneEligible)
-		Err(RequiredBackendUnavailable(backend, _)) => Err(Unavailable(backend))
+		Err(RequiredBackendUnavailable(backend, _)) => Err(Unavailable(id(backend)))
 	}
+}
 
 # Source constraints and capabilities narrow the candidates, --backend
 # narrows Auto, Nix is preferred when both fit, and a required backend that
@@ -251,8 +295,26 @@ expect [
 
 # Only the requested closure is examined: a Nix-only build or shell elsewhere
 # in the project does not keep a Guix shell from being selected.
-expect Selection.fitting(Auto, shell("guixonly"), fixture) == [Guix]
-	and Selection.fitting(Auto, shell("generic"), fixture) == [Nix, Guix]
+expect {
+	fitting = |request|
+		Selection.candidates(Auto, request, fixture, planned)
+			.keep_if(Selection.fits)
+			.map(|c| c.backend)
+	fitting(shell("guixonly")) == ["guix"]
+		and fitting(shell("generic")) == ["nix", "guix"]
+}
+
+# A plan that failed is still chosen when its backend runs, with no switch
+# to another backend; it is passed over only when its backend cannot run.
+expect {
+	failing = |backend| if backend == Nix Err("no lock") else planned(backend)
+	options = Selection.candidates(Auto, shell("generic"), fixture, failing)
+	chosen = |observed|
+		Selection.choose(Auto, options, probed(observed))
+			.map_ok(|c| (c.backend, c.outcome == Failed("no lock")))
+	chosen(both) == Ok(("nix", Bool.True))
+		and chosen(only_guix) == Ok(("guix", Bool.False))
+}
 
 # Guix channels have no lock: update refuses Guix-only sources or --backend
 # guix, and still locks projects that use Nix or automatic sources.
@@ -269,11 +331,18 @@ expect {
 
 # The explanation names the backend and the reason it was chosen.
 expect [
-	(Auto, shell("generic"), only_guix, Guix, "using guix (nix is not installed)"),
-	(Auto, shell("generic"), both, Nix, "using nix (preferred when installed)"),
-	(Only(Guix), shell("generic"), both, Guix, "using guix (--backend guix)"),
-	(Auto, shell("guixonly"), both, Guix, "using guix (only guix fits)"),
+	(Auto, shell("generic"), only_guix, "using guix (nix is not installed)"),
+	(Auto, shell("generic"), both, "using nix (preferred when installed)"),
+	(Only(Guix), shell("generic"), both, "using guix (--backend guix)"),
+	(Auto, shell("guixonly"), both, "using guix (only guix fits)"),
 ].all(
-	|(choice, request, observed, backend, text)|
-		Selection.explain(choice, request, fixture, observed, backend) == text,
+	|(choice, request, observed, text)| {
+		options = Selection.candidates(choice, request, fixture, planned)
+		match Selection.choose(choice, options, probed(observed)) {
+			Ok(chosen) =>
+				Selection.explain(choice, options, probed(observed), chosen)
+					== text
+			Err(_) => Bool.False
+		}
+	},
 )

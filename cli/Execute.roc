@@ -1,6 +1,6 @@
-# Execute a shell, task, build or workflow request: select its backend, obtain
-# its whole pure plan (for Nix after reading the lock authority) and run the
-# steps in order. Nothing here writes the lock.
+# Execute a shell, task, build or workflow request: plan it for each backend
+# that fits (Nix reading the lock authority), choose one whose programs run,
+# check its whole plan and run the steps in order. Nothing here writes the lock.
 import pf.Cmd
 import pf.Stderr
 import pf.Stdout
@@ -20,75 +20,100 @@ import Update
 import Workspace
 
 Execute := [].{
-	# Probe only the backends the decision can depend on: Guix only when Nix
-	# is not both fitting and usable, because Auto prefers Nix.
+	# Plan every fitting backend, then probe fitting candidates in order,
+	# each program once, until one is usable. A chosen plan that failed is
+	# reported, never replaced by another backend's.
 	select! :
 		Ir, Request, Selection.BackendChoice, Str, Output.Mode => Try({}, _)
 	select! = |ir, request, choice, root, mode| {
-		fits = Selection.fitting(choice, request, ir)
-		nix = if fits.contains(Nix) Execute.probe!("nix") else Unchecked
-		guix = match nix {
-			Usable => Unchecked
-			_ => if fits.contains(Guix) Execute.probe!("guix") else Unchecked
+		layout = Workspace.locate!(root)?
+		target = Update.target!()?
+		lock = Update.observe!(layout.lock_path)?
+		candidates = Selection.candidates(
+			choice,
+			request,
+			ir,
+			|backend|
+				match backend {
+					Nix => Execute.nix_plan(ir, request, target, layout, lock)
+					Guix =>
+						GuixBackend.steps(ir, request)
+							.map_err(|message| "cannot plan the Guix shell: ${message}")
+					},
+		)
+		var $observed = []
+		var $found = Bool.False
+		for candidate in candidates.keep_if(Selection.fits) {
+			if !$found {
+				for check in candidate.probes {
+					if !$observed.any(|(program, _)| program == check.program) {
+						$observed = $observed.append(
+							(check.program, Execute.probe!(check.program, check.flag)),
+						)
+					}
+				}
+				seen = $observed
+				$found = Selection.status(candidate, Execute.lookup(seen)) == Usable
+			}
 		}
-		observed = { nix, guix }
-		backend = Selection.resolve(choice, request, ir, observed)?
-		why = Selection.explain(choice, request, ir, observed, backend)
+		probe = Execute.lookup($observed)
+		chosen = Selection.choose(choice, candidates, probe)?
+		why = Selection.explain(choice, candidates, probe, chosen)
 		Output.note!(
 			mode,
 			"kai: ${why}",
-			Output.event(
-				"backend",
-				why,
-				[("backend", Output.text(Selection.name(backend)))],
-			),
+			Output.event("backend", why, [("backend", Output.text(chosen.backend))]),
 		)?
-		layout = Workspace.locate!(root)?
-		match backend {
-			Nix => Execute.request!(ir, request, layout, mode)
-			Guix => {
-				plan = GuixBackend.steps(ir, request)
-					.map_err(|message| GuixFailed(message))?
-				Execute.run!(plan, request, layout, mode)
-			}
+		match chosen.outcome {
+			Planned(plan) => Execute.run!(plan, request, layout, mode)
+			Failed(message) | Unfit(message) => Err(PlanFailed(message))
 		}
+	}
+
+	lookup : List((Str, Selection.Probe)) -> (Str -> Selection.Probe)
+	lookup = |observed| |program|
+		observed.find_first(|(name, _)| name == program).map_ok(|(_, p)| p)
+			?? Unchecked
+
+	# Nix plans read the lock authority; its absence is a planning failure.
+	nix_plan :
+		Ir, Request, Str, Layout, [Absent, Present(List(U8))] -> Try(Plan, Str)
+	nix_plan = |ir, request, target, layout, lock| {
+		path = layout.lock_path
+		unreadable = |why|
+			"cannot read the lock file ${path}: ${why}; run `kai update`"
+		rendering = |message| "cannot generate the Nix files: ${message}"
+		NixBackend.preflight(ir, request, target, layout).map_err(rendering)?
+		text = match lock {
+			Present(bytes) =>
+				Str.from_utf8(bytes).map_err(|_| unreadable("not UTF-8"))?
+			Absent => return Err("no lock file at ${path}; run `kai update`")
+		}
+		locks = Locks.decode(text).map_err(unreadable)?
+		planned = NixBackend.plan(ir, request, target, layout, locks)
+			.map_err(rendering)?
+		NixBackend.steps(planned, request).map_err(rendering)
 	}
 
 	# A bounded, side-effect-free check that an executable runs at all.
-	probe! : Str => Selection.Probe
-	probe! = |program| {
-		version = Cmd.new_str(program).args_str(["--version"]).timeout_ms(10000)
+	probe! : Str, [DoubleDashVersion, DashV, VersionWord] => Selection.Probe
+	probe! = |program, flag| {
+		arg = match flag {
+			DoubleDashVersion => "--version"
+			DashV => "-v"
+			VersionWord => "version"
+		}
+		version = Cmd.new_str(program).args_str([arg]).timeout_ms(10000)
 		match version.run!() {
 			Ok({ status: Exited(0), .. }) => Usable
 			Ok({ status: Exited(code), .. }) =>
-				Unusable("`${program} --version` exited with code ${code.to_str()}")
+				Unusable("`${program} ${arg}` exited with code ${code.to_str()}")
 			Ok({ status: Signaled(signal), .. }) =>
-				Unusable("`${program} --version` got signal ${signal.to_str()}")
+				Unusable("`${program} ${arg}` got signal ${signal.to_str()}")
 			Err(IO(NotFound)) => Missing
-			Err(Timeout(_)) => Unusable("`${program} --version` timed out")
+			Err(Timeout(_)) => Unusable("`${program} ${arg}` timed out")
 			Err(err) => Unusable(Str.inspect(err))
 		}
-	}
-
-	# The whole plan, every workflow step included, is checked before the
-	# first effect.
-	request! : Ir, Request, Layout, Output.Mode => Try({}, _)
-	request! = |ir, request, layout, mode| {
-		target = Update.target!()?
-		NixBackend.preflight(ir, request, target, layout)
-			.map_err(|message| RenderFailed(message))?
-		text = match Update.observe!(layout.lock_path)? {
-			Present(bytes) => Str.from_utf8(bytes)
-				.map_err(|_| BadLock(layout.lock_path, "not UTF-8"))?
-			Absent => return Err(NoLock(layout.lock_path))
-		}
-		locks = Locks.decode(text)
-			.map_err(|message| BadLock(layout.lock_path, message))?
-		planned = NixBackend.plan(ir, request, target, layout, locks)
-			.map_err(|message| RenderFailed(message))?
-		plan = NixBackend.steps(planned, request)
-			.map_err(|message| RenderFailed(message))?
-		Execute.run!(plan, request, layout, mode)
 	}
 
 	# Check the whole plan, then run its steps in order; the first failure

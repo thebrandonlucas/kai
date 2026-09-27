@@ -503,9 +503,6 @@ describe = |err|
 		UnsafePath(value) => "refusing unsafe or symlinked path: ${value}"
 		RenderFailed(message) => "cannot generate the Nix files: ${message}"
 		LockFailed(message) => "cannot lock the Nix inputs: ${message}"
-		NoLock(path) => "no lock file at ${path}; run `kai update`"
-		BadLock(path, message) =>
-			"cannot read the lock file ${path}: ${message}; run `kai update`"
 		LocalChanged(path) => "local source ${path} changed; run `kai update`"
 		UnsafePlan(why) => "refusing the plan: ${why}"
 		SnapshotFailed(message) => message
@@ -518,17 +515,17 @@ describe = |err|
 		AuthorityChanged => "the lock file changed during update; retry kai update"
 		InvalidBackend(value) => "--backend must be nix or guix, not '${value}'"
 		BackendConflict(backend, why) =>
-			"--backend ${Selection.name(backend)} cannot serve this request: ${why}"
+			"--backend ${backend} cannot serve this request: ${why}"
 		NoEligibleBackend(reasons) =>
 			"no backend can serve this request:\n  "
 				.concat(Str.join_with(reasons.keep_if(|r| !r.is_empty()), "\n  "))
 		RequiredBackendUnavailable(backend, probe) =>
-			"this request needs ${Selection.name(backend)}, which "
+			"this request needs ${backend}, which "
 				.concat(Selection.probe_text(probe))
 		GuixLockUnsupported =>
 			"locking is not supported for Guix sources; Guix shells use the "
 				.concat("installed Guix channels")
-		GuixFailed(message) => "cannot plan the Guix shell: ${message}"
+		PlanFailed(message) => message
 		other => Str.inspect(other)
 	}
 
@@ -665,7 +662,7 @@ expect [
 # error, and every other failure is 1.
 expect exit_status(ChildExited(Run("fail"), 7)) == 7
 	and exit_status(InvalidBackend("x")) == 2
-		and exit_status(NoLock("/p/.kai/lock.json")) == 1
+		and exit_status(PlanFailed("no lock file")) == 1
 
 help_text = |loaded, args, style|
 	match render(loaded, args, style) {
