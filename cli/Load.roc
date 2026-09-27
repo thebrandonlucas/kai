@@ -50,7 +50,8 @@ Load := [].{
 	# relative ROC executable belongs to the invocation directory.
 	compiler! : () => Try(Str, _)
 	compiler! = || {
-		_ = Load.seed!()
+		_ = Load.seed!("KAI_PLATFORM_BUNDLE")
+		_ = Load.seed!("KAI_STD_BUNDLE")
 		override = Env.var_str!("ROC") ?? "roc"
 		compiler = if override.contains("/") and !override.starts_with("/") {
 			cwd = Env.cwd!()?.to_str()?
@@ -68,15 +69,15 @@ Load := [].{
 		Ok(compiler)
 	}
 
-	# A Nix-installed Kai's wrapper sets KAI_PLATFORM_BUNDLE to its unpacked
-	# platform bundle, <hash>/. Roc checks its package cache before
-	# downloading a URL package, so seeding the cache with that bundle lets a
-	# Kaifile.roc pinned to it load offline. Best-effort and silent: otherwise
-	# Roc downloads it. Publish with a rename like Roc, which also sweeps
-	# stale *.tmp staging directories.
-	seed! : () => Try({}, _)
-	seed! = || {
-		bundle = Env.var_str!("KAI_PLATFORM_BUNDLE")?.drop_suffix("/")
+	# A Nix-installed Kai's wrapper sets KAI_PLATFORM_BUNDLE and KAI_STD_BUNDLE
+	# to its unpacked platform and std bundles, <hash>/. Roc checks its package
+	# cache before downloading a URL package, so seeding the cache with them
+	# lets a Kaifile.roc pinned to them load offline. Best-effort and silent:
+	# otherwise Roc downloads them. Publish with a rename like Roc, which also
+	# sweeps stale *.tmp staging directories.
+	seed! : OsStr => Try({}, _)
+	seed! = |variable| {
+		bundle = Env.var_str!(variable)?.drop_suffix("/")
 		hash = bundle.split_on("/").last() ?? ""
 		if ["", ".", ".."].contains(hash) {
 			return Err(InvalidBundle(bundle))

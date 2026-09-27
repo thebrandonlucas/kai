@@ -2,8 +2,9 @@
 # a release publishes: served from localhost, the bare kai a release archive
 # holds checks, updates and runs it; a Nix-installed kai does the same
 # offline, seeding the Roc package cache from the bundle its wrapper names.
-# Each uses a fresh Roc cache, which must end up holding that bundle alone,
-# so loading the platform downloads nothing else.
+# Each uses a fresh Roc cache, which must end up holding only the bundles it
+# downloads or seeds (the Nix wrapper seeds std too), so loading the platform
+# downloads nothing else.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -26,9 +27,9 @@ KaiBundle := [].{
 	names! = |dir|
 		Ok(Path.list!(dir)?.map(|p| Path.display(Path.filename(p) ?? p)))
 
-	# The platform bundle, <hash>.tar.zst, and its hash.
-	platform! = || {
-		store = KaiBundle.nix_output!(".#kaifile-platform")?
+	# A bundle flake output's <hash>.tar.zst and its hash.
+	bundle! = |attribute| {
+		store = KaiBundle.nix_output!(attribute)?
 		names = KaiBundle.names!(store)?
 		match names.keep_if(|name| name.ends_with(".tar.zst")) {
 			[name] =>
@@ -36,9 +37,12 @@ KaiBundle := [].{
 					archive: Path.join(store, name),
 					hash: name.drop_suffix(".tar.zst"),
 				})
-			_ => Err(UnexpectedPlatformBundle(names))
+			_ => Err(UnexpectedBundle({ attribute, names }))
 		}
 	}
+
+	# The platform bundle.
+	platform! = || KaiBundle.bundle!(".#kaifile-platform")
 
 	kaifile = |url|
 		\\app [config] { pf: platform "${url}" }
@@ -55,14 +59,15 @@ KaiBundle := [].{
 		kai = Path.canonicalize!(Path.utf8(binary))?
 		version = Path.read_utf8!(Path.utf8("VERSION"))?.trim()
 		bundle = KaiBundle.platform!()?
+		std = KaiBundle.bundle!(".#kai-std")?
 		installed = Path.join(KaiBundle.nix_output!(".#kai")?, "bin/kai")
 		work = Path.canonicalize!(Env.create_temp_dir_with_prefix!("kai-bundle-")?)?
-		result = KaiBundle.run_in!(kai, installed, bundle, version, work)
+		result = KaiBundle.run_in!(kai, installed, bundle, std, version, work)
 		Path.delete_all!(work)?
 		result
 	}
 
-	run_in! = |kai, installed, bundle, version, work| {
+	run_in! = |kai, installed, bundle, std, version, work| {
 		release_path = "v${version}/${bundle.hash}.tar.zst"
 		archive = Path.read_bytes!(bundle.archive)?
 		listener = Tcp.listen!("127.0.0.1", 0, 5000)?
@@ -72,7 +77,7 @@ KaiBundle := [].{
 		served = KaiBundle.project!(
 			kai,
 			url,
-			bundle.hash,
+			[bundle.hash],
 			Path.join(work, "served"),
 			|command| KaiBundle.serving!(listener, target, archive, command),
 		)
@@ -84,7 +89,7 @@ KaiBundle := [].{
 		KaiBundle.project!(
 			installed,
 			offline,
-			bundle.hash,
+			[bundle.hash, std.hash],
 			seeded,
 			|command| Ok(command.exec_output!()?.stdout_utf8),
 		)?
@@ -134,8 +139,9 @@ KaiBundle := [].{
 	}
 
 	# A fresh project and Roc cache (Nix keeps the caller's) whose check must
-	# leave only the bundle cached: no other package, no staging directory.
-	project! = |kai, url, hash, dir, execute!| {
+	# leave exactly the expected bundles cached: no other package, no staging
+	# directory.
+	project! = |kai, url, hashes, dir, execute!| {
 		cache = Path.join(dir, "cache")
 		Path.create_all!(cache)?
 		nix_cache = match Env.var_str!("XDG_CACHE_HOME") {
@@ -155,8 +161,8 @@ KaiBundle := [].{
 		_ = kai!(["check"])?
 		roc_packages = Path.join(cache, "roc/packages")
 		cached = KaiBundle.names!(roc_packages)?
-		bundled = |name| name == hash or name == "${hash}.deps.json"
-		if !cached.contains(hash) or !cached.all(bundled) {
+		bundled = |name| hashes.any(|h| name == h or name == "${h}.deps.json")
+		if !hashes.all(|h| cached.contains(h)) or !cached.all(bundled) {
 			return Err(UnexpectedRocCache(cached))
 		}
 		_ = kai!(["update"])?

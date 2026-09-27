@@ -163,6 +163,51 @@
           '';
         };
 
+      # The std plugin as a Roc package bundle, like the platform's. Its header
+      # names the platform by the URL this release publishes the platform
+      # bundle at, as a Kaifile.roc header does.
+      releaseRepository = "thebrandonlucas/kai";
+      kaiStdFor =
+        pkgs:
+        let
+          platform = kaifilePlatformFor pkgs;
+        in
+        pkgs.stdenvNoCC.mkDerivation {
+          name = "kai-std";
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = ./plugins/std;
+          };
+          nativeBuildInputs = [
+            (rocFor pkgs)
+            pkgs.zstd
+          ];
+          dontConfigure = true;
+          dontFixup = true;
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR" XDG_CACHE_HOME="$TMPDIR/cache"
+            hash="$(basename ${platform}/*.tar.zst .tar.zst)"
+            url="https://github.com/${releaseRepository}/releases/download/v${version}/$hash.tar.zst"
+            mkdir -p "$XDG_CACHE_HOME/roc/packages" bundle
+            cp -R ${platform}/"$hash" "$XDG_CACHE_HOME/roc/packages/$hash"
+            cd plugins/std
+            substituteInPlace main.roc --replace-fail '"../../kaifile/platform/main.roc"' "\"$url\""
+            roc bundle main.roc $(find . -type f ! -path ./main.roc | LC_ALL=C sort) --output-dir ../../bundle
+            cd ../..
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out"
+            cp bundle/*.tar.zst "$out/"
+            name="$(basename "$out"/*.tar.zst .tar.zst)"
+            mkdir "$out/$name"
+            zstd -dc "$out/$name.tar.zst" | tar -x -C "$out/$name"
+            runHook postInstall
+          '';
+        };
+
       # Packages the apps import (basic-cli imports http; kai imports Weaver,
       # which imports ansi and path); unpacked where Roc looks for downloads.
       # http stays at 1.0.0, which basic-cli names; 2.0.0 is the same archive.
@@ -307,13 +352,14 @@
           '';
 
       # Kai evaluates Kaifile.roc with the pinned compiler unless ROC is set,
-      # and seeds Roc's package cache with this Kai's unpacked platform bundle,
-      # <hash>/, so a Kaifile.roc pinned to it loads offline. GNU coreutils
-      # only back up the host's, so tasks keep the user's tools.
+      # and seeds Roc's package cache with this Kai's unpacked platform and std
+      # bundles, <hash>/, so a Kaifile.roc pinned to them loads offline. GNU
+      # coreutils only back up the host's, so tasks keep the user's tools.
       mkKaiPackage =
         pkgs: binary:
         let
           platform = kaifilePlatformFor pkgs;
+          std = kaiStdFor pkgs;
         in
         mkWrappedPackage pkgs {
           pname = "kai";
@@ -323,6 +369,7 @@
             "--suffix PATH : ${lib.makeBinPath [ pkgs.coreutils ]}"
             "--set-default ROC ${rocFor pkgs}/bin/roc"
             "--set-default KAI_PLATFORM_BUNDLE \"${platform}/$(basename ${platform}/*.tar.zst .tar.zst)\""
+            "--set-default KAI_STD_BUNDLE \"${std}/$(basename ${std}/*.tar.zst .tar.zst)\""
           ];
         };
 
@@ -366,6 +413,7 @@
             inherit kai;
             default = kai;
             kaifile-platform = kaifilePlatformFor pkgs;
+            kai-std = kaiStdFor pkgs;
           };
 
           releaseArchives = {
