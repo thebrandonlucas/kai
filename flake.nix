@@ -123,10 +123,7 @@
           name = "kaifile-platform";
           src = lib.fileset.toSource {
             root = ./.;
-            fileset = lib.fileset.unions [
-              ./kaifile/ir
-              ./kaifile/platform
-            ];
+            fileset = ./kaifile/platform;
           };
           nativeBuildInputs = [
             (rocFor pkgs)
@@ -138,17 +135,15 @@
           buildPhase = ''
             runHook preBuild
             export HOME="$TMPDIR" XDG_CACHE_HOME="$TMPDIR/cache" ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
+            mkdir -p "$XDG_CACHE_HOME/roc/packages"
+            cp -R ${platformRocPackagesFor pkgs}/. "$XDG_CACHE_HOME/roc/packages/"
+            chmod -R u+w "$XDG_CACHE_HOME/roc/packages"
             (cd kaifile/platform && zig build --release)
             (cd kaifile/platform/targets && sha256sum --quiet -c x64musl.sha256 arm64musl.sha256)
 
-            # roc bundle packs only files below main.roc's directory, so the
-            # ir package moves inside the platform.
-            mkdir -p stage/ir stage/targets bundle
+            mkdir -p stage/targets bundle
             cp kaifile/platform/*.roc stage/
-            cp kaifile/ir/*.roc stage/ir/
             cp -R kaifile/platform/targets/{x64musl,arm64musl} stage/targets/
-            substituteInPlace stage/main.roc --replace-fail '"../ir/main.roc"' '"ir/main.roc"'
-            substituteInPlace stage/ir/main.roc --replace-fail '"../platform/api.roc"' '"../api.roc"'
             (cd stage && roc bundle main.roc $(find . -type f ! -path ./main.roc | LC_ALL=C sort) --output-dir ../bundle)
             runHook postBuild
           '';
@@ -176,7 +171,12 @@
           name = "kai-std";
           src = lib.fileset.toSource {
             root = ./.;
-            fileset = ./plugins/std;
+            fileset = lib.fileset.unions [
+              ./plugins/std
+              ./kaifile/ir
+              ./kaifile/nix
+              ./kaifile/guix
+            ];
           };
           nativeBuildInputs = [
             (rocFor pkgs)
@@ -191,10 +191,24 @@
             url="https://github.com/${releaseRepository}/releases/download/v${version}/$hash.tar.zst"
             mkdir -p "$XDG_CACHE_HOME/roc/packages" bundle
             cp -R ${platform}/"$hash" "$XDG_CACHE_HOME/roc/packages/$hash"
-            cd plugins/std
-            substituteInPlace main.roc --replace-fail '"../../kaifile/platform/main.roc"' "\"$url\""
-            roc bundle main.roc $(find . -type f ! -path ./main.roc | LC_ALL=C sort) --output-dir ../../bundle
-            cd ../..
+            cp -R ${platformRocPackagesFor pkgs}/. "$XDG_CACHE_HOME/roc/packages/"
+            chmod -R u+w "$XDG_CACHE_HOME/roc/packages"
+            # roc bundle packs only files below main.roc's directory, so the ir,
+            # nix and guix packages move inside std, depending on the platform
+            # itself rather than on its api.roc copy of the same modules.
+            mkdir stage
+            cp plugins/std/*.roc stage/
+            for package in ir nix guix; do
+              cp -R "kaifile/$package" "stage/$package"
+              chmod -R u+w "stage/$package"
+              rm -rf "stage/$package/fuzz"
+              substituteInPlace stage/main.roc --replace-fail "\"../../kaifile/$package/main.roc\"" "\"$package/main.roc\""
+              substituteInPlace "stage/$package/main.roc" --replace-fail 'api: "../platform/api.roc"' "api: platform \"$url\""
+            done
+            substituteInPlace stage/main.roc --replace-fail '"../../kaifile/platform/main.roc"' "\"$url\""
+            cd stage
+            roc bundle main.roc $(find . -type f ! -path ./main.roc | LC_ALL=C sort) --output-dir ../bundle
+            cd ..
             runHook postBuild
           '';
           installPhase = ''

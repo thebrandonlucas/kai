@@ -40,7 +40,7 @@ ConfigFixtures := [].{
 				"${before}config : List(Config.Setting)\nconfig = ${after}"
 			Err(_) => body
 		}
-		"import pf.Config\nimport std.Std\n\n${annotated}\n\n"
+		"import std.Config\nimport std.Std\n\n${annotated}\n\n"
 			.concat("kaifile = Std.kaifile(config)")
 	}
 
@@ -71,7 +71,7 @@ ConfigFixtures := [].{
 	helper_modules = [
 		{
 			name: "ProjectBuilds",
-			source: \\import pf.Config
+			source: \\import std.Config
 				\\ProjectBuilds :: [].{
 				\\ settings : List(Config.Setting)
 				\\ settings = [${ConfigFixtures.build_settings}]
@@ -81,7 +81,7 @@ ConfigFixtures := [].{
 		{
 			name: "ProjectWorkflows",
 			source: \\# Reusable typed workflows compose as ordinary settings.
-				\\import pf.Config
+				\\import std.Config
 				\\ProjectWorkflows :: [].{
 				\\ settings : List(Config.Setting)
 				\\ settings = [${ConfigFixtures.workflow_steps}]

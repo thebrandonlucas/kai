@@ -89,35 +89,45 @@ KaiBundle := [].{
 		source = Path.join(work, "std")
 		output = Path.join(work, "std-bundle")
 		store = Path.join(work, "bundle-cache/roc/packages")
-		Path.create_all!(source)?
 		Path.create_all!(output)?
 		Path.create_all!(store)?
-		Cmd.new_str("cp")
-			.args_str([
-				"-R",
-				"--no-preserve=mode",
-				"--",
-				Path.display(pf_bundle.unpacked),
-				Path.display(Path.join(store, pf_bundle.hash)),
-			])
-			.exec_cmd!()?
-		var $modules = []
-		for file in Path.list!(Path.utf8("plugins/std"))? {
-			name = Path.display(Path.filename(file) ?? file)
-			if name == "main.roc" {
-				main = Path.read_utf8!(file)?.replace_each(
-					"\"../../kaifile/platform/main.roc\"",
-					"\"${url}\"",
-				)
-				Path.write_utf8!(Path.join(source, name), main)?
-			} else if name.ends_with(".roc") {
-				Path.copy!(file, Path.join(source, name))?
-				$modules = $modules.append(name)
+		copy! = |from, to|
+			Cmd.new_str("cp")
+				.args_str(["-R", "--no-preserve=mode", "--", from, Path.display(to)])
+				.exec_cmd!()
+		copy!(Path.display(pf_bundle.unpacked), Path.join(store, pf_bundle.hash))?
+		copy!("plugins/std", source)?
+		rewrite! = |file, from, to|
+			Path.write_utf8!(file, Path.read_utf8!(file)?.replace_each(from, to))
+		main = Path.join(source, "main.roc")
+		rewrite!(main, "\"../../kaifile/platform/main.roc\"", "\"${url}\"")?
+		# ir, nix and guix move inside std and depend on the platform itself, as
+		# the flake bundles them.
+		for dependency in ["ir", "nix", "guix"] {
+			copy!("kaifile/${dependency}", Path.join(source, dependency))?
+			fuzz = Path.join(source, "${dependency}/fuzz")
+			if Path.exists!(fuzz)? {
+				Path.delete_all!(fuzz)?
 			}
+			rewrite!(
+				main,
+				"\"../../kaifile/${dependency}/main.roc\"",
+				"\"${dependency}/main.roc\"",
+			)?
+			rewrite!(
+				Path.join(source, "${dependency}/main.roc"),
+				"api: \"../platform/api.roc\"",
+				"api: platform \"${url}\"",
+			)?
 		}
+		listed = Cmd.new_str("find")
+			.args_str([".", "-type", "f", "!", "-path", "./main.roc"])
+			.cwd(source)
+			.exec_output!()?
+		files = listed.stdout_utf8.split_on("\n").keep_if(|f| !f.is_empty())
 		_ = Cmd.new_str("roc")
 			.args_str(["bundle", "main.roc"])
-			.args_str($modules)
+			.args_str(files)
 			.args_str(["--output-dir", Path.display(output)])
 			.cwd(source)
 			.env(

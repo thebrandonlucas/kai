@@ -1,6 +1,6 @@
 # Reusable tasks; the caller supplies the environment identity.
-import pf.Config
-import pf.EnvName
+import std.Config
+import std.EnvName
 
 ## A normal pure function can supply reusable settings. It neither installs
 ## tools nor extends the consumer with a new backend or runtime operation.

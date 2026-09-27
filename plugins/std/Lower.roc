@@ -1,7 +1,7 @@
 # Authoring cardinality checks feed the shared whole-project validator.
 import Config
 import Val
-import Value
+import pf.Value
 import ir.Ir
 import ir.Project
 

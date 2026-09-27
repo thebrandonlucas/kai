@@ -3,10 +3,10 @@
 # backends, and implementations planning from the settings' Kaifile IR.
 import pf.Backend
 import pf.Command
-import pf.Config
+import Config
 import pf.Implementation
 import pf.Kaifile
-import pf.Lower
+import Lower
 import pf.Plan
 import pf.Plugin
 import ir.Ir

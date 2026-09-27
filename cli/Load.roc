@@ -198,9 +198,9 @@ Load := [].{
 		}
 	}
 
-	# Decode errors are flattened: passing the decoder's own error union on
-	# segfaults `roc check` on nightly-2026-09-26-d6267b4 (see
-	# docs/roc-isms/BUG-012.md, not reported upstream yet).
+	# Decoding here, in a module importing api.Sexpr, avoids a roc check
+	# segfault on nightly-2026-09-26-d6267b4 (roc-issues-repro BUG-013, not
+	# reported upstream yet); the decode errors are flattened for describe.
 	answer :
 		Str -> Try(Protocol.Body, [BadResponse(Str), IncompatibleProtocol(U64, U64)])
 	answer = |text|

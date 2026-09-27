@@ -22,17 +22,8 @@
 ## ])
 ## ```
 ##
-## Unqualified tools use the "default" source, implicitly Auto; a consumer
-## chooses the provider. "source#name" selects another declared source.
-## Environments own tools and scoped overlays; shells and tasks use them.
-## `Custom` and `Raw` take a `Val`, written with bare tags: `Str`, `Int`,
-## `Bool`, `List` and `Attrs` (a list of (name, value) pairs).
-##
-## Every quoted value is checked as it compiles, through the `from_quote` of
-## `Tool`, `System`, `FlakeRef`, `InputName`, `EnvName`, `TaskName`, or
-## `WorkflowName`.
-## Whole-config rules, including missing names and duplicate shells, are
-## also checked at compile time, when std lowers its settings to the IR.
+## std's settings, and the checks that run as Kaifile.roc compiles, are in
+## plugins/std (`Config`, `Lower`).
 platform ""
 	requires {
 		kaifile : Kaifile
@@ -40,25 +31,17 @@ platform ""
 	exposes [
 		Backend,
 		Command,
-		Config,
-		EnvName,
-		FlakeRef,
 		Implementation,
-		InputName,
 		Kaifile,
+		Layout,
 		LockJson,
-		Lower,
 		Plan,
 		Plugin,
 		Protocol,
-		System,
-		TaskName,
-		Tool,
-		Val,
-		WorkflowName,
+		Sexpr,
+		Value,
 	]
 	packages {
-		ir: "../ir/main.roc",
 		weaver: "https://github.com/lukewilliamboswell/weaver/releases/download/${
 			""
 		}0.9.0/7j6KBFBEZ8pNMLQHkx9xiwyZ2PmwQPgKNDPUih6gKe77.tar.zst",
@@ -79,23 +62,16 @@ import Answer
 import Argv
 import Backend
 import Command
-import Config
 import Implementation
 import Host
-import Lower
-import Tool
-import FlakeRef
-import EnvName
-import InputName
 import Kaifile
+import Layout
 import LockJson
 import Plan
 import Plugin
 import Protocol
-import System
-import TaskName
-import Val
-import WorkflowName
+import Sexpr
+import Value
 
 # Keep validation at the top level so `roc check` validates the whole Kaifile.
 # Kai's config fixtures (`zig build config-fixtures`) exercise this platform.

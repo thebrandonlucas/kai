@@ -116,8 +116,8 @@ Shortened from [examples/composition](examples/composition):
 
 ```roc
 # ProjectTasks.roc
-import pf.Config
-import pf.EnvName
+import std.Config
+import std.EnvName
 
 ProjectTasks :: [].{
 	settings : EnvName -> List(Config.Setting)
