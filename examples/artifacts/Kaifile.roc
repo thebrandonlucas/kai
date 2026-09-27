@@ -1,9 +1,14 @@
 # Two sandboxed artifacts: a library built from a fresh snapshot of the
 # project, and an app that reads the locked assets source and the library.
 # The ci workflow checks the working tree, then builds the app.
-app [config] { pf: platform "../../kaifile/platform/main.roc" }
+app [kaifile] {
+	pf: platform "../../kaifile/platform/main.roc",
+	std: "../../plugins/std/main.roc",
+}
 
-config = [
+import std.Std
+
+kaifile = Std.kaifile([
 	Name("artifacts"),
 	Systems(["x86_64-linux", "aarch64-linux"]),
 	Environment("dev", [Tools(["coreutils"])]),
@@ -54,4 +59,4 @@ config = [
 		],
 	),
 	Workflow("ci", [RunTask("check", []), BuildArtifact("app")]),
-]
+])

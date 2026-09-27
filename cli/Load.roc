@@ -125,12 +125,26 @@ Load := [].{
 			_ => Err(UnsupportedHost)
 		}
 
+	# A Kaifile.roc from before plugins provided `config` on the platform
+	# alone; roc would only report a type mismatch. An unreadable file is left
+	# for roc to report.
+	current! : Location => Try({}, [PreviousHeader])
+	current! = |project| {
+		file = Load.path("${project.root}/${project.file}")
+		Load.current(Path.read_utf8!(file) ?? "")
+	}
+
+	current : Str -> Try({}, [PreviousHeader])
+	current = |text|
+		if text.contains("app [config]") Err(PreviousHeader) else Ok({})
+
 	# Type-check the whole configuration, reporting compiler diagnostics as-is;
 	# in JSON mode the compiler's stdout goes to stderr instead. roc exits 2
 	# when it found only warnings.
 	check! : Location, Output.Mode => Try({}, _)
 	check! = |project, mode| {
 		_ = Load.system!()?
+		Load.current!(project)?
 		command = Cmd.new_str(Load.compiler!()?)
 			.args_str(["check", project.file])
 			.cwd(Load.path(project.root))
@@ -159,6 +173,7 @@ Load := [].{
 	ir! : Location => Try(Ir, _)
 	ir! = |project| {
 		_ = Load.system!()?
+		Load.current!(project)?
 		output = Cmd.new_str(Load.compiler!()?)
 			.args_str([project.file])
 			.cwd(Load.path(project.root))
@@ -210,3 +225,8 @@ expect match Load.accept("not ir") {
 	Err(BadIr(_)) => Bool.True
 	_ => Bool.False
 }
+
+# The pre-plugin header is recognized before roc runs.
+expect Load.current("app [config] { pf: platform \"p\" }")
+	== Err(PreviousHeader)
+	and Load.current("app [kaifile] {\n\tpf: platform \"p\",\n}\n") == Ok({})

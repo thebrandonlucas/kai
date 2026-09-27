@@ -1,7 +1,12 @@
 # Environments select ordered overlay stacks; Extend applies the parent's first.
-app [config] { pf: platform "../../kaifile/platform/main.roc" }
+app [kaifile] {
+	pf: platform "../../kaifile/platform/main.roc",
+	std: "../../plugins/std/main.roc",
+}
 
-config = [
+import std.Std
+
+kaifile = Std.kaifile([
 	Name("overlays"),
 	Systems(["x86_64-linux", "aarch64-linux"]),
 	Overlay("base", "path:./overlays/base"),
@@ -17,4 +22,4 @@ config = [
 	Shell("reversed", [Use("reversed")]),
 	Shell("plain", [Use("plain")]),
 	Task("greet", [Use("dev"), Run(["hello", "--greeting"])]),
-]
+])

@@ -44,8 +44,8 @@ KaiBuild := [].{
 
 	run_in! = |kai, project| {
 		kaifile = Path.join(project, "Kaifile.roc")
-		config = match Path.read_utf8!(kaifile)?.split_on("\n]\n") {
-			[body, ""] => "${body}\n${KaiBuild.extra}\n]\n"
+		config = match Path.read_utf8!(kaifile)?.split_on("\n])\n") {
+			[body, ""] => "${body}\n${KaiBuild.extra}\n])\n"
 			_ => return Err(UnexpectedKaifileEnd)
 		}
 		Path.write_utf8!(kaifile, config)?

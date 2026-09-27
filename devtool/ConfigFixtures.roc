@@ -13,7 +13,36 @@ ConfigFixtures := [].{
 	Fixture : { name : Str, body : Str, expected : Expected }
 
 	composition_header =
-		\\app [config] { pf: platform "../../kaifile/platform/main.roc" }
+		\\app [kaifile] {
+		\\	pf: platform "../../kaifile/platform/main.roc",
+		\\	std: "../../plugins/std/main.roc",
+		\\}
+
+	# A Kaifile.roc header naming this checkout's platform and std by paths
+	# relative to `dir`: evaluating an app needs relative paths.
+	header = |root, dir| {
+		relative = |file|
+			ConfigFixtures.relative(
+				Path.display(dir),
+				Path.display(Path.join(root, file)),
+			)
+		pf = relative("kaifile/platform/main.roc")
+		std = relative("plugins/std/main.roc")
+		"app [kaifile] {\n\tpf: platform \"${pf}\",\n\tstd: \"${std}\",\n}"
+	}
+
+	# A fixture body declares `config`, std's settings. Its annotation keeps
+	# large fixtures fast: inferring the type from its use in `kaifile` nearly
+	# doubles the check time.
+	std_kaifile = |body| {
+		annotated = match body.split_first("config = ") {
+			Ok({ before, after }) =>
+				"${before}config : List(Config.Setting)\nconfig = ${after}"
+			Err(_) => body
+		}
+		"import pf.Config\nimport std.Std\n\n${annotated}\n\n"
+			.concat("kaifile = Std.kaifile(config)")
+	}
 
 	# The same builds inline and through an imported helper module.
 	build_settings =
@@ -951,11 +980,6 @@ ConfigFixtures := [].{
 	}
 
 	run_in! = |root, roc, workspace| {
-		# Evaluating an app needs a relative platform path.
-		platform_path = ConfigFixtures.relative(
-			Path.display(workspace),
-			Path.display(Path.join(root, "kaifile/platform/main.roc")),
-		)
 		composition = Path.join(root, "examples/composition")
 		kaifile = Path.read_utf8!(Path.join(composition, "Kaifile.roc"))?
 		composed = match kaifile.split_on(ConfigFixtures.composition_header) {
@@ -966,20 +990,22 @@ ConfigFixtures := [].{
 		helpers = ConfigFixtures.helper_modules.append(
 			{ name: "ProjectTasks", source: tasks },
 		)
-		apps = ConfigFixtures.fixtures.append(
-			{ name: "Composed", body: composed, expected: Valid },
-		)
+		apps = ConfigFixtures.fixtures
+			.map(|f| { ..f, body: ConfigFixtures.std_kaifile(f.body) })
+			.append(
+				{ name: "Composed", body: composed, expected: Valid },
+			)
 		for helper in helpers {
 			Path.write_utf8!(
 				Path.join(workspace, "${helper.name}.roc"),
 				helper.source,
 			)?
 		}
-		header = "app [config] { pf: platform \"${platform_path}\" }"
+		app_header = ConfigFixtures.header(root, workspace)
 		for fixture in apps {
 			Path.write_utf8!(
 				Path.join(workspace, "${fixture.name}.roc"),
-				"${header}\n\n${fixture.body}\n",
+				"${app_header}\n\n${fixture.body}\n",
 			)?
 		}
 		for fixture in apps {

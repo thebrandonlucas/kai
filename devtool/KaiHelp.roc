@@ -59,7 +59,7 @@ KaiHelp := [].{
 			return Err(NoCommandsInHelp(top))
 		}
 		var $examples = KaiHelp.section(top, "Examples:")
-		var $settings = KaiHelp.section(top, "Kaifile.roc (inside config):")
+		var $settings = KaiHelp.section(top, "Kaifile.roc (inside Std.kaifile):")
 		for name in names {
 			page = kai!([name, "--help"])?.stdout_utf8
 			found = KaiHelp.section(page, "Examples:")
@@ -69,19 +69,17 @@ KaiHelp := [].{
 			$examples = KaiHelp.add_new($examples, found)
 			$settings = KaiHelp.add_new(
 				$settings,
-				KaiHelp.section(page, "Kaifile.roc (inside config):"),
+				KaiHelp.section(page, "Kaifile.roc (inside Std.kaifile):"),
 			)
 		}
-		platform_path = ConfigFixtures.relative(
-			Path.display(project),
-			Path.display(Path.join(root, "kaifile/platform/main.roc")),
-		)
 		lines = ["Name(\"help\"),", "Systems([\"x86_64-linux\", \"aarch64-linux\"]),"]
 			.concat($settings)
 			.map(|line| "\t${line}")
-		header = "app [config] { pf: platform \"${platform_path}\" }"
+		header = ConfigFixtures.header(root, project)
 		kaifile = Str.join_with(
-			[header, "", "config = ["].concat(lines).concat(["]", ""]),
+			[header, "", "import std.Std", "", "kaifile = Std.kaifile(["]
+				.concat(lines)
+				.concat(["])", ""]),
 			"\n",
 		)
 		Path.write_utf8!(Path.join(project, "Kaifile.roc"), kaifile)?

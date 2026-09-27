@@ -1,11 +1,17 @@
 ## The Kaifile platform: apps are pure configuration. A `Kaifile.roc` provides
-## `config`, a list of settings; the platform validates it and prints the
-## Kaifile IR as an S-expression, which Kai turns into a working environment.
+## `kaifile`, its plugins; the platform validates them and prints the Kaifile
+## IR as an S-expression, which Kai turns into a working environment. The std
+## plugin takes a list of settings:
 ##
 ## ```roc
-## app [config] { pf: platform "kaifile/platform/main.roc" }
+## app [kaifile] {
+## 	pf: platform "kaifile/platform/main.roc",
+## 	std: "plugins/std/main.roc",
+## }
 ##
-## config = [
+## import std.Std
+##
+## kaifile = Std.kaifile([
 ## 	Name("my-project"),
 ## 	Systems(["x86_64-linux", "aarch64-linux"]),
 ## 	Packages("stable", From(NixPackages("github:NixOS/nixpkgs/nixos-24.05"))),
@@ -13,7 +19,7 @@
 ## 	Shell("default", [Use("dev")]),
 ## 	Task("test", [Use("dev"), Run(["python3", "-m", "pytest"])]),
 ## 	Raw("nix", "shell:default", Attrs([("shellHook", Str("echo hi"))])),
-## ]
+## ])
 ## ```
 ##
 ## Unqualified tools use the "default" source, implicitly Auto; a consumer
@@ -26,10 +32,10 @@
 ## `Tool`, `System`, `FlakeRef`, `InputName`, `EnvName`, `TaskName`, or
 ## `WorkflowName`.
 ## Whole-config rules, including missing names and duplicate shells, are
-## also checked at compile time by lowering `config` to the rendered IR.
+## also checked at compile time, when std lowers its settings to the IR.
 platform ""
 	requires {
-		config : List(Config.Setting)
+		kaifile : Kaifile
 	}
 	exposes [
 		Config,
@@ -76,17 +82,16 @@ import System
 import TaskName
 import Val
 import WorkflowName
-import ir.Ir
 
-# Keep lowering at the top level so `roc check` validates the whole config.
+# Keep validation at the top level so `roc check` validates the whole Kaifile.
 # Kai's config fixtures (`zig build config-fixtures`) exercise this platform.
 rendered : Str
-rendered = or_crash(Lower.lower(config)).to_str()
+rendered = or_crash(Kaifile.validate(kaifile))
 
-or_crash : Try(Ir, Str) -> Ir
+or_crash : Try(Str, Str) -> Str
 or_crash = |result|
 	match result {
-		Ok(ir) => ir
+		Ok(text) => text
 		Err(error) => crash "Invalid Kaifile.roc: ${error}"
 	}
 

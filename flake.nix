@@ -320,6 +320,7 @@
             fileset = lib.fileset.unions [
               ./cli
               ./kaifile
+              ./plugins/std-release
               ./VERSION
               ./.roc-version
             ];

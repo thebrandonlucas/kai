@@ -40,15 +40,18 @@ a `Kaifile.roc`.
 ## Getting started
 
 A project is configured by `Kaifile.roc`, an ordinary
-[Roc](https://roc-lang.org/) app on the Kaifile platform. Its `config` is a
-list of settings:
+[Roc](https://roc-lang.org/) app on the Kaifile platform. Its `kaifile` is
+made of plugins; Kai's standard plugin, std, takes a list of settings:
 
 ```roc
-app [config] {
+app [kaifile] {
 	pf: platform "https://github.com/thebrandonlucas/kai/releases/download/v0.0.8/8eM3r3RE4n1BFSWqD7wvqch5UW3ACJ7LLJiiin5nxJdK.tar.zst",
+	std: "https://github.com/thebrandonlucas/kai/releases/download/v0.0.8/std-6zJHFrCtGkKhyuiNbmnJNHPx2DQvcgUeDL2znXw86ZEx.tar.zst",
 }
 
-config = [
+import std.Std
+
+kaifile = Std.kaifile([
 	Name("hello"),
 	Systems(["x86_64-linux", "aarch64-linux"]),
 	Environment("dev", [Tools(["cowsay", "python3"])]),
@@ -63,10 +66,11 @@ config = [
 		],
 	),
 	Workflow("ci", [RunTask("hello", []), BuildArtifact("greeting")]),
-]
+])
 ```
 
-`kai --help` prints the platform header for the installed version. Then:
+`kai --help` prints the header for the installed version: the platform and
+std must come from the same release. Then:
 
 ```sh
 kai check                         # compile and validate Kaifile.roc
@@ -126,12 +130,15 @@ ProjectTasks :: [].{
 ```roc
 # Kaifile.roc, after the app header
 import ProjectTasks
+import std.Std
 
-config = [
-	Name("composed"),
-	Environment("dev", [Tools(["git"])]),
-	Shell("default", [Use("dev")]),
-].concat(ProjectTasks.settings("dev"))
+kaifile = Std.kaifile(
+	[
+		Name("composed"),
+		Environment("dev", [Tools(["git"])]),
+		Shell("default", [Use("dev")]),
+	].concat(ProjectTasks.settings("dev")),
+)
 ```
 
 A module can only add settings; new commands or backends need changes to Kai
@@ -206,8 +213,10 @@ open an issue.
 
 The code follows the pipeline:
 
-- `kaifile/platform`: the Roc platform `Kaifile.roc` builds on. It lowers
-  `config` to the Kaifile IR at compile time.
+- `kaifile/platform`: the Roc platform `Kaifile.roc` builds on. It validates
+  the Kaifile's plugins at compile time.
+- `plugins/std`: the std plugin. It lowers its settings to the Kaifile IR at
+  compile time.
 - `kaifile/ir`: the IR, its validation, and plan types.
 - `kaifile/nix`, `kaifile/guix`: pure backends that turn IR into files and
   argv.

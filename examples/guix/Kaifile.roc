@@ -1,8 +1,13 @@
 # One Guix shell path: generic tools use whichever backend is installed, a
 # Guix source requires Guix, and Kai's lock pins neither for Guix.
-app [config] { pf: platform "../../kaifile/platform/main.roc" }
+app [kaifile] {
+	pf: platform "../../kaifile/platform/main.roc",
+	std: "../../plugins/std/main.roc",
+}
 
-config = [
+import std.Std
+
+kaifile = Std.kaifile([
 	Name("guix"),
 	Systems(["x86_64-linux", "aarch64-linux"]),
 	Packages("channels", From(GuixPackages("guix"))),
@@ -10,4 +15,4 @@ config = [
 	Environment("channels", [Tools(["channels#hello"])]),
 	Shell("default", [Use("dev")]),
 	Shell("channels", [Use("channels")]),
-]
+])

@@ -31,12 +31,7 @@ KaiUpdate := [].{
 		project = Path.canonicalize!(temporary)?
 		source = Path.join(root, "examples/${example}")
 		kaifile = Path.read_utf8!(Path.join(source, "Kaifile.roc"))?
-		# Evaluating an app needs a relative platform path.
-		platform_path = ConfigFixtures.relative(
-			Path.display(project),
-			Path.display(Path.join(root, "kaifile/platform/main.roc")),
-		)
-		header = "app [config] { pf: platform \"${platform_path}\" }"
+		header = ConfigFixtures.header(root, project)
 		body = match kaifile.split_on(ConfigFixtures.composition_header) {
 			[before, after] => "${before}${header}${after}"
 			_ => return Err(UnexpectedCompositionHeader(kaifile))

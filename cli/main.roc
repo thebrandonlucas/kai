@@ -497,6 +497,10 @@ describe : _ -> Str
 describe = |err|
 	match err {
 		NoKaifile(location) => "no Kaifile.roc at ${location}"
+		PreviousHeader =>
+			"Kaifile.roc uses the pre-plugin header `app [config]`; start it as "
+				.concat("`kai --help` shows and wrap the settings in ")
+				.concat("`kaifile = Std.kaifile([...])`")
 		UnsupportedHost =>
 			"Kai runs only on x86_64 and aarch64 Linux hosts"
 		CompilerUnavailable(compiler, message) =>
