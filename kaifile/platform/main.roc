@@ -31,6 +31,7 @@ platform ""
 	exposes [
 		Backend,
 		Command,
+		Conformance,
 		Implementation,
 		Kaifile,
 		Layout,
@@ -62,6 +63,7 @@ import Answer
 import Argv
 import Backend
 import Command
+import Conformance
 import Implementation
 import Host
 import Kaifile
