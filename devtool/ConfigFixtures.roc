@@ -90,6 +90,88 @@ ConfigFixtures := [].{
 		},
 	]
 
+	# A plugin next to std, from Kaifile.roc: its command and implementation
+	# lines. Every registry rule is a compile error naming the clash.
+	with_plugin = |name, expected, commands, implementations|
+		{
+			name,
+			expected: Rejected(expected),
+			body: \\import pf.Command
+				\\import pf.Implementation
+				\\import pf.Kaifile
+				\\import pf.Plugin
+				\\import std.Config
+				\\import std.Std
+				\\
+				\\page = { description: "", examples: [], config: [] }
+				\\cmd = |id, lock|
+				\\	Command.{ name: id, summary: "", help: page, args: [], lock }
+				\\unused = |_| Err("unused")
+				\\free = |id|
+				\\	Implementation.{
+				\\		command: id,
+				\\		backend: Independent,
+				\\		fit: |_| Ok({}),
+				\\		plan: unused,
+				\\	}
+				\\on = |id, backend|
+				\\	Implementation.{
+				\\		command: id,
+				\\		backend: On(backend),
+				\\		fit: |_| Ok({}),
+				\\		plan: unused,
+				\\	}
+				\\extra = Plugin.new({ name: "extra", version: "1", describe: "",
+				\\  commands: [${commands}], backends: [],
+				\\  implementations: [${implementations}] })
+				\\
+				\\config : List(Config.Setting)
+				\\config = [Name("registry"), Environment("dev", [])]
+				\\
+				\\kaifile = Kaifile.new([Std.plugin(config), extra])
+			,
+		}
+
+	registry_fixtures : List(Fixture)
+	registry_fixtures = [
+		ConfigFixtures.with_plugin(
+			"DuplicateCommand",
+			"command shell is declared twice",
+			"cmd(\"shell\", ReadsLock)",
+			"free(\"shell\")",
+		),
+		ConfigFixtures.with_plugin(
+			"BuiltinCommand",
+			"extra: check is a kai command",
+			"cmd(\"check\", ReadsLock)",
+			"free(\"check\")",
+		),
+		ConfigFixtures.with_plugin(
+			"UnimplementedCommand",
+			"command deploy has no implementation",
+			"cmd(\"deploy\", ReadsLock)",
+			"",
+		),
+		ConfigFixtures.with_plugin(
+			"DuplicatePair",
+			"shell on nix is implemented twice",
+			"",
+			"on(\"shell\", \"nix\")",
+		),
+		ConfigFixtures.with_plugin(
+			"UnknownBackend",
+			"extra: deploy uses unknown backend apt",
+			"cmd(\"deploy\", ReadsLock)",
+			"on(\"deploy\", \"apt\")",
+		),
+		ConfigFixtures.with_plugin(
+			"TwoLockOwners",
+			"only one command may own the lock",
+			"cmd(\"pin\", OwnsLock)",
+			"free(\"pin\")",
+		),
+	]
+
 	fixtures : List(Fixture)
 	fixtures = [
 		{
@@ -992,6 +1074,7 @@ ConfigFixtures := [].{
 		)
 		apps = ConfigFixtures.fixtures
 			.map(|f| { ..f, body: ConfigFixtures.std_kaifile(f.body) })
+			.concat(ConfigFixtures.registry_fixtures)
 			.append(
 				{ name: "Composed", body: composed, expected: Valid },
 			)
