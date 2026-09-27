@@ -141,8 +141,10 @@ kaifile = Std.kaifile(
 )
 ```
 
-A module can only add settings; new commands or backends need changes to Kai
-itself.
+A module can only add settings. New commands, and replacements for one
+command on one backend, come from plugins: Roc packages next to std in
+`Kaifile.new([...])`. See [docs/plugin.md](docs/plugin.md) and
+[examples/plugins/deploy](examples/plugins/deploy), which adds `kai deploy`.
 
 ## Backends
 
@@ -217,10 +219,11 @@ The code follows the pipeline:
   the Kaifile's plugins at compile time.
 - `plugins/std`: the std plugin. It lowers its settings to the Kaifile IR at
   compile time.
-- `kaifile/ir`: the IR, its validation, and plan types.
-- `kaifile/nix`, `kaifile/guix`: pure backends that turn IR into files and
-  argv.
-- `cli`: `kai` itself. It loads the IR, selects a backend and runs the plan.
+- `kaifile/ir`: std's IR and its validation.
+- `kaifile/nix`, `kaifile/guix`: std's pure backends that turn IR into files
+  and argv.
+- `cli`: `kai` itself. It asks the compiled Kaifile for the command's
+  candidate plans, chooses a backend, checks the plan and runs it.
 - `devtool`: checks, integration tests and release tooling; see
   [devtool/README.md](devtool/README.md) and [RELEASE.md](docs/RELEASE.md).
 

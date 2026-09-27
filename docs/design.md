@@ -1,15 +1,20 @@
 - The architecture is inspired by [Caddy](https://caddyserver.com/docs/architecture): the standard `kai` binary should come with everything most users want. Configuration is `Kaifile.roc`, an ordinary Roc app on the Kaifile platform:
 ```roc
-app [config] { pf: platform "kaifile/platform/main.roc" }
+app [kaifile] {
+	pf: platform "kaifile/platform/main.roc",
+	std: "plugins/std/main.roc",
+}
 
-config = [
+import std.Std
+
+kaifile = Std.kaifile([
 	Name("example"),
 	Environment("dev", [Tools(["cowsay", "fortune"])]),
 	Shell("default", [Use("dev")]),
-]
+])
 ```
-When called by the `kai` CLI, the pipeline is: `Kaifile.roc` -> Roc compiler + Kaifile platform, which lowers and validates `config` at compile time -> Kaifile IR -> a pure backend plan (`kaifile/nix` or `kaifile/guix`) of files and argv -> a small executor in `cli/` that writes backend output such as `.kai/generated/nix/flake.nix` and runs e.g. `nix develop`. Only `kai update` writes the lock, `.kai/lock.json`; the rest of `.kai` is generated output. Kai supplies assumed defaults where Nix is more explicit.
-- Kai aspires to Unix philosophy and Caddy-like [modularity](https://caddyserver.com/docs/architecture): small composable modules and well-defined data boundaries. Configuration is reused through ordinary Roc modules that return settings. Backends are Kai modules selected per request (`nix` or `guix`); adding a command or backend means changing Kai. A runtime extension mechanism, which could eventually let painful parts of `nix` (such as the famously slow evaluator) be replaced while the rest of `kai` still uses `nix`, is deferred.
+When called by the `kai` CLI, the pipeline is: `Kaifile.roc` -> Roc compiler + Kaifile platform, which validates the plugins at compile time -> kai sends the compiled Kaifile one request on stdin (argv, host, layout, lock) -> the platform parses argv from the plugins' command data and answers with help, a usage error, or one candidate plan per backend that implements the command -> kai probes backends lazily, chooses one, checks the whole plan and runs its steps (write generated files such as `.kai/generated/nix/flake.nix`, run exact argv such as `nix develop`). std (`plugins/std`) plans shells, tasks, builds, workflows and updates from its settings' Kaifile IR with the pure `kaifile/nix` and `kaifile/guix` backends. Only a plan of `kai update`, the command that owns the lock, may publish `.kai/lock.json`; the rest of `.kai` is generated output. Kai supplies assumed defaults where Nix is more explicit.
+- Kai aspires to Unix philosophy and Caddy-like [modularity](https://caddyserver.com/docs/architecture): small composable modules and well-defined data boundaries. Configuration is reused through ordinary Roc modules that return settings. Commands, backends and their implementations come from plugins, ordinary Roc packages on the Kaifile platform (std is one); a plugin adds a command, or replaces one implementation with `Plugin.without`, without changing Kai. Plugins are pure: they return plans, and only kai performs effects. See [plugin.md](plugin.md).
 - [Work in small steps to stay motivated](https://mitchellh.com/writing/building-large-technical-projects). Avoid big changes where possible.
 - If the programmer tells you to implement a concept, do the minimal amount of work to prove the concept while still following the rules and design philosophy (for example, you may still add a simple test or two).
 - Aspirational dependency culture: vendored, like Roc or Ghostty.
