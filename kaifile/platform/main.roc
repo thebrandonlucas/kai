@@ -36,7 +36,10 @@ platform ""
 		EnvName,
 		FlakeRef,
 		InputName,
+		Kaifile,
+		Lower,
 		Plan,
+		Plugin,
 		Protocol,
 		System,
 		TaskName,
@@ -65,7 +68,9 @@ import Tool
 import FlakeRef
 import EnvName
 import InputName
+import Kaifile
 import Plan
+import Plugin
 import Protocol
 import System
 import TaskName

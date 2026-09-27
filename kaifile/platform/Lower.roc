@@ -30,6 +30,10 @@ Lower :: [].{
 		"aarch64-linux",
 	]
 
+	## The settings as Kaifile IR text, or why they are invalid.
+	render : List(Config.Setting) -> Try(Str, Str)
+	render = |settings| Lower.lower(settings).map_ok(|ir| ir.to_str())
+
 	lower : List(Config.Setting) -> Try(Ir, Str)
 	lower = |settings| {
 		initial : Acc
