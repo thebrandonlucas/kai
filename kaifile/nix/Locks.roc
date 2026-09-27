@@ -3,7 +3,7 @@
 import api.Layout
 import ir.Ir
 import ir.Project
-import ir.Plan
+import api.Plan
 import ir.LockFile
 import api.LockJson
 
@@ -189,14 +189,13 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		Ok(Locks.{ identity, graph: normalized })
 	}
 
+	## The lock rebased onto a layout, and the steps that verify each locked
+	## local tree before a step reads it.
+	Derived : { contents : Str, checks : List(Plan.Step) }
+
 	## Matching ignores object/declaration order, but never array/overlay order.
 	## Revalidate even nominal values constructed directly by library consumers.
-	derive : Locks,
-	Ir,
-	Layout -> Try(
-		{ contents : Str, operations : List(Plan.Operation) },
-		Str,
-	)
+	derive : Locks, Ir, Layout -> Try(Derived, Str)
 	derive = |locks, ir, layout| {
 		Layout.validate(layout)?
 		project = Project.validate(ir)?
@@ -213,7 +212,7 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		nodes = LockJson.object(LockJson.field(locks.graph, "nodes")?)?
 		declared = inputs(project)?
 		var $nodes = []
-		var $operations = []
+		var $checks = []
 		for node in nodes {
 			var $value = node.value
 			for input in declared.keep_if(|i| i.ref.starts_with("path:")) {
@@ -222,9 +221,13 @@ Locks := { identity : LockJson, graph : LockJson }.{
 					path = "${layout.project_root}/${local_path(input)}"
 					locked = LockJson.field($value, "locked")?
 					nar_hash = LockJson.string(LockJson.field(locked, "narHash")?)?
-					operation = VerifyLocal({ path, nar_hash })
-					if !$operations.contains(operation) {
-						$operations = $operations.append(operation)
+					check = VerifyPath({
+						path,
+						argv: ["nix", "hash", "path", "--sri", path],
+						stdout: nar_hash,
+					})
+					if !$checks.contains(check) {
+						$checks = $checks.append(check)
 					}
 					for field in ["original", "locked"] {
 						attrs = LockJson.field($value, field)?
@@ -239,7 +242,7 @@ Locks := { identity : LockJson, graph : LockJson }.{
 			$nodes = $nodes.append({ name: node.name, value: $value })
 		}
 		graph = LockJson.set(locks.graph, "nodes", LockJson.Object($nodes))?
-		Ok({ contents: LockJson.encode(graph).concat("\n"), operations: $operations })
+		Ok({ contents: LockJson.encode(graph).concat("\n"), checks: $checks })
 	}
 
 	validate_identity : LockJson -> Try({}, Str)
@@ -569,7 +572,7 @@ Locks := { identity : LockJson, graph : LockJson }.{
 
 	## Bind the complete root input set to original declarations and flake intent.
 	## Only direct declared path inputs are permitted; transitive host paths
-	## cannot leak into a relocatable authority or bypass VerifyLocal.
+	## cannot leak into a relocatable authority or bypass VerifyPath.
 	validate_binding : LockJson, LockJson -> Try({}, Str)
 	validate_binding = |identity, graph| {
 		inputs_ = LockJson.object(LockJson.field(identity, "inputs")?)?
@@ -773,10 +776,11 @@ expect match locked_fixture {
 		match Locks.derive(locks, project, layout) {
 			Ok(derived) => derived.contents.contains("/moved/assets")
 				and !derived.contents.contains("/project")
-					and derived.operations == [
-						VerifyLocal({
+					and derived.checks == [
+						VerifyPath({
 							path: "/moved/assets",
-							nar_hash: "sha256-mhO52EWOvxHOyTFt0V1hM6Oo6mlpNo2PFlxQtcmCJBc=",
+							argv: ["nix", "hash", "path", "--sri", "/moved/assets"],
+							stdout: "sha256-mhO52EWOvxHOyTFt0V1hM6Oo6mlpNo2PFlxQtcmCJBc=",
 						}),
 					]
 						and Locks.decode(Locks.encode(locks)) == Ok(locks)

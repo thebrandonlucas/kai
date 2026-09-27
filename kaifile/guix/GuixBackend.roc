@@ -506,7 +506,6 @@ expect [
 	([env("dev", ["hello"])], Request.Shell("missing", [])),
 	([env("dev", ["hello"])], Request.Build("dev")),
 	([env("dev", ["hello"])], Request.Workflow("dev")),
-	([env("dev", ["hello"])], Request.Generate),
 ].all(|(environments, request)| check(environments, request, Err({})))
 
 hex = "0123456789abcdef0123456789abcdef01234567"

@@ -243,9 +243,7 @@ Std := [].{
 			Absent => return Err("no lock file at ${path}; run `kai update`")
 		}
 		locks = Locks.decode(text).map_err(unreadable)?
-		planned = NixBackend.plan(ir, wanted, target, layout, locks)
-			.map_err(rendering)?
-		NixBackend.steps(planned, wanted).map_err(rendering)
+		NixBackend.plan(ir, wanted, target, layout, locks).map_err(rendering)
 	}
 
 	Run : { environment : Str, argv : List(Str), what : Str }

@@ -1,12 +1,10 @@
 # Pure Nix rendering for validated, reusable environment closures.
 import api.Layout
-import api.Plan as Steps
+import api.Plan
 import api.Value
 import ir.Ir
 import ir.Project
 import ir.Request
-import ir.Plan
-import Backend
 import Locks
 
 ## Package names are native Nix attributes, never translated or filtered.
@@ -17,14 +15,10 @@ import Locks
 ## and rejects duplicate attributes or replacement of packages/devShells.
 ## Alias Raw does not leak into another alias or a task's environment entry.
 NixBackend :: [].{
-	backend : Backend
-	backend = Backend.{
-		name: "nix",
-		features: ["raw", "sources", "builds", "workflows"],
-		render: |ir| render(ir).map_ok(
-			|contents| [{ path: "flake.nix", contents }],
-		),
-	}
+
+	## The IR features this backend renders.
+	features : List(Str)
+	features = ["raw", "sources", "builds", "workflows"]
 
 	default_nixpkgs : Str
 	default_nixpkgs = Locks.default_nixpkgs
@@ -49,13 +43,15 @@ NixBackend :: [].{
 		Ok({})
 	}
 
+	## One atomic request: its rendered flake, the argv that runs it, how the
+	## run reports (a build's artifact), and its workflow stage.
 	Prepared : {
-		project : Ir,
 		inputs : List(Locks.Input),
-		builds : List(Ir.Build),
 		argv : List(Str),
 		contents : Str,
-		action : [Generate, Shell(Str), Run(Str), Build(Str)],
+		what : Str,
+		stage : Str,
+		output : [Inherit, Artifact({ name : Str, label : Str, output : Str })],
 	}
 
 	## Expand only semantic requests. Every atomic request shares this selection
@@ -116,60 +112,55 @@ NixBackend :: [].{
 	## Structural validation belongs to prepare, before selecting any steps.
 	prepare_atomic : Ir, Request, Str, Layout, RenderBudget -> Try(Prepared, Str)
 	prepare_atomic = |project, request, target, layout, budget| {
-		var $names = []
-		var $builds = []
-		var $argv = []
-		var $action = Generate
 		base_ref = "path:${layout.generated_root}"
 		read_only = ["--no-update-lock-file", "--no-write-lock-file"]
-		match request {
-			Request.Generate => {
-				$names = project.shells.map(|s| s.environment)
-					.concat(project.tasks.map(|t| t.environment))
-					.concat(project.builds.map(|b| b.environment))
-				for build in project.builds {
-					if !$builds.any(|selected| selected.name == build.name) {
-						for dependency in Project.build_closure(project, build.name)? {
-							if !$builds.any(|selected| selected.name == dependency.name) {
-								$builds = $builds.append(dependency)
-							}
-						}
-					}
-				}
-			}
+		develop = |entry|
+			["nix", "develop"].concat(read_only)
+				.append("${base_ref}#devShells.${target}.${entry}")
+		selected = match request {
 			Request.Shell(name, command) => {
-				$action = Shell(name)
 				shell = project.shells.find_first(|s| s.name == name)
 					.map_err(|_| "unknown shell: ${name}")?
-				$names = [shell.environment]
-				$argv = ["nix", "develop"].concat(read_only).append(
-					"${base_ref}#devShells.${target}.${name}",
-				)
 				# A command runs noninteractively inside the shell.
-				if !command.is_empty() {
+				argv = if command.is_empty() {
+					develop(name)
+				} else {
 					Project.check_argv(command, name)?
-					$argv = $argv.append("--command").concat(command)
+					develop(name).append("--command").concat(command)
+				}
+				{
+					what: "shell ${name}",
+					stage: "shell ${name}",
+					names: [shell.environment],
+					builds: [],
+					argv,
+					output: Inherit,
 				}
 			}
 			Request.Run(name, extra) => {
-				$action = Run(name)
 				task = project.tasks.find_first(|t| t.name == name)
 					.map_err(|_| "unknown task: ${name}")?
 				command = task.run.concat(extra)
 				Project.check_argv(command, name)?
-				$names = [task.environment]
-				entry = environment_shell(task.environment)
-				$argv = ["nix", "develop"].concat(read_only)
-					.concat(["${base_ref}#devShells.${target}.${entry}", "--command"])
-					.concat(command)
+				{
+					what: "task ${name}",
+					stage: "run ${name}",
+					names: [task.environment],
+					builds: [],
+					argv: develop(environment_shell(task.environment))
+						.append("--command")
+						.concat(command),
+					output: Inherit,
+				}
 			}
 			Request.Build(name) => {
-				$action = Build(name)
-				$builds = Project.build_closure(project, name)?
-				$names = $builds.map(|b| b.environment)
+				builds = Project.build_closure(project, name)?
+				built = builds.find_first(|b| b.name == name)
+					.map_err(|_| "unknown build: ${name}")?
+				label = "${base_ref}#packages.${target}.${name}"
 				# Namespace witnesses compare caller/build on the same kernel.
 				# Never dispatch this local isolation contract to a remote builder.
-				$argv = ["nix", "build", "--no-link", "--print-out-paths"]
+				argv = ["nix", "build", "--no-link", "--print-out-paths"]
 					.concat(read_only)
 					.concat([
 						"--builders",
@@ -181,8 +172,16 @@ NixBackend :: [].{
 						"sandbox-fallback",
 						"false",
 						"--impure",
-						"${base_ref}#packages.${target}.${name}",
+						label,
 					])
+				{
+					what: "build ${name}",
+					stage: "build ${name}",
+					names: builds.map(|b| b.environment),
+					builds,
+					argv,
+					output: Artifact({ name, label, output: built.output }),
+				}
 			}
 			Request.Workflow(_) => return Err(
 				"workflow must expand into atomic requests",
@@ -191,61 +190,56 @@ NixBackend :: [].{
 		inputs = Locks.inputs(project)?
 		remaining = charge_rendered(
 			budget,
-			$argv.fold(0, |n, arg| n + arg.to_utf8().len()),
+			selected.argv.fold(0, |n, arg| n + arg.to_utf8().len()),
 		)?
 		contents = render_selected(
 			project,
-			$names,
-			$builds,
+			selected.names,
+			selected.builds,
 			layout.workspace,
 			Some({ inputs, layout }),
 			remaining,
 		)?
-		check_layout(project, target, layout, !$builds.is_empty())?
+		check_layout(project, target, layout, !selected.builds.is_empty())?
 		Ok({
-			project,
 			inputs,
-			builds: $builds,
-			argv: $argv,
+			argv: selected.argv,
 			contents,
-			action: $action,
+			what: selected.what,
+			stage: selected.stage,
+			output: selected.output,
 		})
 	}
 
-	## Derive executable data only after complete structure, selected capability,
-	## target, caller layout and authoritative lock checks. No effects occur here.
+	## Derive executable steps only after complete structure, selected
+	## capability, target, caller layout and authoritative lock checks. No
+	## effects occur here. A workflow marks each of its steps with a Stage.
 	plan : Ir, Request, Str, Layout, Locks -> Try(Plan, Str)
 	plan = |ir, request, target, layout, locks| {
 		prepared = prepare(ir, request, target, layout)?
 		derived = Locks.derive(locks, Project.validate(ir)?, layout)?
-		var $steps = []
-		var $templates = []
-		for selected in prepared {
-			step = match $templates.find_first(
-				|entry| entry.action == selected.action and entry.argv == selected.argv,
-			) {
-				Ok(entry) => entry
-				Err(_) => {
-					entry = materialize_plan(selected, target, layout, derived)
-					$templates = $templates.append(entry)
-					entry
-				}
-			}
-			$steps = $steps.append(step)
+		workflow = match request {
+			Request.Workflow(_) => Bool.True
+			_ => Bool.False
 		}
-		Ok(Plan.{ steps: $steps })
+		var $steps = []
+		for selected in prepared {
+			if workflow {
+				$steps = $steps.append(Stage(selected.stage))
+			}
+			$steps = $steps.concat(materialize(selected, layout, derived))
+		}
+		Ok(Plan.{ steps: $steps, next: Done })
 	}
 
-	## A snapshot operation belongs to one explicit build, never an artifact name.
-	## Recheck supplied local pins on every step, including after source-editing
-	## tasks.
-	materialize_plan = |selected, target, layout, derived| {
-		{ inputs, builds, argv, contents, action, .. } = selected
-		snapshot = "${layout.workspace}/snapshot"
-		base_ref = "path:${layout.generated_root}"
-		var $operations = derived.operations
-		match action {
-			Build(_) => {
+	## Every step rechecks the local pins, including after source-editing
+	## tasks, then writes its files and runs. Every build snapshots afresh and
+	## installs Kai as its runner.
+	materialize : Prepared, Layout, Locks.Derived -> List(Plan.Step)
+	materialize = |selected, layout, derived| {
+		{ inputs, argv, contents, what, output, .. } = selected
+		sandbox = match output {
+			Artifact(_) => {
 				local = inputs.keep_if(|i| i.ref.starts_with("path:"))
 					.map(|i| "${layout.project_root}/${Locks.local_path(i)}")
 				exclude = [
@@ -258,97 +252,24 @@ NixBackend :: [].{
 					layout.lock_path,
 				]
 					.concat(local)
-				$operations = $operations
-					.append(
-						Snapshot({
-							root: layout.project_root,
-							destination: snapshot,
-							exclude,
-						}),
-					)
-					.append(InstallRunner({ destination: runner_path(layout.workspace) }))
+				[
+					Snapshot({
+						root: layout.project_root,
+						destination: "${layout.workspace}/snapshot",
+						exclude,
+					}),
+					InstallRunner({ destination: runner_path(layout.workspace) }),
+				]
 			}
-			_ => {}
+			Inherit => []
 		}
 		files = staged_files(layout, contents)
 			.append({
 				path: "${layout.generated_root}/flake.lock",
 				contents: derived.contents,
 			})
-		{
-			action,
-			files,
-			argv,
-			operations: $operations,
-			artifacts: builds.map(
-				|build| {
-					name: build.name,
-					installable: "${base_ref}#packages.${target}.${build.name}",
-					output: build.output,
-					dependencies: build.needs,
-				},
-			),
-		}
-	}
-
-	## The plan in the executor's vocabulary, until std plans in its own terms:
-	## each step verifies, snapshots and installs, writes its files, then runs.
-	## A workflow marks each of its steps with a Stage.
-	steps : Plan, Request -> Try(Steps, Str)
-	steps = |planned, request| {
-		workflow = match request {
-			Request.Workflow(_) => Bool.True
-			_ => Bool.False
-		}
-		var $steps = []
-		for step in planned.steps {
-			(verb, name, what) = match step.action {
-				Generate => ("generate", "", "generate")
-				Shell(shell) => ("shell", shell, "shell ${shell}")
-				Run(task) => ("run", task, "task ${task}")
-				Build(artifact) => ("build", artifact, "build ${artifact}")
-			}
-			if workflow {
-				$steps = $steps.append(Stage("${verb} ${name}".trim()))
-			}
-			for operation in step.operations {
-				$steps = $steps.append(
-					match operation {
-						VerifyLocal({ path, nar_hash }) =>
-							VerifyPath({
-								path,
-								argv: ["nix", "hash", "path", "--sri", path],
-								stdout: nar_hash,
-							})
-						Snapshot(snapshot) => Snapshot(snapshot)
-						InstallRunner(runner) => InstallRunner(runner)
-					},
-				)
-			}
-			$steps = $steps.append(Write(step.files))
-			output = match step.action {
-				Generate => None
-				Build(artifact) => {
-					found = step.artifacts.find_first(|a| a.name == artifact)
-						.map_err(|_| "the plan has no artifact ${artifact}")?
-					Some(
-						Artifact({
-							name: artifact,
-							label: found.installable,
-							output: found.output,
-						}),
-					)
-				}
-				_ => Some(Inherit)
-			}
-			match output {
-				Some(out) => {
-					$steps = $steps.append(Run({ what, argv: step.argv, output: out }))
-				}
-				None => {}
-			}
-		}
-		Ok(Steps.{ steps: $steps, next: Done })
+		derived.checks.concat(sandbox)
+			.concat([Write(files), Run({ what, argv, output })])
 	}
 
 	## Update consumers check these source roots before staging or fetching.
@@ -523,7 +444,7 @@ NixBackend :: [].{
 	],
 	RenderBudget -> Try(Str, Str)
 	render_selected = |ir, names, builds, workspace, staging, budget| {
-		missing = ir.unsupported_features(backend.features)
+		missing = ir.unsupported_features(features)
 		if !missing.is_empty() {
 			return Err("unsupported features: ${Str.join_with(missing, ", ")}")
 		}
@@ -1266,6 +1187,62 @@ plan_fixture = |request| {
 	)
 }
 
+# One request's steps: its checks and sandbox steps, then its files and run.
+Single : {
+	before : List(Plan.Step),
+	files : List(Plan.File),
+	what : Str,
+	argv : List(Str),
+	output : [Inherit, Artifact({ name : Str, label : Str, output : Str })],
+}
+
+split : List(Plan.Step) -> Try(Single, Str)
+split = |steps|
+	match steps {
+		[.. as before, Write(files), Run({ what, argv, output })] =>
+			Ok({ before, files, what, argv, output })
+		_ => Err("not one request's steps")
+	}
+
+single : Request -> Try(Single, Str)
+single = |request| {
+	planned = plan_fixture(request)?
+	split(planned.steps)
+}
+
+runs : Plan -> List({ what : Str, argv : List(Str) })
+runs = |planned|
+	planned.steps.keep_oks(
+		|step|
+			match step {
+				Run({ what, argv, .. }) => Ok({ what, argv })
+				_ => Err({})
+			},
+	)
+
+is_snapshot : Plan.Step -> Bool
+is_snapshot = |step|
+	match step {
+		Snapshot(_) => True
+		_ => False
+	}
+
+# A workflow plan's stages, each with the steps it marks.
+stages : Plan -> List({ name : Str, steps : List(Plan.Step) })
+stages = |planned|
+	planned.steps.fold(
+		[],
+		|acc, step|
+			match step {
+				Stage(name) => acc.append({ name, steps: [] })
+				other => match acc.last() {
+					Ok(last) => acc.drop_last(1)
+						.append({ ..last, steps: last.steps.append(other) })
+					Err(_) => acc
+				}
+			},
+	)
+
 # Preflight rejects the same requested closures without needing lock data.
 expect {
 	project = mk({
@@ -1294,22 +1271,13 @@ expect NixBackend.preflight(
 	TestData.layout,
 ) == Err("unsupported Nix target riscv64-linux")
 
-# A build plans dependency-first artifacts and exact, immutable sandbox argv.
-expect match plan_fixture(Request.Build("app")) {
-	Ok({ steps: [plan] }) => plan.action == Build("app") and plan.artifacts == [
-		{
-			name: "library",
-			installable: "path:/generated#packages.x86_64-linux.library",
-			output: "dist/library",
-			dependencies: [],
-		},
-		{
-			name: "app",
-			installable: "path:/generated#packages.x86_64-linux.app",
-			output: "dist/app",
-			dependencies: ["library"],
-		},
-	] and plan.argv == [
+# A build names its artifact and runs exact, immutable sandbox argv.
+expect match single(Request.Build("app")) {
+	Ok(step) => step.output == Artifact({
+		name: "app",
+		label: "path:/generated#packages.x86_64-linux.app",
+		output: "dist/app",
+	}) and step.argv == [
 		"nix",
 		"build",
 		"--no-link",
@@ -1332,11 +1300,12 @@ expect match plan_fixture(Request.Build("app")) {
 
 # Inputs are verified before each fresh snapshot, including every excluded root,
 # and Kai installs itself as the runner outside the generated flake.
-expect match plan_fixture(Request.Build("app")) {
-	Ok({ steps: [plan] }) => plan.operations == [
-		VerifyLocal({
+expect match single(Request.Build("app")) {
+	Ok(step) => step.before == [
+		VerifyPath({
 			path: "/project/assets",
-			nar_hash: "sha256-mhO52EWOvxHOyTFt0V1hM6Oo6mlpNo2PFlxQtcmCJBc=",
+			argv: ["nix", "hash", "path", "--sri", "/project/assets"],
+			stdout: "sha256-mhO52EWOvxHOyTFt0V1hM6Oo6mlpNo2PFlxQtcmCJBc=",
 		}),
 		Snapshot({
 			root: "/project",
@@ -1353,7 +1322,7 @@ expect match plan_fixture(Request.Build("app")) {
 			],
 		}),
 		InstallRunner({ destination: "/work/build-runner" }),
-	] and plan.files.map(|file| file.path) == [
+	] and step.files.map(|file| file.path) == [
 		"/generated/flake.nix",
 		"/generated/flake.lock",
 	]
@@ -1361,8 +1330,8 @@ expect match plan_fixture(Request.Build("app")) {
 }
 
 # User argv is data; source/dependency views are immutable store farms.
-expect match plan_fixture(Request.Build("app")) {
-	Ok({ steps: [plan] }) => match plan.files.first() {
+expect match single(Request.Build("app")) {
+	Ok(step) => match step.files.first() {
 		Ok(file) => file.contents.contains(
 			"\"\" \"two words\" \"line\\nbreak\" \"$HOME\"",
 		)
@@ -1383,13 +1352,13 @@ expect match plan_fixture(Request.Build("app")) {
 }
 
 # Task extras preserve empty arguments, controls and option-looking literals.
-expect match plan_fixture(
+expect match single(
 	Request.Run(
 		"check",
 		["", "two words", "--flag", "a\nb"],
 	),
 ) {
-	Ok({ steps: [plan] }) => plan.action == Run("check") and plan.argv == [
+	Ok(step) => step.what == "task check" and step.argv == [
 		"nix",
 		"develop",
 		"--no-update-lock-file",
@@ -1403,29 +1372,29 @@ expect match plan_fixture(
 		"two words",
 		"--flag",
 		"a\nb",
-	] and plan.artifacts.is_empty()
-		and plan.operations.len() == 1 and plan.files.len() == 2
+	] and step.output == Inherit
+		and step.before.len() == 1 and step.files.len() == 2
 	_ => False
 }
 
 # Aliases use the caller target, never the host's implicit default output shape.
-expect match plan_fixture(Request.Shell("default", [])) {
-	Ok({ steps: [plan] }) => plan.action == Shell("default") and plan.argv == [
+expect match single(Request.Shell("default", [])) {
+	Ok(step) => step.what == "shell default" and step.argv == [
 		"nix",
 		"develop",
 		"--no-update-lock-file",
 		"--no-write-lock-file",
 		"path:/generated#devShells.x86_64-linux.default",
 	]
-		and plan.artifacts.is_empty()
+		and step.output == Inherit
 	_ => False
 }
 
 # A shell command follows the shell installable, one element per argument.
-expect match plan_fixture(
+expect match single(
 	Request.Shell("default", ["git", "a b", "--version"]),
 ) {
-	Ok({ steps: [plan] }) => plan.argv == [
+	Ok(step) => step.argv == [
 		"nix",
 		"develop",
 		"--no-update-lock-file",
@@ -1439,50 +1408,12 @@ expect match plan_fixture(
 	_ => False
 }
 
-# Generate produces no backend command or snapshot and never writes authority.
-expect match plan_fixture(Request.Generate) {
-	Ok({ steps: [plan] }) => plan.action == Generate
-		and plan.argv.is_empty() and plan.operations.len() == 1
-			and !plan.files.any(|file| file.path == TestData.layout.lock_path)
-	_ => False
-}
-
-# Generate orders all builds dependency-first, sharing dependencies once even
-# when consumers precede them and more than one root needs the same library.
-expect match plan_locks {
-	Ok(locks) => {
-		project = TestData.project({
-			..TestData.data,
-			builds: [
-				TestData.application,
-				{ ..TestData.application, name: "other" },
-				TestData.library,
-			],
-		})
-		match NixBackend.plan(
-			project,
-			Request.Generate,
-			"x86_64-linux",
-			TestData.layout,
-			locks,
-		) {
-			Ok({ steps: [plan] }) =>
-				plan.artifacts.map(|artifact| artifact.name) ==
-					["library", "app", "other"]
-					and plan.artifacts.map(|artifact| artifact.dependencies) ==
-						[[], ["library"], ["library"]]
-			_ => False
-		}
-	}
-	Err(_) => False
-}
-
 # Request selection never shrinks root inputs or causes an implicit relock.
 expect match (
-	plan_fixture(Request.Build("library")),
-	plan_fixture(Request.Shell("default", [])),
+	single(Request.Build("library")),
+	single(Request.Shell("default", [])),
 ) {
-	(Ok({ steps: [build] }), Ok({ steps: [shell] })) => {
+	(Ok(build), Ok(shell)) => {
 		build_lock = build.files.find_first(|f| f.path == "/generated/flake.lock")
 		shell_lock = shell.files.find_first(|f| f.path == "/generated/flake.lock")
 		build_lock == shell_lock and match shell.files.first() {
@@ -1674,7 +1605,7 @@ expect match plan_locks {
 }
 
 # File/directory conflicts fail in pure preflight and both update entry points,
-# before lock reads, VerifyLocal, Snapshot or staging can have effects.
+# before lock reads, VerifyPath, Snapshot or staging can have effects.
 expect ["flake.nix", "flake.lock"].all(
 	|file| {
 		["", "/child"].all(
@@ -1694,7 +1625,7 @@ expect ["flake.nix", "flake.lock"].all(
 				).is_err()
 					and NixBackend.preflight(
 						project,
-						Request.Generate,
+						Request.Run("check", []),
 						"x86_64-linux",
 						layout,
 					).is_err()
@@ -1860,19 +1791,14 @@ expect {
 		TestData.layout,
 		plan_locks?,
 	)?
-	plan.steps.len() == 4096 and plan.steps.all(
-		|step| step.action == Build("library")
-			and step.artifacts.map(|artifact| artifact.name) == ["library"]
-				and step.operations.keep_if(
-					|operation| match operation {
-						Snapshot(_) => True
-						_ => False
-					},
-				).len() == 1,
-	) and match plan.steps.first() {
-		Ok(step) => match step.files.first() {
-			Ok(file) => file.contents.to_utf8().len() > 524288
-			Err(_) => False
+	staged = stages(plan)
+	staged.len() == 4096 and staged.all(
+		|stage| stage.name == "build library"
+			and stage.steps.count_if(is_snapshot) == 1,
+	) and match staged.first() {
+		Ok(stage) => match split(stage.steps) {
+			Ok({ files: [flake, ..], .. }) => flake.contents.to_utf8().len() > 524288
+			_ => False
 		}
 		Err(_) => False
 	}
@@ -1916,13 +1842,8 @@ expect {
 		"check.py",
 		"configured argument",
 	]
-	plan.steps.map(|step| step.argv) == extras.map(|extra| prefix.concat(extra))
-		and plan.steps.map(|step| step.action) == [
-			Run("check"),
-			Run("check"),
-			Run("check"),
-			Run("check"),
-		]
+	runs(plan)
+		== extras.map(|extra| { what: "task check", argv: prefix.concat(extra) })
 }
 
 # Distinct requests count all rendered systems toward the 16 MiB budget.
@@ -1961,7 +1882,7 @@ expect {
 		locks,
 	)?
 	diagnostic = "workflow plan exceeds 16 MiB of distinct rendered requests"
-	below.steps.len() == 7 and NixBackend.preflight(
+	stages(below).len() == 7 and NixBackend.preflight(
 		project,
 		Request.Workflow("over"),
 		"x86_64-linux",
@@ -2089,11 +2010,12 @@ expect {
 		locks,
 	)?
 	diagnostic = "workflow plan exceeds 16 MiB of distinct rendered requests"
-	plan.steps.len() == 2 and plan.steps.all(
-		|step| match step.files.first() {
-			Ok(flake) => flake.contents.to_utf8().len()
-				+ step.argv.fold(0, |n, arg| n + arg.to_utf8().len()) == 16777216
-			Err(_) => False
+	staged = stages(plan)
+	staged.len() == 2 and staged.all(
+		|stage| match split(stage.steps) {
+			Ok({ files: [flake, ..], argv, .. }) => flake.contents.to_utf8().len()
+				+ argv.fold(0, |n, arg| n + arg.to_utf8().len()) == 16777216
+			_ => False
 		},
 	) and Project.validate(over_limit).is_ok() and NixBackend.preflight(
 		at_limit,
@@ -2164,40 +2086,32 @@ expect {
 	)?
 	check = workflow_plan(Request.Run("check", []))?
 	bundle = workflow_plan(Request.Build("bundle"))?
-	sequence.steps == library.steps.concat(edit.steps).concat(check.steps)
-		.concat(bundle.steps).concat(check.steps).concat(bundle.steps)
-		.concat(bundle.steps)
-		and sequence.steps.map(|step| step.action) == [
-			Build("library"),
-			Run("check"),
-			Run("check"),
-			Build("bundle"),
-			Run("check"),
-			Build("bundle"),
-			Build("bundle"),
+	staged = stages(sequence)
+	staged.map(|stage| stage.steps) == [
+		library.steps,
+		edit.steps,
+		check.steps,
+		bundle.steps,
+		check.steps,
+		bundle.steps,
+		bundle.steps,
+	]
+		and staged.map(|stage| stage.name) == [
+			"build library",
+			"run check",
+			"run check",
+			"build bundle",
+			"run check",
+			"build bundle",
+			"build bundle",
 		]
 }
 
-# Diamond dependencies occur once per build operation, not once per workflow.
 # Every explicit build snapshots again, even consecutive builds of one name.
 expect {
 	sequence = workflow_plan(Request.Workflow("ci"))?
-	sequence.steps.map(|step| step.artifacts.map(|artifact| artifact.name)) == [
-		["library"],
-		[],
-		[],
-		["library", "app", "other", "bundle"],
-		[],
-		["library", "app", "other", "bundle"],
-		["library", "app", "other", "bundle"],
-	] and sequence.steps.map(
-		|step| step.operations.keep_if(
-			|operation| match operation {
-				Snapshot(_) => True
-				_ => False
-			},
-		).len(),
-	) == [1, 0, 0, 1, 0, 1, 1]
+	stages(sequence).map(|stage| stage.steps.count_if(is_snapshot))
+		== [1, 0, 0, 1, 0, 1, 1]
 }
 
 # Each step reverifies local pins before staging; all derived locks are equal
@@ -2207,16 +2121,15 @@ expect {
 	before = Locks.encode(locks)
 	sequence = workflow_plan(Request.Workflow("ci"))?
 	atomic = workflow_plan(Request.Build("library"))?
-	match atomic.steps {
-		[library] => sequence.steps.all(
-			|step| step.operations.first() == library.operations.first()
+	library = split(atomic.steps)?
+	stages(sequence).all(
+		|stage| match split(stage.steps) {
+			Ok(step) => step.before.first() == library.before.first()
 				and step.files.last() == library.files.last()
-					and !step.files.any(
-						|file| file.path == TestData.layout.lock_path,
-					),
-		) and Locks.encode(locks) == before
-		_ => False
-	}
+					and !step.files.any(|file| file.path == TestData.layout.lock_path)
+			Err(_) => False
+		},
+	) and Locks.encode(locks) == before
 }
 
 # A selected task-only workflow ignores unrelated valid Guix environments.
@@ -2253,7 +2166,7 @@ expect {
 		TestData.layout,
 		locks,
 	)
-	first.steps.map(|step| step.action) == [Run("check")]
+	runs(first).map(|run| run.what) == ["task check"]
 		and later.is_err() and later.map_ok(|plan| plan.steps) == NixBackend.plan(
 			project,
 			Request.Run("foreign", []),
@@ -2299,7 +2212,7 @@ expect {
 		TestData.layout,
 		locks,
 	)
-	first.steps.map(|step| step.action) == [Run("check")]
+	runs(first).map(|run| run.what) == ["task check"]
 		and later.is_err() and later.map_ok(|plan| plan.steps) == NixBackend.plan(
 			project,
 			Request.Build("app"),
@@ -2363,7 +2276,7 @@ expect {
 		"aarch64-linux",
 		TestData.layout,
 		locks,
-	).map_ok(|plan| plan.steps.map(|step| step.argv.last())) ==
+	).map_ok(|plan| runs(plan).map(|run| run.argv.last())) ==
 		Ok([Ok("path:/generated#packages.aarch64-linux.app")])
 }
 
