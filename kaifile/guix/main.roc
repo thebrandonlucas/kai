@@ -2,5 +2,6 @@
 package
 	[GuixBackend]
 	{
+		api: "../platform/api.roc",
 		ir: "../ir/main.roc",
 	}

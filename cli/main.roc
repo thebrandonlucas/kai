@@ -507,14 +507,8 @@ describe = |err|
 		BadLock(path, message) =>
 			"cannot read the lock file ${path}: ${message}; run `kai update`"
 		LocalChanged(path) => "local source ${path} changed; run `kai update`"
-		ChildExited(Shell(name), code) =>
-			"shell ${name} exited with code ${code.to_str()}"
-		ChildExited(Run(name), code) =>
-			"task ${name} exited with code ${code.to_str()}"
-		ChildExited(Build(name), code) =>
-			"build ${name} exited with code ${code.to_str()}"
 		SnapshotFailed(message) => message
-		ChildExited(_, code) => "command exited with code ${code.to_str()}"
+		ChildExited(what, code) => "${what} exited with code ${code.to_str()}"
 		ExecCmdFailed({ command, exit_code }) =>
 			"`${command}` exited with code ${exit_code.to_str()}"
 		UpdateLocked(guard) =>

@@ -1,5 +1,6 @@
 # Pure Nix rendering for validated, reusable environment closures.
 import api.Layout
+import api.Plan as Steps
 import api.Value
 import ir.Ir
 import ir.Project
@@ -288,6 +289,66 @@ NixBackend :: [].{
 				},
 			),
 		}
+	}
+
+	## The plan in the executor's vocabulary, until std plans in its own terms:
+	## each step verifies, snapshots and installs, writes its files, then runs.
+	## A workflow marks each of its steps with a Stage.
+	steps : Plan, Request -> Try(Steps, Str)
+	steps = |planned, request| {
+		workflow = match request {
+			Request.Workflow(_) => Bool.True
+			_ => Bool.False
+		}
+		var $steps = []
+		for step in planned.steps {
+			(verb, name, what) = match step.action {
+				Generate => ("generate", "", "generate")
+				Shell(shell) => ("shell", shell, "shell ${shell}")
+				Run(task) => ("run", task, "task ${task}")
+				Build(artifact) => ("build", artifact, "build ${artifact}")
+			}
+			if workflow {
+				$steps = $steps.append(Stage("${verb} ${name}".trim()))
+			}
+			for operation in step.operations {
+				$steps = $steps.append(
+					match operation {
+						VerifyLocal({ path, nar_hash }) =>
+							VerifyPath({
+								path,
+								argv: ["nix", "hash", "path", "--sri", path],
+								stdout: nar_hash,
+							})
+						Snapshot(snapshot) => Snapshot(snapshot)
+						InstallRunner(runner) => InstallRunner(runner)
+					},
+				)
+			}
+			$steps = $steps.append(Write(step.files))
+			output = match step.action {
+				Generate => None
+				Build(artifact) => {
+					found = step.artifacts.find_first(|a| a.name == artifact)
+						.map_err(|_| "the plan has no artifact ${artifact}")?
+					Some(
+						Artifact({
+							name: artifact,
+							label: found.installable,
+							output: found.output,
+						}),
+					)
+				}
+				_ => Some(Inherit)
+			}
+			match output {
+				Some(out) => {
+					$steps = $steps.append(Run({ what, argv: step.argv, output: out }))
+				}
+				None => {}
+			}
+		}
+		Ok(Steps.{ steps: $steps, next: Done })
 	}
 
 	## Update consumers check these source roots before staging or fetching.

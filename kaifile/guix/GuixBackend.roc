@@ -1,5 +1,6 @@
 # Pure Guix shell planning: one environment's tools become exact
 # `guix shell --pure` argv. Kai supports no other Guix operation.
+import api.Plan as Steps
 import ir.Ir
 import ir.Project
 import ir.Request
@@ -33,6 +34,24 @@ GuixBackend :: [].{
 		}
 		tail = if command.is_empty() [] else ["--"].concat(command)
 		Ok(["guix", "shell", "--pure"].concat(specs).concat(tail))
+	}
+
+	## The shell in the executor's vocabulary, after a note that it is unpinned.
+	steps : Ir, Request -> Try(Steps, Str)
+	steps = |ir, request| {
+		argv = GuixBackend.plan(ir, request)?
+		what = match request {
+			Request.Shell(name, _) => "shell ${name}"
+			_ => "shell"
+		}
+		unpinned = "this Guix shell uses the installed Guix channels and is not "
+			.concat("pinned by Kai's lock")
+		Ok(
+			Steps.{
+				steps: [Note(unpinned), Run({ what, argv, output: Inherit })],
+				next: Done,
+			},
+		)
 	}
 }
 

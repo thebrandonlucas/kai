@@ -84,24 +84,15 @@ Output := [].{
 			],
 		)
 
-	# One workflow step, numbered from 1, with what it runs.
-	step : Str,
-	U64,
-	U64,
-	[Generate, Shell(Str), Run(Str), Build(Str)] -> {
-		human : Str,
-		started : Str,
-		finished : Str,
-	}
-	step = |workflow, index, count, action| {
-		(verb, name) = match action {
-			Run(task) => ("run", task)
-			Build(artifact) => ("build", artifact)
-			Shell(shell) => ("shell", shell)
-			Generate => ("generate", "")
+	# One workflow step, numbered from 1. Its label is what it runs: a verb,
+	# then the name it acts on ("build app").
+	step : Str, U64, U64, Str -> { human : Str, started : Str, finished : Str }
+	step = |workflow, index, count, what| {
+		(verb, name) = match what.split_first(" ") {
+			Ok({ before, after }) => (before, after)
+			Err(_) => (what, "")
 		}
 		position = "${index.to_str()}/${count.to_str()}"
-		what = "${verb} ${name}"
 		fields = [
 			("workflow", LockJson.String(workflow)),
 			("step", LockJson.Number(index.to_str())),
@@ -159,7 +150,7 @@ expect [
 
 # Workflow steps say which step of how many runs what, for both audiences.
 expect {
-	planned = Output.step("ci", 2, 3, Build("app"))
+	planned = Output.step("ci", 2, 3, "build app")
 	planned.human == "kai: workflow ci step 2/3: build app"
 		and decoded(planned.started)
 			== [

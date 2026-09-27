@@ -1,13 +1,13 @@
-# Execute a shell, task, build or workflow request: select its backend, then
-# for Nix read the lock authority, obtain the whole pure plan and run its
-# steps in order, or run one Guix shell. Nothing here writes the lock.
+# Execute a shell, task, build or workflow request: select its backend, obtain
+# its whole pure plan (for Nix after reading the lock authority) and run the
+# steps in order. Nothing here writes the lock.
 import pf.Cmd
 import pf.Stderr
 import pf.Stdout
 
 import api.Layout
+import api.Plan
 import ir.Ir
-import ir.Plan
 import ir.Request
 import nix.NixBackend
 import nix.Locks
@@ -43,9 +43,14 @@ Execute := [].{
 				[("backend", Output.text(Selection.name(backend)))],
 			),
 		)?
+		layout = Workspace.locate!(root)?
 		match backend {
-			Nix => Execute.request!(ir, request, Workspace.locate!(root)?, mode)
-			Guix => Execute.guix!(ir, request, root, mode)
+			Nix => Execute.request!(ir, request, layout, mode)
+			Guix => {
+				plan = GuixBackend.steps(ir, request)
+					.map_err(|message| GuixFailed(message))?
+				Execute.run!(plan, request, layout, mode)
+			}
 		}
 	}
 
@@ -65,20 +70,6 @@ Execute := [].{
 		}
 	}
 
-	# Guix shells use the installed channels and never touch the workspace.
-	guix! : Ir, Request, Str, Output.Mode => Try({}, _)
-	guix! = |ir, request, root, mode| {
-		argv = GuixBackend.plan(ir, request).map_err(|message| GuixFailed(message))?
-		unpinned = "this Guix shell uses the installed Guix channels and is not "
-			.concat("pinned by Kai's lock")
-		Output.note!(mode, "kai: ${unpinned}", Output.event("note", unpinned, []))?
-		action = match request {
-			Request.Shell(name, _) => Shell(name)
-			_ => Generate
-		}
-		Execute.child!(argv, action, root)
-	}
-
 	# The whole plan, every workflow step included, is checked before the
 	# first effect.
 	request! : Ir, Request, Layout, Output.Mode => Try({}, _)
@@ -93,69 +84,104 @@ Execute := [].{
 		}
 		locks = Locks.decode(text)
 			.map_err(|message| BadLock(layout.lock_path, message))?
-		plan = NixBackend.plan(ir, request, target, layout, locks)
+		planned = NixBackend.plan(ir, request, target, layout, locks)
 			.map_err(|message| RenderFailed(message))?
-		Workspace.prepare!(layout)?
+		plan = NixBackend.steps(planned, request)
+			.map_err(|message| RenderFailed(message))?
+		Execute.run!(plan, request, layout, mode)
+	}
+
+	# Run the steps in order; the first failure stops the plan. Each Stage
+	# opens a numbered workflow step that the next Stage or the end closes.
+	run! : Plan, Request, Layout, Output.Mode => Try({}, _)
+	run! = |plan, request, layout, mode| {
+		if plan.steps.any(Execute.uses_workspace) {
+			Workspace.prepare!(layout)?
+		}
+		workflow = match request {
+			Request.Workflow(name) => name
+			_ => ""
+		}
+		count = plan.steps.count_if(
+			|step| match step {
+				Stage(_) => Bool.True
+				_ => Bool.False
+			},
+		)
 		var $index = 0
+		var $finished = ""
 		for step in plan.steps {
-			$index = $index + 1
-			match request {
-				Request.Workflow(name) => {
-					count = plan.steps.len()
-					progress = Output.step(name, $index, count, step.action)
+			match step {
+				Stage(label) => {
+					Execute.finish!(mode, $finished)?
+					$index = $index + 1
+					progress = Output.step(workflow, $index, count, label)
 					Output.note!(mode, progress.human, progress.started)?
-					Execute.step!(step, layout, mode)?
-					Output.json!(mode, progress.finished)?
+					$finished = progress.finished
 				}
 				_ => Execute.step!(step, layout, mode)?
 			}
 		}
-		Ok({})
+		Execute.finish!(mode, $finished)
 	}
 
-	# Verify local pins, snapshot the project and install the runner for a
-	# build, stage generated files, then run the argv from the project root. A
-	# failing child stops the plan.
+	# Close the open workflow step, if any.
+	finish! : Output.Mode, Str => Try({}, _)
+	finish! = |mode, finished|
+		if finished.is_empty() Ok({}) else Output.json!(mode, finished)
+
+	uses_workspace : Plan.Step -> Bool
+	uses_workspace = |step|
+		match step {
+			Write(_) | Snapshot(_) | InstallRunner(_) => Bool.True
+			_ => Bool.False
+		}
+
+	# One step's effect. Children run from the project root; a failing child
+	# stops the plan.
 	step! : Plan.Step, Layout, Output.Mode => Try({}, _)
 	step! = |step, layout, mode| {
-		for operation in step.operations {
-			match operation {
-				VerifyLocal({ path, nar_hash }) => {
-					Workspace.safe_source!(path)?
-					observed = Cmd.new_str("nix")
-						.args_str(["hash", "path", "--sri", path])
-						.cwd(Workspace.path(layout.project_root))
-						.exec_output!()?
-					Stderr.write!(observed.stderr_utf8_lossy)?
-					if observed.stdout_utf8.trim() != nar_hash {
-						return Err(LocalChanged(path))
-					}
+		root = layout.project_root
+		match step {
+			Note(message) =>
+				Output.note!(mode, "kai: ${message}", Output.event("note", message, []))
+			Print(text) =>
+				Output.result!(mode, text, Output.event("result", text, []))
+			Stage(_) => Ok({})
+			Write(files) => Workspace.stage!(files, layout)
+			VerifyPath({ path, argv, stdout }) => {
+				Workspace.safe_source!(path)?
+				(program, args) = match argv {
+					[first, .. as rest] => (first, rest)
+					[] => return Err(RenderFailed("the plan has an empty command"))
 				}
-				Snapshot(snapshot) => Snapshot.snapshot!(snapshot)?
-				InstallRunner({ destination }) =>
-					Workspace.install_runner!(destination)?
+				observed = Cmd.new_str(program)
+					.args_str(args)
+					.cwd(Workspace.path(root))
+					.exec_output!()?
+				Stderr.write!(observed.stderr_utf8_lossy)?
+				if observed.stdout_utf8.trim() != stdout {
+					return Err(LocalChanged(path))
 				}
-		}
-		Workspace.stage!(step.files, layout)?
-		match step.action {
-			Build(name) => Execute.build!(step, name, layout.project_root, mode)
-			_ => Execute.child!(step.argv, step.action, layout.project_root)
+				Ok({})
+			}
+			Snapshot(snapshot) => Snapshot.snapshot!(snapshot)
+			InstallRunner({ destination }) => Workspace.install_runner!(destination)
+			Run({ what, argv, output: Inherit }) => Execute.child!(argv, what, root)
+			Run({ what, argv, output: Artifact(artifact) }) =>
+				Execute.build!(argv, what, artifact, root, mode)
+			Confirm(_) => Err(RenderFailed("this kai cannot confirm steps yet"))
+			PublishLock(_) => Err(RenderFailed("this kai cannot publish a lock yet"))
 		}
 	}
 
 	# Resolve the requested artifact with the planned command: its store path
-	# on stdout, only after success. Dependency metadata stays descriptive.
-	build! : Plan.Step, Str, Str, Output.Mode => Try({}, _)
-	build! = |step, name, root, mode| {
-		for artifact in step.artifacts {
-			Stderr.line!(
-				"building ${artifact.name}: ${artifact.installable} "
-					.concat("(output ${artifact.output})"),
-			)?
-		}
-		artifact = step.artifacts.find_first(|a| a.name == name)
-			.map_err(|_| RenderFailed("the plan has no artifact ${name}"))?
-		(program, args) = match step.argv {
+	# on stdout, only after success.
+	build! : List(Str), Str, Plan.Artifact, Str, Output.Mode => Try({}, _)
+	build! = |argv, what, artifact, root, mode| {
+		{ name, label, output: declared } = artifact
+		Stderr.line!("building ${name}: ${label} (output ${declared})")?
+		(program, args) = match argv {
 			[first, .. as rest] => (first, rest)
 			[] => return Err(RenderFailed("the plan has no build command"))
 		}
@@ -167,11 +193,11 @@ Execute := [].{
 		match output.status {
 			Exited(0) => {
 				path = Str.from_utf8_lossy(output.stdout_bytes).trim()
-				built = "built ${name}: ${artifact.installable} -> ${path}"
+				built = "built ${name}: ${label} -> ${path}"
 				fields = [
 					("name", Output.text(name)),
-					("installable", Output.text(artifact.installable)),
-					("output", Output.text(artifact.output)),
+					("installable", Output.text(label)),
+					("output", Output.text(declared)),
 					("path", Output.text(path)),
 				]
 				match mode {
@@ -182,22 +208,22 @@ Execute := [].{
 					Json => Stdout.line!(Output.event("artifact", built, fields))
 				}
 			}
-			Exited(code) => Err(ChildExited(Build(name), code))
-			Signaled(signal) => Err(ChildExited(Build(name), 128 + signal))
+			Exited(code) => Err(ChildExited(what, code))
+			Signaled(signal) => Err(ChildExited(what, 128 + signal))
 		}
 	}
 
 	# Run argv from the project root with inherited stdio.
-	child! = |argv, action, root|
+	child! = |argv, what, root|
 		match argv {
 			[program, .. as args] => {
 				code = Cmd.new_str(program)
 					.args_str(args)
 					.cwd(Workspace.path(root))
 					.exec_exit_code!()?
-				if code == 0 Ok({}) else Err(ChildExited(action, code))
+				if code == 0 Ok({}) else Err(ChildExited(what, code))
 			}
-			[] => Ok({})
+			[] => Err(RenderFailed("the plan has an empty command"))
 		}
 
 	# A child's status becomes kai's own; statuses a process cannot exit with,
