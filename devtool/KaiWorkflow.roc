@@ -107,7 +107,7 @@ KaiWorkflow := [].{
 			if $actual != expected Err(WrongArtifacts($actual)) else Ok({})
 		}
 		_ = json!(["check"], 0, ["check"])?
-		_ = json!(["update"], 0, ["update"])?
+		_ = json!(["update"], 0, ["backend", "update"])?
 		lock = file(".kai/lock.json")
 		published = Path.read_bytes!(lock)?
 		modified = Path.time_modified!(lock)?

@@ -68,7 +68,7 @@ run! = |shown, mode| {
 		return Stdout.line!("kai ${version}")
 	}
 	located = Load.project!(requested_file(shown))
-	if command_word(shown) == Ok("check") {
+	if command_word(shown) == Ok("check") and !asks_help(shown) {
 		project = located?
 		Load.check!(project, mode)?
 		valid = "${project.file} is valid"

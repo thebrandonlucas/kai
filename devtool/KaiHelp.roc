@@ -52,6 +52,22 @@ KaiHelp := [].{
 	run_in! = |root, kai, project| {
 		kai! = |args| Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(project)
 			.exec_output!()
+		# Commands and their help come from the Kaifile's plugins.
+		write! = |settings| {
+			systems = "Systems([\"x86_64-linux\", \"aarch64-linux\"]),"
+			lines = ["Name(\"help\"),", systems]
+				.concat(settings)
+				.map(|line| "\t${line}")
+			header = ConfigFixtures.header(root, project)
+			kaifile = Str.join_with(
+				[header, "", "import std.Std", "", "kaifile = Std.kaifile(["]
+					.concat(lines)
+					.concat(["])", ""]),
+				"\n",
+			)
+			Path.write_utf8!(Path.join(project, "Kaifile.roc"), kaifile)
+		}
+		write!([])?
 		# Output to a pipe is plain even without --no-color.
 		top = kai!(["--help"])?.stdout_utf8
 		names = KaiHelp.commands(top)
@@ -72,17 +88,7 @@ KaiHelp := [].{
 				KaiHelp.section(page, "Kaifile.roc (inside Std.kaifile):"),
 			)
 		}
-		lines = ["Name(\"help\"),", "Systems([\"x86_64-linux\", \"aarch64-linux\"]),"]
-			.concat($settings)
-			.map(|line| "\t${line}")
-		header = ConfigFixtures.header(root, project)
-		kaifile = Str.join_with(
-			[header, "", "import std.Std", "", "kaifile = Std.kaifile(["]
-				.concat(lines)
-				.concat(["])", ""]),
-			"\n",
-		)
-		Path.write_utf8!(Path.join(project, "Kaifile.roc"), kaifile)?
+		write!($settings)?
 		_ = kai!(["update"])?
 		for example in $examples {
 			args = example.split_on(" ").drop_first(1)
