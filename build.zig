@@ -502,7 +502,7 @@ pub fn build(b: *std.Build) void {
     // binary: the package wrapper would put Nix back on PATH.
     const kai_guix_step = b.step(
         "kai-guix",
-        "Run kai shell against stub and, if installed, real Guix",
+        "Run kai against stub and, if installed, real Guix",
     );
     const run_kai_guix = addDevtoolCommand(b, devtool, "kai-guix", &.{});
     run_kai_guix.addFileArg(bare_binary);
@@ -511,7 +511,7 @@ pub fn build(b: *std.Build) void {
 
     const guix_integration_step = b.step(
         "guix-integration",
-        "Run kai shell against real Guix without Nix; fails without guix",
+        "Run kai against real Guix without Nix; fails without guix",
     );
     const run_guix_integration = addDevtoolCommand(
         b,

@@ -126,12 +126,19 @@ KaiGuix := [].{
 			Err(_) => return Stdout.line!("SKIPPED: guix not installed")
 		}
 		# guix can share a directory with nix (as on NixOS), so PATH holds only
-		# a link to guix; Roc stays reachable through ROC.
+		# links to guix and coreutils; Roc stays reachable through ROC.
 		isolated = Path.join(stubs, "guix-only")
 		Path.create_dir!(isolated)?
 		Cmd.new_str("ln")
 			.args_str(["-s", "${guix}/guix", Path.display(isolated)])
 			.exec_cmd!()?
+		# kai snapshots a build's project with coreutils, as any host has.
+		coreutils = KaiGuix.which!("readlink")?
+		for tool in ["cp", "chmod", "readlink", "test"] {
+			Cmd.new_str("ln")
+				.args_str(["-s", "${coreutils}/${tool}", Path.display(isolated)])
+				.exec_cmd!()?
+		}
 		guix_path = Path.display(isolated)
 		Path.delete!(Path.join(kai_dir, "lock.json"))?
 		_ = kai!(guix_path, ["update"])?
