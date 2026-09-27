@@ -217,6 +217,12 @@ Execute := [].{
 				} else {
 					Err("verifies a path outside the project: ${path}")
 				}
+			CheckSource(path) =>
+				if under(path, layout.project_root) {
+					Ok({})
+				} else {
+					Err("checks a source outside the project: ${path}")
+				}
 			Snapshot({ destination, .. }) | InstallRunner({ destination }) =>
 				if under(destination, layout.workspace) {
 					Ok({})
@@ -282,6 +288,7 @@ Execute := [].{
 				}
 				Ok({})
 			}
+			CheckSource(path) => Workspace.safe_source!(path)
 			Snapshot(snapshot) => Snapshot.snapshot!(snapshot)
 			InstallRunner({ destination }) => Workspace.install_runner!(destination)
 			Run({ what, argv, output: Inherit }) => Execute.child!(argv, what, root)

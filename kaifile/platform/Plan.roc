@@ -18,6 +18,9 @@ Plan := { steps : List(Step), next : Next }.{
 		Confirm(Str),
 		Write(List(File)),
 		VerifyPath({ path : Str, argv : List(Str), stdout : Str }),
+
+		## A local source a backend will read: no symlinks or special files.
+		CheckSource(Str),
 		Snapshot({ root : Str, destination : Str, exclude : List(Str) }),
 		InstallRunner({ destination : Str }),
 		Run({ what : Str, argv : List(Str), output : [Inherit, Artifact(Artifact)] }),

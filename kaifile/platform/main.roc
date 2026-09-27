@@ -38,9 +38,12 @@ platform ""
 		kaifile : Kaifile
 	}
 	exposes [
+		Backend,
+		Command,
 		Config,
 		EnvName,
 		FlakeRef,
+		Implementation,
 		InputName,
 		Kaifile,
 		Lower,
@@ -55,9 +58,13 @@ platform ""
 	]
 	packages {
 		ir: "../ir/main.roc",
+		weaver: "https://github.com/lukewilliamboswell/weaver/releases/download/${
+			""
+		}0.9.0/7j6KBFBEZ8pNMLQHkx9xiwyZ2PmwQPgKNDPUih6gKe77.tar.zst",
 	}
 	provides { "roc_main": main_for_host! }
 	hosted {
+		"roc_stdin_read_to_end": Host.stdin_read_to_end!,
 		"roc_stderr_line": Host.stderr_line!,
 		"roc_stdout_line": Host.stdout_line!,
 	}
@@ -67,7 +74,12 @@ platform ""
 		arm64musl: { inputs: ["crt1.o", "libhost.a", app, "libc.a", "libzigc.a", "libcompiler_rt.a"] },
 	}
 
+import Answer
+import Argv
+import Backend
+import Command
 import Config
+import Implementation
 import Host
 import Lower
 import Tool
@@ -95,9 +107,18 @@ or_crash = |result|
 		Err(error) => crash "Invalid Kaifile.roc: ${error}"
 	}
 
+# Without a request on stdin, the Kaifile IR, as before kai sent requests.
 main_for_host! : List(Str) => I32
-main_for_host! = |_args|
-	match Host.stdout_line!(Str.drop_suffix(rendered, "\n")) {
+main_for_host! = |_args| {
+	request = Host.stdin_read_to_end!() ?? ""
+	answer = if request.is_empty() {
+		Str.drop_suffix(rendered, "\n")
+	} else {
+		_ = rendered
+		Answer.respond(kaifile, request)
+	}
+	match Host.stdout_line!(answer) {
 		Ok({}) => 0
 		Err(_) => 1
 	}
+}

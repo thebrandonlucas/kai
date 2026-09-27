@@ -1,4 +1,5 @@
-///! Platform host that implements effectful functions for stdout and stderr.
+///! Platform host that implements effectful functions for stdin, stdout and
+///! stderr.
 const std = @import("std");
 const builtin = @import("builtin");
 const abi = @import("roc_platform_abi.zig");
@@ -97,6 +98,31 @@ fn hostedStdoutLine(str: abi.RocStr) callconv(.c) abi.HostStdout_lineResult {
     return stdoutLineOk();
 }
 
+fn stdinErr(message: []const u8, roc_host: *abi.RocHost) abi.HostStdin_lineResult {
+    var result = std.mem.zeroes(abi.HostStdin_lineResult);
+    result.payload = .{ .err = abi.RocStr.fromSlice(message, roc_host) };
+    result.tag = .Err;
+    return result;
+}
+
+/// Hosted function: Host.stdin_read_to_end!, kai's whole request. Bounded
+/// at 64 MiB and required to be UTF-8.
+fn hostedStdinReadToEnd() callconv(.c) abi.HostStdin_lineResult {
+    const roc_host = g_roc_host.?;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    var buffer: [4096]u8 = undefined;
+    var reader = std.Io.File.stdin().readerStreaming(io, &buffer);
+    const gpa = std.heap.page_allocator;
+    const bytes = reader.interface.allocRemaining(gpa, .limited(64 << 20)) catch |err|
+        return stdinErr(@errorName(err), roc_host);
+    defer gpa.free(bytes);
+    if (!std.unicode.utf8ValidateSlice(bytes)) return stdinErr("stdin is not UTF-8", roc_host);
+    var result = std.mem.zeroes(abi.HostStdin_lineResult);
+    result.payload = .{ .ok = abi.RocStr.fromSlice(bytes, roc_host) };
+    result.tag = .Ok;
+    return result;
+}
+
 fn hostAlloc(length: usize, alignment: usize) callconv(.c) ?*anyopaque {
     return abi.DefaultAllocators.rocAlloc(g_roc_host.?, length, alignment);
 }
@@ -125,6 +151,7 @@ comptime {
     if (!builtin.is_test) {
         @export(&hostedStderrLine, .{ .name = "roc_stderr_line", .visibility = .hidden });
         @export(&hostedStdoutLine, .{ .name = "roc_stdout_line", .visibility = .hidden });
+        @export(&hostedStdinReadToEnd, .{ .name = "roc_stdin_read_to_end", .visibility = .hidden });
 
         @export(&hostAlloc, .{ .name = "roc_alloc", .visibility = .hidden });
         @export(&hostDealloc, .{ .name = "roc_dealloc", .visibility = .hidden });
