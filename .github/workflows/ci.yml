@@ -80,17 +80,27 @@ jobs:
       - name: Run Project CI
         run: nix develop --command zig build ci
 
-  # The release gate for the Guix shell: real Guix, with Nix hidden from kai.
+  # The release gate for Guix: real Guix, with Nix hidden from kai. A cold
+  # channel checkout authenticates the whole history (about 35 minutes), so
+  # it is cached; the first time-machine run at the pinned release downloads
+  # that Guix.
   # Ubuntu's guix package brings a daemon and its substitute keys.
   guix:
     name: guix
     if: github.event_name != 'push' && github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache Guix channel checkouts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/guix
+          key: guix-cache-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: guix-cache-${{ runner.os }}-
 
       - name: Install Nix
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
