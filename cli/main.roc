@@ -507,6 +507,7 @@ describe = |err|
 		BadLock(path, message) =>
 			"cannot read the lock file ${path}: ${message}; run `kai update`"
 		LocalChanged(path) => "local source ${path} changed; run `kai update`"
+		UnsafePlan(why) => "refusing the plan: ${why}"
 		SnapshotFailed(message) => message
 		ChildExited(what, code) => "${what} exited with code ${code.to_str()}"
 		ExecCmdFailed({ command, exit_code }) =>

@@ -91,10 +91,12 @@ Execute := [].{
 		Execute.run!(plan, request, layout, mode)
 	}
 
-	# Run the steps in order; the first failure stops the plan. Each Stage
-	# opens a numbered workflow step that the next Stage or the end closes.
+	# Check the whole plan, then run its steps in order; the first failure
+	# stops the plan. Each Stage opens a numbered workflow step that the next
+	# Stage or the end closes.
 	run! : Plan, Request, Layout, Output.Mode => Try({}, _)
 	run! = |plan, request, layout, mode| {
+		Execute.validate(plan, layout)?
 		if plan.steps.any(Execute.uses_workspace) {
 			Workspace.prepare!(layout)?
 		}
@@ -129,6 +131,68 @@ Execute := [].{
 	finish! : Output.Mode, Str => Try({}, _)
 	finish! = |mode, finished|
 		if finished.is_empty() Ok({}) else Output.json!(mode, finished)
+
+	# Every step is checked before the first runs: files only beneath the
+	# generated root, the snapshot and runner only in the workspace, verified
+	# paths only in the project, and every command exact argv naming a
+	# program. Steps this kai cannot run yet are refused up front.
+	validate : Plan, Layout -> Try({}, [UnsafePlan(Str)])
+	validate = |plan, layout| {
+		for step in plan.steps {
+			Execute.check(step, layout).map_err(|why| UnsafePlan(why))?
+		}
+		match plan.next {
+			Done => Ok({})
+			Observe(_) => Err(UnsafePlan("this kai cannot resume a plan yet"))
+		}
+	}
+
+	check : Plan.Step, Layout -> Try({}, Str)
+	check = |step, layout| {
+		under = |path, root|
+			Workspace.normalize(path) == path and path.starts_with("${root}/")
+		command = |argv|
+			match argv {
+				[program, ..] =>
+					if
+						program.is_empty()
+							or program.starts_with("-")
+								or (program.contains("/") and !program.starts_with("/"))
+							{
+								Err("not a program name or absolute path: ${program}")
+							} else {
+								Ok({})
+							}
+				[] => Err("an empty command")
+			}
+		match step {
+			Write(files) =>
+				match files.find_first(
+					|file|
+						!Workspace.stageable(file, layout)
+							or !under(file.path, layout.generated_root),
+				) {
+					Ok(file) => Err("writes outside the generated files: ${file.path}")
+					Err(_) => Ok({})
+				}
+			VerifyPath({ path, argv, .. }) =>
+				if under(path, layout.project_root) {
+					command(argv)
+				} else {
+					Err("verifies a path outside the project: ${path}")
+				}
+			Snapshot({ destination, .. }) | InstallRunner({ destination }) =>
+				if under(destination, layout.workspace) {
+					Ok({})
+				} else {
+					Err("writes outside the workspace: ${destination}")
+				}
+			Run({ argv, .. }) => command(argv)
+			Confirm(_) => Err("this kai cannot confirm steps yet")
+			PublishLock(_) => Err("only kai update publishes the lock")
+			Note(_) | Print(_) | Stage(_) => Ok({})
+		}
+	}
 
 	uses_workspace : Plan.Step -> Bool
 	uses_workspace = |step|
@@ -235,3 +299,59 @@ Execute := [].{
 # A failing child's status is kept rather than collapsed to 1.
 expect [(7, 7), (1, 1), (255, 255), (256, 1), (-1, 1), (0, 1)]
 	.all(|(code, exit)| Execute.exit_code(code) == exit)
+
+layout : Layout
+layout = Layout.{
+	project_root: "/p",
+	workspace: "/p/.kai",
+	generated_root: "/p/.kai/generated",
+	lock_path: "/p/.kai/lock.json",
+}
+
+validated : List(Plan.Step) -> Try({}, [UnsafePlan(Str)])
+validated = |steps| Execute.validate(Plan.{ steps, next: Done }, layout)
+
+# A build's steps pass: files beneath the generated root, verified project
+# sources, the snapshot and runner in the workspace, exact argv.
+expect
+	validated([
+		Stage("build app"),
+		VerifyPath({ path: "/p/vendor", argv: ["nix", "hash"], stdout: "x" }),
+		Snapshot({ root: "/p", destination: "/p/.kai/snapshot", exclude: [] }),
+		InstallRunner({ destination: "/p/.kai/build-runner" }),
+		Write([{ path: "/p/.kai/generated/flake.nix", contents: "" }]),
+		Run({ what: "build app", argv: ["/bin/nix", "build"], output: Inherit }),
+		Note("n"),
+	])
+		== Ok({})
+
+# Each unsafe or unsupported step refuses the whole plan.
+expect [
+	Write([{ path: "/p/.kai/lock.json", contents: "" }]),
+	Write([{ path: "/p/.kai/generated/../lock.json", contents: "" }]),
+	Write([{ path: "/p/flake.nix", contents: "" }]),
+	VerifyPath({ path: "/etc", argv: ["nix"], stdout: "" }),
+	VerifyPath({ path: "/p/../etc", argv: ["nix"], stdout: "" }),
+	VerifyPath({ path: "/p/src", argv: [], stdout: "" }),
+	Snapshot({ root: "/p", destination: "/p/src", exclude: [] }),
+	InstallRunner({ destination: "/tmp/runner" }),
+	Run({ what: "t", argv: [], output: Inherit }),
+	Run({ what: "t", argv: [""], output: Inherit }),
+	Run({ what: "t", argv: ["-c"], output: Inherit }),
+	Run({ what: "t", argv: ["bin/sh"], output: Inherit }),
+	Confirm("go?"),
+	PublishLock({ previous: Absent, contents: "{}" }),
+]
+	.all(
+		|bad|
+			match validated([Note("before"), bad]) {
+				Err(UnsafePlan(_)) => Bool.True
+				Ok(_) => Bool.False
+			},
+	)
+
+# A plan that asks to be resumed is refused until kai can resume one.
+expect {
+	resumed = Plan.{ steps: [], next: Observe(["/p/.kai/generated/x"]) }
+	Execute.validate(resumed, layout) != Ok({})
+}
