@@ -189,7 +189,13 @@ Load := [].{
 				out = failed.stdout_utf8_lossy
 				failure = KaifileFailed(project.file, out.concat(failed.stderr_utf8_lossy))
 				if failed.exit_code == 2 {
-					Load.answer(out).map_err(|_| failure)
+					Load.answer(out).map_err(
+						|err|
+							match err {
+								AnswerTooLarge(size) => AnswerTooLarge(size)
+								_ => failure
+							},
+					)
 				} else {
 					Err(failure)
 				}
@@ -201,15 +207,30 @@ Load := [].{
 	# Decoding here, in a module importing api.Sexpr, avoids a roc check
 	# segfault on nightly-2026-09-26-d6267b4 (roc-issues-repro BUG-013, not
 	# reported upstream yet); the decode errors are flattened for describe.
+	# An answer beyond answer_limit bytes is refused before decoding, so a
+	# runaway plan (such as a workflow repeating a large build thousands of
+	# times) fails with a clear message instead of stalling kai.
 	answer :
-		Str -> Try(Protocol.Body, [BadResponse(Str), IncompatibleProtocol(U64, U64)])
-	answer = |text|
+		Str -> Try(
+			Protocol.Body,
+			[BadResponse(Str), IncompatibleProtocol(U64, U64), AnswerTooLarge(U64)],
+		)
+	answer = |text| {
+		size = text.count_utf8_bytes()
+		if size > Load.answer_limit {
+			return Err(AnswerTooLarge(size))
+		}
 		match Protocol.decode_response(text) {
 			Ok(response) => Ok(response.body)
 			Err(Incompatible({ major, minor })) =>
 				Err(IncompatibleProtocol(major, minor))
 			Err(other) => Err(BadResponse(Str.inspect(other)))
 		}
+	}
+
+	# Four times the 16 MiB std's Nix planner renders for one workflow.
+	answer_limit : U64
+	answer_limit = 67108864
 
 	path : Str -> Path
 	path = |p| Path.from_os_str(OsStr.from_str(p))
@@ -233,6 +254,15 @@ expect Load.split_file("/Kaifile.roc") == { root: "/", file: "Kaifile.roc" }
 expect match Load.answer("not a response") {
 	Err(BadResponse(_)) => Bool.True
 	_ => Bool.False
+}
+
+# An oversized answer is refused before it is decoded.
+expect {
+	var $text = "x"
+	while $text.count_utf8_bytes() <= Load.answer_limit {
+		$text = $text.concat($text)
+	}
+	Load.answer($text) == Err(AnswerTooLarge($text.count_utf8_bytes()))
 }
 
 # The pre-plugin header is recognized before roc runs.

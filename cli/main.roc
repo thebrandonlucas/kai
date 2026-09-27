@@ -268,6 +268,9 @@ describe = |err|
 			"Kaifile.roc uses platform protocol ${major.to_str()}.${minor.to_str()}; "
 				.concat("this kai speaks ${Protocol.current.major.to_str()}.x")
 		BadResponse(reason) => "could not read the Kaifile's answer: ${reason}"
+		AnswerTooLarge(size) =>
+			"the Kaifile's answer is ${(size // 1048576).to_str()} MiB, over kai's "
+				.concat("64 MiB limit; a workflow may repeat a large step too often")
 		Refused(message) => message
 		InvalidProject(message) => "invalid Kaifile: ${message}"
 		InvalidWorkspace(message) => "invalid workspace: ${message}"
