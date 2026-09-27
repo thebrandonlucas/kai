@@ -161,9 +161,9 @@ generate_checksums! = |root, dist, archive_names| {
 	}
 }
 
-# A release publishes the platform bundle its recorded URL names, so the URL
-# cannot go stale.
-check_platform_url! = |version, bundle| {
+# A release publishes the platform and std bundles their recorded URLs name,
+# so the URLs cannot go stale.
+check_bundle_urls! = |version, pf_bundle, std_bundle| {
 	origin = Cmd.new_str("git")
 		.args_str(["config", "--get", "remote.origin.url"])
 		.exec_output!()?
@@ -173,20 +173,30 @@ check_platform_url! = |version, bundle| {
 		Ok(repo) => "${repo.owner}/${repo.repository}"
 		Err(_) => return Err(UnsupportedReleaseOrigin(origin))
 	}
-	expected = Release.platform_url(repository, version, bundle.hash)
-	recorded = Path.read_utf8!(Path.utf8(Release.platform_file))?.trim()
-	if recorded == expected {
-		Ok({})
-	} else {
-		Err(StalePlatformUrl({ expected, recorded }))
+	for (file, expected) in [
+		(
+			Release.platform_file,
+			Release.platform_url(repository, version, pf_bundle.hash),
+		),
+		(Release.std_file, Release.std_url(repository, version, std_bundle.hash)),
+	] {
+		recorded = Path.read_utf8!(Path.utf8(file))?.trim()
+		if recorded != expected {
+			return Err(StaleBundleUrl({ file, expected, recorded }))
+		}
 	}
+	Ok({})
 }
 
 build_release_stage! = |root, dist, workspace, version| {
-	Stdout.line!("Building the Kaifile platform bundle through Nix...")?
-	bundle = KaiBundle.platform!()?
-	check_platform_url!(version, bundle)?
-	copy_file!(bundle.archive, Path.join(dist, "${bundle.hash}.tar.zst"))?
+	Stdout.line!("Building the Kaifile platform and std bundles through Nix...")?
+	pf_bundle = KaiBundle.platform!()?
+	std_bundle = KaiBundle.bundle!(".#kai-std")?
+	check_bundle_urls!(version, pf_bundle, std_bundle)?
+	bundles = ["${pf_bundle.hash}.tar.zst", "std-${std_bundle.hash}.tar.zst"]
+	copy_file!(pf_bundle.archive, Path.join(dist, "${pf_bundle.hash}.tar.zst"))?
+	std_asset = "std-${std_bundle.hash}.tar.zst"
+	copy_file!(std_bundle.archive, Path.join(dist, std_asset))?
 
 	systems = Release.release_systems(
 		Path.read_utf8!(Path.utf8(Release.systems_file))?,
@@ -204,7 +214,7 @@ build_release_stage! = |root, dist, workspace, version| {
 	}
 
 	archive_inventory = directory_inventory!(dist)?
-	expected_archives = Release.archive_inventory(version, systems, bundle.hash)
+	expected_archives = Release.archive_inventory(version, systems, bundles)
 	if !Release.is_exact_inventory(archive_inventory, expected_archives) {
 		Err(
 			UnexpectedArtifactInventory({
@@ -216,7 +226,7 @@ build_release_stage! = |root, dist, workspace, version| {
 		Stdout.line!("Generating checksums...")?
 		generate_checksums!(root, dist, expected_archives)?
 		inventory = directory_inventory!(dist)?
-		expected = Release.inventory(version, systems, bundle.hash)
+		expected = Release.inventory(version, systems, bundles)
 		if Release.is_exact_inventory(inventory, expected) {
 			Ok(expected)
 		} else {

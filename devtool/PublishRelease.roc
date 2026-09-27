@@ -310,6 +310,12 @@ PublishRelease := [].{
 			Release.manifest_version(manifest) ? InvalidPublicationManifest
 		platform_url = Path.read_utf8!(Path.utf8(Release.platform_file))?.trim()
 		platform_hash = Release.platform_hash(platform_url, repository_name, version)?
+		std_url = Path.read_utf8!(Path.utf8(Release.std_file))?.trim()
+		std_asset = std_url.split_on("/").last() ?? ""
+		std_hash = std_asset.drop_prefix("std-").drop_suffix(".tar.zst")
+		if Release.std_url(repository_name, version, std_hash) != std_url {
+			return Err(UnexpectedStdUrl(std_url))
+		}
 		systems = Release.release_systems(
 			Path.read_utf8!(Path.utf8(Release.systems_file))?,
 		)?
@@ -325,7 +331,7 @@ PublishRelease := [].{
 			canonical_version: version,
 			manifest_version,
 			name,
-			platform_hash,
+			bundles: ["${platform_hash}.tar.zst", std_asset],
 			systems,
 			tag_name: "v${version}",
 			target_commit: target,

@@ -6,7 +6,9 @@ Release := [].{
 		canonical_version : Str,
 		manifest_version : Str,
 		name : Str,
-		platform_hash : Str,
+
+		## The Roc bundles a release publishes, by asset name.
+		bundles : List(Str),
 		systems : List(Str),
 		tag_name : Str,
 		target_commit : Str,
@@ -257,7 +259,7 @@ Release := [].{
 				assets: Release.inventory(
 					input.canonical_version,
 					input.systems,
-					input.platform_hash,
+					input.bundles,
 				),
 				name: input.name,
 				tag_name: input.tag_name,
@@ -270,9 +272,13 @@ Release := [].{
 	# The file recording the released platform bundle's URL.
 	platform_file = "kaifile/platform-release"
 
+	# The file recording the released std bundle's URL.
+	std_file = "plugins/std-release"
+
 	release_files = [
 		"build.zig.zon",
 		Release.platform_file,
+		Release.std_file,
 		"RELEASE_NAME",
 		"VERSION",
 	]
@@ -280,15 +286,16 @@ Release := [].{
 	are_allowed_release_files : List(Str) -> Bool
 	are_allowed_release_files = |files| {
 		expected_length = if files.contains("RELEASE_NAME") {
-			4
+			5
 		} else {
-			3
+			4
 		}
 		files.contains("build.zig.zon") and
 			files.contains("VERSION") and
 				files.contains(Release.platform_file) and
-					files.len() == expected_length and
-						List.all(files, |file| Release.release_files.contains(file))
+					files.contains(Release.std_file) and
+						files.len() == expected_length and
+							List.all(files, |file| Release.release_files.contains(file))
 	}
 
 	manifest_version :
@@ -401,6 +408,12 @@ Release := [].{
 		"https://github.com/${repository}/releases/download/"
 			.concat("v${version}/${hash}.tar.zst")
 
+	# Roc tells packages apart by URL minus version and hash, so the std
+	# bundle's asset name carries a prefix.
+	std_url : Str, Str, Str -> Str
+	std_url = |repository, version, hash|
+		Release.platform_url(repository, version, "std-${hash}")
+
 	# The bundle hash in a recorded URL for this repository and version.
 	platform_hash : Str, Str, Str -> Try(Str, [UnexpectedPlatformUrl(Str)])
 	platform_hash = |url, repository, version| {
@@ -413,17 +426,14 @@ Release := [].{
 		}
 	}
 
-	# Everything SHA256SUMS covers.
-	archive_inventory : Str, List(Str), Str -> List(Str)
-	archive_inventory = |version, systems, bundle_hash|
-		systems.map(|system| Release.archive_name(version, system))
-			.append("${bundle_hash}.tar.zst")
+	# Everything SHA256SUMS covers: the CLI archives and the Roc bundles.
+	archive_inventory : Str, List(Str), List(Str) -> List(Str)
+	archive_inventory = |version, systems, bundles|
+		systems.map(|system| Release.archive_name(version, system)).concat(bundles)
 
-	inventory : Str, List(Str), Str -> List(Str)
-	inventory = |version, systems, bundle_hash|
-		["SHA256SUMS"].concat(
-			Release.archive_inventory(version, systems, bundle_hash),
-		)
+	inventory : Str, List(Str), List(Str) -> List(Str)
+	inventory = |version, systems, bundles|
+		["SHA256SUMS"].concat(Release.archive_inventory(version, systems, bundles))
 
 	is_exact_inventory : List(Str), List(Str) -> Bool
 	is_exact_inventory = |actual, expected|

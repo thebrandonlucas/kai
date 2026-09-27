@@ -162,6 +162,7 @@ PrepareRelease := [].{
 				"--",
 				"build.zig.zon",
 				Release.platform_file,
+				Release.std_file,
 				"RELEASE_NAME",
 				"VERSION",
 			])?
@@ -184,10 +185,14 @@ PrepareRelease := [].{
 		Path.write_utf8!(Path.utf8("VERSION"), version)?
 		Path.write_utf8!(Path.utf8("RELEASE_NAME"), name)?
 		Path.write_utf8!(manifest_path, rewritten)?
-		# Record the URL this release will publish the platform bundle at.
+		# Record the URLs this release will publish the platform and std bundles
+		# at; the std bundle names the platform URL, so it is built after VERSION.
 		bundle = KaiBundle.platform!()?
 		url = Release.platform_url(repository, version, bundle.hash)
 		Path.write_utf8!(Path.utf8(Release.platform_file), "${url}\n")?
+		std = KaiBundle.bundle!(".#kai-std")?
+		std_url = Release.std_url(repository, version, std.hash)
+		Path.write_utf8!(Path.utf8(Release.std_file), "${std_url}\n")?
 		Ok({})
 	}
 	build_release_branch! = |name, version, tag, branch, repository| {
