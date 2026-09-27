@@ -3,10 +3,12 @@
 # check its whole plan and run the steps in order. Nothing here writes the lock.
 import pf.Cmd
 import pf.Stderr
+import pf.Stdin
 import pf.Stdout
 
 import api.Layout
 import api.Plan
+import api.Sexpr
 import ir.Ir
 import ir.Request
 import nix.NixBackend
@@ -20,12 +22,15 @@ import Update
 import Workspace
 
 Execute := [].{
+	# --yes, --dry-run, and whether a person can answer a confirmation.
+	Options : { yes : Bool, dry_run : Bool, interactive : Bool }
+
 	# Plan every fitting backend, then probe fitting candidates in order,
 	# each program once, until one is usable. A chosen plan that failed is
 	# reported, never replaced by another backend's.
 	select! :
-		Ir, Request, Selection.BackendChoice, Str, Output.Mode => Try({}, _)
-	select! = |ir, request, choice, root, mode| {
+		Ir, Request, Selection.BackendChoice, Str, Output.Mode, Options => Try({}, _)
+	select! = |ir, request, choice, root, mode, options| {
 		layout = Workspace.locate!(root)?
 		target = Update.target!()?
 		lock = Update.observe!(layout.lock_path)?
@@ -65,7 +70,7 @@ Execute := [].{
 			Output.event("backend", why, [("backend", Output.text(chosen.backend))]),
 		)?
 		match chosen.outcome {
-			Planned(plan) => Execute.run!(plan, request, layout, mode)
+			Planned(plan) => Execute.run!(plan, request, layout, mode, options)
 			Failed(message) | Unfit(message) => Err(PlanFailed(message))
 		}
 	}
@@ -119,9 +124,15 @@ Execute := [].{
 	# Check the whole plan, then run its steps in order; the first failure
 	# stops the plan. Each Stage opens a numbered workflow step that the next
 	# Stage or the end closes.
-	run! : Plan, Request, Layout, Output.Mode => Try({}, _)
-	run! = |plan, request, layout, mode| {
+	run! : Plan, Request, Layout, Output.Mode, Options => Try({}, _)
+	run! = |plan, request, layout, mode, options| {
 		Execute.validate(plan, layout)?
+		if options.dry_run {
+			text = Sexpr.to_str(plan)
+			fields = [("plan", Output.text(text))]
+			return Output.result!(mode, text, Output.event("plan", "dry run", fields))
+		}
+		Execute.confirmable(plan, options)?
 		if plan.steps.any(Execute.uses_workspace) {
 			Workspace.prepare!(layout)?
 		}
@@ -146,7 +157,7 @@ Execute := [].{
 					Output.note!(mode, progress.human, progress.started)?
 					$finished = progress.finished
 				}
-				_ => Execute.step!(step, layout, mode)?
+				_ => Execute.step!(step, layout, mode, options)?
 			}
 		}
 		Execute.finish!(mode, $finished)
@@ -213,9 +224,26 @@ Execute := [].{
 					Err("writes outside the workspace: ${destination}")
 				}
 			Run({ argv, .. }) => command(argv)
-			Confirm(_) => Err("this kai cannot confirm steps yet")
 			PublishLock(_) => Err("only kai update publishes the lock")
-			Note(_) | Print(_) | Stage(_) => Ok({})
+			Note(_) | Print(_) | Stage(_) | Confirm(_) => Ok({})
+		}
+	}
+
+	# Without --yes, a plan that asks for confirmation needs a person at a
+	# terminal; otherwise it fails before its first effect.
+	confirmable : Plan, Options -> Try({}, [ConfirmationRequired(Str)])
+	confirmable = |plan, options| {
+		prompts = plan.steps.keep_oks(
+			|step|
+				match step {
+					Confirm(prompt) => Ok(prompt)
+					_ => Err({})
+				},
+		)
+		match prompts.first() {
+			Ok(prompt) if !options.yes and !options.interactive =>
+				Err(ConfirmationRequired(prompt))
+			_ => Ok({})
 		}
 	}
 
@@ -228,8 +256,8 @@ Execute := [].{
 
 	# One step's effect. Children run from the project root; a failing child
 	# stops the plan.
-	step! : Plan.Step, Layout, Output.Mode => Try({}, _)
-	step! = |step, layout, mode| {
+	step! : Plan.Step, Layout, Output.Mode, Options => Try({}, _)
+	step! = |step, layout, mode, options| {
 		root = layout.project_root
 		match step {
 			Note(message) =>
@@ -259,7 +287,18 @@ Execute := [].{
 			Run({ what, argv, output: Inherit }) => Execute.child!(argv, what, root)
 			Run({ what, argv, output: Artifact(artifact) }) =>
 				Execute.build!(argv, what, artifact, root, mode)
-			Confirm(_) => Err(RenderFailed("this kai cannot confirm steps yet"))
+			Confirm(prompt) =>
+				if options.yes {
+					Ok({})
+				} else {
+					Stderr.write!("kai: ${prompt} [y/N] ")?
+					answer = Stdin.line!() ?? ""
+					if ["y", "yes"].contains(answer.trim()) {
+						Ok({})
+					} else {
+						Err(Declined(prompt))
+					}
+				}
 			PublishLock(_) => Err(RenderFailed("this kai cannot publish a lock yet"))
 		}
 	}
@@ -364,7 +403,6 @@ expect [
 	Run({ what: "t", argv: [""], output: Inherit }),
 	Run({ what: "t", argv: ["-c"], output: Inherit }),
 	Run({ what: "t", argv: ["bin/sh"], output: Inherit }),
-	Confirm("go?"),
 	PublishLock({ previous: Absent, contents: "{}" }),
 ]
 	.all(
@@ -379,4 +417,21 @@ expect [
 expect {
 	resumed = Plan.{ steps: [], next: Observe(["/p/.kai/generated/x"]) }
 	Execute.validate(resumed, layout) != Ok({})
+}
+
+# A confirmation needs --yes or a person at a terminal; otherwise the plan
+# is refused before its first effect.
+expect {
+	asks = Plan.{ steps: [Note("n"), Confirm("delete?")], next: Done }
+	quiet = Plan.{ steps: [Note("n")], next: Done }
+	[
+		(asks, Bool.False, Bool.False, Err(ConfirmationRequired("delete?"))),
+		(asks, Bool.True, Bool.False, Ok({})),
+		(asks, Bool.False, Bool.True, Ok({})),
+		(quiet, Bool.False, Bool.False, Ok({})),
+	].all(
+		|(plan, yes, interactive, expected)|
+			Execute.confirmable(plan, { yes, dry_run: Bool.False, interactive })
+				== expected,
+	)
 }

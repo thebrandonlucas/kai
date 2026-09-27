@@ -63,6 +63,8 @@ Parsed : {
 	no_color : Bool,
 	json : Bool,
 	backend : Try(Str, [NoValue]),
+	yes : Bool,
+	dry_run : Bool,
 	command : Command,
 }
 
@@ -123,6 +125,16 @@ cli = |commands, note, text_style|
 				short: "",
 				long: "backend",
 				help: "Use nix or guix instead of choosing automatically.",
+			}),
+			yes: Opt.flag({
+				short: "",
+				long: "yes",
+				help: "Answer yes to every confirmation.",
+			}),
+			dry_run: Opt.flag({
+				short: "",
+				long: "dry-run",
+				help: "Print the plan instead of running it.",
 			}),
 			command: SubCmd.required(
 				commands.concat([
@@ -399,8 +411,8 @@ main! = |args| {
 			}
 			Err(Exit(2))
 		}
-		Ok({ command, backend, .. }) =>
-			match run!(command, backend, located, loaded, mode) {
+		Ok({ command, backend, yes, dry_run, .. }) =>
+			match run!(command, backend, { yes, dry_run }, located, loaded, mode) {
 				Ok({}) => Ok({})
 				Err(err) => {
 					code = exit_status(err)
@@ -417,11 +429,15 @@ main! = |args| {
 		}
 }
 
-run! = |command, backend, located, loaded, mode| {
+run! = |command, backend, { yes, dry_run }, located, loaded, mode| {
 	choice = backend_choice(backend)?
 	project = located?
-	execute! = |request|
-		Execute.select!(loaded?, request, choice, project.root, mode)
+	execute! = |request| {
+		# A person can answer a confirmation only at a terminal, without --json.
+		interactive = mode == Human and is_terminal!("0") and is_terminal!("2")
+		options = { yes, dry_run, interactive }
+		Execute.select!(loaded?, request, choice, project.root, mode, options)
+	}
 	match command {
 		Check => {
 			Load.check!(project, mode)?
@@ -505,6 +521,9 @@ describe = |err|
 		LockFailed(message) => "cannot lock the Nix inputs: ${message}"
 		LocalChanged(path) => "local source ${path} changed; run `kai update`"
 		UnsafePlan(why) => "refusing the plan: ${why}"
+		ConfirmationRequired(prompt) =>
+			"${prompt} needs confirmation; pass --yes to accept"
+		Declined(prompt) => "not confirmed: ${prompt}"
 		SnapshotFailed(message) => message
 		ChildExited(what, code) => "${what} exited with code ${code.to_str()}"
 		ExecCmdFailed({ command, exit_code }) =>

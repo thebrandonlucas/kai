@@ -1,7 +1,8 @@
 # Run a built `kai run` and `kai shell` against real Nix on a copy of
 # examples/composition: without a lock they refuse and create none; with one
-# they pass exact argv, keep a task's exit code, run raw shell hooks and
-# leave the lock untouched, even though the Kaifile.roc has warnings.
+# they pass exact argv, keep a task's exit code, run raw shell hooks, print
+# a dry run's plan without running it and leave the lock untouched, even
+# though the Kaifile.roc has warnings.
 import pf.Cmd
 import pf.Path
 import pf.Stdout
@@ -66,6 +67,11 @@ KaiRun := [].{
 		_ = kai!(["update"])?
 		published = Path.read_bytes!(lock)?
 		modified = Path.time_modified!(lock)?
+		# A dry run prints the plan and runs nothing; the task would exit 7.
+		dry = kai!(["--dry-run", "--yes", "run", "fail"])?
+		if !dry.stdout_utf8.contains("(Run ") {
+			return Err(DryRunShowedNoPlan(dry.stdout_utf8))
+		}
 		args = kai!(["run", "args", "--", "first", "two words", "--literal", ""])?
 		expected = "<configured argument><first><two words><--literal><>\n"
 		if args.stdout_utf8 != expected {
