@@ -373,7 +373,7 @@ pub fn build(b: *std.Build) void {
     const test_kaifile_api = b.addSystemCommand(&.{
         "roc",
         "test",
-        "kaifile/platform/api.roc",
+        "kaifile/platform/main.roc",
     });
     test_kaifile_api.step.dependOn(check_step);
     test_step.dependOn(&test_kaifile_api.step);

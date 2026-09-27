@@ -216,3 +216,102 @@ Argv := [].{
 		}
 	}
 }
+
+page : Command.Page
+page = { description: "About.", examples: ["kai x"], config: ["X(\"x\"),"] }
+
+choices : List(Str) -> List(Command.Choice)
+choices = |names| names.map(|value| { value, summary: "", details: [] })
+
+toy : List(Command)
+toy = [
+	Command.{
+		name: "shell",
+		summary: "",
+		help: page,
+		args: [
+			Name({
+				name: "name",
+				help: "",
+				choices: choices(["default", "ci"]),
+				default: Default("default"),
+			}),
+			Trailing({ name: "command", help: "" }),
+		],
+		lock: ReadsLock,
+	},
+	Command.{
+		name: "run",
+		summary: "",
+		help: page,
+		args: [
+			Name({
+				name: "task",
+				help: "",
+				choices: choices(["args"]),
+				default: Required,
+			}),
+			Trailing({ name: "args", help: "" }),
+		],
+		lock: ReadsLock,
+	},
+	Command.{
+		name: "build",
+		summary: "",
+		help: page,
+		args: [Name({ name: "name", help: "", choices: [], default: Required })],
+		lock: ReadsLock,
+	},
+	Command.{ name: "update", summary: "", help: page, args: [], lock: OwnsLock },
+]
+
+parsed = |argv|
+	Argv.parse(page, toy, Plain, argv).map_ok(|p| (p.command, p.args))
+
+present = |name, value| { name, value: Present(value) }
+
+many = |name, words| { name, value: Many(words) }
+
+# Arguments after -- reach the task or shell command exactly, never kai;
+# kai's own flags are found anywhere before --.
+expect [
+	(
+		["run", "args", "--", "--json", "--yes"],
+		("run", [present("task", "args"), many("args", ["--json", "--yes"])]),
+	),
+	(
+		["run", "args", "--", "first", "two words", "--literal", ""],
+		(
+			"run",
+			[
+				present("task", "args"),
+				many("args", ["first", "two words", "--literal", ""]),
+			],
+		),
+	),
+	(["shell"], ("shell", [present("name", "default")])),
+	(
+		["shell", "ci", "--", "git", "--version"],
+		("shell", [present("name", "ci"), many("command", ["git", "--version"])]),
+	),
+	(["-f", "Kaifile.roc", "update"], ("update", [])),
+	(["build", "anything"], ("build", [present("name", "anything")])),
+	(
+		["--backend", "guix", "shell", "ci", "--", "--backend", "nix"],
+		("shell", [present("name", "ci"), many("command", ["--backend", "nix"])]),
+	),
+].all(|(argv, expected)| parsed(argv) == Ok(expected))
+
+# Choices reject names the project does not define; help lists commands.
+expect
+	[["run", "missing"], ["shell", "missing"], ["run"], ["build"]].all(
+		|argv|
+			match parsed(argv) {
+				Err(Usage(_)) => Bool.True
+				_ => Bool.False
+			},
+	)
+		and match parsed(["--help"]) {
+			Err(Help(text)) => text.contains("shell") and text.contains("About.")
+			_ => Bool.False
+		}

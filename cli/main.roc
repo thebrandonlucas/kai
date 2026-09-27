@@ -107,6 +107,10 @@ run! = |shown, mode| {
 			}
 		}
 	match body {
+		# kai knows the release URLs a Kaifile.roc starts with; the platform
+		# cannot name its own bundle.
+		Help(text) if command_word(shown).is_err() =>
+			Stdout.line!("${text}\n\nKaifile.roc starts with:\n${Help.header}")
 		Help(text) => Stdout.line!(text)
 		Usage(text) => Err(Usage(text))
 		Refused(text) => Err(Refused(text))
