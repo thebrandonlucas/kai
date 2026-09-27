@@ -247,6 +247,40 @@ Std := [].{
 		NixBackend.steps(planned, wanted).map_err(rendering)
 	}
 
+	Run : { environment : Str, argv : List(Str), what : Str }
+
+	## Plan `argv` inside std environment `environment` from the locked Nix
+	## inputs, as a task would run: how a plugin runs a tool the project
+	## declares. `what` names the step in progress and errors.
+	run_in : List(Config.Setting), Implementation.Context, Run -> Try(Plan, Str)
+	run_in = |settings, ctx, { environment, argv, what }| {
+		ir = Lower.lower(settings)?
+		task = "_kai_plugin_run"
+		with_task = Ir.{
+			format: ir.format,
+			name: ir.name,
+			requires_: ir.requires_,
+			systems: ir.systems,
+			sources: ir.sources,
+			inputs: ir.inputs,
+			environments: ir.environments,
+			shells: ir.shells,
+			tasks: ir.tasks.append({ name: task, environment, run: argv }),
+			build_sources: ir.build_sources,
+			builds: ir.builds,
+			workflows: ir.workflows,
+			extensions: ir.extensions,
+			raw: ir.raw,
+		}
+		planned = Std.plan_nix(with_task, Request.Run(task, []), ctx)?
+		named = |step|
+			match step {
+				Run(run) => Run({ ..run, what })
+				other => other
+			}
+		Ok(Plan.{ steps: planned.steps.map(named), next: planned.next })
+	}
+
 	## `kai update` pins Nix inputs only; a project using only Guix sources
 	## has nothing to lock.
 	lockable : Ir -> Try({}, Str)

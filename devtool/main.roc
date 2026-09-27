@@ -20,6 +20,7 @@ import KaiBundle
 import KaiEnv
 import KaiGuix
 import KaiHelp
+import KaiPlugins
 import KaiRun
 import KaiUpdate
 import KaiWorkflow
@@ -288,6 +289,7 @@ main! = |args|
 		Ok(Cli.Command.KaiEnv(kai)) => KaiEnv.run!(kai)
 		Ok(Cli.Command.KaiGuix({ kai, required })) => KaiGuix.run!(kai, required)
 		Ok(Cli.Command.KaiHelp(kai)) => KaiHelp.run!(kai)
+		Ok(Cli.Command.KaiPlugins(kai)) => KaiPlugins.run!(kai)
 		Ok(Cli.Command.KaiRun(kai)) => KaiRun.run!(kai)
 		Ok(Cli.Command.KaiUpdate(kai)) => KaiUpdate.run!(kai)
 		Ok(Cli.Command.KaiWorkflow(kai)) => KaiWorkflow.run!(kai)
@@ -353,6 +355,7 @@ usage_lines = [
 	"kai-env KAI_BINARY",
 	"kai-guix [--require] KAI_BINARY",
 	"kai-help KAI_BINARY",
+	"kai-plugins KAI_BINARY",
 	"kai-run KAI_BINARY",
 	"kai-workflow KAI_BINARY",
 	"kai-update KAI_BINARY",

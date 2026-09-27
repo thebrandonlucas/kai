@@ -210,6 +210,7 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileInput(b.path("devtool/KaiEnv.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiGuix.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiHelp.roc"));
+    build_devtool.addFileInput(b.path("devtool/KaiPlugins.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiRun.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiUpdate.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiWorkflow.roc"));
@@ -468,6 +469,15 @@ pub fn build(b: *std.Build) void {
     run_kai_run.addFileArg(cli_binary);
     kai_run_step.dependOn(&run_kai_run.step);
     ci_step.dependOn(kai_run_step);
+
+    const kai_plugins_step = b.step(
+        "kai-plugins",
+        "Run plugin commands with real Nix on a project using examples/plugins",
+    );
+    const run_kai_plugins = addDevtoolCommand(b, devtool, "kai-plugins", &.{});
+    run_kai_plugins.addFileArg(cli_binary);
+    kai_plugins_step.dependOn(&run_kai_plugins.step);
+    ci_step.dependOn(kai_plugins_step);
 
     // The cheap real-Nix checks hosted CI runs on every push.
     const smoke_step = b.step(

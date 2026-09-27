@@ -10,6 +10,7 @@ Cli := [].{
 		KaiEnv(Str),
 		KaiGuix({ kai : Str, required : Bool }),
 		KaiHelp(Str),
+		KaiPlugins(Str),
 		KaiRun(Str),
 		KaiWorkflow(Str),
 		KaiUpdate(Str),
@@ -28,6 +29,7 @@ Cli := [].{
 				(KaiEnv(left_kai), KaiEnv(right_kai)) => left_kai == right_kai
 				(KaiGuix(left_args), KaiGuix(right_args)) => left_args == right_args
 				(KaiHelp(left_kai), KaiHelp(right_kai)) => left_kai == right_kai
+				(KaiPlugins(left_kai), KaiPlugins(right_kai)) => left_kai == right_kai
 				(KaiRun(left_kai), KaiRun(right_kai)) => left_kai == right_kai
 				(KaiWorkflow(left_kai), KaiWorkflow(right_kai)) =>
 					left_kai == right_kai
@@ -96,6 +98,7 @@ Cli := [].{
 			["kai-guix", "--require", kai] =>
 				Ok(KaiGuix({ kai, required: Bool.True }))
 			["kai-help", kai] => Ok(KaiHelp(kai))
+			["kai-plugins", kai] => Ok(KaiPlugins(kai))
 			["kai-run", kai] => Ok(KaiRun(kai))
 			["kai-workflow", kai] => Ok(KaiWorkflow(kai))
 			["kai-update", kai] => Ok(KaiUpdate(kai))
@@ -112,6 +115,7 @@ Cli := [].{
 					| "kai-env"
 					| "kai-guix"
 					| "kai-help"
+					| "kai-plugins"
 					| "kai-run"
 					| "kai-workflow"
 					| "kai-update" =>

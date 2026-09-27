@@ -10,6 +10,7 @@ import pf.OsStr
 import pf.Stderr
 import pf.Stdout
 import api.Layout
+import api.LockJson
 import api.Protocol
 
 import BuildRunner
@@ -114,7 +115,24 @@ run! = |shown, mode| {
 		Help(text) => Stdout.line!(text)
 		Usage(text) => Err(Usage(text))
 		Refused(text) => Err(Refused(text))
-		Describe(_) => Err(Refused("kai has no use for a description here"))
+		Describe({ plugins, commands, backends }) => {
+			versioned = |p| if p.version.is_empty() p.name else "${p.name} ${p.version}"
+			named = plugins.map(versioned)
+			lines = [
+				"plugins: ${Str.join_with(named, ", ")}",
+				"commands: ${Str.join_with(commands, ", ")}",
+				"backends: ${Str.join_with(backends, ", ")}",
+			]
+			texts = |items| LockJson.Array(items.map(|i| LockJson.String(i)))
+			fields = [
+				("plugins", texts(plugins.map(|p| p.name))),
+				("commands", texts(commands)),
+				("backends", texts(backends)),
+			]
+			summary = Str.join_with(lines, "\n")
+			event = Output.event("describe", "Kaifile.roc", fields)
+			Output.result!(mode, summary, event)
+		}
 		Candidates({ command, choice, lock, options, .. }) => {
 			# A person can answer a confirmation only at a terminal, without
 			# --json.
@@ -277,6 +295,8 @@ describe = |err|
 			"this request needs ${backend}, which "
 				.concat(Selection.probe_text(probe))
 		PlanFailed(message) => message
+		NoImplementation("") => "no plugin implements this command"
+		NoImplementation(backend) => "no plugin implements this command on ${backend}"
 		other => Str.inspect(other)
 	}
 

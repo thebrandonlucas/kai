@@ -40,13 +40,38 @@ Answer := [].{
 		lock: ReadsLock,
 	}
 
+	## kai answers `describe` with the Kaifile's plugins, commands and
+	## backends.
+	describe : Command
+	describe = Command.{
+		name: "describe",
+		summary: "List the plugins, commands and backends Kaifile.roc defines.",
+		help: {
+			description: "List the plugins, commands and backends Kaifile.roc "
+				.concat("defines, for people and, with --json, for tools."),
+			examples: ["kai describe", "kai --json describe"],
+			config: [],
+		},
+		args: [],
+		lock: ReadsLock,
+	}
+
 	body : Kaifile, Protocol.Request -> Protocol.Body
 	body = |kaifile, request| {
-		commands = [Answer.check].concat(kaifile.plugins.join_map(|p| p.commands))
+		commands = [Answer.check, Answer.describe]
+			.concat(kaifile.plugins.join_map(|p| p.commands))
 		match Argv.parse(Answer.kai, commands, request.style, request.argv) {
 			Err(Help(text)) => Help(text)
 			Err(Usage(text)) => Usage(text)
 			Ok({ command: "check", .. }) => Refused("kai checks Kaifile.roc itself")
+			Ok({ command: "describe", .. }) =>
+				Describe(
+					Protocol.Manifest.{
+						plugins: kaifile.plugins.map(|p| { name: p.name, version: p.version }),
+						commands: kaifile.plugins.join_map(|p| p.commands.map(|c| c.name)),
+						backends: Kaifile.backends(kaifile).map(|b| b.id),
+					},
+				)
 			Ok({ globals, command, args }) => {
 				(choice, phase, observed) = match request.resume {
 					Fresh =>

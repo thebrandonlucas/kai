@@ -40,6 +40,7 @@ Selection := [].{
 				BackendConflict(Str, Str),
 				NoEligibleBackend(List(Str)),
 				RequiredBackendUnavailable(Str, Probe),
+				NoImplementation(Str),
 			],
 		)
 	choose = |choice, options, probe| {
@@ -49,6 +50,8 @@ Selection := [].{
 				_ => ""
 			}
 		match (choice, options.keep_if(Selection.fits)) {
+			(Only(backend), _) if options.is_empty() => Err(NoImplementation(backend))
+			(Auto, _) if options.is_empty() => Err(NoImplementation(""))
 			(Only(backend), []) =>
 				Err(BackendConflict(backend, options.first().map_ok(reason) ?? ""))
 			(_, [single]) =>
@@ -126,6 +129,7 @@ outcome = |choice, options, observed|
 		Err(BackendConflict(backend, _)) => Err(Conflict(backend))
 		Err(NoEligibleBackend(_)) => Err(NoneEligible)
 		Err(RequiredBackendUnavailable(backend, _)) => Err(Unavailable(backend))
+		Err(NoImplementation(_)) => Err(NoneEligible)
 	}
 
 # Candidates arrive in preference order, only --backend's with --backend.
