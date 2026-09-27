@@ -153,10 +153,14 @@ can serve the request. Guix is used when Nix is not installed, or when the
 environment's tools come from a `GuixPackages` source. `--backend nix` or
 `--backend guix` forces one; Kai never falls back to the other.
 
-Guix supports only `kai shell`, which runs `guix shell --pure` with the
-environment's tools. Guix shells use the installed channels and are not pinned
-by Kai's lock, so `kai update` refuses a Guix-only project. Overlays, tasks,
-builds and workflows need Nix. See [examples/guix](examples/guix).
+On Guix, `kai shell` and `kai run` run `guix time-machine -q -C CHANNELS --
+shell -q --pure` with the environment's tools, at the Guix channel commit
+Kai's lock pins. `kai update` pins every installed backend that fits, each in
+its own section of `.kai/lock.json` (`kai --backend guix update` pins only
+Guix), and Guix commands refuse to run without a Guix pin. The first Guix
+command at a new commit downloads, or builds, that Guix, which can take a long
+time. Overlays, builds and workflows need Nix. See
+[examples/guix](examples/guix).
 
 ## The `.kai` directory
 

@@ -6,12 +6,14 @@ import pf.Command
 import Config
 import pf.Implementation
 import pf.Kaifile
+import pf.Layout
 import Lower
 import pf.Plan
 import pf.Plugin
 import ir.Ir
 import ir.Project
 import ir.Request
+import ir.LockFile
 import nix.Locks
 import nix.NixBackend
 import guix.GuixBackend
@@ -174,9 +176,12 @@ Std := [].{
 					backend: On("guix"),
 					fit: |args|
 						GuixBackend.plan(ir, Std.request(command, args)?).map_ok(|_| {}),
-					plan: |ctx|
-						GuixBackend.steps(ir, Std.request(command, ctx.args)?)
-							.map_err(|message| "cannot plan the Guix shell: ${message}"),
+					plan: |ctx| {
+						wanted = Std.request(command, ctx.args)?
+						locked = Std.guix_pins(ctx)?
+						GuixBackend.steps(ir, wanted, ctx.layout.generated_root, locked)
+							.map_err(|message| "cannot plan the Guix ${command}: ${message}")
+					},
 				},
 		)
 		nix
@@ -191,12 +196,8 @@ Std := [].{
 				Implementation.{
 					command: "update",
 					backend: On("guix"),
-					fit: |_|
-						Err(
-							"locking is not supported for Guix sources; Guix shells use the "
-								.concat("installed Guix channels"),
-						),
-					plan: |_| Err("unreachable"),
+					fit: |_| Std.guix_lockable(ir),
+					plan: |ctx| Std.update_guix(ctx),
 				},
 				Implementation.{
 					command: "ir",
@@ -231,18 +232,19 @@ Std := [].{
 	## Nix plans read the lock authority; its absence is a planning failure.
 	plan_nix : Ir, Request, Implementation.Context -> Try(Plan, Str)
 	plan_nix = |ir, wanted, ctx| {
+		layout = Std.nix_layout(ctx.layout)
 		path = ctx.layout.lock_path
 		unreadable = |why|
 			"cannot read the lock file ${path}: ${why}; run `kai update`"
 		rendering = |message| "cannot generate the Nix files: ${message}"
 		target = ctx.host.system
-		NixBackend.preflight(ir, wanted, target, ctx.layout).map_err(rendering)?
+		NixBackend.preflight(ir, wanted, target, layout).map_err(rendering)?
 		text = match ctx.lock {
 			Present(contents) => contents
 			Absent => return Err("no lock file at ${path}; run `kai update`")
 		}
 		locks = Locks.decode(text).map_err(unreadable)?
-		planned = NixBackend.plan(ir, wanted, target, ctx.layout, locks)
+		planned = NixBackend.plan(ir, wanted, target, layout, locks)
 			.map_err(rendering)?
 		NixBackend.steps(planned, wanted).map_err(rendering)
 	}
@@ -281,8 +283,84 @@ Std := [].{
 		Ok(Plan.{ steps: planned.steps.map(named), next: planned.next })
 	}
 
-	## `kai update` pins Nix inputs only; a project using only Guix sources
-	## has nothing to lock.
+	## Nix's generated files live in their own directory beneath kai's
+	## generated root; Guix's beside them.
+	nix_layout : Layout -> Layout
+	nix_layout = |layout|
+		Layout.{
+			project_root: layout.project_root,
+			workspace: layout.workspace,
+			generated_root: "${layout.generated_root}/nix",
+			lock_path: layout.lock_path,
+		}
+
+	## The Guix channel pins in the lock, or why they are missing or stale.
+	guix_pins : Implementation.Context -> Try(List(GuixBackend.Pin), Str)
+	guix_pins = |ctx| {
+		missing = "the guix lock is missing or stale; run kai --backend guix update"
+		section = match ctx.lock {
+			Present(text) =>
+				match LockFile.section(text, "guix")? {
+					Present(found) => found
+					Absent => return Err(missing)
+				}
+			Absent => return Err(missing)
+		}
+		GuixBackend.pinned([GuixBackend.default_channel], section)
+	}
+
+	## Guix has something to lock when any environment can run on it.
+	guix_lockable : Ir -> Try({}, Str)
+	guix_lockable = |ir| {
+		guix = |e| Project.check_environment(ir, Guix, e.name).is_ok()
+		if ir.environments.any(guix) {
+			Ok({})
+		} else {
+			Err("no environment can run on Guix")
+		}
+	}
+
+	## Phase 0 resolves the channels with the installed `guix repl` and asks
+	## kai for the result; phase 1 validates it and publishes the lock's guix
+	## section, keeping the others.
+	update_guix : Implementation.Context -> Try(Plan, Str)
+	update_guix = |ctx| {
+		dir = "${ctx.layout.generated_root}/guix"
+		result = "${dir}/lock-result.json"
+		channels = [GuixBackend.default_channel]
+		match ctx.phase {
+			0 => {
+				unpinned = "${dir}/channels-unpinned.scm"
+				script = "${dir}/lock.scm"
+				entries = channels.map(|channel| { channel, commit: Unpinned })
+				# The empty result keeps a stale one from being observed.
+				files = [
+					{ path: unpinned, contents: GuixBackend.channels_scm(entries) },
+					{ path: script, contents: GuixBackend.lock_script },
+					{ path: result, contents: "" },
+				]
+				argv = ["guix", "repl", "-q", "--", script, result, unpinned]
+				Ok(
+					Plan.{
+						steps: [Write(files), Run({ what: "guix lock", argv, output: Inherit })],
+						next: Observe([result]),
+					},
+				)
+			}
+			_ => {
+				text = match ctx.observed.find_first(|o| o.path == result) {
+					Ok({ contents: Text(found), .. }) => found
+					_ => return Err("Guix produced no ${result}")
+				}
+				pinned = GuixBackend.pins(channels, text)?
+				contents = LockFile.splice(ctx.lock, "guix", GuixBackend.section(pinned))?
+				publish = PublishLock({ previous: ctx.lock, contents })
+				Ok(Plan.{ steps: [publish], next: Done })
+			}
+		}
+	}
+
+	## Nix has nothing to lock in a project using only Guix sources.
 	lockable : Ir -> Try({}, Str)
 	lockable = |ir| {
 		used = ir.environments.join_map(|e| e.tools.map(|t| t.source))
@@ -296,10 +374,7 @@ Std := [].{
 						},
 			)
 		if !used.is_empty() and used.all(guix) {
-			Err(
-				"locking is not supported for Guix sources; Guix shells use the "
-					.concat("installed Guix channels"),
-			)
+			Err("every tool comes from a Guix source; Nix has nothing to lock")
 		} else {
 			Ok({})
 		}
@@ -309,7 +384,7 @@ Std := [].{
 	## phase 1 validates it and publishes the lock.
 	update_nix : Ir, Implementation.Context -> Try(Plan, Str)
 	update_nix = |ir, ctx| {
-		layout = ctx.layout
+		layout = Std.nix_layout(ctx.layout)
 		target = ctx.host.system
 		backend_lock = "${layout.generated_root}/flake.lock"
 		match ctx.phase {
@@ -348,14 +423,10 @@ Std := [].{
 				}
 				locks = Locks.from_nix(ir, layout, resolved)
 					.map_err(|message| "cannot lock the Nix inputs: ${message}")?
-				Ok(
-					Plan.{
-						steps: [
-							PublishLock({ previous: ctx.lock, contents: Locks.encode(locks) }),
-						],
-						next: Done,
-					},
-				)
+				# Other backends' sections are kept as they are.
+				contents = LockFile.splice(ctx.lock, "nix", Locks.section(locks))?
+				publish = PublishLock({ previous: ctx.lock, contents })
+				Ok(Plan.{ steps: [publish], next: Done })
 			}
 		}
 	}

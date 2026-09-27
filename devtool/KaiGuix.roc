@@ -1,9 +1,11 @@
-# Run a built `kai shell` against Guix on a copy of examples/guix. STUBBED
+# Run a built kai against Guix on a copy of examples/guix. STUBBED
 # process-boundary checks come first: recording stand-ins for guix and nix
-# show the selected program, exact argv, and that a failing Guix shell never
-# falls back to Nix. Then, when guix is installed, real Guix shells run with
-# Nix absent from PATH and no lock is created. A missing guix is reported as
-# skipped, never passed, and fails when the real run is required.
+# show that Guix commands need a Guix lock, then run under `guix
+# time-machine` at the locked channels with exact argv, and that a failing
+# Guix shell never falls back to Nix. Then, when guix is installed, real Guix
+# locks the channels with Nix absent from PATH, and shells and tasks run at
+# a pinned release. A missing guix is reported as skipped, never passed, and
+# fails when the real run is required.
 import pf.Cmd
 import pf.Env
 import pf.Path
@@ -12,6 +14,10 @@ import pf.Stdout
 import KaiUpdate
 
 KaiGuix := [].{
+	# The Guix 1.5.0 release commit: substitutes exist for it, so the first
+	# time-machine run downloads Guix rather than building it.
+	release = "230aa373f315f247852ee07dff34146e9b480aec"
+
 	run! = |binary, required| {
 		(kai, project) = KaiUpdate.fixture!(binary, "guix", [])?
 		stubs = Path.canonicalize!(Env.create_temp_dir_with_prefix!("kai-stubs-")?)?
@@ -33,13 +39,30 @@ KaiGuix := [].{
 
 	# STUB executables: each argument is logged on its own line, prefixed by
 	# the program's name. `nix` is unusable; `guix` passes its probe and fails
-	# every shell with status 3.
+	# every other command with status 3.
 	stub = |name, status|
 		\\#!/bin/sh
 		\\# STUB for kai-guix: records argv and runs nothing.
 		\\for arg in "$@"; do printf '${name} %s\n' "$arg" >> "$KAI_STUB_LOG"; done
 		\\[ "$1" = --version ] && exit ${status}
 		\\exit 3
+		\\
+
+	# A lock holding only a guix section pinned to `commit`.
+	lock = |commit|
+		\\{"version": 2, "guix": {
+		\\  "identity": {"channels": ["guix"]},
+		\\  "channels": [{
+		\\    "name": "guix",
+		\\    "url": "https://git.guix.gnu.org/guix.git",
+		\\    "branch": "master",
+		\\    "commit": "${commit}",
+		\\    "introduction": {
+		\\      "commit": "9edb3f66fd807b096b48283debdcddccfea34bad",
+		\\      "signer": "BBB0 2DDF 2CEA F6A8 0D1D  E643 A2A0 6DF2 A33A 54FA"
+		\\    }
+		\\  }]
+		\\}}
 		\\
 
 	run_in! = |kai, project, stubs, required| {
@@ -56,6 +79,18 @@ KaiGuix := [].{
 			.env_str("KAI_STUB_LOG", Path.display(log))
 			.exec_output!()
 		command = ["hello", "--greeting", "two words"]
+		match kai!(Path.display(stubs), ["shell", "default", "--"].concat(command)) {
+			Err(NonZeroExitCode({ exit_code, stderr_utf8_lossy, .. })) if exit_code == 1
+				and stderr_utf8_lossy.contains("run kai --backend guix update") => {}
+			other => return Err(GuixRanUnlocked(Str.inspect(other)))
+		}
+		kai_dir = Path.join(project, ".kai")
+		Path.create_all!(kai_dir)?
+		lock_file = Path.join(kai_dir, "lock.json")
+		pin! = || Path.write_utf8!(lock_file, KaiGuix.lock(KaiGuix.release))
+		pin!()?
+		generated = Path.join(project, ".kai/generated/guix/channels.scm")
+		channels = Path.display(generated)
 		stubbed = [
 			(
 				["shell", "default", "--"].concat(command),
@@ -72,14 +107,19 @@ KaiGuix := [].{
 				Err(NonZeroExitCode({ exit_code, .. })) if exit_code == 3 => {}
 				other => return Err(GuixStatusLost(Str.inspect(other)))
 			}
-			argv = ["shell", "--pure", "hello", "--"].concat(command)
+			argv = ["time-machine", "-q", "-C", channels, "--"]
+				.concat(["shell", "-q", "--pure", "hello", "--"])
+				.concat(command)
 			expected = probes.concat(argv.map(|arg| "guix ${arg}"))
 			recorded = Path.read_utf8!(log)?.split_on("\n").drop_last(1)
 			if recorded != expected {
 				return Err(WrongGuixArgv(recorded))
 			}
 		}
-		Stdout.line!("stubbed kai shell ran guix with exact argv, no fallback")?
+		if !Path.read_utf8!(Path.utf8(channels))?.contains(KaiGuix.release) {
+			return Err(ChannelsNotPinned)
+		}
+		Stdout.line!("stubbed kai ran guix under time-machine with exact argv")?
 		guix = match KaiGuix.which!("guix") {
 			Ok(dir) => dir
 			Err(_) if required => return Err(GuixNotInstalled)
@@ -93,31 +133,31 @@ KaiGuix := [].{
 			.args_str(["-s", "${guix}/guix", Path.display(isolated)])
 			.exec_cmd!()?
 		guix_path = Path.display(isolated)
-		auto = kai!(
-			guix_path,
-			["shell", "default", "--", "hello", "--greeting", "a b"],
-		)?
-		if
-			auto.stdout_utf8 != "a b\n"
-				or !auto.stderr_utf8_lossy.contains("not pinned by Kai's lock")
-				{
-					return Err(WrongGuixShell(Str.inspect(auto)))
-				}
-		named = [["--backend", "guix", "shell", "default"], ["shell", "channels"]]
-		for args in named {
-			output = kai!(guix_path, args.concat(["--", "hello", "--greeting", "hi"]))?
-			if output.stdout_utf8 != "hi\n" {
+		Path.delete!(Path.join(kai_dir, "lock.json"))?
+		_ = kai!(guix_path, ["update"])?
+		locked = Path.read_utf8!(Path.join(kai_dir, "lock.json"))?
+		if !locked.contains("\"guix\"") or locked.contains("\"nix\"") {
+			return Err(WrongGuixLock(locked))
+		}
+		# The release has substitutes; the branch head may not yet.
+		pin!()?
+		shells = [
+			(["shell", "default", "--", "hello", "--greeting", "a b"], "a b\n"),
+			(
+				["--backend", "guix", "shell", "channels", "--"]
+					.concat(["hello", "--greeting", "hi"]),
+				"hi\n",
+			),
+			(["run", "greet", "--", "task"], "task\n"),
+		]
+		for (args, expected) in shells {
+			output = kai!(guix_path, args)?
+			if output.stdout_utf8 != expected {
 				return Err(WrongGuixShell(Str.inspect(output)))
 			}
 		}
-		match kai!(guix_path, ["--backend", "guix", "update"]) {
-			Err(NonZeroExitCode({ exit_code, stderr_utf8_lossy, .. })) if exit_code == 1
-				and stderr_utf8_lossy.contains("locking is not supported") => {}
-			other => return Err(GuixLocked(Str.inspect(other)))
-		}
-		if Path.exists!(Path.join(project, ".kai"))? {
-			return Err(GuixCreatedWorkspace)
-		}
-		Stdout.line!("kai shell ran real Guix without Nix and created no lock")
+		Stdout.line!(
+			"kai locked Guix and ran pinned Guix shells and tasks without Nix",
+		)
 	}
 }

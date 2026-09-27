@@ -4,6 +4,7 @@ import api.Layout
 import ir.Ir
 import ir.Project
 import ir.Plan
+import ir.LockFile
 import api.LockJson
 
 Locks := { identity : LockJson, graph : LockJson }.{
@@ -121,28 +122,32 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		)
 	}
 
+	## The Nix section of a lock file, version 1 or 2.
 	decode : Str -> Try(Locks, Str)
 	decode = |text| {
-		envelope = LockJson.decode(text)?
-		if LockJson.field(envelope, "version")? != LockJson.Number("1") {
-			return Err("unsupported Kai lock version; run kai update")
+		section = match LockFile.section(text, "nix")? {
+			Present(found) => found
+			Absent => return Err("the lock has no Nix section; run kai update")
 		}
-		identity = LockJson.field(envelope, "identity")?
-		graph = LockJson.field(envelope, "nix")?
+		identity = LockJson.field(section, "identity")?
+		graph = LockJson.field(section, "graph")?
 		validate_identity(identity)?
 		validate_graph(graph)?
 		validate_binding(identity, graph)?
 		Ok(Locks.{ identity, graph })
 	}
 
-	encode : Locks -> Str
-	encode = |locks| LockJson.encode(
+	## The Nix section a lock file holds.
+	section : Locks -> LockJson
+	section = |locks|
 		LockJson.Object([
-			{ name: "version", value: LockJson.Number("1") },
 			{ name: "identity", value: locks.identity },
-			{ name: "nix", value: locks.graph },
-		]),
-	).concat("\n")
+			{ name: "graph", value: locks.graph },
+		])
+
+	## A lock file holding only this Nix section.
+	encode : Locks -> Str
+	encode = |locks| LockFile.splice(Absent, "nix", Locks.section(locks)) ?? ""
 
 	## Explicit update alone may supply fresh Nix observations. Every local node
 	## is tied to a declared relative identity and retains its NAR content hash.

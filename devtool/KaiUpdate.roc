@@ -6,6 +6,7 @@ import pf.Env
 import pf.Path
 import pf.Stderr
 import pf.Stdout
+import api.LockJson
 import nix.Locks
 
 import ConfigFixtures
@@ -52,11 +53,23 @@ KaiUpdate := [].{
 
 	run_in! = |kai, project| {
 		lock = Path.join(project, ".kai/lock.json")
-		update! = || Cmd.new(Path.to_os_str(kai)).arg_str("update")
+		nix_update = ["--backend", "nix", "update"]
+		update! = || Cmd.new(Path.to_os_str(kai)).args_str(nix_update)
 			.cwd(project).exec_cmd!()
 		update!()?
 		_ = Locks.decode(Path.read_utf8!(lock)?).map_err(|err| BadLock(err))?
+		# A Nix update keeps another backend's section as it is.
+		guix = LockJson.Object([{ name: "channels", value: LockJson.Array([]) }])
+		decoded = |text| LockJson.decode(text).map_err(|err| BadLock(err))
+		sections = LockJson.object(decoded(Path.read_utf8!(lock)?)?)
+			.map_err(|err| BadLock(err))?
+		with_guix = LockJson.Object(sections.append({ name: "guix", value: guix }))
+		Path.write_utf8!(lock, LockJson.encode(with_guix))?
 		update!()?
+		kept = LockJson.field(decoded(Path.read_utf8!(lock)?)?, "guix")
+		if kept != Ok(guix) {
+			return Err(GuixSectionLost(Str.inspect(kept)))
+		}
 		published = Path.read_bytes!(lock)?
 		_ = Locks.decode(Path.read_utf8!(lock)?).map_err(|err| BadLock(err))?
 		guard = Path.join(project, ".kai/lock.json.lock")
@@ -70,6 +83,9 @@ KaiUpdate := [].{
 			return Err(LockChangedWhileHeld)
 		}
 		Path.delete_empty!(guard)?
-		Stdout.line!("kai update published, refreshed and respected its lock")
+		Stdout.line!(
+			"kai update published, refreshed, kept the guix section and "
+				.concat("respected its lock"),
+		)
 	}
 }

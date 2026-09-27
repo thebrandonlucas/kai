@@ -64,7 +64,7 @@ Workspace := [].{
 		Layout.{
 			project_root: root,
 			workspace,
-			generated_root: "${workspace}/generated/nix",
+			generated_root: "${workspace}/generated",
 			lock_path: "${workspace}/lock.json",
 		}
 	}
@@ -259,7 +259,7 @@ expect [(".kai", "/project/.kai"), ("state", "/project/state")].all(
 			== [
 				"/project",
 				workspace,
-				"${workspace}/generated/nix",
+				"${workspace}/generated",
 				"${workspace}/lock.json",
 			]
 	},
@@ -282,7 +282,7 @@ expect {
 	[
 		("/project/.kai/generated/nix/flake.nix", Bool.True),
 		("/project/.kai/lock.json", Bool.False),
-		("/project/.kai/generated/nix", Bool.False),
+		("/project/.kai/generated", Bool.False),
 		("/project/flake.nix", Bool.False),
 	].all(
 		|(target, ok)|

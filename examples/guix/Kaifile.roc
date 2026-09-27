@@ -1,5 +1,5 @@
-# One Guix shell path: generic tools use whichever backend is installed, a
-# Guix source requires Guix, and Kai's lock pins neither for Guix.
+# Generic tools use whichever backend is installed and a Guix source requires
+# Guix; Guix shells and tasks run at the channel commit Kai's lock pins.
 app [kaifile] {
 	pf: platform "../../kaifile/platform/main.roc",
 	std: "../../plugins/std/main.roc",
@@ -15,4 +15,5 @@ kaifile = Std.kaifile([
 	Environment("channels", [Tools(["channels#hello"])]),
 	Shell("default", [Use("dev")]),
 	Shell("channels", [Use("channels")]),
+	Task("greet", [Use("dev"), Run(["hello", "--greeting"])]),
 ])

@@ -41,10 +41,13 @@ Execute := [].{
 	# plan that failed is reported, never replaced by another backend's.
 	command! : Answer, Resume(_), Layout, Output.Mode, Options, Str => Try({}, _)
 	command! = |answer, resume!, layout, mode, options, workflow| {
+		# A lock owner run without --backend refreshes every installed backend
+		# that fits, in preference order; every other command runs one.
+		every = answer.lock == OwnsLock and answer.choice == Auto
 		var $observed = []
 		var $found = Bool.False
 		for candidate in answer.options.keep_if(Selection.fits) {
-			if !$found {
+			if every or !$found {
 				for check in candidate.probes {
 					if !$observed.any(|(program, _)| program == check.program) {
 						$observed = $observed.append(
@@ -58,34 +61,59 @@ Execute := [].{
 		}
 		probe = Execute.lookup($observed)
 		chosen = Selection.choose(answer.choice, answer.options, probe)?
-		if chosen.backend != "" {
-			why = Selection.explain(answer.choice, answer.options, probe, chosen)
-			Output.note!(
+		usable = |c| Selection.fits(c) and Selection.status(c, probe) == Usable
+		ran = if every answer.options.keep_if(usable) else [chosen]
+		for candidate in ran {
+			if candidate.backend != "" {
+				why = if ran.len() > 1 {
+					"using ${candidate.backend} (updating every installed backend that fits)"
+				} else {
+					Selection.explain(answer.choice, answer.options, probe, candidate)
+				}
+				backend = [("backend", Output.text(candidate.backend))]
+				Output.note!(mode, "kai: ${why}", Output.event("backend", why, backend))?
+			}
+			plan = Execute.planned(candidate.outcome)?
+			Execute.follow!(
+				{ backend: candidate.backend, lock: answer.lock, workflow },
+				plan,
+				0,
+				resume!,
+				layout,
 				mode,
-				"kai: ${why}",
-				Output.event("backend", why, [("backend", Output.text(chosen.backend))]),
+				options,
 			)?
 		}
-		plan = Execute.planned(chosen.outcome)?
-		follow! = |current, phase| {
-			Execute.run!(current, answer.lock, layout, mode, options, workflow)?
-			match current.next {
-				Done => Ok({})
-				Observe(_) if options.dry_run => Ok({})
-				Observe(_) if phase >= 3 =>
-					Err(UnsafePlan("a plan may continue at most 3 times"))
-				Observe(paths) => {
-					body = resume!(chosen.backend, phase + 1, Execute.observe!(paths)?)?
-					next = match body {
-						Candidates({ options: [only], .. }) => Execute.planned(only.outcome)?
-						Refused(why) => return Err(Refused(why))
-						_ => return Err(PlanFailed("the Kaifile did not continue the plan"))
-					}
-					follow!(next, phase + 1)
+		Ok({})
+	}
+
+	# Run a plan and every continuation it asks for, on one backend.
+	follow! = |which, current, phase, resume!, layout, mode, options| {
+		{ backend, lock, workflow } = which
+		Execute.run!(current, lock, layout, mode, options, workflow)?
+		match current.next {
+			Done => Ok({})
+			Observe(_) if options.dry_run => Ok({})
+			Observe(_) if phase >= 3 =>
+				Err(UnsafePlan("a plan may continue at most 3 times"))
+			Observe(paths) => {
+				body = resume!(backend, phase + 1, Execute.observe!(paths)?)?
+				next = match body {
+					Candidates({ options: [only], .. }) => Execute.planned(only.outcome)?
+					Refused(why) => return Err(Refused(why))
+					_ => return Err(PlanFailed("the Kaifile did not continue the plan"))
 				}
+				Execute.follow!(
+					{ backend, lock, workflow },
+					next,
+					phase + 1,
+					resume!,
+					layout,
+					mode,
+					options,
+				)
 			}
 		}
-		follow!(plan, 0)
 	}
 
 	Outcome : [Unfit(Str), Planned(Plan), Failed(Str)]
