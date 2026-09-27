@@ -4,7 +4,7 @@ import api.Layout
 import ir.Ir
 import ir.Project
 import ir.Plan
-import LockJson
+import api.LockJson
 
 Locks := { identity : LockJson, graph : LockJson }.{
 	is_eq : _

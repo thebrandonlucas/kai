@@ -1,5 +1,5 @@
-# Locate a Kaifile.roc, evaluate it with the pinned Roc compiler, and read the
-# validated Kaifile IR it prints.
+# Locate a Kaifile.roc, evaluate it with the pinned Roc compiler, and ask it
+# what a command should do.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -7,9 +7,8 @@ import pf.Path
 import pf.Random
 import pf.Stderr
 
-import ir.Ir
-import ir.Project
-import nix.NixBackend
+import api.Protocol
+import api.Sexpr
 
 import "../.roc-version" as compiler_version : Str
 
@@ -50,8 +49,12 @@ Load := [].{
 	# relative ROC executable belongs to the invocation directory.
 	compiler! : () => Try(Str, _)
 	compiler! = || {
-		_ = Load.seed!("KAI_PLATFORM_BUNDLE")
-		_ = Load.seed!("KAI_STD_BUNDLE")
+		seeded = ["KAI_PLATFORM_BUNDLE", "KAI_STD_BUNDLE", "KAI_ROC_PACKAGES"]
+		for variable in seeded {
+			for bundle in (Env.var_str!(variable) ?? "").split_on(":") {
+				_ = Load.seed!(bundle)
+			}
+		}
 		override = Env.var_str!("ROC") ?? "roc"
 		compiler = if override.contains("/") and !override.starts_with("/") {
 			cwd = Env.cwd!()?.to_str()?
@@ -70,14 +73,15 @@ Load := [].{
 	}
 
 	# A Nix-installed Kai's wrapper sets KAI_PLATFORM_BUNDLE and KAI_STD_BUNDLE
-	# to its unpacked platform and std bundles, <hash>/. Roc checks its package
-	# cache before downloading a URL package, so seeding the cache with them
-	# lets a Kaifile.roc pinned to them load offline. Best-effort and silent:
+	# to its unpacked platform and std bundles, <hash>/, and KAI_ROC_PACKAGES to
+	# the packages the platform imports, separated by colons. Roc checks its
+	# package cache before downloading a URL package, so seeding the cache with
+	# them lets a Kaifile.roc pinned to them load offline. Best-effort and silent:
 	# otherwise Roc downloads them. Publish with a rename like Roc, which also
 	# sweeps stale *.tmp staging directories.
-	seed! : OsStr => Try({}, _)
-	seed! = |variable| {
-		bundle = Env.var_str!(variable)?.drop_suffix("/")
+	seed! : Str => Try({}, _)
+	seed! = |unpacked| {
+		bundle = unpacked.drop_suffix("/")
 		hash = bundle.split_on("/").last() ?? ""
 		if ["", ".", ".."].contains(hash) {
 			return Err(InvalidBundle(bundle))
@@ -167,40 +171,45 @@ Load := [].{
 		}
 	}
 
-	# Evaluate the configuration and accept only IR this Kai understands. roc
+	# Ask the compiled Kaifile one question, with the request on stdin. roc
 	# exits 2 after a complete run when any source has warnings, and 1 on
 	# errors even though it still runs the app.
-	ir! : Location => Try(Ir, _)
-	ir! = |project| {
+	ask! : Location, Protocol.Request => Try(Protocol.Body, _)
+	ask! = |project, request| {
 		_ = Load.system!()?
 		Load.current!(project)?
 		output = Cmd.new_str(Load.compiler!()?)
 			.args_str([project.file])
 			.cwd(Load.path(project.root))
+			.stdin(Bytes(Sexpr.to_str(request).to_utf8()))
 			.exec_output!()
 		match output {
-			Ok({ stdout_utf8, .. }) => Load.accept(stdout_utf8)
+			Ok({ stdout_utf8, .. }) => Load.answer(stdout_utf8)
 			Err(NonZeroExitCode(failed)) => {
 				out = failed.stdout_utf8_lossy
-				if failed.exit_code == 2 and Ir.parse(out).is_ok() {
-					Load.accept(out)
+				failure = KaifileFailed(project.file, out.concat(failed.stderr_utf8_lossy))
+				if failed.exit_code == 2 {
+					Load.answer(out).map_err(|_| failure)
 				} else {
-					Err(KaifileFailed(project.file, out.concat(failed.stderr_utf8_lossy)))
+					Err(failure)
 				}
 			}
 			Err(_) => Err(KaifileInvalid(project.file))
 		}
 	}
 
-	accept : Str -> Try(Ir, _)
-	accept = |text| {
-		ir = Ir.parse(text).map_err(|err| BadIr(err))?
-		missing = ir.unsupported_features(NixBackend.backend.features)
-		if !missing.is_empty() {
-			return Err(NeedsFeatures(missing))
+	# Decode errors are flattened: passing the decoder's own error union on
+	# segfaults `roc check` on nightly-2026-09-26-d6267b4 (see
+	# docs/roc-isms/BUG-012.md, not reported upstream yet).
+	answer :
+		Str -> Try(Protocol.Body, [BadResponse(Str), IncompatibleProtocol(U64, U64)])
+	answer = |text|
+		match Protocol.decode_response(text) {
+			Ok(response) => Ok(response.body)
+			Err(Incompatible({ major, minor })) =>
+				Err(IncompatibleProtocol(major, minor))
+			Err(other) => Err(BadResponse(Str.inspect(other)))
 		}
-		Project.validate(ir).map_err(|message| InvalidProject(message))
-	}
 
 	path : Str -> Path
 	path = |p| Path.from_os_str(OsStr.from_str(p))
@@ -220,9 +229,9 @@ expect Load.split_file("/project/app/Kaifile.roc")
 # A configuration at the filesystem root keeps "/" as its root.
 expect Load.split_file("/Kaifile.roc") == { root: "/", file: "Kaifile.roc" }
 
-# Output that is not IR is rejected before any planning.
-expect match Load.accept("not ir") {
-	Err(BadIr(_)) => Bool.True
+# Output that is not a response is rejected before anything runs.
+expect match Load.answer("not a response") {
+	Err(BadResponse(_)) => Bool.True
 	_ => Bool.False
 }
 

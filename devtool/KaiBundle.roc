@@ -3,7 +3,8 @@
 # archive holds checks, updates and runs it; a Nix-installed kai does the
 # same offline, seeding the Roc package cache from the bundles its wrapper
 # names. Each uses a fresh Roc cache, which must end up holding exactly those
-# two bundles. A std bundled against another platform is refused.
+# two bundles and the packages the platform imports. A std bundled against
+# another platform is refused.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -44,6 +45,14 @@ KaiBundle := [].{
 
 	bundle! = |attribute|
 		KaiBundle.found!(KaiBundle.nix_output!(attribute)?, attribute)
+
+	# The URL packages the platform imports: Weaver, and the ansi and path
+	# packages Weaver imports (the flake's rocPackages).
+	platform_packages = [
+		"7j6KBFBEZ8pNMLQHkx9xiwyZ2PmwQPgKNDPUih6gKe77",
+		"JXLM47L6CzrLXB5HBfqc27VnU6CD4jMm5Mk6dgbbovL",
+		"7YfABZPwJAXtLBY2vm8FqMyGAtNxncCJ65HdNKHFGNnE",
+	]
 
 	# The platform bundle.
 	platform! = || KaiBundle.bundle!(".#kaifile-platform")
@@ -149,7 +158,7 @@ KaiBundle := [].{
 		served = KaiBundle.project!(
 			kai,
 			KaiBundle.kaifile(platform_url, "${base}${std_path(served_std.hash)}"),
-			[pf_bundle.hash, served_std.hash],
+			[pf_bundle.hash, served_std.hash].concat(KaiBundle.platform_packages),
 			Path.join(work, "served"),
 			serve!,
 		)
@@ -171,7 +180,7 @@ KaiBundle := [].{
 				KaiBundle.platform_url!(std)?,
 				"https://kai.invalid${std_path(std.hash)}",
 			),
-			[pf_bundle.hash, std.hash],
+			[pf_bundle.hash, std.hash].concat(KaiBundle.platform_packages),
 			Path.join(work, "installed"),
 			|command| Ok(command.exec_output!()?.stdout_utf8),
 		)?

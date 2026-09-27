@@ -5,7 +5,7 @@ import pf.OsStr
 import pf.Path
 
 import api.Layout
-import ir.Plan
+import api.Plan
 
 Workspace := [].{
 	default_dir = ".kai"

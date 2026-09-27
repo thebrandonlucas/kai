@@ -8,6 +8,7 @@ package
 		Implementation,
 		Kaifile,
 		Layout,
+		LockJson,
 		Plan,
 		Plugin,
 		Protocol,

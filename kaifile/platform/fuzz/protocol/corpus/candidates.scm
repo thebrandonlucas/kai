@@ -1,6 +1,7 @@
 (
 	(body (Candidates (
 		(choice Auto)
+		(lock ReadsLock)
 		(command "build")
 		(options ((
 			(backend "guix")

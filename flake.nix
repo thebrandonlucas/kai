@@ -234,6 +234,33 @@
         }
       ];
 
+      # The URL packages the platform depends on (Weaver, which imports ansi and
+      # path), unpacked for kai to seed Roc's package cache with offline.
+      platformRocPackages = builtins.filter (
+        p: p.name != "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS"
+      ) rocPackages;
+      platformRocPackagesFor =
+        pkgs:
+        pkgs.runCommand "kai-platform-packages" { nativeBuildInputs = [ pkgs.zstd ]; } (
+          lib.concatMapStrings (
+            {
+              name,
+              release,
+              hash,
+            }:
+            let
+              archive = pkgs.fetchurl {
+                url = "https://github.com/${release}/${name}.tar.zst";
+                inherit hash;
+              };
+            in
+            ''
+              mkdir -p "$out/${name}"
+              zstd -dc ${archive} | tar -x -C "$out/${name}"
+            ''
+          ) platformRocPackages
+        );
+
       mkRocBinary =
         pkgs: rocTarget:
         {
@@ -361,6 +388,7 @@
         let
           platform = kaifilePlatformFor pkgs;
           std = kaiStdFor pkgs;
+          packages = platformRocPackagesFor pkgs;
         in
         mkWrappedPackage pkgs {
           pname = "kai";
@@ -371,6 +399,9 @@
             "--set-default ROC ${rocFor pkgs}/bin/roc"
             "--set-default KAI_PLATFORM_BUNDLE \"${platform}/$(basename ${platform}/*.tar.zst .tar.zst)\""
             "--set-default KAI_STD_BUNDLE \"${std}/$(basename ${std}/*.tar.zst .tar.zst)\""
+            "--set-default KAI_ROC_PACKAGES \"${
+              lib.concatMapStringsSep ":" (p: "${packages}/${p}") (map (p: p.name) platformRocPackages)
+            }\""
           ];
         };
 

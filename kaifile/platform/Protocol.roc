@@ -57,6 +57,9 @@ Protocol := [].{
 				command : Str,
 				plugin : Str,
 				choice : [Auto, Only(Str)],
+
+				## `OwnsLock` lets the chosen plan publish the lock.
+				lock : [ReadsLock, OwnsLock],
 				options : List(Candidate),
 			},
 		),
@@ -163,6 +166,7 @@ candidates = Candidates({
 	command: "shell",
 	plugin: "std",
 	choice: Only("nix"),
+	lock: ReadsLock,
 	options: [
 		{ backend: "guix", plugin: "std", probes: [], outcome: Unfit("overlays") },
 		planned,

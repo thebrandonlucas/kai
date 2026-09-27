@@ -37,9 +37,13 @@ Kaifile := { plugins : List(Plugin) }.{
 		owned = kaifile.plugins.join_map(
 			|p| p.implementations.keep_if(|i| i.command == command).map(|i| (p.name, i)),
 		)
-		owner = kaifile.plugins.find_first(
-			|p| p.commands.any(|c| c.name == command),
-		).map_ok(|p| p.name) ?? ""
+		named = |c| c.name == command
+		declaring = kaifile.plugins.find_first(|p| p.commands.any(named))
+		owner = declaring.map_ok(|p| p.name) ?? ""
+		lock = match declaring.map_ok(|p| p.commands.find_first(named)) {
+			Ok(Ok(found)) => found.lock
+			_ => ReadsLock
+		}
 		option = |(plugin, implementation), backend, probes| {
 			ctx = context(backend)
 			outcome = match (implementation.fit)(ctx.args) {
@@ -80,7 +84,7 @@ Kaifile := { plugins : List(Plugin) }.{
 								),
 					)
 			}
-		Candidates({ command, plugin: owner, choice, options })
+		Candidates({ command, plugin: owner, choice, lock, options })
 	}
 
 	## The project description kai reads, or why the plugins are invalid:

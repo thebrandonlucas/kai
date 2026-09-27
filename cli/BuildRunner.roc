@@ -9,12 +9,15 @@ import pf.Env
 import pf.Path
 import pf.Stderr
 
-import ir.Project
-import nix.LockJson
+import api.LockJson
 
 import Snapshot
 
 BuildRunner := [].{
+	# The subcommand the generated build derivations run; std's NixBackend
+	# writes the same name.
+	command = "__build-runner"
+
 	Spec : {
 		project : Str,
 		argv : List(Str),
@@ -163,9 +166,18 @@ BuildRunner := [].{
 		Ok({})
 	}
 
+	# Lexical containment; `output!` also rejects escaping symlinks.
+	valid_output : Str -> Bool
+	valid_output = |path|
+		!path.is_empty() and !path.contains("\\") and !path.contains(":") and
+			path.to_utf8().all(|b| b >= 32 and b != 127) and
+				path.split_on("/").all(
+					|part| !part.is_empty() and part != "." and part != "..",
+				)
+
 	# The declared output, checked to be a contained, link-free tree.
 	output! = |work, relative| {
-		if !Project.valid_output(relative) {
+		if !BuildRunner.valid_output(relative) {
 			return Err(Refused("invalid declared relative output"))
 		}
 		match Path.unix(work).type!() {

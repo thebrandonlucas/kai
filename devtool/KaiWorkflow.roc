@@ -7,7 +7,7 @@
 import pf.Cmd
 import pf.Path
 import pf.Stdout
-import nix.LockJson
+import api.LockJson
 
 import KaiUpdate
 

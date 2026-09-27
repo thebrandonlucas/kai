@@ -1,59 +1,11 @@
-# `kai update`: the only command that resolves pins and publishes the lock
-# authority. Every other command reads the authority and never writes it.
-import pf.Cmd
+# The lock authority: only a plan's PublishLock step writes it, compared and
+# swapped against what that plan was planned from. Every other command reads
+# it and never writes it.
 import pf.Env
 
-import api.Layout
-import ir.Ir
-import nix.NixBackend
-import nix.Locks
-
-import Load
 import Workspace
 
 Update := [].{
-	# The declared system whose generated outputs Kai builds and runs: the
-	# host's own, which the project must list in Systems.
-	target! : () => Try(Str, [UnsupportedHost])
-	target! = Load.system!
-
-	update! : Ir, Layout => Try({}, _)
-	update! = |ir, layout| {
-		target = Update.target!()?
-		files = NixBackend.update_files(ir, target, layout)
-			.map_err(|message| RenderFailed(message))?
-		locals = NixBackend.local_checks(ir, target, layout)
-			.map_err(|message| RenderFailed(message))?
-		Workspace.prepare!(layout)?
-		prior = Update.observe!(layout.lock_path)?
-		# Reject ancestor escapes and nested symlinks before staging or fetching.
-		for local in locals {
-			Workspace.safe_source!(local)?
-		}
-		backend_lock = "${layout.generated_root}/flake.lock"
-		Workspace.safe_path!(backend_lock)?
-		if backend_lock == layout.lock_path {
-			return Err(UnsafePath(backend_lock))
-		}
-		Workspace.stage!(files, layout)?
-		# Derived state is disposable. Unlink it rather than letting Nix follow a
-		# stale hard-link alias while explicitly resolving a fresh input graph.
-		if Workspace.path(backend_lock).exists!()? {
-			Workspace.path(backend_lock).delete!()?
-		}
-		argv = ["flake", "update", "--flake", "path:${layout.generated_root}"]
-		Cmd.new_str("nix").args_str(argv)
-			.cwd(Workspace.path(layout.project_root))
-			.exec_cmd!()?
-		Workspace.safe_path!(backend_lock)?
-		locks = Locks.from_nix(
-			ir,
-			layout,
-			Workspace.path(backend_lock).read_utf8!()?,
-		).map_err(|message| LockFailed(message))?
-		Update.publish!(layout.lock_path, prior, Locks.encode(locks))
-	}
-
 	# The authority's bytes, so publication can detect a concurrent writer.
 	observe! : Str => Try([Absent, Present(List(U8))], _)
 	observe! = |lock_path| {
@@ -65,6 +17,17 @@ Update := [].{
 			Err(err) => Err(err)
 		}
 	}
+
+	# The authority as the text a Kaifile plans from.
+	text! : Str => Try([Absent, Present(Str)], _)
+	text! = |lock_path|
+		match Update.observe!(lock_path)? {
+			Present(bytes) =>
+				Str.from_utf8(bytes)
+					.map_ok(|text| Present(text))
+					.map_err(|_| BadLock(lock_path, "not UTF-8"))
+			Absent => Ok(Absent)
+		}
 
 	# A directory created beside the authority is the writer lock. It is held
 	# only while comparing the observed authority and renaming over it.

@@ -8,7 +8,7 @@
 import pf.Stderr
 import pf.Stdout
 
-import nix.LockJson
+import api.LockJson
 
 Output := [].{
 	Mode : [Human, Json]

@@ -46,6 +46,7 @@ platform ""
 		Implementation,
 		InputName,
 		Kaifile,
+		LockJson,
 		Lower,
 		Plan,
 		Plugin,
@@ -87,6 +88,7 @@ import FlakeRef
 import EnvName
 import InputName
 import Kaifile
+import LockJson
 import Plan
 import Plugin
 import Protocol

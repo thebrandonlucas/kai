@@ -1,19 +1,17 @@
-# Execute a shell, task, build or workflow request: plan it for each backend
-# that fits (Nix reading the lock authority), choose one whose programs run,
-# check its whole plan and run the steps in order. Nothing here writes the lock.
+# Execute a command the Kaifile answered with candidate plans: probe their
+# backends lazily, choose one, check its whole plan and run the steps in
+# order, then continue a plan that asks to observe files. Only a command
+# that owns the lock may publish it.
 import pf.Cmd
+import pf.Path
 import pf.Stderr
 import pf.Stdin
 import pf.Stdout
 
 import api.Layout
 import api.Plan
+import api.Protocol
 import api.Sexpr
-import ir.Ir
-import ir.Request
-import nix.NixBackend
-import nix.Locks
-import guix.GuixBackend
 
 import Output
 import Selection
@@ -25,30 +23,27 @@ Execute := [].{
 	# --yes, --dry-run, and whether a person can answer a confirmation.
 	Options : { yes : Bool, dry_run : Bool, interactive : Bool }
 
-	# Plan every fitting backend, then probe fitting candidates in order,
-	# each program once, until one is usable. A chosen plan that failed is
-	# reported, never replaced by another backend's.
-	select! :
-		Ir, Request, Selection.BackendChoice, Str, Output.Mode, Options => Try({}, _)
-	select! = |ir, request, choice, root, mode, options| {
-		layout = Workspace.locate!(root)?
-		target = Update.target!()?
-		lock = Update.observe!(layout.lock_path)?
-		candidates = Selection.candidates(
-			choice,
-			request,
-			ir,
-			|backend|
-				match backend {
-					Nix => Execute.nix_plan(ir, request, target, layout, lock)
-					Guix =>
-						GuixBackend.steps(ir, request)
-							.map_err(|message| "cannot plan the Guix shell: ${message}")
-					},
-		)
+	Lock : [ReadsLock, OwnsLock]
+
+	Observed : List({ path : Str, contents : [Missing, Text(Str)] })
+
+	Answer : {
+		choice : Selection.Choice,
+		lock : Lock,
+		options : List(Selection.Candidate),
+	}
+
+	# Ask the Kaifile to continue the chosen backend's plan.
+	Resume(err) : Str, U64, Observed => Try(Protocol.Body, err)
+
+	# Probe fitting candidates in order, each program once, until one is
+	# usable; run the chosen plan and any continuation it asks for. A chosen
+	# plan that failed is reported, never replaced by another backend's.
+	command! : Answer, Resume(_), Layout, Output.Mode, Options, Str => Try({}, _)
+	command! = |answer, resume!, layout, mode, options, workflow| {
 		var $observed = []
 		var $found = Bool.False
-		for candidate in candidates.keep_if(Selection.fits) {
+		for candidate in answer.options.keep_if(Selection.fits) {
 			if !$found {
 				for check in candidate.probes {
 					if !$observed.any(|(program, _)| program == check.program) {
@@ -62,42 +57,71 @@ Execute := [].{
 			}
 		}
 		probe = Execute.lookup($observed)
-		chosen = Selection.choose(choice, candidates, probe)?
-		why = Selection.explain(choice, candidates, probe, chosen)
-		Output.note!(
-			mode,
-			"kai: ${why}",
-			Output.event("backend", why, [("backend", Output.text(chosen.backend))]),
-		)?
-		match chosen.outcome {
-			Planned(plan) => Execute.run!(plan, request, layout, mode, options)
+		chosen = Selection.choose(answer.choice, answer.options, probe)?
+		if chosen.backend != "" {
+			why = Selection.explain(answer.choice, answer.options, probe, chosen)
+			Output.note!(
+				mode,
+				"kai: ${why}",
+				Output.event("backend", why, [("backend", Output.text(chosen.backend))]),
+			)?
+		}
+		plan = Execute.planned(chosen.outcome)?
+		follow! = |current, phase| {
+			Execute.run!(current, answer.lock, layout, mode, options, workflow)?
+			match current.next {
+				Done => Ok({})
+				Observe(_) if options.dry_run => Ok({})
+				Observe(_) if phase >= 3 =>
+					Err(UnsafePlan("a plan may continue at most 3 times"))
+				Observe(paths) => {
+					body = resume!(chosen.backend, phase + 1, Execute.observe!(paths)?)?
+					next = match body {
+						Candidates({ options: [only], .. }) => Execute.planned(only.outcome)?
+						Refused(why) => return Err(Refused(why))
+						_ => return Err(PlanFailed("the Kaifile did not continue the plan"))
+					}
+					follow!(next, phase + 1)
+				}
+			}
+		}
+		follow!(plan, 0)
+	}
+
+	Outcome : [Unfit(Str), Planned(Plan), Failed(Str)]
+
+	planned : Outcome -> Try(Plan, [PlanFailed(Str)])
+	planned = |outcome|
+		match outcome {
+			Planned(plan) => Ok(plan)
 			Failed(message) | Unfit(message) => Err(PlanFailed(message))
 		}
-	}
 
 	lookup : List((Str, Selection.Probe)) -> (Str -> Selection.Probe)
 	lookup = |observed| |program|
 		observed.find_first(|(name, _)| name == program).map_ok(|(_, p)| p)
 			?? Unchecked
 
-	# Nix plans read the lock authority; its absence is a planning failure.
-	nix_plan :
-		Ir, Request, Str, Layout, [Absent, Present(List(U8))] -> Try(Plan, Str)
-	nix_plan = |ir, request, target, layout, lock| {
-		path = layout.lock_path
-		unreadable = |why|
-			"cannot read the lock file ${path}: ${why}; run `kai update`"
-		rendering = |message| "cannot generate the Nix files: ${message}"
-		NixBackend.preflight(ir, request, target, layout).map_err(rendering)?
-		text = match lock {
-			Present(bytes) =>
-				Str.from_utf8(bytes).map_err(|_| unreadable("not UTF-8"))?
-			Absent => return Err("no lock file at ${path}; run `kai update`")
+	# A continuation's files, each at most 1 MiB; validation keeps them in
+	# the generated root.
+	observe! : List(Str) => Try(Observed, _)
+	observe! = |paths| {
+		var $observed = []
+		for path in paths {
+			Workspace.safe_path!(path)?
+			contents = match Workspace.path(path).type!() {
+				Ok(IsFile) => {
+					if Workspace.path(path).size_in_bytes!()? > 1_048_576 {
+						return Err(UnsafePlan("observed file over 1 MiB: ${path}"))
+					}
+					Text(Workspace.path(path).read_utf8!()?)
+				}
+				Err(PathErr(NotFound, _)) => Missing
+				_ => return Err(UnsafePath(path))
+			}
+			$observed = $observed.append({ path, contents })
 		}
-		locks = Locks.decode(text).map_err(unreadable)?
-		planned = NixBackend.plan(ir, request, target, layout, locks)
-			.map_err(rendering)?
-		NixBackend.steps(planned, request).map_err(rendering)
+		Ok($observed)
 	}
 
 	# A bounded, side-effect-free check that an executable runs at all.
@@ -124,9 +148,9 @@ Execute := [].{
 	# Check the whole plan, then run its steps in order; the first failure
 	# stops the plan. Each Stage opens a numbered workflow step that the next
 	# Stage or the end closes.
-	run! : Plan, Request, Layout, Output.Mode, Options => Try({}, _)
-	run! = |plan, request, layout, mode, options| {
-		Execute.validate(plan, layout)?
+	run! : Plan, Lock, Layout, Output.Mode, Options, Str => Try({}, _)
+	run! = |plan, lock, layout, mode, options, workflow| {
+		Execute.validate(plan, layout, lock)?
 		if options.dry_run {
 			text = Sexpr.to_str(plan)
 			fields = [("plan", Output.text(text))]
@@ -135,10 +159,6 @@ Execute := [].{
 		Execute.confirmable(plan, options)?
 		if plan.steps.any(Execute.uses_workspace) {
 			Workspace.prepare!(layout)?
-		}
-		workflow = match request {
-			Request.Workflow(name) => name
-			_ => ""
 		}
 		count = plan.steps.count_if(
 			|step| match step {
@@ -172,21 +192,28 @@ Execute := [].{
 	# generated root, the snapshot and runner only in the workspace, verified
 	# paths only in the project, and every command exact argv naming a
 	# program. Steps this kai cannot run yet are refused up front.
-	validate : Plan, Layout -> Try({}, [UnsafePlan(Str)])
-	validate = |plan, layout| {
+	validate : Plan, Layout, Lock -> Try({}, [UnsafePlan(Str)])
+	validate = |plan, layout, lock| {
 		for step in plan.steps {
-			Execute.check(step, layout).map_err(|why| UnsafePlan(why))?
+			Execute.check(step, layout, lock).map_err(|why| UnsafePlan(why))?
 		}
 		match plan.next {
 			Done => Ok({})
-			Observe(_) => Err(UnsafePlan("this kai cannot resume a plan yet"))
-		}
+			Observe(paths) =>
+				match paths.find_first(|p| !Execute.under(p, layout.generated_root)) {
+					Ok(path) =>
+						Err(UnsafePlan("observes a file outside the generated files: ${path}"))
+					Err(_) => Ok({})
+				}
+			}
 	}
 
-	check : Plan.Step, Layout -> Try({}, Str)
-	check = |step, layout| {
-		under = |path, root|
-			Workspace.normalize(path) == path and path.starts_with("${root}/")
+	under : Str, Str -> Bool
+	under = |path, root|
+		Workspace.normalize(path) == path and path.starts_with("${root}/")
+
+	check : Plan.Step, Layout, Lock -> Try({}, Str)
+	check = |step, layout, lock| {
 		command = |argv|
 			match argv {
 				[program, ..] =>
@@ -230,7 +257,11 @@ Execute := [].{
 					Err("writes outside the workspace: ${destination}")
 				}
 			Run({ argv, .. }) => command(argv)
-			PublishLock(_) => Err("only kai update publishes the lock")
+			PublishLock(_) =>
+				match lock {
+					OwnsLock => Ok({})
+					ReadsLock => Err("only a command that owns the lock publishes it")
+				}
 			Note(_) | Print(_) | Stage(_) | Confirm(_) => Ok({})
 		}
 	}
@@ -306,7 +337,16 @@ Execute := [].{
 						Err(Declined(prompt))
 					}
 				}
-			PublishLock(_) => Err(RenderFailed("this kai cannot publish a lock yet"))
+			PublishLock({ previous, contents }) => {
+				prior = match previous {
+					Present(text) => Present(text.to_utf8())
+					Absent => Absent
+				}
+				Update.publish!(layout.lock_path, prior, contents)?
+				updated = "updated ${layout.lock_path}"
+				fields = [("lock", Output.text(layout.lock_path))]
+				Output.result!(mode, updated, Output.event("update", updated, fields))
+			}
 		}
 	}
 
@@ -380,7 +420,8 @@ layout = Layout.{
 }
 
 validated : List(Plan.Step) -> Try({}, [UnsafePlan(Str)])
-validated = |steps| Execute.validate(Plan.{ steps, next: Done }, layout)
+validated = |steps|
+	Execute.validate(Plan.{ steps, next: Done }, layout, ReadsLock)
 
 # A build's steps pass: files beneath the generated root, verified project
 # sources, the snapshot and runner in the workspace, exact argv.
@@ -420,10 +461,19 @@ expect [
 			},
 	)
 
-# A plan that asks to be resumed is refused until kai can resume one.
+# A continuation observes only generated files, and only a command that
+# owns the lock may publish it.
 expect {
-	resumed = Plan.{ steps: [], next: Observe(["/p/.kai/generated/x"]) }
-	Execute.validate(resumed, layout) != Ok({})
+	observing = |path| Plan.{ steps: [], next: Observe([path]) }
+	publish = Plan.{
+		steps: [PublishLock({ previous: Absent, contents: "{}" })],
+		next: Done,
+	}
+	checked = |plan, lock| Execute.validate(plan, layout, lock)
+	checked(observing("/p/.kai/generated/flake.lock"), ReadsLock) == Ok({})
+		and checked(observing("/p/.kai/lock.json"), ReadsLock) != Ok({})
+			and Execute.validate(publish, layout, OwnsLock) == Ok({})
+				and Execute.validate(publish, layout, ReadsLock) != Ok({})
 }
 
 # A confirmation needs --yes or a person at a terminal; otherwise the plan

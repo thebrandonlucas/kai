@@ -1,6 +1,7 @@
 # kai repo devtool entry point
 app [main!] {
 	pf: platform "../.basic-cli/main.roc",
+	api: "../kaifile/platform/api.roc",
 	nix: "../kaifile/nix/main.roc",
 }
 
