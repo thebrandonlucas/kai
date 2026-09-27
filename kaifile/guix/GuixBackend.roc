@@ -1,5 +1,6 @@
 # Pure Guix planning: an environment's tools become exact `guix shell
 # --pure` argv under `guix time-machine`, at the channels Kai's lock pins.
+import api.Layout
 import api.LockJson
 import api.Plan as Steps
 import ir.Ir
@@ -212,6 +213,202 @@ GuixBackend :: [].{
 		)
 	}
 
+	## A build and the builds it needs, dependencies first.
+	closure : Ir, Str -> Try(List(Ir.Build), Str)
+	closure = |ir, name| {
+		var $ordered = []
+		var $pending = [name]
+		var $guard = 0
+		while !$pending.is_empty() and $guard < 1000 {
+			$guard = $guard + 1
+			next = $pending.first() ?? ""
+			build = ir.builds.find_first(|b| b.name == next)
+				.map_err(|_| "unknown build: ${next}")?
+			missing = build.needs.keep_if(|n| !$ordered.any(|b| b.name == n))
+			if missing.is_empty() {
+				if !$ordered.any(|b| b.name == next) {
+					$ordered = $ordered.append(build)
+				}
+				$pending = $pending.drop_first(1)
+			} else {
+				$pending = missing.concat($pending)
+			}
+		}
+		Ok($ordered)
+	}
+
+	## The Guix build file for `name` and the builds it needs: each runs kai's
+	## runner on the project snapshot, as the Nix builds do.
+	build_scm : Ir, Str, Str -> Try(Str, Str)
+	build_scm = |ir, name, workspace| {
+		project = Project.validate(ir)?
+		q = GuixBackend.quote
+		var $defines = []
+		for build in GuixBackend.closure(project, name)? {
+			if !build.inputs.is_empty() {
+				return Err("Guix builds cannot use build inputs yet: ${build.name}")
+			}
+			Project.check_environment(project, Guix, build.environment)?
+			environment = project.environments
+				.find_first(|e| e.name == build.environment)
+				.map_err(|_| "unknown environment: ${build.environment}")?
+			specs = Str.join_with(environment.tools.map(|t| q(t.name)), " ")
+			argv = LockJson.encode(Array(build.run.map(|a| String(a))))
+			needs = build.needs.map(|n| "(${q(n)} ,kai-build-${n})")
+			artifacts = "(file-union ${q("kai-artifacts-${build.name}")} "
+				.concat("`(${Str.join_with(needs, " ")}))")
+			$defines = $defines.append(
+				"(define kai-build-${build.name}\n"
+					.concat("  (kai-build ${q(build.name)} '(${specs})\n")
+					.concat("    ${q(argv)} ${q(build.output)}\n")
+					.concat("    ${artifacts}))"),
+			)
+		}
+		file = |variable, path, label, recursive|
+			"(define ${variable} (local-file ${q(path)} ${q(label)}${recursive}))\n"
+		tree = " #:recursive? #t"
+		files = file("runner", "${workspace}/build-runner", "kai-build-runner", tree)
+			.concat(file("project", "${workspace}/snapshot", "kai-project", tree))
+			.concat(
+				file(
+					"isolation",
+					"${workspace}/snapshot.isolation.json",
+					"kai-isolation.json",
+					"",
+				),
+			)
+		header = "(use-modules (guix) (guix gexp) (guix profiles) (gnu))\n\n"
+		Ok(
+			header
+				.concat(files)
+				.concat(GuixBackend.build_procedure)
+				.concat(Str.join_with($defines, "\n"))
+				.concat("\nkai-build-${name}\n"),
+		)
+	}
+
+	## Writes the runner's spec.json (as the Nix builds' kaiSpec) and runs it.
+	build_procedure =
+		\\
+		\\(define (tools specs)
+		\\  (profile (content (specifications->manifest
+		\\                     (append specs '("coreutils" "bash"))))))
+		\\
+		\\(define (kai-build name specs argv-json output-dir artifacts)
+		\\  (computed-file (string-append "kai-" name)
+		\\    #~(begin
+		\\        (use-modules (ice-9 textual-ports))
+		\\        (let ((witness (call-with-input-file #$isolation get-string-all)))
+		\\          (call-with-output-file "spec.json"
+		\\            (lambda (port)
+		\\              (display
+		\\               (string-append
+		\\                "{\\"project\\":\\"" #$project "\\""
+		\\                ",\\"isolation\\":" witness
+		\\                ",\\"argv\\":" #$argv-json
+		\\                ",\\"output\\":\\"" #$output-dir "\\""
+		\\                ",\\"path\\":\\"" #$(tools specs) "/bin\\""
+		\\                ",\\"coreutils\\":\\""
+		\\                #$(specification->package "coreutils") "/bin\\""
+		\\                ",\\"inputs\\":\\"" #$(file-union "kai-inputs" '()) "\\""
+		\\                ",\\"artifacts\\":\\"" #$artifacts "\\"}")
+		\\               port))))
+		\\        (setenv "out" #$output)
+		\\        (execl #$runner "kai-build-runner" "__build-runner" "spec.json"))))
+		\\
+		\\
+
+	## A build under time-machine: kai snapshots the project and installs
+	## its runner, then Guix builds the file above; the artifact is the store
+	## path `guix build` prints.
+	build_steps : Ir, Str, Layout, List(Pin) -> Try(Steps, Str)
+	build_steps = |ir, name, layout, locked| {
+		build = ir.builds.find_first(|b| b.name == name)
+			.map_err(|_| "unknown build: ${name}")?
+		workspace = layout.workspace
+		dir = "${layout.generated_root}/guix"
+		channels = "${dir}/channels.scm"
+		scm = "${dir}/build-${name}.scm"
+		entries = locked.map(|p| { channel: p.channel, commit: Pinned(p.commit) })
+		exclude = [".git", ".hg", ".svn", ".jj"]
+			.concat([workspace, layout.generated_root, layout.lock_path])
+		Ok(
+			Steps.{
+				steps: [
+					Snapshot({
+						root: layout.project_root,
+						destination: "${workspace}/snapshot",
+						exclude,
+					}),
+					InstallRunner({ destination: "${workspace}/build-runner" }),
+					Write([
+						{ path: channels, contents: GuixBackend.channels_scm(entries) },
+						{ path: scm, contents: GuixBackend.build_scm(ir, name, workspace)? },
+					]),
+					Run({
+						what: "build ${name}",
+						argv: ["guix", "time-machine", "-q", "-C", channels, "--"]
+							.concat(["build", "-f", scm]),
+						output: Artifact({
+							name,
+							label: "build-${name}.scm",
+							output: build.output,
+						}),
+					}),
+				],
+				next: Done,
+			},
+		)
+	}
+
+	## The steps for any request Guix serves; a workflow's steps are marked
+	## with Stages, as on Nix.
+	request_steps : Ir, Request, Layout, List(Pin) -> Try(Steps, Str)
+	request_steps = |ir, request, layout, locked|
+		match request {
+			Request.Build(name) => GuixBackend.build_steps(ir, name, layout, locked)
+			Request.Workflow(name) => {
+				var $steps = []
+				for step in Project.workflow_steps(ir, name)? {
+					(label, part) = match step {
+						RunTask(task, args) =>
+							(
+								"run ${task}",
+								GuixBackend.steps(
+									ir,
+									Request.Run(task, args),
+									layout.generated_root,
+									locked,
+								)?,
+							)
+						BuildArtifact(build) =>
+							("build ${build}", GuixBackend.build_steps(ir, build, layout, locked)?)
+						}
+					$steps = $steps.append(Stage(label)).concat(part.steps)
+				}
+				Ok(Steps.{ steps: $steps, next: Done })
+			}
+			_ => GuixBackend.steps(ir, request, layout.generated_root, locked)
+		}
+
+	## Whether Guix can serve a request: shells and tasks by their
+	## environment, builds by their closure, workflows by every step.
+	fit : Ir, Request -> Try({}, Str)
+	fit = |ir, request|
+		match request {
+			Request.Build(name) => GuixBackend.build_scm(ir, name, "/fit").map_ok(|_| {})
+			Request.Workflow(name) => {
+				for step in Project.workflow_steps(ir, name)? {
+					match step {
+						RunTask(task, args) => GuixBackend.fit(ir, Request.Run(task, args))?
+						BuildArtifact(build) => GuixBackend.fit(ir, Request.Build(build))?
+					}
+				}
+				Ok({})
+			}
+			_ => GuixBackend.plan(ir, request).map_ok(|_| {})
+		}
+
 	## A shell or task under `guix time-machine` at the locked channels.
 	steps : Ir, Request, Str, List(Pin) -> Try(Steps, Str)
 	steps = |ir, request, generated, locked| {
@@ -367,4 +564,30 @@ expect {
 			}
 		Err(_) => Bool.False
 	}
+}
+
+# A build's needs render first and become its artifacts.
+expect {
+	build = |name, needs, inputs| {
+		name,
+		environment: "dev",
+		inputs,
+		needs,
+		run: ["true"],
+		output: "out",
+	}
+	ir = {
+		..fixture([env("dev", ["hello"])]),
+		requires_: ["builds"],
+		builds: [build("app", ["lib"], []), build("lib", [], [])],
+	}
+	rendered = GuixBackend.build_scm(ir, "app", "/p/.kai") ?? ""
+	lib = rendered.split_on("(define kai-build-lib").len() == 2
+	before = rendered.split_on("(define kai-build-app").first() ?? ""
+	order = before.contains("kai-build-lib")
+	lib
+		and order
+			and rendered.contains("(\"lib\" ,kai-build-lib)")
+				and rendered.ends_with("kai-build-app\n")
+					and GuixBackend.build_scm(ir, "data", "/p/.kai").is_err()
 }

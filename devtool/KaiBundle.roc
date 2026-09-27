@@ -275,7 +275,8 @@ KaiBundle := [].{
 		if !hashes.all(|h| cached.contains(h)) or !cached.all(bundled) {
 			return Err(UnexpectedRocCache(cached))
 		}
-		_ = kai!(["update"])?
+		# Guix would clone its channel into this fresh cache; bundles are Nix's.
+		_ = kai!(["--backend", "nix", "update"])?
 		output = kai!(["run", "version"])?
 		if !output.starts_with("git version ") {
 			return Err(WrongTaskOutput(output))

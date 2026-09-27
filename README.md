@@ -155,11 +155,13 @@ environment's tools come from a `GuixPackages` source. `--backend nix` or
 
 On Guix, `kai shell` and `kai run` run `guix time-machine -q -C CHANNELS --
 shell -q --pure` with the environment's tools, at the Guix channel commit
-Kai's lock pins. `kai update` pins every installed backend that fits, each in
-its own section of `.kai/lock.json` (`kai --backend guix update` pins only
-Guix), and Guix commands refuse to run without a Guix pin. The first Guix
-command at a new commit downloads, or builds, that Guix, which can take a long
-time. Overlays, builds and workflows need Nix. See
+Kai's lock pins. `kai build` runs `guix build -f` on a generated file whose
+derivation runs the same sandboxed build runner as on Nix, and `kai workflow`
+runs tasks and builds in order. `kai update` pins every installed backend that
+fits, each in its own section of `.kai/lock.json` (`kai --backend guix update`
+pins only Guix), and Guix commands refuse to run without a Guix pin. The first
+Guix command at a new commit downloads, or builds, that Guix, which can take a
+long time. Overlays and build inputs (`Inputs([...])`) need Nix. See
 [examples/guix](examples/guix).
 
 ## The `.kai` directory

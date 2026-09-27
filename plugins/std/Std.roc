@@ -174,12 +174,11 @@ Std := [].{
 				Implementation.{
 					command,
 					backend: On("guix"),
-					fit: |args|
-						GuixBackend.plan(ir, Std.request(command, args)?).map_ok(|_| {}),
+					fit: |args| GuixBackend.fit(ir, Std.request(command, args)?),
 					plan: |ctx| {
 						wanted = Std.request(command, ctx.args)?
 						locked = Std.guix_pins(ctx)?
-						GuixBackend.steps(ir, wanted, ctx.layout.generated_root, locked)
+						GuixBackend.request_steps(ir, wanted, ctx.layout, locked)
 							.map_err(|message| "cannot plan the Guix ${command}: ${message}")
 					},
 				},

@@ -3,9 +3,9 @@
 # show that Guix commands need a Guix lock, then run under `guix
 # time-machine` at the locked channels with exact argv, and that a failing
 # Guix shell never falls back to Nix. Then, when guix is installed, real Guix
-# locks the channels with Nix absent from PATH, and shells and tasks run at
-# a pinned release. A missing guix is reported as skipped, never passed, and
-# fails when the real run is required.
+# locks the channels with Nix absent from PATH, and shells, tasks, a
+# sandboxed build and a workflow run at a pinned release. A missing guix is
+# reported as skipped, never passed, and fails when the real run is required.
 import pf.Cmd
 import pf.Env
 import pf.Path
@@ -156,8 +156,23 @@ KaiGuix := [].{
 				return Err(WrongGuixShell(Str.inspect(output)))
 			}
 		}
+		# A sandboxed Guix build prints its store path; the workflow runs the
+		# task, then the build.
+		built = kai!(guix_path, ["--backend", "guix", "build", "greeting"])?
+		path = built.stdout_utf8.trim()
+		if !path.ends_with("-kai-greeting") {
+			return Err(WrongGuixBuild(Str.inspect(built)))
+		}
+		if Path.read_utf8!(Path.utf8(path))? != "Hello, world!\n" {
+			return Err(WrongGuixArtifact(path))
+		}
+		workflow = kai!(guix_path, ["--backend", "guix", "workflow", "ci"])?
+		if !workflow.stdout_utf8.starts_with("from ci\n") {
+			return Err(WrongGuixWorkflow(Str.inspect(workflow)))
+		}
 		Stdout.line!(
-			"kai locked Guix and ran pinned Guix shells and tasks without Nix",
+			"kai locked Guix and ran pinned Guix shells, tasks, builds and workflows "
+				.concat("without Nix"),
 		)
 	}
 }
