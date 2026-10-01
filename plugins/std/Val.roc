@@ -5,7 +5,7 @@
 ## Attrs([("shellHook", Str("echo hi")), ("env", Attrs([("DEBUG", Str("1"))]))])
 ## ```
 ##
-## Attribute sets are lists of (name, value) pairs. Lowered to `ir.Value`.
+## Attribute sets are lists of (name, value) pairs. Lowered to `model.Value`.
 Val := [
 	Str(Str),
 	Int(I64),

@@ -1,26 +1,26 @@
 # Authoring cardinality checks feed the shared whole-project validator.
 import Config
 import Val
-import pf.Value
-import ir.Ir
-import ir.Project
+import model.Value
+import model.Model
+import model.Project
 
-## Lower authoring settings, then share semantic validation with IR consumers.
-## Setting cardinality belongs here because the IR stores only one value.
+## Lower authoring settings, then share semantic validation with the backends.
+## Setting cardinality belongs here because the model stores only one value.
 Lower :: [].{
 	Acc : {
 		names : List(Str),
 		systems : List(List(Str)),
-		sources : List(Ir.Source),
-		inputs : List(Ir.Input),
-		environments : List(Ir.Environment),
-		shells : List(Ir.Shell),
-		tasks : List(Ir.Task),
-		build_sources : List(Ir.BuildSource),
-		builds : List(Ir.Build),
-		workflows : List(Ir.Workflow),
-		extensions : List(Ir.Extension),
-		raw : List(Ir.Raw),
+		sources : List(Model.Source),
+		inputs : List(Model.Input),
+		environments : List(Model.Environment),
+		shells : List(Model.Shell),
+		tasks : List(Model.Task),
+		build_sources : List(Model.BuildSource),
+		builds : List(Model.Build),
+		workflows : List(Model.Workflow),
+		extensions : List(Model.Extension),
+		raw : List(Model.Raw),
 	}
 
 	## Explicit target defaults; never inferred from the compiling host.
@@ -30,11 +30,11 @@ Lower :: [].{
 		"aarch64-linux",
 	]
 
-	## The settings as Kaifile IR text, or why they are invalid.
+	## The settings as Kaifile model text, or why they are invalid.
 	render : List(Config.Setting) -> Try(Str, Str)
-	render = |settings| Lower.lower(settings).map_ok(|ir| ir.to_str())
+	render = |settings| Lower.lower(settings).map_ok(|model| model.to_str())
 
-	lower : List(Config.Setting) -> Try(Ir, Str)
+	lower : List(Config.Setting) -> Try(Model, Str)
 	lower = |settings| {
 		initial : Acc
 		initial = {
@@ -69,8 +69,8 @@ Lower :: [].{
 				.concat(if acc.builds.is_empty() [] else ["builds"])
 				.concat(if acc.workflows.is_empty() [] else ["workflows"])
 		Project.validate(
-			Ir.{
-				format: Ir.current_format,
+			Model.{
+				format: Model.current_format,
 				name,
 				requires_,
 				systems,
@@ -167,7 +167,7 @@ Lower :: [].{
 		Ok(next)
 	}
 
-	workflow_step : Config.WorkflowStep -> Ir.WorkflowStep
+	workflow_step : Config.WorkflowStep -> Model.WorkflowStep
 	workflow_step = |step|
 		match step {
 			RunTask(name, argv) => RunTask(name.to_str(), argv)
@@ -175,7 +175,7 @@ Lower :: [].{
 			RunWorkflow(name) => RunWorkflow(name.to_str())
 		}
 
-	provider : Config.PackageSource -> Ir.Provider
+	provider : Config.PackageSource -> Model.Provider
 	provider = |source|
 		match source {
 			Auto => Auto
@@ -183,7 +183,8 @@ Lower :: [].{
 			From(GuixPackages(channel)) => GuixPackages(channel)
 		}
 
-	environment : Str, List(Config.EnvironmentSetting) -> Try(Ir.Environment, Str)
+	environment :
+		Str, List(Config.EnvironmentSetting) -> Try(Model.Environment, Str)
 	environment = |name, inner| {
 		draft = inner.fold(
 			{ tools: [], overlays: [], parents: [] },
@@ -219,7 +220,7 @@ Lower :: [].{
 		})
 	}
 
-	shell : Str, List(Config.ShellSetting) -> Try(Ir.Shell, Str)
+	shell : Str, List(Config.ShellSetting) -> Try(Model.Shell, Str)
 	shell = |name, inner| {
 		environments = inner.map(
 			|setting| match setting {
@@ -233,7 +234,7 @@ Lower :: [].{
 		}
 	}
 
-	task : Str, List(Config.TaskSetting) -> Try(Ir.Task, Str)
+	task : Str, List(Config.TaskSetting) -> Try(Model.Task, Str)
 	task = |name, inner| {
 		draft = inner.fold(
 			{ environments: [], runs: [] },
@@ -256,7 +257,7 @@ Lower :: [].{
 		Ok({ name, environment: environment_name, run })
 	}
 
-	build : Str, List(Config.BuildSetting) -> Try(Ir.Build, Str)
+	build : Str, List(Config.BuildSetting) -> Try(Model.Build, Str)
 	build = |name, inner| {
 		draft = inner.fold(
 			{ environments: [], inputs: [], needs: [], runs: [], outputs: [] },

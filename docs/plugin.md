@@ -1,6 +1,6 @@
 # Writing a Kai plugin
 
-A plugin is an ordinary Roc package on the Kaifile platform. It adds
+A plugin is an ordinary Roc package on Kai's plugin platform. It adds
 commands to `kai`, declares backends, and implements commands on backends.
 Plugins are pure: they return plans, data describing what to write and
 run, and `kai` performs every effect after checking the whole plan. std,

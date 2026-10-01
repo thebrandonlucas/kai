@@ -1,6 +1,6 @@
 # Imported pure functions compose ordinary settings for std.
 app [kaifile] {
-	pf: platform "../../kaifile/platform/main.roc",
+	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",
 }
 

@@ -1,5 +1,5 @@
 # Checked workflow identities, distinct from task and artifact names.
-import ir.Project
+import model.Project
 
 WorkflowName :: { name : Str }.{
 	from_quote : Str -> Try(WorkflowName, [BadQuotedBytes(Str)])

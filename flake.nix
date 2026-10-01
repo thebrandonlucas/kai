@@ -114,16 +114,16 @@
           '';
         };
 
-      # The Kaifile platform as a Roc package bundle, <hash>.tar.zst, which a
+      # The Kai platform as a Roc package bundle, <hash>.tar.zst, which a
       # release publishes for Kaifile.roc headers to reference by URL; also
       # unpacked as <hash>/ for kai to seed Roc's package cache with.
-      kaifilePlatformFor =
+      kaiPlatformFor =
         pkgs:
         pkgs.stdenvNoCC.mkDerivation {
-          name = "kaifile-platform";
+          name = "kai-platform";
           src = lib.fileset.toSource {
             root = ./.;
-            fileset = ./kaifile/platform;
+            fileset = ./platform;
           };
           nativeBuildInputs = [
             (rocFor pkgs)
@@ -138,12 +138,12 @@
             mkdir -p "$XDG_CACHE_HOME/roc/packages"
             cp -R ${platformRocPackagesFor pkgs}/. "$XDG_CACHE_HOME/roc/packages/"
             chmod -R u+w "$XDG_CACHE_HOME/roc/packages"
-            (cd kaifile/platform && zig build --release)
-            (cd kaifile/platform/targets && sha256sum --quiet -c x64musl.sha256 arm64musl.sha256)
+            (cd platform && zig build --release)
+            (cd platform/targets && sha256sum --quiet -c x64musl.sha256 arm64musl.sha256)
 
             mkdir -p stage/targets bundle
-            cp kaifile/platform/*.roc stage/
-            cp -R kaifile/platform/targets/{x64musl,arm64musl} stage/targets/
+            cp platform/*.roc stage/
+            cp -R platform/targets/{x64musl,arm64musl} stage/targets/
             (cd stage && roc bundle main.roc $(find . -type f ! -path ./main.roc | LC_ALL=C sort) --output-dir ../bundle)
             runHook postBuild
           '';
@@ -165,18 +165,13 @@
       kaiStdFor =
         pkgs:
         let
-          platform = kaifilePlatformFor pkgs;
+          platform = kaiPlatformFor pkgs;
         in
         pkgs.stdenvNoCC.mkDerivation {
           name = "kai-std";
           src = lib.fileset.toSource {
             root = ./.;
-            fileset = lib.fileset.unions [
-              ./plugins/std
-              ./kaifile/ir
-              ./kaifile/nix
-              ./kaifile/guix
-            ];
+            fileset = ./plugins/std;
           };
           nativeBuildInputs = [
             (rocFor pkgs)
@@ -193,19 +188,16 @@
             cp -R ${platform}/"$hash" "$XDG_CACHE_HOME/roc/packages/$hash"
             cp -R ${platformRocPackagesFor pkgs}/. "$XDG_CACHE_HOME/roc/packages/"
             chmod -R u+w "$XDG_CACHE_HOME/roc/packages"
-            # roc bundle packs only files below main.roc's directory, so the ir,
-            # nix and guix packages move inside std, depending on the platform
-            # itself rather than on its api.roc copy of the same modules.
-            mkdir stage
-            cp plugins/std/*.roc stage/
-            for package in ir nix guix; do
-              cp -R "kaifile/$package" "stage/$package"
-              chmod -R u+w "stage/$package"
-              rm -rf "stage/$package/fuzz"
-              substituteInPlace stage/main.roc --replace-fail "\"../../kaifile/$package/main.roc\"" "\"$package/main.roc\""
-              substituteInPlace "stage/$package/main.roc" --replace-fail 'api: "../platform/api.roc"' "api: platform \"$url\""
+            # std's own packages reach the platform's modules through api.roc;
+            # bundled, they depend on the platform itself instead.
+            cp -R plugins/std stage
+            chmod -R u+w stage
+            rm -rf stage/*/fuzz stage/backends/*/fuzz
+            substituteInPlace stage/model/main.roc --replace-fail 'api: "../../../platform/api.roc"' "api: platform \"$url\""
+            for backend in nix guix; do
+              substituteInPlace "stage/backends/$backend/main.roc" --replace-fail 'api: "../../../../platform/api.roc"' "api: platform \"$url\""
             done
-            substituteInPlace stage/main.roc --replace-fail '"../../kaifile/platform/main.roc"' "\"$url\""
+            substituteInPlace stage/main.roc --replace-fail '"../../platform/main.roc"' "\"$url\""
             cd stage
             roc bundle main.roc $(find . -type f ! -path ./main.roc | LC_ALL=C sort) --output-dir ../bundle
             cd ..
@@ -360,7 +352,8 @@
             root = ./.;
             fileset = lib.fileset.unions [
               ./cli
-              ./kaifile
+              ./platform
+              ./platform-release
               ./plugins/std-release
               ./VERSION
               ./.roc-version
@@ -400,7 +393,7 @@
       mkKaiPackage =
         pkgs: binary:
         let
-          platform = kaifilePlatformFor pkgs;
+          platform = kaiPlatformFor pkgs;
           std = kaiStdFor pkgs;
           packages = platformRocPackagesFor pkgs;
         in
@@ -458,7 +451,7 @@
           common = {
             inherit kai;
             default = kai;
-            kaifile-platform = kaifilePlatformFor pkgs;
+            kai-platform = kaiPlatformFor pkgs;
             kai-std = kaiStdFor pkgs;
           };
 
@@ -530,7 +523,7 @@
             ];
             # Roc apps in this repository import the platform through .basic-cli.
             shellHook = ''
-              if [ -f flake.nix ] && [ -d kaifile ]; then
+              if [ -f flake.nix ] && [ -d platform ]; then
                 ln -sfn ${basicCliFor pkgs} .basic-cli
               fi
             '';

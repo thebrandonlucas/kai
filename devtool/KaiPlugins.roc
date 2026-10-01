@@ -97,7 +97,7 @@ KaiPlugins := [].{
 		}
 		described = kai!(["describe"])?.stdout_utf8
 		expected = "plugins: std, deploy 0.1.0, quiet 1\n"
-			.concat("commands: shell, run, build, workflow, update, ir, deploy\n")
+			.concat("commands: shell, run, build, workflow, update, model, deploy\n")
 			.concat("backends: nix, guix\n")
 		if described != expected {
 			return Err(WrongDescribe(described))

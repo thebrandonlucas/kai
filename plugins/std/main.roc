@@ -13,8 +13,8 @@ package
 		WorkflowName,
 	]
 	{
-		pf: platform "../../kaifile/platform/main.roc",
-		ir: "../../kaifile/ir/main.roc",
-		nix: "../../kaifile/nix/main.roc",
-		guix: "../../kaifile/guix/main.roc",
+		pf: platform "../../platform/main.roc",
+		model: "model/main.roc",
+		nix: "backends/nix/main.roc",
+		guix: "backends/guix/main.roc",
 	}

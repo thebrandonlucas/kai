@@ -2,7 +2,7 @@
 # Guix; on Guix, shells, tasks, builds and workflows run at the channel
 # commit Kai's lock pins.
 app [kaifile] {
-	pf: platform "../../kaifile/platform/main.roc",
+	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",
 }
 

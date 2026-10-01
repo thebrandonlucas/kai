@@ -2,7 +2,7 @@
 # project, and an app that reads the locked assets source and the library.
 # The ci workflow checks the working tree, then builds the app.
 app [kaifile] {
-	pf: platform "../../kaifile/platform/main.roc",
+	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",
 }
 

@@ -15,7 +15,7 @@ Fuzz := [].{
 		Ok({})
 	}
 
-	# `kaifile/ir/fuzz/parse/main.roc` is `ir-parse`.
+	# `platform/fuzz/protocol/main.roc` is `platform-protocol`.
 	target_name = |source|
 		match source.split_on("/") {
 			[.., owner, "fuzz", target, "main.roc"] => "${owner}-${target}"

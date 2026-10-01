@@ -29,8 +29,9 @@ BuildRunner := [].{
 	}
 
 	remedy = "cannot verify build isolation; user Run was not executed. "
-		.concat("Enable sandbox = true and sandbox-fallback = false in the Nix ")
-		.concat("daemon configuration and use a local Linux sandbox with /proc.")
+		.concat("Build in the backend's local Linux sandbox, with /proc: for Nix, ")
+		.concat("set sandbox = true and sandbox-fallback = false in the daemon ")
+		.concat("configuration; for Guix, run guix-daemon without --disable-chroot.")
 
 	refusal = |detail| "${BuildRunner.remedy} ${detail}"
 

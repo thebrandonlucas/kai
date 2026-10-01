@@ -1,6 +1,6 @@
 # std's settings are today's Kaifile settings. std declares kai's standard
-# commands (shell, run, build, workflow, update, ir), the nix and guix
-# backends, and implementations planning from the settings' Kaifile IR.
+# commands (shell, run, build, workflow, update, model), the nix and guix
+# backends, and implementations planning from the settings' Kaifile model.
 import pf.Backend
 import pf.Command
 import Config
@@ -10,10 +10,10 @@ import pf.Layout
 import Lower
 import pf.Plan
 import pf.Plugin
-import ir.Ir
-import ir.Project
-import ir.Request
-import ir.LockFile
+import model.Model
+import model.Project
+import model.Request
+import pf.LockFile
 import nix.Locks
 import nix.NixBackend
 import guix.GuixBackend
@@ -30,12 +30,12 @@ Std := [].{
 	plugin : List(Config.Setting) -> Plugin
 	plugin = |settings|
 		match Lower.lower(settings) {
-			Ok(ir) =>
+			Ok(model) =>
 				Plugin.new({
 					name: "std",
 					version: "",
-					describe: ir.to_str(),
-					commands: Std.commands(ir),
+					describe: model.to_str(),
+					commands: Std.commands(model),
 					backends: [
 						Backend.{
 							id: "nix",
@@ -50,13 +50,13 @@ Std := [].{
 							flag: DoubleDashVersion,
 						},
 					],
-					implementations: Std.implementations(ir),
+					implementations: Std.implementations(model),
 				})
 			Err(problem) => Plugin.invalid("std", [problem])
 		}
 
-	commands : Ir -> List(Command)
-	commands = |ir| {
+	commands : Model -> List(Command)
+	commands = |model| {
 		choice = |value, summary| { value, summary, details: [] }
 		command = |name, page, args, lock|
 			Command.{ name, summary: page.description, help: page, args, lock }
@@ -68,7 +68,7 @@ Std := [].{
 					Name({
 						name: "name",
 						help: "The shell to enter (default: default).",
-						choices: ir.shells.map(
+						choices: model.shells.map(
 							|s| choice(s.name, "Environment ${s.environment}"),
 						),
 						default: Default("default"),
@@ -87,7 +87,7 @@ Std := [].{
 					Name({
 						name: "task",
 						help: "The task to run.",
-						choices: ir.tasks.map(
+						choices: model.tasks.map(
 							|t| choice(t.name, "${Str.join_with(t.run, " ")} [${t.environment}]"),
 						),
 						default: Required,
@@ -106,7 +106,7 @@ Std := [].{
 					Name({
 						name: "name",
 						help: "The build to run.",
-						choices: ir.builds.map(
+						choices: model.builds.map(
 							|b| choice(b.name, "Output ${b.output} [${b.environment}]"),
 						),
 						default: Required,
@@ -121,7 +121,7 @@ Std := [].{
 					Name({
 						name: "name",
 						help: "The workflow to run.",
-						choices: ir.workflows.map(
+						choices: model.workflows.map(
 							|w| choice(w.name, Str.join_with(w.steps.map(Std.step_text), ", ")),
 						),
 						default: Required,
@@ -130,11 +130,11 @@ Std := [].{
 				ReadsLock,
 			),
 			command("update", Pages.update, [], OwnsLock),
-			command("ir", Pages.ir, [], ReadsLock),
+			command("model", Pages.model, [], ReadsLock),
 		]
 	}
 
-	step_text : Ir.WorkflowStep -> Str
+	step_text : Model.WorkflowStep -> Str
 	step_text = |step|
 		match step {
 			RunTask(task, _) => "run ${task}"
@@ -142,7 +142,7 @@ Std := [].{
 			RunWorkflow(name) => "workflow ${name}"
 		}
 
-	## The IR request a command's parsed arguments name.
+	## The model request a command's parsed arguments name.
 	request : Str, Command.Args -> Try(Request, Str)
 	request = |command, args|
 		match command {
@@ -157,16 +157,16 @@ Std := [].{
 			_ => Err("std has no ${command} request")
 		}
 
-	implementations : Ir -> List(Implementation)
-	implementations = |ir| {
+	implementations : Model -> List(Implementation)
+	implementations = |model| {
 		atomic = ["shell", "run", "build", "workflow"]
 		nix = atomic.map(
 			|command|
 				Implementation.{
 					command,
 					backend: On("nix"),
-					fit: |args| Std.fit_nix(ir, Std.request(command, args)?),
-					plan: |ctx| Std.plan_nix(ir, Std.request(command, ctx.args)?, ctx),
+					fit: |args| Std.fit_nix(model, Std.request(command, args)?),
+					plan: |ctx| Std.plan_nix(model, Std.request(command, ctx.args)?, ctx),
 				},
 		)
 		guix = atomic.map(
@@ -174,11 +174,11 @@ Std := [].{
 				Implementation.{
 					command,
 					backend: On("guix"),
-					fit: |args| GuixBackend.fit(ir, Std.request(command, args)?),
+					fit: |args| GuixBackend.fit(model, Std.request(command, args)?),
 					plan: |ctx| {
 						wanted = Std.request(command, ctx.args)?
 						locked = Std.guix_pins(ctx)?
-						GuixBackend.request_steps(ir, wanted, ctx.layout, locked)
+						GuixBackend.request_steps(model, wanted, ctx.layout, locked)
 							.map_err(|message| "cannot plan the Guix ${command}: ${message}")
 					},
 				},
@@ -189,21 +189,21 @@ Std := [].{
 				Implementation.{
 					command: "update",
 					backend: On("nix"),
-					fit: |_| Std.lockable(ir),
-					plan: |ctx| Std.update_nix(ir, ctx),
+					fit: |_| Std.lockable(model),
+					plan: |ctx| Std.update_nix(model, ctx),
 				},
 				Implementation.{
 					command: "update",
 					backend: On("guix"),
-					fit: |_| Std.guix_lockable(ir),
+					fit: |_| Std.guix_lockable(model),
 					plan: |ctx| Std.update_guix(ctx),
 				},
 				Implementation.{
-					command: "ir",
+					command: "model",
 					backend: Independent,
 					fit: |_| Ok({}),
 					plan: |_| {
-						text = Str.drop_suffix(ir.to_str(), "\n")
+						text = Str.drop_suffix(model.to_str(), "\n")
 						Ok(Plan.{ steps: [Print(text)], next: Done })
 					},
 				},
@@ -212,38 +212,38 @@ Std := [].{
 
 	## Whether Nix can serve the requested closure; unrelated shells, tasks
 	## and builds never matter. Nix planning checks builds itself.
-	fit_nix : Ir, Request -> Try({}, Str)
-	fit_nix = |ir, wanted| {
+	fit_nix : Model, Request -> Try({}, Str)
+	fit_nix = |model, wanted| {
 		environment = match wanted {
 			Request.Shell(name, _) =>
-				ir.shells.find_first(|s| s.name == name)
+				model.shells.find_first(|s| s.name == name)
 					.map_ok(|s| s.environment)
 					.map_err(|_| "unknown shell: ${name}")?
 			Request.Run(name, _) =>
-				ir.tasks.find_first(|t| t.name == name)
+				model.tasks.find_first(|t| t.name == name)
 					.map_ok(|t| t.environment)
 					.map_err(|_| "unknown task: ${name}")?
 			_ => return Ok({})
 		}
-		Project.check_environment(ir, Nix, environment)
+		Project.check_environment(model, Nix, environment)
 	}
 
 	## Nix plans read the lock authority; its absence is a planning failure.
-	plan_nix : Ir, Request, Implementation.Context -> Try(Plan, Str)
-	plan_nix = |ir, wanted, ctx| {
+	plan_nix : Model, Request, Implementation.Context -> Try(Plan, Str)
+	plan_nix = |model, wanted, ctx| {
 		layout = Std.nix_layout(ctx.layout)
 		path = ctx.layout.lock_path
 		unreadable = |why|
 			"cannot read the lock file ${path}: ${why}; run `kai update`"
 		rendering = |message| "cannot generate the Nix files: ${message}"
 		target = ctx.host.system
-		NixBackend.preflight(ir, wanted, target, layout).map_err(rendering)?
+		NixBackend.preflight(model, wanted, target, layout).map_err(rendering)?
 		text = match ctx.lock {
 			Present(contents) => contents
 			Absent => return Err("no lock file at ${path}; run `kai update`")
 		}
 		locks = Locks.decode(text).map_err(unreadable)?
-		NixBackend.plan(ir, wanted, target, layout, locks).map_err(rendering)
+		NixBackend.plan(model, wanted, target, layout, locks).map_err(rendering)
 	}
 
 	Run : { environment : Str, argv : List(Str), what : Str }
@@ -253,23 +253,23 @@ Std := [].{
 	## declares. `what` names the step in progress and errors.
 	run_in : List(Config.Setting), Implementation.Context, Run -> Try(Plan, Str)
 	run_in = |settings, ctx, { environment, argv, what }| {
-		ir = Lower.lower(settings)?
+		model = Lower.lower(settings)?
 		task = "_kai_plugin_run"
-		with_task = Ir.{
-			format: ir.format,
-			name: ir.name,
-			requires_: ir.requires_,
-			systems: ir.systems,
-			sources: ir.sources,
-			inputs: ir.inputs,
-			environments: ir.environments,
-			shells: ir.shells,
-			tasks: ir.tasks.append({ name: task, environment, run: argv }),
-			build_sources: ir.build_sources,
-			builds: ir.builds,
-			workflows: ir.workflows,
-			extensions: ir.extensions,
-			raw: ir.raw,
+		with_task = Model.{
+			format: model.format,
+			name: model.name,
+			requires_: model.requires_,
+			systems: model.systems,
+			sources: model.sources,
+			inputs: model.inputs,
+			environments: model.environments,
+			shells: model.shells,
+			tasks: model.tasks.append({ name: task, environment, run: argv }),
+			build_sources: model.build_sources,
+			builds: model.builds,
+			workflows: model.workflows,
+			extensions: model.extensions,
+			raw: model.raw,
 		}
 		planned = Std.plan_nix(with_task, Request.Run(task, []), ctx)?
 		named = |step|
@@ -307,10 +307,10 @@ Std := [].{
 	}
 
 	## Guix has something to lock when any environment can run on it.
-	guix_lockable : Ir -> Try({}, Str)
-	guix_lockable = |ir| {
-		guix = |e| Project.check_environment(ir, Guix, e.name).is_ok()
-		if ir.environments.any(guix) {
+	guix_lockable : Model -> Try({}, Str)
+	guix_lockable = |model| {
+		guix = |e| Project.check_environment(model, Guix, e.name).is_ok()
+		if model.environments.any(guix) {
 			Ok({})
 		} else {
 			Err("no environment can run on Guix")
@@ -358,11 +358,11 @@ Std := [].{
 	}
 
 	## Nix has nothing to lock in a project using only Guix sources.
-	lockable : Ir -> Try({}, Str)
-	lockable = |ir| {
-		used = ir.environments.join_map(|e| e.tools.map(|t| t.source))
+	lockable : Model -> Try({}, Str)
+	lockable = |model| {
+		used = model.environments.join_map(|e| e.tools.map(|t| t.source))
 		guix = |name|
-			ir.sources.any(
+			model.sources.any(
 				|s|
 					s.name == name
 						and match s.provider {
@@ -379,15 +379,15 @@ Std := [].{
 
 	## Phase 0 resolves the inputs with Nix and asks kai for the result;
 	## phase 1 validates it and publishes the lock.
-	update_nix : Ir, Implementation.Context -> Try(Plan, Str)
-	update_nix = |ir, ctx| {
+	update_nix : Model, Implementation.Context -> Try(Plan, Str)
+	update_nix = |model, ctx| {
 		layout = Std.nix_layout(ctx.layout)
 		target = ctx.host.system
 		backend_lock = "${layout.generated_root}/flake.lock"
 		match ctx.phase {
 			0 => {
-				files = NixBackend.update_files(ir, target, layout)?
-				locals = NixBackend.local_checks(ir, target, layout)?
+				files = NixBackend.update_files(model, target, layout)?
+				locals = NixBackend.local_checks(model, target, layout)?
 				# Replacing a stale lock by rename, rather than letting Nix follow
 				# a hard-link alias, before resolving a fresh input graph.
 				empty = "{\"nodes\":{\"root\":{}},\"root\":\"root\",\"version\":7}\n"
@@ -418,7 +418,7 @@ Std := [].{
 					Ok({ contents: Text(text), .. }) => text
 					_ => return Err("Nix produced no ${backend_lock}")
 				}
-				locks = Locks.from_nix(ir, layout, resolved)
+				locks = Locks.from_nix(model, layout, resolved)
 					.map_err(|message| "cannot lock the Nix inputs: ${message}")?
 				# Other backends' sections are kept as they are.
 				contents = LockFile.splice(ctx.lock, "nix", Locks.section(locks))?
@@ -432,7 +432,7 @@ Std := [].{
 # Valid settings describe the project; invalid ones name std's problem.
 expect {
 	valid = Kaifile.validate(Std.kaifile([Name("x")]))
-	valid.map_ok(|ir| ir.contains("(name \"x\")")) == Ok(Bool.True)
+	valid.map_ok(|model| model.contains("(name \"x\")")) == Ok(Bool.True)
 		and Kaifile.validate(Std.kaifile([]))
 			== Err("std: MissingName: declare Name once")
 }

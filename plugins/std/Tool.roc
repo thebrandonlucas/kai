@@ -1,6 +1,6 @@
-# Checked tool references that lower into IR tools for environments.
-import ir.Ir
-import ir.Project
+# Checked tool references that lower into model tools for environments.
+import model.Model
+import model.Project
 
 ## A provider-native tool name, optionally qualified as "source#name".
 ## Generic syntax is checked here; explicit source grammar is checked during
@@ -13,7 +13,7 @@ Tool :: { source : Str, name : Str }.{
 			Err(error) => Err(BadQuotedBytes(error))
 		}
 
-	to_ir : Tool -> Ir.Tool
+	to_ir : Tool -> Model.Tool
 	to_ir = |tool| { source: tool.source, name: tool.name }
 
 	to_str : Tool -> Str

@@ -215,7 +215,10 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileInput(b.path("devtool/KaiUpdate.roc"));
     build_devtool.addFileInput(b.path("devtool/KaiWorkflow.roc"));
     for (sources.roc_files) |source| {
-        if (std.mem.startsWith(u8, source, "kaifile/")) {
+        if (std.mem.startsWith(u8, source, "platform/") or
+            std.mem.startsWith(u8, source, "plugins/std/model/") or
+            std.mem.startsWith(u8, source, "plugins/std/backends/"))
+        {
             build_devtool.addFileInput(b.path(source));
         }
     }
@@ -317,16 +320,16 @@ pub fn build(b: *std.Build) void {
 
     const platform_bundle_step = b.step(
         "platform-bundle",
-        "Build the Kaifile platform bundle a release publishes, into zig-out",
+        "Build the Kai platform bundle a release publishes, into zig-out",
     );
     const platform_bundle = b.addSystemCommand(&.{
-        "nix", "build", ".#kaifile-platform", "--out-link", "zig-out/kaifile-platform",
+        "nix", "build", ".#kai-platform", "--out-link", "zig-out/kai-platform",
     });
     platform_bundle_step.dependOn(&platform_bundle.step);
 
     // Configuration apps link the native configuration platform's host.
     const build_platform_host = b.addSystemCommand(&.{ "zig", "build", "--release" });
-    build_platform_host.setCwd(b.path("kaifile/platform"));
+    build_platform_host.setCwd(b.path("platform"));
 
     for (sources.roc_roots) |root| {
         const check_roc = b.addSystemCommand(&.{ "roc", "check" });
@@ -371,40 +374,40 @@ pub fn build(b: *std.Build) void {
     );
     test_step.dependOn(check_step);
 
-    const test_kaifile_api = b.addSystemCommand(&.{
+    const test_platform = b.addSystemCommand(&.{
         "roc",
         "test",
-        "kaifile/platform/main.roc",
+        "platform/main.roc",
     });
-    test_kaifile_api.step.dependOn(check_step);
-    test_step.dependOn(&test_kaifile_api.step);
+    test_platform.step.dependOn(check_step);
+    test_step.dependOn(&test_platform.step);
 
-    const test_kaifile_ir = b.addSystemCommand(&.{
+    const test_std_model = b.addSystemCommand(&.{
         "roc",
         "test",
-        "kaifile/ir/main.roc",
+        "plugins/std/model/main.roc",
     });
-    test_kaifile_ir.step.dependOn(check_step);
-    test_step.dependOn(&test_kaifile_ir.step);
+    test_std_model.step.dependOn(check_step);
+    test_step.dependOn(&test_std_model.step);
 
-    const test_kaifile_nix = b.addSystemCommand(&.{
+    const test_std_nix = b.addSystemCommand(&.{
         "roc",
         "test",
-        "kaifile/nix/main.roc",
+        "plugins/std/backends/nix/main.roc",
     });
-    test_kaifile_nix.step.dependOn(check_step);
-    test_step.dependOn(&test_kaifile_nix.step);
+    test_std_nix.step.dependOn(check_step);
+    test_step.dependOn(&test_std_nix.step);
 
-    const test_kaifile_guix = b.addSystemCommand(&.{
+    const test_std_guix = b.addSystemCommand(&.{
         "roc",
         "test",
-        "kaifile/guix/main.roc",
+        "plugins/std/backends/guix/main.roc",
     });
-    test_kaifile_guix.step.dependOn(check_step);
-    test_step.dependOn(&test_kaifile_guix.step);
+    test_std_guix.step.dependOn(check_step);
+    test_step.dependOn(&test_std_guix.step);
 
     // plugins/std has no test root yet: `roc test` panics when the platform
-    // and a package it depends on share a module name (ir, nix and guix
+    // and a package it depends on share a module name (model, nix and guix
     // reach the platform's modules again through api.roc, so Sexpr appears
     // twice; roc-issues-repro BUG-012, not yet reported upstream). Add
     // `roc test plugins/std/main.roc` with a Roc release that fixes it.
@@ -430,7 +433,7 @@ pub fn build(b: *std.Build) void {
         ".#kai.unwrapped",
         "kai-unwrapped",
     ).path(b, "bin/kai");
-    // Every maintained example must load and lower to IR.
+    // Every maintained example must load and lower to std's model.
     const examples = [_][]const u8{
         "examples/artifacts",
         "examples/composition",
@@ -438,7 +441,7 @@ pub fn build(b: *std.Build) void {
         "examples/overlays",
     };
     for (examples) |example| {
-        for ([_][]const u8{ "check", "ir" }) |command| {
+        for ([_][]const u8{ "check", "model" }) |command| {
             const smoke = std.Build.Step.Run.create(
                 b,
                 b.fmt("kai {s} {s}", .{ command, example }),

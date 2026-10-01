@@ -674,11 +674,11 @@ Tidy := [].{
 			}
 		}
 
-	# Backend planners take the IR and a request; `plan : Ir, Request, ...`.
+	# Backend planners take a model and a request: `plan : Model, Request, ...`.
 	is_planner = |source|
 		List.any(
 			Tidy.indexed_lines(source),
-			|line| line.text.starts_with("\tplan : Ir, Request"),
+			|line| line.text.starts_with("\tplan : Model, Request"),
 		)
 
 	relative_path = |raw_path|
@@ -737,7 +737,7 @@ Tidy := [].{
 		if found.is_empty() {
 			Ok([
 				Tidy.Diagnostic.{
-					kind: MissingImplementationTest("plan : Ir, Request"),
+					kind: MissingImplementationTest("plan : Model, Request"),
 					line: 1,
 					path: "no backend planner found",
 				},

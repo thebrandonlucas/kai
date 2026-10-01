@@ -1,5 +1,5 @@
 # Checked environment and shell identities for authored configuration.
-import ir.Project
+import model.Project
 
 ## An environment or shell name, checked at compile time.
 EnvName :: { name : Str }.{

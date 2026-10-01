@@ -1,5 +1,5 @@
 # Checked task identities, optionally dotted, for authored configuration.
-import ir.Project
+import model.Project
 
 ## A task name, checked at compile time.
 TaskName :: { name : Str }.{

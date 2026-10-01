@@ -16,11 +16,11 @@ Pages := [].{
 	ci_workflow = "Workflow(\"ci\", [RunTask(\"test\", []), "
 		.concat("BuildArtifact(\"copy\")]),")
 
-	ir : Command.Page
-	ir = {
-		description: "Print the validated configuration as Kaifile IR, the data "
+	model : Command.Page
+	model = {
+		description: "Print the validated configuration as Kaifile model, the data "
 			.concat("kai plans shells and tasks from."),
-		examples: ["kai ir"],
+		examples: ["kai model"],
 		config: [],
 	}
 

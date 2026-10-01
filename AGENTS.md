@@ -10,7 +10,7 @@
     - [design.md](./docs/design.md) for design and architecture
     - [vision.md](./docs/vision.md) for project purpose and goals
 - Put backend-specific shared helpers in their corresponding backend module,
-  e.g. `kaifile/nix/NixBackend.roc` or `kaifile/guix/GuixBackend.roc`, instead
+  e.g. `plugins/std/backends/nix/NixBackend.roc` or `plugins/std/backends/guix/GuixBackend.roc`, instead
   of a standalone helper module.
 - Never add an AI agent as an author or co-author of a commit or PR: no
   `Co-Authored-By`, `Generated with` or similar attribution trailers. The

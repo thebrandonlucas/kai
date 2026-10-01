@@ -1,7 +1,7 @@
 # kai: developer environments, tasks and builds from a Kaifile.roc.
 app [main!] {
 	pf: platform "../.basic-cli/main.roc",
-	api: "../kaifile/platform/api.roc",
+	api: "../platform/api.roc",
 }
 
 import pf.Cmd

@@ -270,7 +270,7 @@ Release := [].{
 	}
 
 	# The file recording the released platform bundle's URL.
-	platform_file = "kaifile/platform-release"
+	platform_file = "platform-release"
 
 	# The file recording the released std bundle's URL.
 	std_file = "plugins/std-release"

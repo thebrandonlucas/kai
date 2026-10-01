@@ -29,7 +29,7 @@ nix shell github:thebrandonlucas/kai    # kai on PATH in a new shell
 ```
 
 The Nix package includes the Roc compiler Kai uses to evaluate `Kaifile.roc`
-and pre-seeds Roc's package cache with the matching Kaifile platform.
+and pre-seeds Roc's package cache with the matching Kai platform.
 
 Release archives contain only the `kai` binary. To use one, also install Nix
 and the Roc compiler named in [`.roc-version`](.roc-version) (available from
@@ -40,7 +40,7 @@ a `Kaifile.roc`.
 ## Getting started
 
 A project is configured by `Kaifile.roc`, an ordinary
-[Roc](https://roc-lang.org/) app on the Kaifile platform. Its `kaifile` is
+[Roc](https://roc-lang.org/) app on Kai's plugin platform. Its `kaifile` is
 made of plugins; Kai's standard plugin, std, takes a list of settings:
 
 ```roc
@@ -221,13 +221,15 @@ open an issue.
 
 The code follows the pipeline:
 
-- `kaifile/platform`: the Roc platform `Kaifile.roc` builds on. It validates
-  the Kaifile's plugins at compile time.
-- `plugins/std`: the std plugin. It lowers its settings to the Kaifile IR at
+- `platform`: Kai's plugin platform, the Roc platform `Kaifile.roc` builds
+  on and the API every plugin uses: commands, backends, implementations,
+  plans and the protocol kai speaks. It validates the Kaifile's plugins at
   compile time.
-- `kaifile/ir`: std's IR and its validation.
-- `kaifile/nix`, `kaifile/guix`: std's pure backends that turn IR into files
-  and argv.
+- `plugins/std`: the std plugin. It lowers its settings to its project model
+  at compile time.
+  - `plugins/std/model`: std's project model and its validation.
+  - `plugins/std/backends/nix`, `plugins/std/backends/guix`: std's pure
+    backends that plan files and argv from the model.
 - `cli`: `kai` itself. It asks the compiled Kaifile for the command's
   candidate plans, chooses a backend, checks the plan and runs it.
 - `devtool`: checks, integration tests and release tooling; see

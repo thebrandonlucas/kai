@@ -9,6 +9,6 @@ result-*
 kai
 kai-issues/
 .basic-cli
-/kaifile/platform/targets/*/libhost.a
-/kaifile/platform/.zig-cache/
-/kaifile/platform/zig-out/
+/platform/targets/*/libhost.a
+/platform/.zig-cache/
+/platform/zig-out/

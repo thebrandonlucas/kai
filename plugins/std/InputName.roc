@@ -1,5 +1,5 @@
 # Checked package source and flake input identities for authored configuration.
-import ir.Project
+import model.Project
 
 ## A package source or flake input name, checked at compile time.
 InputName :: { name : Str }.{

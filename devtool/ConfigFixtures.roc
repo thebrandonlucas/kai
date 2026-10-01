@@ -1,5 +1,5 @@
 # Kaifile.roc configurations that `roc check` must accept or reject at compile
-# time, plus the semantic IR that equivalent configurations must share.
+# time, plus the project model that equivalent configurations must share.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -14,7 +14,7 @@ ConfigFixtures := [].{
 
 	composition_header =
 		\\app [kaifile] {
-		\\	pf: platform "../../kaifile/platform/main.roc",
+		\\	pf: platform "../../platform/main.roc",
 		\\	std: "../../plugins/std/main.roc",
 		\\}
 
@@ -26,7 +26,7 @@ ConfigFixtures := [].{
 				Path.display(dir),
 				Path.display(Path.join(root, file)),
 			)
-		pf = relative("kaifile/platform/main.roc")
+		pf = relative("platform/main.roc")
 		std = relative("plugins/std/main.roc")
 		"app [kaifile] {\n\tpf: platform \"${pf}\",\n\tstd: \"${std}\",\n}"
 	}
@@ -972,7 +972,7 @@ ConfigFixtures := [].{
 		"config = [${Str.join_with(settings, ",\n ")}]"
 	}
 
-	# IR pairs that must print byte-identical semantic IR.
+	# Pairs that must print a byte-identical project model.
 	equivalent_ir = [
 		("ForwardInheritance", "EquivalentInline"),
 		("Valid", "EquivalentDefault"),
@@ -1095,12 +1095,12 @@ ConfigFixtures := [].{
 			ConfigFixtures.check!(roc, workspace, fixture)?
 		}
 		for (left, right) in ConfigFixtures.equivalent_ir {
-			ConfigFixtures.same_ir!(roc, workspace, left, [], right, [])?
+			ConfigFixtures.same_model!(roc, workspace, left, [], right, [])?
 		}
 		# Tool availability must not affect semantic configuration.
 		no_tools = Path.join(workspace, "no-tools")
 		Path.create_dir!(no_tools)?
-		ConfigFixtures.same_ir!(
+		ConfigFixtures.same_model!(
 			roc,
 			workspace,
 			"Valid",
@@ -1109,10 +1109,10 @@ ConfigFixtures := [].{
 			[("PATH", Path.display(no_tools))],
 		)?
 		for marker in ConfigFixtures.ir_markers {
-			ir = ConfigFixtures.ir!(roc, workspace, marker.name, [])?
+			model = ConfigFixtures.model!(roc, workspace, marker.name, [])?
 			for text in marker.texts {
-				if !ir.contains(text) {
-					Stderr.line!(ir)?
+				if !model.contains(text) {
+					Stderr.line!(model)?
 					return Err(MissingIrMarker({ fixture: marker.name, text }))
 				}
 			}
@@ -1136,7 +1136,7 @@ ConfigFixtures := [].{
 				[
 					"${valid} valid configs accepted",
 					"${rejected} rejected at compile time",
-					"equivalent IR verified",
+					"equivalent models verified",
 				],
 				"; ",
 			),
@@ -1167,7 +1167,7 @@ ConfigFixtures := [].{
 		}
 	}
 
-	ir! = |roc, workspace, name, envs| {
+	model! = |roc, workspace, name, envs| {
 		path = Path.join(workspace, "${name}.roc")
 		output = ConfigFixtures.roc_command(roc, [Path.to_os_str(path)])
 			.envs_str(envs)
@@ -1182,13 +1182,13 @@ ConfigFixtures := [].{
 		}
 	}
 
-	same_ir! = |roc, workspace, left, left_envs, right, right_envs| {
-		left_ir = ConfigFixtures.ir!(roc, workspace, left, left_envs)?
-		right_ir = ConfigFixtures.ir!(roc, workspace, right, right_envs)?
-		if left_ir == right_ir {
+	same_model! = |roc, workspace, left, left_envs, right, right_envs| {
+		left_model = ConfigFixtures.model!(roc, workspace, left, left_envs)?
+		right_model = ConfigFixtures.model!(roc, workspace, right, right_envs)?
+		if left_model == right_model {
 			Ok({})
 		} else {
-			Stderr.line!("${left}:\n${left_ir}\n${right}:\n${right_ir}")?
+			Stderr.line!("${left}:\n${left_model}\n${right}:\n${right_model}")?
 			Err(DifferentIr({ left, right }))
 		}
 	}

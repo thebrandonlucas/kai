@@ -1,6 +1,6 @@
 # Environments select ordered overlay stacks; Extend applies the parent's first.
 app [kaifile] {
-	pf: platform "../../kaifile/platform/main.roc",
+	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",
 }
 

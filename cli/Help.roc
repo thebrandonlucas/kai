@@ -1,7 +1,7 @@
 # kai's own help: the header a Kaifile.roc starts with, and what kai says
 # when there is no Kaifile.roc to ask. Command help comes from the Kaifile's
 # plugins.
-import "../kaifile/platform-release" as platform_release : Str
+import "../platform-release" as platform_release : Str
 import "../plugins/std-release" as std_release : Str
 
 Help := [].{

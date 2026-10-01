@@ -55,7 +55,7 @@ KaiBundle := [].{
 	]
 
 	# The platform bundle.
-	platform! = || KaiBundle.bundle!(".#kaifile-platform")
+	platform! = || KaiBundle.bundle!(".#kai-platform")
 
 	kaifile = |pf_url, std|
 		\\app [kaifile] {
@@ -100,23 +100,22 @@ KaiBundle := [].{
 		rewrite! = |file, from, to|
 			Path.write_utf8!(file, Path.read_utf8!(file)?.replace_each(from, to))
 		main = Path.join(source, "main.roc")
-		rewrite!(main, "\"../../kaifile/platform/main.roc\"", "\"${url}\"")?
-		# ir, nix and guix move inside std and depend on the platform itself, as
-		# the flake bundles them.
-		for dependency in ["ir", "nix", "guix"] {
-			copy!("kaifile/${dependency}", Path.join(source, dependency))?
-			fuzz = Path.join(source, "${dependency}/fuzz")
+		rewrite!(main, "\"../../platform/main.roc\"", "\"${url}\"")?
+		# std's own packages reach the platform's modules through api.roc;
+		# bundled, they depend on the platform release itself.
+		nested = [
+			("model", "../../../platform/api.roc"),
+			("backends/nix", "../../../../platform/api.roc"),
+			("backends/guix", "../../../../platform/api.roc"),
+		]
+		for (dir, api) in nested {
+			fuzz = Path.join(source, "${dir}/fuzz")
 			if Path.exists!(fuzz)? {
 				Path.delete_all!(fuzz)?
 			}
 			rewrite!(
-				main,
-				"\"../../kaifile/${dependency}/main.roc\"",
-				"\"${dependency}/main.roc\"",
-			)?
-			rewrite!(
-				Path.join(source, "${dependency}/main.roc"),
-				"api: \"../platform/api.roc\"",
+				Path.join(source, "${dir}/main.roc"),
+				"api: \"${api}\"",
 				"api: platform \"${url}\"",
 			)?
 		}

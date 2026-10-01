@@ -1,8 +1,8 @@
 # kai repo devtool entry point
 app [main!] {
 	pf: platform "../.basic-cli/main.roc",
-	api: "../kaifile/platform/api.roc",
-	nix: "../kaifile/nix/main.roc",
+	api: "../platform/api.roc",
+	nix: "../plugins/std/backends/nix/main.roc",
 }
 
 import pf.Cmd
@@ -189,7 +189,7 @@ check_bundle_urls! = |version, pf_bundle, std_bundle| {
 }
 
 build_release_stage! = |root, dist, workspace, version| {
-	Stdout.line!("Building the Kaifile platform and std bundles through Nix...")?
+	Stdout.line!("Building the Kai platform and std bundles through Nix...")?
 	pf_bundle = KaiBundle.platform!()?
 	std_bundle = KaiBundle.bundle!(".#kai-std")?
 	check_bundle_urls!(version, pf_bundle, std_bundle)?
