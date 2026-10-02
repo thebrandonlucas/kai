@@ -1,17 +1,18 @@
-# Run a built `kai shell` and `kai run` against real Nix on a copy of
-# examples/overlays: overlay stacks apply in order only to environments that
-# select them, Extend applies the parent's stack first, and shells aliasing
-# different environments differ. One update serves every request unchanged.
+# Nix overlays, which Guix does not have: a built `kai shell` and `kai run`
+# on a copy of examples/overlays against real Nix. Overlay stacks apply in
+# order only to environments that select them, Extend applies the parent's
+# stack first, and shells aliasing different environments differ. One update
+# serves every request unchanged.
 import pf.Cmd
 import pf.Path
 import pf.Stdout
 
-import KaiUpdate
+import E2e
 
-KaiEnv := [].{
-	run! = |binary| {
-		(kai, project) = KaiUpdate.fixture!(binary, "overlays", ["overlays"])?
-		result = KaiEnv.run_in!(kai, project)
+E2eOverlays := [].{
+	nix! = |binary| {
+		(kai, project) = E2e.fixture!(binary, "overlays", ["overlays"])?
+		result = E2eOverlays.run_in!(kai, project)
 		Path.delete_all!(project)?
 		result
 	}
@@ -31,7 +32,7 @@ KaiEnv := [].{
 			.exec_output!()
 		_ = kai!(["update"])?
 		published = Path.read_bytes!(lock)?
-		for case in KaiEnv.expected {
+		for case in E2eOverlays.expected {
 			output = kai!(["shell", case.shell, "--", "fixture-tool"])?.stdout_utf8
 			if output != case.output {
 				return Err(WrongOverlayStack(case.shell, output))

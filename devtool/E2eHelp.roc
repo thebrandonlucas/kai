@@ -8,14 +8,14 @@ import pf.Stdout
 
 import ConfigFixtures
 
-KaiHelp := [].{
-	run! = |binary| {
+E2eHelp := [].{
+	nix! = |binary| {
 		root = Path.canonicalize!(Env.cwd!()?)?
 		kai = Path.canonicalize!(Path.utf8(binary))?
 		project = Path.canonicalize!(
 			Env.create_temp_dir_with_prefix!("kai-help-")?,
 		)?
-		result = KaiHelp.run_in!(root, kai, project)
+		result = E2eHelp.run_in!(root, kai, project)
 		Path.delete_all!(project)?
 		result
 	}
@@ -31,7 +31,7 @@ KaiHelp := [].{
 	# Command names start a Commands row; wrapped descriptions are indented.
 	commands : Str -> List(Str)
 	commands = |text|
-		KaiHelp.section(text, "Commands:")
+		E2eHelp.section(text, "Commands:")
 			.map(|line| line.drop_prefix("  "))
 			.keep_if(|line| !line.starts_with(" "))
 			.map(|line| line.split_on(" ").first() ?? line)
@@ -70,29 +70,29 @@ KaiHelp := [].{
 		write!([])?
 		# Output to a pipe is plain even without --no-color.
 		top = kai!(["--help"])?.stdout_utf8
-		names = KaiHelp.commands(top)
+		names = E2eHelp.commands(top)
 		if names.is_empty() {
 			return Err(NoCommandsInHelp(top))
 		}
-		var $examples = KaiHelp.section(top, "Examples:")
-		var $settings = KaiHelp.section(top, "Kaifile.roc (inside Std.kaifile):")
+		var $examples = E2eHelp.section(top, "Examples:")
+		var $settings = E2eHelp.section(top, "Kaifile.roc (inside Std.kaifile):")
 		for name in names {
 			page = kai!([name, "--help"])?.stdout_utf8
-			found = KaiHelp.section(page, "Examples:")
+			found = E2eHelp.section(page, "Examples:")
 			if found.is_empty() or page.contains("\u(001b)") {
 				return Err(BadCommandHelp(name, page))
 			}
-			$examples = KaiHelp.add_new($examples, found)
-			$settings = KaiHelp.add_new(
+			$examples = E2eHelp.add_new($examples, found)
+			$settings = E2eHelp.add_new(
 				$settings,
-				KaiHelp.section(page, "Kaifile.roc (inside Std.kaifile):"),
+				E2eHelp.section(page, "Kaifile.roc (inside Std.kaifile):"),
 			)
 		}
 		write!($settings)?
 		_ = kai!(["update"])?
 		for example in $examples {
 			args = example.split_on(" ").drop_first(1)
-			if KaiHelp.runnable(args) {
+			if E2eHelp.runnable(args) {
 				_ = kai!(args)
 					.map_err(|err| ExampleFailed(example, Str.inspect(err)))?
 			}

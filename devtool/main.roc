@@ -15,15 +15,16 @@ import Cli
 import ConfigFixtures
 import Fuzz
 import GitHub
-import KaiBuild
-import KaiBundle
-import KaiEnv
-import KaiGuix
-import KaiHelp
-import KaiPlugins
-import KaiRun
-import KaiUpdate
-import KaiWorkflow
+import Bundles
+import E2e
+import E2eBuild
+import E2eBundle
+import E2eHelp
+import E2eOverlays
+import E2ePlugins
+import E2eRun
+import E2eUpdate
+import E2eWorkflow
 import PrepareRelease
 import Release
 import Tidy
@@ -190,8 +191,8 @@ check_bundle_urls! = |version, pf_bundle, std_bundle| {
 
 build_release_stage! = |root, dist, workspace, version| {
 	Stdout.line!("Building the Kai platform and std bundles through Nix...")?
-	pf_bundle = KaiBundle.platform!()?
-	std_bundle = KaiBundle.bundle!(".#kai-std")?
+	pf_bundle = Bundles.platform!()?
+	std_bundle = Bundles.bundle!(".#kai-std")?
 	check_bundle_urls!(version, pf_bundle, std_bundle)?
 	bundles = ["${pf_bundle.hash}.tar.zst", "std-${std_bundle.hash}.tar.zst"]
 	copy_file!(pf_bundle.archive, Path.join(dist, "${pf_bundle.hash}.tar.zst"))?
@@ -204,7 +205,7 @@ build_release_stage! = |root, dist, workspace, version| {
 	for system in systems {
 		archive = Path.join(dist, Release.archive_name(version, system))
 		Stdout.line!("Building and checking the ${system} CLI archive...")?
-		copy_file!(KaiBundle.nix_output!(".#release-${system}")?, archive)?
+		copy_file!(Bundles.nix_output!(".#release-${system}")?, archive)?
 		destination = Path.join(workspace, "${system}-cli-test")
 		if system == "x86_64-linux" {
 			check_x64!(archive, destination, version)?
@@ -287,6 +288,47 @@ build_release! = || {
 	}
 }
 
+## Each named test's Nix half, then its Guix half when it has one. Guix
+## halves share one Nix-free PATH, removed afterwards.
+e2e! = |{ test, only, require_guix, kai, bare }| {
+	names = if test == "all" Cli.e2e_tests else [test]
+	guix = if only == Nix Missing else E2e.guix!(require_guix)?
+	result = e2e_each!(names, only, kai, bare, guix)
+	match guix {
+		Ready(dir) => Path.delete_all!(dir)?
+		Missing => {}
+	}
+	result
+}
+
+e2e_each! = |names, only, kai, bare, guix| {
+	for name in names {
+		if only != Guix {
+			match name {
+				"run" => E2eRun.nix!(kai)?
+				"build" => E2eBuild.nix!(kai)?
+				"workflow" => E2eWorkflow.nix!(kai)?
+				"update" => E2eUpdate.nix!(kai)?
+				"overlays" => E2eOverlays.nix!(kai)?
+				"help" => E2eHelp.nix!(kai)?
+				"plugins" => E2ePlugins.nix!(kai)?
+				_ => E2eBundle.nix!(bare)?
+			}
+		}
+		if only != Nix {
+			match name {
+				"run" => E2eRun.guix!(bare, guix)?
+				"build" => E2eBuild.guix!(bare, guix)?
+				"workflow" => E2eWorkflow.guix!(bare, guix)?
+				"update" => E2eUpdate.guix!(bare, guix)?
+				_ if only == Guix => Stdout.line!("${name} runs on Nix only")?
+				_ => {}
+			}
+		}
+	}
+	Ok({})
+}
+
 main! : List(OsStr) => Try({}, _)
 main! = |args|
 	match Cli.parse(args.map(OsStr.display)) {
@@ -294,15 +336,7 @@ main! = |args|
 		Ok(Cli.Command.BuildRelease) => build_release!()
 		Ok(Cli.Command.ConfigFixtures) => ConfigFixtures.run!()
 		Ok(Cli.Command.Fuzz({ seconds, apps })) => Fuzz.run!(seconds, apps)
-		Ok(Cli.Command.KaiBuild(kai)) => KaiBuild.run!(kai)
-		Ok(Cli.Command.KaiBundle(kai)) => KaiBundle.run!(kai)
-		Ok(Cli.Command.KaiEnv(kai)) => KaiEnv.run!(kai)
-		Ok(Cli.Command.KaiGuix({ kai, required })) => KaiGuix.run!(kai, required)
-		Ok(Cli.Command.KaiHelp(kai)) => KaiHelp.run!(kai)
-		Ok(Cli.Command.KaiPlugins(kai)) => KaiPlugins.run!(kai)
-		Ok(Cli.Command.KaiRun(kai)) => KaiRun.run!(kai)
-		Ok(Cli.Command.KaiUpdate(kai)) => KaiUpdate.run!(kai)
-		Ok(Cli.Command.KaiWorkflow(kai)) => KaiWorkflow.run!(kai)
+		Ok(Cli.Command.E2e(run)) => e2e!(run)
 		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(
 			name,
 			version,
@@ -318,23 +352,53 @@ parse_cases = [
 	{ args: ["help"], expected: Ok(Cli.Command.Help) },
 	{ args: ["build-release"], expected: Ok(Cli.Command.BuildRelease) },
 	{ args: ["config-fixtures"], expected: Ok(Cli.Command.ConfigFixtures) },
-	{ args: ["kai-update", "kai"], expected: Ok(Cli.Command.KaiUpdate("kai")) },
-	{ args: ["kai-env", "kai"], expected: Ok(Cli.Command.KaiEnv("kai")) },
-	{ args: ["kai-build", "kai"], expected: Ok(Cli.Command.KaiBuild("kai")) },
-	{ args: ["kai-bundle", "kai"], expected: Ok(Cli.Command.KaiBundle("kai")) },
 	{
-		args: ["kai-guix", "--require", "kai"],
-		expected: Ok(Cli.Command.KaiGuix({ kai: "kai", required: Bool.True })),
-	},
-	{ args: ["kai-help", "kai"], expected: Ok(Cli.Command.KaiHelp("kai")) },
-	{ args: ["kai-run", "kai"], expected: Ok(Cli.Command.KaiRun("kai")) },
-	{
-		args: ["kai-workflow", "kai"],
-		expected: Ok(Cli.Command.KaiWorkflow("kai")),
+		args: ["e2e", "run", "kai", "bare"],
+		expected: Ok(
+			Cli.Command.E2e({
+				test: "run",
+				only: Both,
+				require_guix: Bool.False,
+				kai: "kai",
+				bare: "bare",
+			}),
+		),
 	},
 	{
-		args: ["kai-update"],
-		expected: Err(Cli.Error.ExpectedKaiBinary("kai-update")),
+		args: ["e2e", "all", "--guix", "--require-guix", "kai", "bare"],
+		expected: Ok(
+			Cli.Command.E2e({
+				test: "all",
+				only: Guix,
+				require_guix: Bool.True,
+				kai: "kai",
+				bare: "bare",
+			}),
+		),
+	},
+	{
+		args: ["e2e", "update", "--nix", "--guix", "kai", "bare"],
+		expected: Ok(
+			Cli.Command.E2e({
+				test: "update",
+				only: Both,
+				require_guix: Bool.False,
+				kai: "kai",
+				bare: "bare",
+			}),
+		),
+	},
+	{
+		args: ["e2e", "build", "--nix", "kai"],
+		expected: Err(Cli.Error.ExpectedKaiBinaries),
+	},
+	{
+		args: ["e2e", "deploy", "kai", "bare"],
+		expected: Err(Cli.Error.UnknownTest("deploy")),
+	},
+	{
+		args: ["e2e", "run", "--nixx", "kai", "bare"],
+		expected: Err(Cli.Error.UnknownOption("--nixx")),
 	},
 	{
 		args: ["prepare-release", "μοριων", "0.0.3"],
@@ -360,15 +424,7 @@ usage_lines = [
 	"Usage: kai-devtool <command> [arguments]",
 	"build-release",
 	"config-fixtures",
-	"kai-build KAI_BINARY",
-	"kai-bundle KAI_BINARY",
-	"kai-env KAI_BINARY",
-	"kai-guix [--require] KAI_BINARY",
-	"kai-help KAI_BINARY",
-	"kai-plugins KAI_BINARY",
-	"kai-run KAI_BINARY",
-	"kai-workflow KAI_BINARY",
-	"kai-update KAI_BINARY",
+	"e2e TEST [--nix | --guix] [--require-guix] KAI_BINARY BARE_KAI_BINARY",
 	"prepare-release NAME VERSION",
 	"tidy ROC_FILE...",
 	"help",

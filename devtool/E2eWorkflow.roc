@@ -1,24 +1,25 @@
-# Run a built `kai workflow` and `kai --json` against real Nix on a copy of
-# examples/artifacts: steps run in order, a failing step stops the rest and
-# keeps its exit code, repeated steps repeat, each build snapshots the project
-# afresh, a changed locked source stops a workflow before its first effect,
-# and the lock is never written. In JSON mode kai's stdout is whole JSON
-# objects without terminal escapes.
+# kai workflow and kai --json. On Nix, on a copy of examples/artifacts: steps
+# run in order, a failing step stops the rest and keeps its exit code,
+# repeated steps repeat, each build snapshots the project afresh, a changed
+# locked source stops a workflow before its first effect, and the lock is
+# never written. In JSON mode kai's stdout is whole JSON objects without
+# terminal escapes. On Guix, on a copy of examples/guix with Nix off PATH: a
+# workflow runs its task, then its build.
 import pf.Cmd
 import pf.Path
 import pf.Stdout
 import api.LockJson
 
-import KaiUpdate
+import E2e
 
-KaiWorkflow := [].{
-	run! = |binary| {
-		(kai, project) = KaiUpdate.fixture!(
+E2eWorkflow := [].{
+	nix! = |binary| {
+		(kai, project) = E2e.fixture!(
 			binary,
 			"artifacts",
 			["assets", "src"],
 		)?
-		result = KaiWorkflow.run_in!(kai, project)
+		result = E2eWorkflow.nix_in!(kai, project)
 		Path.delete_all!(project)?
 		result
 	}
@@ -65,10 +66,10 @@ KaiWorkflow := [].{
 	text = |value, name|
 		LockJson.string(LockJson.field(value, name) ?? LockJson.Null) ?? ""
 
-	run_in! = |kai, project| {
+	nix_in! = |kai, project| {
 		kaifile = Path.join(project, "Kaifile.roc")
 		config = match Path.read_utf8!(kaifile)?.split_on("\n])\n") {
-			[body, ""] => "${body}\n${KaiWorkflow.extra}\n])\n"
+			[body, ""] => "${body}\n${E2eWorkflow.extra}\n])\n"
 			_ => return Err(UnexpectedKaifileEnd)
 		}
 		Path.write_utf8!(kaifile, config)?
@@ -78,11 +79,11 @@ KaiWorkflow := [].{
 		# Runs kai with --json, expecting its exit code and event types.
 		json! = |args, code, types| {
 			output = kai!(["--json"].concat(args))?
-			parsed = KaiWorkflow.events(output.stdout_bytes)
-				.map_err(|message| BadJson(args, message, KaiWorkflow.show(output)))?
-			found = parsed.map(|event| KaiWorkflow.text(event, "type"))
+			parsed = E2eWorkflow.events(output.stdout_bytes)
+				.map_err(|message| BadJson(args, message, E2eWorkflow.show(output)))?
+			found = parsed.map(|event| E2eWorkflow.text(event, "type"))
 			if output.status != Exited(code) or found != types {
-				return Err(UnexpectedEvents(args, found, KaiWorkflow.show(output)))
+				return Err(UnexpectedEvents(args, found, E2eWorkflow.show(output)))
 			}
 			Ok(parsed)
 		}
@@ -97,11 +98,11 @@ KaiWorkflow := [].{
 		# Each artifact's bytes, in the order kai built them.
 		built! = |reported, expected| {
 			artifacts = reported.keep_if(
-				|e| KaiWorkflow.text(e, "type") == "artifact",
+				|e| E2eWorkflow.text(e, "type") == "artifact",
 			)
 			var $actual = []
 			for artifact in artifacts {
-				path = Path.utf8(KaiWorkflow.text(artifact, "path"))
+				path = Path.utf8(E2eWorkflow.text(artifact, "path"))
 				$actual = $actual.append(Path.read_utf8!(path)?)
 			}
 			if $actual != expected Err(WrongArtifacts($actual)) else Ok({})
@@ -131,7 +132,7 @@ KaiWorkflow := [].{
 		marked!("first\n")?
 		failure = stopped.last() ?? LockJson.Null
 		if
-			KaiWorkflow.text(failure, "error") != "child_exited"
+			E2eWorkflow.text(failure, "error") != "child_exited"
 				or LockJson.field(failure, "exit_code") != Ok(LockJson.Number("7"))
 				{
 					return Err(WrongError(LockJson.encode(failure)))
@@ -145,7 +146,7 @@ KaiWorkflow := [].{
 			repeated.status != Exited(0)
 				or !Str.from_utf8_lossy(repeated.stderr_bytes).contains(second)
 				{
-					return Err(NotRepeated(KaiWorkflow.show(repeated)))
+					return Err(NotRepeated(E2eWorkflow.show(repeated)))
 				}
 		marked!("again\nagain\n")?
 		# A changed locked source stops the workflow before its first task.
@@ -158,7 +159,7 @@ KaiWorkflow := [].{
 			["backend", "step_started", "error"],
 		)?
 		if
-			!KaiWorkflow.text(locked.last() ?? LockJson.Null, "message")
+			!E2eWorkflow.text(locked.last() ?? LockJson.Null, "message")
 				.contains("run `kai update`")
 				{
 					return Err(LockedSourceIgnored(locked.map(LockJson.encode)))
@@ -185,7 +186,7 @@ KaiWorkflow := [].{
 			_ => ""
 		}
 		if ci_app != "Artifact example\n${edited}" {
-			return Err(WrongCiOutput(KaiWorkflow.show(ci)))
+			return Err(WrongCiOutput(E2eWorkflow.show(ci)))
 		}
 		if
 			Path.read_bytes!(lock)? != published
@@ -202,6 +203,26 @@ KaiWorkflow := [].{
 		Str.inspect(output.status)
 			.concat("\n${Str.from_utf8_lossy(output.stdout_bytes)}")
 			.concat(Str.from_utf8_lossy(output.stderr_bytes))
+
+	guix! = |bare, guix|
+		match guix {
+			Missing => E2e.skipped!("kai workflow")
+			Ready(path) => {
+				(kai, project) = E2e.guix_project!(bare)?
+				result = E2eWorkflow.guix_in!(kai, project, path)
+				Path.delete_all!(project)?
+				result
+			}
+		}
+
+	guix_in! = |kai, project, path| {
+		args = ["--backend", "guix", "workflow", "ci"]
+		workflow = E2e.guix_kai!(kai, project, path, args)?
+		if !workflow.stdout_utf8.starts_with("from ci\n") {
+			return Err(WrongGuixWorkflow(Str.inspect(workflow)))
+		}
+		Stdout.line!("kai ran a Guix workflow's task and build without Nix")
+	}
 }
 
 # Only whole JSON object lines with a type, and no escapes, are JSON output.
@@ -211,4 +232,4 @@ expect [
 	("source checked\n{\"type\":\"check\"}\n", Bool.False),
 	("{\"message\":\"no type\"}\n", Bool.False),
 	("{\"type\":\"note\",\"message\":\"\u(001b)[31m\"}\n", Bool.False),
-].all(|(text, ok)| KaiWorkflow.events(text.to_utf8()).is_ok() == ok)
+].all(|(text, ok)| E2eWorkflow.events(text.to_utf8()).is_ok() == ok)

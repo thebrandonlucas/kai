@@ -1,5 +1,5 @@
 # What each std command accomplishes, commands to try, and the Kaifile.roc
-# settings that make them work. The kai-help devtool check compiles the
+# settings that make them work. The e2e-help devtool test compiles the
 # settings and runs the commands, so help cannot drift from what kai accepts.
 import pf.Command
 

@@ -1,24 +1,25 @@
-# Run a built `kai build` against real Nix on a copy of examples/artifacts:
-# artifacts have exact bytes, every build snapshots the project afresh, a
-# missing output or symlink never reports success, a changed locked source
-# needs `kai update`, the sandbox hides host files and TCP, and the lock is
-# never written.
+# kai build. On Nix, on a copy of examples/artifacts: artifacts have exact
+# bytes, every build snapshots the project afresh, a missing output or
+# symlink never reports success, a changed locked source needs `kai update`,
+# the sandbox hides host files and TCP, and the lock is never written. On
+# Guix, on a copy of examples/guix with Nix off PATH: a sandboxed build
+# prints the store path of its exact artifact.
 import pf.Cmd
 import pf.Env
 import pf.Path
 import pf.Stdout
 import pf.Tcp
 
-import KaiUpdate
+import E2e
 
-KaiBuild := [].{
-	run! = |binary| {
-		(kai, project) = KaiUpdate.fixture!(
+E2eBuild := [].{
+	nix! = |binary| {
+		(kai, project) = E2e.fixture!(
 			binary,
 			"artifacts",
 			["assets", "src"],
 		)?
-		result = KaiBuild.run_in!(kai, project)
+		result = E2eBuild.nix_in!(kai, project)
 		Path.delete_all!(project)?
 		result
 	}
@@ -28,9 +29,9 @@ KaiBuild := [].{
 		\\	Build("missing", [Use("dev"), Run(["true"]),
 		\\		Output("dist/missing.txt")]),
 		\\	Build("probe", [Use("dev"),
-		\\		Run(["bash", "-c", "{ ${KaiBuild.probe}; } > probe.txt"]),
+		\\		Run(["bash", "-c", "{ ${E2eBuild.probe}; } > probe.txt"]),
 		\\		Output("probe.txt")]),
-		\\	Task("probe", [Use("dev"), Run(["bash", "-c", "${KaiBuild.probe}"])]),
+		\\	Task("probe", [Use("dev"), Run(["bash", "-c", "${E2eBuild.probe}"])]),
 
 	# Reports whether the marker holds the token and the port connects, from
 	# the marker, token and port in probe.args. Bash opens /dev/tcp itself.
@@ -42,10 +43,10 @@ KaiBuild := [].{
 		.concat("then tcp=reachable; else tcp=denied; fi; ")
 		.concat("echo host-file $file; echo host-TCP $tcp")
 
-	run_in! = |kai, project| {
+	nix_in! = |kai, project| {
 		kaifile = Path.join(project, "Kaifile.roc")
 		config = match Path.read_utf8!(kaifile)?.split_on("\n])\n") {
-			[body, ""] => "${body}\n${KaiBuild.extra}\n])\n"
+			[body, ""] => "${body}\n${E2eBuild.extra}\n])\n"
 			_ => return Err(UnexpectedKaifileEnd)
 		}
 		Path.write_utf8!(kaifile, config)?
@@ -70,7 +71,7 @@ KaiBuild := [].{
 						or !stderr.contains("built ${name}: ")
 							or !stderr.contains(" -> ${path}\n")
 					{
-						return Err(BuildFailed(name, KaiBuild.show(output)))
+						return Err(BuildFailed(name, E2eBuild.show(output)))
 					}
 			actual = Path.read_utf8!(Path.utf8(path))?
 			if actual != expected {
@@ -88,7 +89,7 @@ KaiBuild := [].{
 						or stderr.contains("built ")
 							or !stderr.contains(diagnostic)
 					{
-						return Err(NotRefused(name, diagnostic, KaiBuild.show(output)))
+						return Err(NotRefused(name, diagnostic, E2eBuild.show(output)))
 					}
 			Ok(stderr)
 		}
@@ -127,7 +128,7 @@ KaiBuild := [].{
 			return Err(FailedSnapshotChangedWitness)
 		}
 		Path.delete!(file("link"))?
-		KaiBuild.sandbox!(kai!, project, built!)?
+		E2eBuild.sandbox!(kai!, project, built!)?
 		if
 			Path.read_bytes!(lock)? != published
 				or Path.time_modified!(lock)? != modified
@@ -148,7 +149,7 @@ KaiBuild := [].{
 	# sandbox can hide it. A listening socket completes connects on its own.
 	sandbox! = |kai!, project, built!| {
 		directory = Env.create_temp_dir_in!(Path.utf8("/var/tmp"), "kai-probe-")?
-		result = KaiBuild.probe!(kai!, project, built!, directory)
+		result = E2eBuild.probe!(kai!, project, built!, directory)
 		Path.delete_all!(directory)?
 		result
 	}
@@ -166,9 +167,33 @@ KaiBuild := [].{
 		control = kai!(["run", "probe"])?
 		reachable = "host-file read\nhost-TCP reachable\n"
 		if control.stdout_bytes != reachable.to_utf8() {
-			return Err(ProbeControlFailed(KaiBuild.show(control)))
+			return Err(ProbeControlFailed(E2eBuild.show(control)))
 		}
 		built!("probe", "host-file denied\nhost-TCP denied\n")?
 		listener.close!()
+	}
+
+	guix! = |bare, guix|
+		match guix {
+			Missing => E2e.skipped!("kai build")
+			Ready(path) => {
+				(kai, project) = E2e.guix_project!(bare)?
+				result = E2eBuild.guix_in!(kai, project, path)
+				Path.delete_all!(project)?
+				result
+			}
+		}
+
+	guix_in! = |kai, project, path| {
+		args = ["--backend", "guix", "build", "greeting"]
+		built = E2e.guix_kai!(kai, project, path, args)?
+		store = built.stdout_utf8.trim()
+		if !store.ends_with("-kai-greeting") {
+			return Err(WrongGuixBuild(Str.inspect(built)))
+		}
+		if Path.read_utf8!(Path.utf8(store))? != "Hello, world!\n" {
+			return Err(WrongGuixArtifact(store))
+		}
+		Stdout.line!("kai built an exact artifact in the Guix sandbox without Nix")
 	}
 }

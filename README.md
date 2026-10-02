@@ -214,10 +214,12 @@ nix develop    # or `direnv allow` once
 zig build ci
 ```
 
-`zig build ci` includes real Nix integration runs, so it needs network access
-or a warm Nix cache. `zig build guix-integration` runs a Guix shell with real
-Guix and fails without it. If `nix develop` is missing a dependency, please
-open an issue.
+`zig build ci` includes the end-to-end tests, which run a built kai against
+real Nix and, when it is installed, Guix, so it needs network access or a warm
+Nix cache. `zig build e2e -- --nix` or `-- --guix` runs them on one backend,
+and `zig build e2e-run` (or `-build`, `-workflow`, `-update`, ...) runs one;
+`zig build guix-integration` runs every Guix test and fails without Guix. If
+`nix develop` is missing a dependency, please open an issue.
 
 The code follows the pipeline:
 

@@ -10,7 +10,7 @@ import pf.Stdout
 
 import ConfigFixtures
 
-KaiPlugins := [].{
+E2ePlugins := [].{
 	body =
 		\\import pf.Implementation
 		\\import pf.Kaifile
@@ -56,12 +56,12 @@ KaiPlugins := [].{
 		\\])
 		\\
 
-	run! = |binary| {
+	nix! = |binary| {
 		root = Path.canonicalize!(Env.cwd!()?)?
 		kai = Path.canonicalize!(Path.utf8(binary))?
 		temporary = Env.create_temp_dir_with_prefix!("kai-plugins-")?
 		project = Path.canonicalize!(temporary)?
-		result = KaiPlugins.run_in!(root, kai, project)
+		result = E2ePlugins.run_in!(root, kai, project)
 		Path.delete_all!(project)?
 		result
 	}
@@ -75,7 +75,7 @@ KaiPlugins := [].{
 		header = "${opened}\tdeploy: \"${deploy}\",\n}"
 		Path.write_utf8!(
 			Path.join(project, "Kaifile.roc"),
-			"${header}\n\n${KaiPlugins.body}",
+			"${header}\n\n${E2ePlugins.body}",
 		)?
 		kai! = |args| Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(project)
 			.exec_output!()

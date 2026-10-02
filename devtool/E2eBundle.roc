@@ -12,40 +12,9 @@ import pf.Path
 import pf.Stdout
 import pf.Tcp
 
-KaiBundle := [].{
-	# Build a flake output and return its store path.
-	nix_output! = |attribute| {
-		output = Cmd.new_str("nix")
-			.args_str(["build", attribute, "--no-link", "--print-out-paths"])
-			.exec_output!()?
-		match output.stdout_utf8.split_on("\n").keep_if(|line| !line.is_empty()) {
-			[path] => Ok(Path.utf8(path))
-			_ => Err(UnexpectedNixOutput({ attribute, output: output.stdout_utf8 }))
-		}
-	}
+import Bundles
 
-	names! = |dir|
-		Ok(Path.list!(dir)?.map(|p| Path.display(Path.filename(p) ?? p)))
-
-	# A bundle's <hash>.tar.zst, its hash and its unpacked <hash>/.
-	found! = |dir, what| {
-		names = KaiBundle.names!(dir)?
-		match names.keep_if(|name| name.ends_with(".tar.zst")) {
-			[name] => {
-				hash = name.drop_suffix(".tar.zst")
-				Ok({
-					archive: Path.join(dir, name),
-					hash,
-					unpacked: Path.join(dir, hash),
-				})
-			}
-			_ => Err(UnexpectedBundle({ what, names }))
-		}
-	}
-
-	bundle! = |attribute|
-		KaiBundle.found!(KaiBundle.nix_output!(attribute)?, attribute)
-
+E2eBundle := [].{
 	# The URL packages the platform imports: Weaver, and the ansi and path
 	# packages Weaver imports (the flake's rocPackages).
 	platform_packages = [
@@ -53,9 +22,6 @@ KaiBundle := [].{
 		"JXLM47L6CzrLXB5HBfqc27VnU6CD4jMm5Mk6dgbbovL",
 		"7YfABZPwJAXtLBY2vm8FqMyGAtNxncCJ65HdNKHFGNnE",
 	]
-
-	# The platform bundle.
-	platform! = || KaiBundle.bundle!(".#kai-platform")
 
 	kaifile = |pf_url, std|
 		\\app [kaifile] {
@@ -134,17 +100,17 @@ KaiBundle := [].{
 				Path.to_os_str(Path.join(work, "bundle-cache")),
 			)
 			.exec_output!()?
-		KaiBundle.found!(output, "std for ${url}")
+		Bundles.found!(output, "std for ${url}")
 	}
 
-	run! = |binary| {
+	nix! = |binary| {
 		kai = Path.canonicalize!(Path.utf8(binary))?
 		version = Path.read_utf8!(Path.utf8("VERSION"))?.trim()
-		pf_bundle = KaiBundle.platform!()?
-		std = KaiBundle.bundle!(".#kai-std")?
-		installed = Path.join(KaiBundle.nix_output!(".#kai")?, "bin/kai")
+		pf_bundle = Bundles.platform!()?
+		std = Bundles.bundle!(".#kai-std")?
+		installed = Path.join(Bundles.nix_output!(".#kai")?, "bin/kai")
 		work = Path.canonicalize!(Env.create_temp_dir_with_prefix!("kai-bundle-")?)?
-		result = KaiBundle.run_in!(kai, installed, pf_bundle, std, version, work)
+		result = E2eBundle.run_in!(kai, installed, pf_bundle, std, version, work)
 		Path.delete_all!(work)?
 		result
 	}
@@ -157,24 +123,24 @@ KaiBundle := [].{
 		# asset name carries a prefix.
 		std_path = |hash| "/v${version}/std-${hash}.tar.zst"
 		platform_url = "${base}${path(pf_bundle.hash)}"
-		served_std = KaiBundle.std_for!(platform_url, pf_bundle, work)?
+		served_std = E2eBundle.std_for!(platform_url, pf_bundle, work)?
 		routes = [
 			(path(pf_bundle.hash), Path.read_bytes!(pf_bundle.archive)?),
 			(std_path(served_std.hash), Path.read_bytes!(served_std.archive)?),
 			(std_path(std.hash), Path.read_bytes!(std.archive)?),
 		]
-		serve! = |command| KaiBundle.serving!(listener, routes, command)
-		served = KaiBundle.project!(
+		serve! = |command| E2eBundle.serving!(listener, routes, command)
+		served = E2eBundle.project!(
 			kai,
-			KaiBundle.kaifile(platform_url, "${base}${std_path(served_std.hash)}"),
-			[pf_bundle.hash, served_std.hash].concat(KaiBundle.platform_packages),
+			E2eBundle.kaifile(platform_url, "${base}${std_path(served_std.hash)}"),
+			[pf_bundle.hash, served_std.hash].concat(E2eBundle.platform_packages),
 			Path.join(work, "served"),
 			serve!,
 		)
 		# The released std names the release's platform URL, not this one.
-		mismatched = KaiBundle.mismatch!(
+		mismatched = E2eBundle.mismatch!(
 			kai,
-			KaiBundle.kaifile(platform_url, "${base}${std_path(std.hash)}"),
+			E2eBundle.kaifile(platform_url, "${base}${std_path(std.hash)}"),
 			Path.join(work, "mismatched"),
 			serve!,
 		)
@@ -183,13 +149,13 @@ KaiBundle := [].{
 		_ = mismatched?
 		# Unreachable, so only the seeded cache can supply std; the platform
 		# URL must be the one std names, which is not published yet.
-		KaiBundle.project!(
+		E2eBundle.project!(
 			installed,
-			KaiBundle.kaifile(
-				KaiBundle.platform_url!(std)?,
+			E2eBundle.kaifile(
+				E2eBundle.platform_url!(std)?,
 				"https://kai.invalid${std_path(std.hash)}",
 			),
-			[pf_bundle.hash, std.hash].concat(KaiBundle.platform_packages),
+			[pf_bundle.hash, std.hash].concat(E2eBundle.platform_packages),
 			Path.join(work, "installed"),
 			|command| Ok(command.exec_output!()?.stdout_utf8),
 		)?
@@ -215,7 +181,7 @@ KaiBundle := [].{
 			}
 			match listener.accept!(100) {
 				Ok(stream) => {
-					_ = KaiBundle.respond!(stream, routes)
+					_ = E2eBundle.respond!(stream, routes)
 				}
 				Err(_) => {}
 			}
@@ -262,14 +228,14 @@ KaiBundle := [].{
 	# A check that must leave exactly the expected bundles cached (no other
 	# package, no staging directory), then an update and a task.
 	project! = |kai, text, hashes, dir, execute!| {
-		cache = KaiBundle.fresh!(dir, text)?
+		cache = E2eBundle.fresh!(dir, text)?
 		kai! = |args| execute!(
 			Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(dir)
 				.env(OsStr.utf8("XDG_CACHE_HOME"), Path.to_os_str(cache)),
 		)
 		_ = kai!(["check"])?
 		roc_packages = Path.join(cache, "roc/packages")
-		cached = KaiBundle.names!(roc_packages)?
+		cached = Bundles.names!(roc_packages)?
 		bundled = |name| hashes.any(|h| name == h or name == "${h}.deps.json")
 		if !hashes.all(|h| cached.contains(h)) or !cached.all(bundled) {
 			return Err(UnexpectedRocCache(cached))
@@ -285,7 +251,7 @@ KaiBundle := [].{
 
 	# roc refuses a std pinned to another platform before type checking.
 	mismatch! = |kai, text, dir, execute!| {
-		cache = KaiBundle.fresh!(dir, text)?
+		cache = E2eBundle.fresh!(dir, text)?
 		checked = execute!(
 			Cmd.new(Path.to_os_str(kai)).args_str(["check"]).cwd(dir)
 				.env(OsStr.utf8("XDG_CACHE_HOME"), Path.to_os_str(cache)),

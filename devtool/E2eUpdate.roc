@@ -1,57 +1,29 @@
-# Run a built `kai update` against real Nix on a copy of examples/composition:
-# it must publish a decodable lock, succeed again, and refuse to publish while
-# another update holds the writer lock.
+# kai update. On Nix, on a copy of examples/composition: it must publish a
+# decodable lock, keep another backend's section, succeed again, and refuse
+# to publish while another update holds the writer lock. On Guix, on a copy
+# of examples/guix with Nix off PATH: it locks the Guix channels alone.
 import pf.Cmd
-import pf.Env
 import pf.Path
 import pf.Stderr
 import pf.Stdout
 import api.LockJson
 import nix.Locks
 
-import ConfigFixtures
+import E2e
 
-KaiUpdate := [].{
-	run! = |binary| {
-		(kai, project) = KaiUpdate.fixture!(
+E2eUpdate := [].{
+	nix! = |binary| {
+		(kai, project) = E2e.fixture!(
 			binary,
 			"composition",
 			["ProjectTasks.roc"],
 		)?
-		result = KaiUpdate.run_in!(kai, project)
+		result = E2eUpdate.nix_in!(kai, project)
 		Path.delete_all!(project)?
 		result
 	}
 
-	# A temporary copy of an example's Kaifile.roc and listed files or
-	# directories (symlinks preserved), plus the absolute kai binary.
-	fixture! = |binary, example, entries| {
-		root = Path.canonicalize!(Env.cwd!()?)?
-		kai = Path.canonicalize!(Path.utf8(binary))?
-		temporary = Env.create_temp_dir_with_prefix!("kai-fixture-")?
-		project = Path.canonicalize!(temporary)?
-		source = Path.join(root, "examples/${example}")
-		kaifile = Path.read_utf8!(Path.join(source, "Kaifile.roc"))?
-		header = ConfigFixtures.header(root, project)
-		body = match kaifile.split_on(ConfigFixtures.composition_header) {
-			[before, after] => "${before}${header}${after}"
-			_ => return Err(UnexpectedCompositionHeader(kaifile))
-		}
-		Path.write_utf8!(Path.join(project, "Kaifile.roc"), body)?
-		for entry in entries {
-			from = Path.join(source, entry)
-			to = Path.join(project, entry)
-			if Path.is_dir!(from)? {
-				options = { symlinks: Preserve, destination: RequireNew }
-				Path.copy_dir_with!(from, to, options)?
-			} else {
-				Path.copy!(from, to)?
-			}
-		}
-		Ok((kai, project))
-	}
-
-	run_in! = |kai, project| {
+	nix_in! = |kai, project| {
 		lock = Path.join(project, ".kai/lock.json")
 		nix_update = ["--backend", "nix", "update"]
 		update! = || Cmd.new(Path.to_os_str(kai)).args_str(nix_update)
@@ -87,5 +59,25 @@ KaiUpdate := [].{
 			"kai update published, refreshed, kept the guix section and "
 				.concat("respected its lock"),
 		)
+	}
+
+	guix! = |bare, guix|
+		match guix {
+			Missing => E2e.skipped!("kai update")
+			Ready(path) => {
+				(kai, project) = E2e.fixture!(bare, "guix", [])?
+				result = E2eUpdate.guix_in!(kai, project, path)
+				Path.delete_all!(project)?
+				result
+			}
+		}
+
+	guix_in! = |kai, project, path| {
+		_ = E2e.guix_kai!(kai, project, path, ["update"])?
+		locked = Path.read_utf8!(Path.join(project, ".kai/lock.json"))?
+		if !locked.contains("\"guix\"") or locked.contains("\"nix\"") {
+			return Err(WrongGuixLock(locked))
+		}
+		Stdout.line!("kai update locked the Guix channels without Nix")
 	}
 }

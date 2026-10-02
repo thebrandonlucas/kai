@@ -152,7 +152,7 @@ Std.plugin(project).without_command("workflow")
 
 ## Testing
 
-`zig build kai-plugins` runs a real kai against a project using
+`zig build e2e-plugins` runs a real kai against a project using
 `examples/plugins/deploy`. A plugin package's own expects run with
 `roc test` once the Roc test runner handles platform packages whose
 dependencies share module names with the platform

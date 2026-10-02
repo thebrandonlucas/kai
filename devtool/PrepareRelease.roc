@@ -5,7 +5,7 @@ import pf.Path
 import pf.Stderr
 import pf.Stdout
 
-import KaiBundle
+import Bundles
 import Release
 
 PrepareRelease := [].{
@@ -187,10 +187,10 @@ PrepareRelease := [].{
 		Path.write_utf8!(manifest_path, rewritten)?
 		# Record the URLs this release will publish the platform and std bundles
 		# at; the std bundle names the platform URL, so it is built after VERSION.
-		bundle = KaiBundle.platform!()?
+		bundle = Bundles.platform!()?
 		url = Release.platform_url(repository, version, bundle.hash)
 		Path.write_utf8!(Path.utf8(Release.platform_file), "${url}\n")?
-		std = KaiBundle.bundle!(".#kai-std")?
+		std = Bundles.bundle!(".#kai-std")?
 		std_url = Release.std_url(repository, version, std.hash)
 		Path.write_utf8!(Path.utf8(Release.std_file), "${std_url}\n")?
 		Ok({})

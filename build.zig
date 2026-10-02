@@ -174,6 +174,25 @@ fn addDevtoolCommand(
     return run;
 }
 
+// One end-to-end test, or `all`, with fixed flags, then any flags passed
+// after `--`, then the Nix-installed and bare kai.
+fn addE2e(
+    b: *std.Build,
+    devtool: std.Build.LazyPath,
+    test_name: []const u8,
+    kai: std.Build.LazyPath,
+    bare: std.Build.LazyPath,
+    flags: []const []const u8,
+) *std.Build.Step.Run {
+    const run = addDevtoolCommand(b, devtool, "e2e", &.{test_name});
+    run.setName(b.fmt("run devtool e2e {s}", .{test_name}));
+    run.addArgs(flags);
+    if (b.args) |args| run.addArgs(args);
+    run.addFileArg(kai);
+    run.addFileArg(bare);
+    return run;
+}
+
 fn addNixOutLink(
     b: *std.Build,
     prerequisite: *std.Build.Step,
@@ -205,15 +224,12 @@ pub fn build(b: *std.Build) void {
     build_devtool.addFileInput(b.path("devtool/Cli.roc"));
     build_devtool.addFileInput(b.path("devtool/ConfigFixtures.roc"));
     build_devtool.addFileInput(b.path("devtool/Fuzz.roc"));
-    build_devtool.addFileInput(b.path("devtool/KaiBuild.roc"));
-    build_devtool.addFileInput(b.path("devtool/KaiBundle.roc"));
-    build_devtool.addFileInput(b.path("devtool/KaiEnv.roc"));
-    build_devtool.addFileInput(b.path("devtool/KaiGuix.roc"));
-    build_devtool.addFileInput(b.path("devtool/KaiHelp.roc"));
-    build_devtool.addFileInput(b.path("devtool/KaiPlugins.roc"));
-    build_devtool.addFileInput(b.path("devtool/KaiRun.roc"));
-    build_devtool.addFileInput(b.path("devtool/KaiUpdate.roc"));
-    build_devtool.addFileInput(b.path("devtool/KaiWorkflow.roc"));
+    for ([_][]const u8{
+        "Bundles",     "E2e",        "E2eBuild", "E2eBundle", "E2eHelp",
+        "E2eOverlays", "E2ePlugins", "E2eRun",   "E2eUpdate", "E2eWorkflow",
+    }) |module| {
+        build_devtool.addFileInput(b.path(b.fmt("devtool/{s}.roc", .{module})));
+    }
     for (sources.roc_files) |source| {
         if (std.mem.startsWith(u8, source, "platform/") or
             std.mem.startsWith(u8, source, "plugins/std/model/") or
@@ -455,113 +471,49 @@ pub fn build(b: *std.Build) void {
     }
 
     // Resolves nixpkgs with real Nix, so it needs network or a warm cache.
-    const kai_update_step = b.step(
-        "kai-update",
-        "Run kai update with real Nix on a copy of examples/composition",
-    );
-    const run_kai_update = addDevtoolCommand(b, devtool, "kai-update", &.{});
-    run_kai_update.addFileArg(cli_binary);
-    kai_update_step.dependOn(&run_kai_update.step);
-    ci_step.dependOn(kai_update_step);
+    // End-to-end tests run a built kai on example projects against real
+    // backends: Nix halves with the Nix-installed kai, Guix halves with the
+    // bare kai and only guix and coreutils on PATH, skipped without guix.
+    // `zig build e2e` runs them all and `zig build e2e-<test>` one; pass
+    // `-- --nix` or `-- --guix` to run one backend.
+    const e2e_tests = [_][]const u8{
+        "run", "build", "workflow", "update", "overlays", "help", "plugins", "bundle",
+    };
+    const e2e_step = b.step("e2e", "Run every end-to-end test (-- --nix | --guix)");
+    const run_e2e = addE2e(b, devtool, "all", cli_binary, bare_binary, &.{});
+    e2e_step.dependOn(&run_e2e.step);
+    ci_step.dependOn(e2e_step);
+    for (e2e_tests) |test_name| {
+        const step = b.step(
+            b.fmt("e2e-{s}", .{test_name}),
+            b.fmt("Run the {s} end-to-end test (-- --nix | --guix)", .{test_name}),
+        );
+        step.dependOn(&addE2e(b, devtool, test_name, cli_binary, bare_binary, &.{}).step);
+    }
 
-    const kai_run_step = b.step(
-        "kai-run",
-        "Run kai run and kai shell with real Nix on examples/composition",
-    );
-    const run_kai_run = addDevtoolCommand(b, devtool, "kai-run", &.{});
-    run_kai_run.addFileArg(cli_binary);
-    kai_run_step.dependOn(&run_kai_run.step);
-    ci_step.dependOn(kai_run_step);
-
-    const kai_plugins_step = b.step(
-        "kai-plugins",
-        "Run plugin commands with real Nix on a project using examples/plugins",
-    );
-    const run_kai_plugins = addDevtoolCommand(b, devtool, "kai-plugins", &.{});
-    run_kai_plugins.addFileArg(cli_binary);
-    kai_plugins_step.dependOn(&run_kai_plugins.step);
-    ci_step.dependOn(kai_plugins_step);
-
-    // The cheap real-Nix checks hosted CI runs on every push.
     const smoke_step = b.step(
         "smoke",
-        "Run kai-update and kai-run, the cheap real-Nix checks",
+        "Run the update and run end-to-end tests on Nix, the cheap real checks",
     );
-    smoke_step.dependOn(kai_update_step);
-    smoke_step.dependOn(kai_run_step);
+    for ([_][]const u8{ "update", "run" }) |test_name| {
+        const smoke = addE2e(b, devtool, test_name, cli_binary, bare_binary, &.{"--nix"});
+        smoke_step.dependOn(&smoke.step);
+    }
 
-    const kai_env_step = b.step(
-        "kai-env",
-        "Run kai shell and kai run with real Nix on examples/overlays",
-    );
-    const run_kai_env = addDevtoolCommand(b, devtool, "kai-env", &.{});
-    run_kai_env.addFileArg(cli_binary);
-    kai_env_step.dependOn(&run_kai_env.step);
-    ci_step.dependOn(kai_env_step);
-
-    // Stubbed Guix checks always run; the real Guix shell is reported as
-    // SKIPPED without guix. guix-integration requires it (hosted CI gate).
-    // A Guix-only host installs the release archive, so these run the bare
-    // binary: the package wrapper would put Nix back on PATH.
-    const kai_guix_step = b.step(
-        "kai-guix",
-        "Run kai against stub and, if installed, real Guix",
-    );
-    const run_kai_guix = addDevtoolCommand(b, devtool, "kai-guix", &.{});
-    run_kai_guix.addFileArg(bare_binary);
-    kai_guix_step.dependOn(&run_kai_guix.step);
-    ci_step.dependOn(kai_guix_step);
-
+    // The hosted Guix CI gate: every Guix half, failing without guix.
     const guix_integration_step = b.step(
         "guix-integration",
-        "Run kai against real Guix without Nix; fails without guix",
+        "Run every end-to-end test on real Guix without Nix; fails without guix",
     );
-    const run_guix_integration = addDevtoolCommand(
+    const run_guix_integration = addE2e(
         b,
         devtool,
-        "kai-guix",
-        &.{"--require"},
+        "all",
+        cli_binary,
+        bare_binary,
+        &.{ "--guix", "--require-guix" },
     );
-    run_guix_integration.addFileArg(bare_binary);
     guix_integration_step.dependOn(&run_guix_integration.step);
-
-    // Real sandboxed builds; the sandbox probe needs a world-readable /var/tmp.
-    const kai_build_step = b.step(
-        "kai-build",
-        "Run kai build with real, sandboxed Nix on examples/artifacts",
-    );
-    const run_kai_build = addDevtoolCommand(b, devtool, "kai-build", &.{});
-    run_kai_build.addFileArg(cli_binary);
-    kai_build_step.dependOn(&run_kai_build.step);
-    ci_step.dependOn(kai_build_step);
-
-    // Real workflows and JSON output, on examples/artifacts like kai-build.
-    const kai_workflow_step = b.step(
-        "kai-workflow",
-        "Run kai workflow and kai --json with real Nix on examples/artifacts",
-    );
-    const run_kai_workflow = addDevtoolCommand(b, devtool, "kai-workflow", &.{});
-    run_kai_workflow.addFileArg(cli_binary);
-    kai_workflow_step.dependOn(&run_kai_workflow.step);
-    ci_step.dependOn(kai_workflow_step);
-
-    const kai_bundle_step = b.step(
-        "kai-bundle",
-        "Load a Kaifile.roc through the served and the pre-seeded platform bundle",
-    );
-    const run_kai_bundle = addDevtoolCommand(b, devtool, "kai-bundle", &.{});
-    run_kai_bundle.addFileArg(bare_binary);
-    kai_bundle_step.dependOn(&run_kai_bundle.step);
-    ci_step.dependOn(kai_bundle_step);
-
-    const kai_help_step = b.step(
-        "kai-help",
-        "Compile and run the examples in kai help with real Nix",
-    );
-    const run_kai_help = addDevtoolCommand(b, devtool, "kai-help", &.{});
-    run_kai_help.addFileArg(cli_binary);
-    kai_help_step.dependOn(&run_kai_help.step);
-    ci_step.dependOn(kai_help_step);
 
     const config_fixtures_step = b.step(
         "config-fixtures",
