@@ -1,0 +1,13 @@
+.{
+    .name = .kai_platform,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .fingerprint = 0x6f26e92e386d9ab1,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "host",
+        "targets",
+    },
+}

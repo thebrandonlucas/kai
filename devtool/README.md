@@ -1,4 +1,4 @@
-Goal here is to eventually build our build system in `roc`! Allowing us to have one tool that can just do all the things. Right now these `zig build build-release` and `zig build release -- "<release-name> x.x.x` are written in `roc` and invoked via `zig`.
+Goal here is to eventually build our build system in `roc`! Allowing us to have one tool that can just do all the things. Right now these `zig build build-release` and `zig build release -- "<release-name>" x.x.x` are written in `roc` and invoked via `zig`.
 
 Basically the idea is that we have a list of "monotonically growing checks" that define what our codebase is, and that this should (eventually):
 

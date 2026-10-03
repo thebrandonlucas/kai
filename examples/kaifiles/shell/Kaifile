@@ -1,6 +1,0 @@
-# The simplest possible Kaifile.
-#
-# Run `kai shell` to enter this environment on Linux or macOS.
-shell {
-  packages: ["cowsay", "fortune"]
-}
