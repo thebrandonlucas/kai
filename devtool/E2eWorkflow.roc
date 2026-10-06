@@ -208,7 +208,7 @@ E2eWorkflow := [].{
 		match guix {
 			Missing => E2e.skipped!("kai workflow")
 			Ready(path) => {
-				(kai, project) = E2e.guix_project!(bare)?
+				(kai, project) = E2e.guix_project!(bare, "guix", [])?
 				result = E2eWorkflow.guix_in!(kai, project, path)
 				Path.delete_all!(project)?
 				result

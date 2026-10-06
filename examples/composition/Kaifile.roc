@@ -12,7 +12,8 @@ kaifile = Std.kaifile(
 		Name("composed"),
 		Systems(["x86_64-linux", "aarch64-linux"]),
 		Environment("base", [Tools(["git"])]),
-		Environment("dev", [Extend("base"), Tools(["coreutils", "git"])]),
+		# Guix shells have no sh unless a tool provides it; Nix shells always do.
+		Environment("dev", [Extend("base"), Tools(["bash", "coreutils", "git"])]),
 		Shell("default", [Use("dev")]),
 	].concat(ProjectTasks.settings("dev")),
 )

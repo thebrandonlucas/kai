@@ -257,7 +257,7 @@ ConfigFixtures := [].{
 			body: \\config = [Name("composed"),
 				\\ Systems(["x86_64-linux", "aarch64-linux"]),
 				\\ Environment("base", [Tools(["git"])]),
-				\\ Environment("dev", [Tools(["git", "coreutils"])]),
+				\\ Environment("dev", [Tools(["git", "bash", "coreutils"])]),
 				\\ Shell("default", [Use("dev")]),
 				\\ Task("fmt", [Use("dev"), Run(["git", "diff", "--check"])]),
 				\\ Task("test", [Use("dev"), Run(["git", "--version"])]),

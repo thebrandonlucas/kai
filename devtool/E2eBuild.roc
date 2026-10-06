@@ -177,7 +177,7 @@ E2eBuild := [].{
 		match guix {
 			Missing => E2e.skipped!("kai build")
 			Ready(path) => {
-				(kai, project) = E2e.guix_project!(bare)?
+				(kai, project) = E2e.guix_project!(bare, "guix", [])?
 				result = E2eBuild.guix_in!(kai, project, path)
 				Path.delete_all!(project)?
 				result

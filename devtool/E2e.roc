@@ -90,9 +90,9 @@ E2e := [].{
 			.exec_output!()
 	}
 
-	## A copy of examples/guix, locked at `release`.
-	guix_project! = |binary| {
-		(kai, project) = E2e.fixture!(binary, "guix", [])?
+	## A copy of an example, locked at `release`.
+	guix_project! = |binary, example, entries| {
+		(kai, project) = E2e.fixture!(binary, example, entries)?
 		E2e.pin!(project)?
 		Ok((kai, project))
 	}

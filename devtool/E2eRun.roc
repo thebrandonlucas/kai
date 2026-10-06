@@ -2,10 +2,11 @@
 # lock they refuse and create none; with one they pass exact argv, keep a
 # task's exit code, run raw shell hooks, print a dry run's plan without
 # running it and leave the lock untouched, even though the Kaifile.roc has
-# warnings. On Guix, on a copy of examples/guix: STUBBED process-boundary
-# checks show that Guix commands need a Guix lock, then run under `guix
+# warnings. On Guix: STUBBED process-boundary checks on examples/guix
+# show that Guix commands need a Guix lock, then run under `guix
 # time-machine` at the locked channels with exact argv, and that a failing
-# Guix shell never falls back to Nix; then real Guix runs shells and a task.
+# Guix shell never falls back to Nix; then real Guix runs a shell and a task
+# on examples/composition and the channel source's shell on examples/guix.
 import pf.Cmd
 import pf.Env
 import pf.Path
@@ -116,12 +117,27 @@ E2eRun := [].{
 		match guix {
 			Missing => E2e.skipped!("kai run and shell")
 			Ready(path) => {
-				(real, pinned) = E2e.guix_project!(bare)?
-				result = E2eRun.guix_in!(real, pinned, path)
-				Path.delete_all!(pinned)?
-				result
+				composed = [
+					(["shell", "default", "--", "echo", "a b"], "a b\n"),
+					(["run", "args", "--", "a b"], "<configured argument><a b>\n"),
+				]
+				E2eRun.guix_on!(bare, path, "composition", composed)?
+				greeting = ["hello", "--greeting", "hi"]
+				shell = ["--backend", "guix", "shell", "channels", "--"]
+				channels = [(shell.concat(greeting), "hi\n")]
+				E2eRun.guix_on!(bare, path, "guix", channels)?
+				Stdout.line!("kai ran pinned Guix shells and tasks without Nix")
 			}
 		}
+	}
+
+	## Run each case on a pinned copy of `example` and compare its stdout.
+	guix_on! = |bare, path, example, cases| {
+		entries = if example == "composition" ["ProjectTasks.roc"] else []
+		(kai, project) = E2e.guix_project!(bare, example, entries)?
+		result = E2eRun.guix_in!(kai, project, path, cases)
+		Path.delete_all!(project)?
+		result
 	}
 
 	stubbed! = |kai, project, stubs| {
@@ -177,23 +193,13 @@ E2eRun := [].{
 		Stdout.line!("stubbed kai ran guix under time-machine with exact argv")
 	}
 
-	guix_in! = |kai, project, path| {
-		kai! = |args| E2e.guix_kai!(kai, project, path, args)
-		shells = [
-			(["shell", "default", "--", "hello", "--greeting", "a b"], "a b\n"),
-			(
-				["--backend", "guix", "shell", "channels", "--"]
-					.concat(["hello", "--greeting", "hi"]),
-				"hi\n",
-			),
-			(["run", "greet", "--", "task"], "task\n"),
-		]
-		for (args, expected) in shells {
-			output = kai!(args)?
+	guix_in! = |kai, project, path, cases| {
+		for (args, expected) in cases {
+			output = E2e.guix_kai!(kai, project, path, args)?
 			if output.stdout_utf8 != expected {
 				return Err(WrongGuixShell(Str.inspect(output)))
 			}
 		}
-		Stdout.line!("kai ran pinned Guix shells and tasks without Nix")
+		Ok({})
 	}
 }

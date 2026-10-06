@@ -1,7 +1,7 @@
 # kai update. On Nix, on a copy of examples/composition: it must publish a
 # decodable lock, keep another backend's section, succeed again, and refuse
 # to publish while another update holds the writer lock. On Guix, on a copy
-# of examples/guix with Nix off PATH: it locks the Guix channels alone.
+# of examples/composition with Nix off PATH: it locks the Guix channels alone.
 import pf.Cmd
 import pf.Path
 import pf.Stderr
@@ -65,7 +65,7 @@ E2eUpdate := [].{
 		match guix {
 			Missing => E2e.skipped!("kai update")
 			Ready(path) => {
-				(kai, project) = E2e.fixture!(bare, "guix", [])?
+				(kai, project) = E2e.fixture!(bare, "composition", ["ProjectTasks.roc"])?
 				result = E2eUpdate.guix_in!(kai, project, path)
 				Path.delete_all!(project)?
 				result
