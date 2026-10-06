@@ -1,6 +1,7 @@
-# Generic tools use whichever backend is installed and a Guix source requires
-# Guix; on Guix, shells, tasks, builds and workflows run at the channel
-# commit Kai's lock pins.
+# A Guix channel source beside generic tools: the channels shell needs Guix,
+# while generic tools use whichever backend is installed. On Guix, every
+# command runs at the channel commit Kai's lock pins. The build takes no
+# inputs, which Guix builds do not support yet.
 app [kaifile] {
 	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",
@@ -9,7 +10,7 @@ app [kaifile] {
 import std.Std
 
 kaifile = Std.kaifile([
-	Name("guix"),
+	Name("channels"),
 	Systems(["x86_64-linux", "aarch64-linux"]),
 	Packages("channels", From(GuixPackages("guix"))),
 	Environment("dev", [Tools(["hello"])]),

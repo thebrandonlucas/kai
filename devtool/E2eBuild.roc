@@ -2,7 +2,7 @@
 # bytes, every build snapshots the project afresh, a missing output or
 # symlink never reports success, a changed locked source needs `kai update`,
 # the sandbox hides host files and TCP, and the lock is never written. On
-# Guix, on a copy of examples/guix with Nix off PATH: a sandboxed build
+# Guix, on a copy of examples/channels with Nix off PATH: a sandboxed build
 # prints the store path of its exact artifact.
 import pf.Cmd
 import pf.Env
@@ -177,7 +177,7 @@ E2eBuild := [].{
 		match guix {
 			Missing => E2e.skipped!("kai build")
 			Ready(path) => {
-				(kai, project) = E2e.guix_project!(bare, "guix", [])?
+				(kai, project) = E2e.guix_project!(bare, "channels", [])?
 				result = E2eBuild.guix_in!(kai, project, path)
 				Path.delete_all!(project)?
 				result

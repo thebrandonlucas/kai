@@ -453,7 +453,7 @@ pub fn build(b: *std.Build) void {
     const examples = [_][]const u8{
         "examples/artifacts",
         "examples/composition",
-        "examples/guix",
+        "examples/channels",
         "examples/overlays",
     };
     for (examples) |example| {

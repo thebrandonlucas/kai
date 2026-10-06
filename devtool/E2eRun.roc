@@ -2,11 +2,11 @@
 # lock they refuse and create none; with one they pass exact argv, keep a
 # task's exit code, run raw shell hooks, print a dry run's plan without
 # running it and leave the lock untouched, even though the Kaifile.roc has
-# warnings. On Guix: STUBBED process-boundary checks on examples/guix
+# warnings. On Guix: STUBBED process-boundary checks on examples/channels
 # show that Guix commands need a Guix lock, then run under `guix
 # time-machine` at the locked channels with exact argv, and that a failing
 # Guix shell never falls back to Nix; then real Guix runs a shell and a task
-# on examples/composition and the channel source's shell on examples/guix.
+# on examples/composition and the channel source's shell on examples/channels.
 import pf.Cmd
 import pf.Env
 import pf.Path
@@ -108,7 +108,7 @@ E2eRun := [].{
 	}
 
 	guix! = |bare, guix| {
-		(kai, project) = E2e.fixture!(bare, "guix", [])?
+		(kai, project) = E2e.fixture!(bare, "channels", [])?
 		stubs = Path.canonicalize!(Env.create_temp_dir_with_prefix!("kai-stubs-")?)?
 		stubbed = E2eRun.stubbed!(kai, project, stubs)
 		Path.delete_all!(stubs)?
@@ -125,7 +125,7 @@ E2eRun := [].{
 				greeting = ["hello", "--greeting", "hi"]
 				shell = ["--backend", "guix", "shell", "channels", "--"]
 				channels = [(shell.concat(greeting), "hi\n")]
-				E2eRun.guix_on!(bare, path, "guix", channels)?
+				E2eRun.guix_on!(bare, path, "channels", channels)?
 				Stdout.line!("kai ran pinned Guix shells and tasks without Nix")
 			}
 		}

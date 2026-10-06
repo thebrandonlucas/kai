@@ -3,7 +3,7 @@
 # repeated steps repeat, each build snapshots the project afresh, a changed
 # locked source stops a workflow before its first effect, and the lock is
 # never written. In JSON mode kai's stdout is whole JSON objects without
-# terminal escapes. On Guix, on a copy of examples/guix with Nix off PATH: a
+# terminal escapes. On Guix, on a copy of examples/channels with Nix off PATH: a
 # workflow runs its task, then its build.
 import pf.Cmd
 import pf.Path
@@ -208,7 +208,7 @@ E2eWorkflow := [].{
 		match guix {
 			Missing => E2e.skipped!("kai workflow")
 			Ready(path) => {
-				(kai, project) = E2e.guix_project!(bare, "guix", [])?
+				(kai, project) = E2e.guix_project!(bare, "channels", [])?
 				result = E2eWorkflow.guix_in!(kai, project, path)
 				Path.delete_all!(project)?
 				result
