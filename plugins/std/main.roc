@@ -1,10 +1,20 @@
+## Kai's standard plugin: environments, shells, tasks, builds and workflows.
 package
-	[StdPlugin]
+	[
+		Std,
+		Config,
+		EnvName,
+		FlakeRef,
+		InputName,
+		System,
+		TaskName,
+		Tool,
+		Val,
+		WorkflowName,
+	]
 	{
-		backends: "./backends/main.roc",
-		blocks: "./schemas/blocks/main.roc",
-		commands: "./schemas/commands/main.roc",
-		implementations: "./implementations/main.roc",
-		kai: "../../xkai/package.roc",
-		parser: "../../xkai/parser/main.roc",
+		pf: platform "../../platform/main.roc",
+		model: "model/main.roc",
+		nix: "backends/nix/main.roc",
+		guix: "backends/guix/main.roc",
 	}

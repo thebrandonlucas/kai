@@ -1,66 +1,159 @@
-Kai can be used to write plugins which allow anyone to make their own `kai` binary using `xkai`, a special CLI tool for building `kai` CLI tools!
+# Writing a Kai plugin
 
-This is done so that the work done here will _last_ -- as code itself becomes cheaper and cheaper, good architecture and design thinking become more valuable by comparison. Thus a tool that wants to last must be modular and easy to modify in keeping with the Unix Philosophy. Since `kai` aims to be foundational software, modularity is a strong concern.
+A plugin is an ordinary Roc package on Kai's plugin platform. It adds
+commands to `kai`, declares backends, and implements commands on backends.
+Plugins are pure: they return plans, data describing what to write and
+run, and `kai` performs every effect after checking the whole plan. std,
+Kai's standard plugin, is written the same way; `examples/plugins/deploy`
+is a complete small plugin.
 
-`Plugin`s are `roc` modules which let you extend or replace any `kai` functionality you like. It assumes you need to perform operations on potentially divergent systems (right now, `linux` and `macos`). A `Plugin` must specify:
+## Using a plugin
 
-1. The `command`s you want your `kai` to do and their resulting shape.
-2. The `backend`(s) you want it to support. Essentially any requirement your `Plugin` will need to run.
-3. The `implementation`(s) which specify the actual behavior and glue the `command` and `backend` together. It specifies how the given `command` behaves for those specific `backend`(s).
+A Kaifile.roc lists its plugins:
 
-The last allows, for instance, one `command` (i.e. `shell`) to have different behavior across `backend`s (e.g. `nix` would do `nix shell` and `guix` do `guix shell` when `kai shell` is invoked and `backend` is set as one of those).
+```roc
+app [kaifile] {
+	pf: platform "<platform URL>",
+	std: "<std URL>",
+	deploy: "./plugins/deploy/main.roc",
+}
 
-`xkai` then takes this and builds a `kai` binary which implements the `Plugin` behavior. It:
+import pf.Kaifile
+import std.Config
+import std.Std
+import deploy.Deploy
 
-1. Reads a `Plugin.roc` file and its imports from a directory
-2. Validates them.
-3. Runs `roc build --opt=size` to compile it.
+project : List(Config.Setting)
+project = [
+	Name("site"),
+	Environment("ops", [Tools(["nixos-rebuild"])]),
+]
 
-By default, the `kai` binary ships with `StdPlugin`, which will eventually have the standard set of things most developers want. But one size never fits all, especially in the software world.
-
-Not only is `kai` modular via the plugin system, but `Plugin`s _themselves_ are modular! This means you can mix and match components as needed. For example, our split design makes the `shell` `command` independent of a `backend` or `implementation`, it just defines the shape that all `implementation`s of `shell` must conform to for all `backend`s. So a plugin writer could borrow it from `StdPlugin` to use in their own `implementation` or `backend`, while not having to recode the shape!
-
-## Plugin contract
-
-`StdPlugin` and custom plugins expose the same registry contract and use the same generic planner. The planner selects a command and backend, validates its configuration, calls its pure renderer, and lowers its action templates before the shared executor performs any file writes or backend commands.
-
-A plugin's top-level Roc module exports `plugin : PluginApi.RegistryDefinition`. The registry contains:
-
-- a config-block selector; and
-- a definition listing commands, backends, and implementations.
-
-`PluginApi.select_config` provides standard config-block lookup for the command and backend already chosen by the planner: it prefers the matching host section, falls back to an unscoped block, and uses a backend-qualified block when the backend was explicit. A plugin may instead supply its own selector. Commands declare their name, argument policy, config-block requirement, default backend, and body shape. Backends describe a determinate system and its requirements. Implementations connect command and backend names to a required pure renderer and action templates.
-
-A single-file plugin remains valid:
-
-```text
-custom-plugin/
-└── CustomPlugin.roc
+kaifile = Kaifile.new([
+	Std.plugin(project),
+	Deploy.plugin(project, [
+		Host("web", [Address("root@203.0.113.7"), Flake(".#web"), Tools("ops")]),
+	]),
+])
 ```
 
-A plugin may instead split its direct modules into the three supported component folders:
+`kai --help` then lists `deploy`, `kai deploy --help` shows the plugin's
+page with the project's hosts, and `kai describe` lists the plugins,
+commands and backends.
 
-```text
-split-plugin/
-├── Plugin.roc
-├── commands/
-│   └── Command.roc
-├── backends/
-│   └── Backend.roc
-└── implementations/
-    └── CommandBackend.roc
+The platform, std and every plugin must be built for the same Kai release:
+Roc refuses a package pinned to another platform before type checking.
+
+## The package
+
+```roc
+package [Deploy] {
+	pf: platform "<platform URL>",
+	std: "<std URL>",   # only to reuse std's settings or helpers
+}
 ```
 
-The top-level module imports those component packages and assembles their values into one registry definition. `xkai` generates package wiring for direct `.roc` files in these folders; `main.roc` is reserved for generated package wiring, and nested helper directories are not yet supported.
+Import the API from the platform: `pf.Plugin`, `pf.Command`,
+`pf.Implementation`, `pf.Backend`, `pf.Plan`, `pf.Kaifile`.
 
-`xkai` is the plugin builder, similar to `xcaddy`. Pass one or more top-level plugin modules to add commands or override standard command ownership:
+## Plugin
 
-```sh
-xkai build path/to/CustomPlugin.roc path/to/split-plugin/Plugin.roc
+`Plugin.new({ name, version, describe, commands, backends,
+implementations })` builds a plugin; `describe` is `""` for any plugin
+but std. A plugin whose settings are invalid returns
+`Plugin.invalid(name, problems)`: `kai check` and every command then fail
+with `Invalid Kaifile.roc: <name>: <problems>` while Kaifile.roc compiles.
+
+Settings are the plugin's own closed tag union (`Deploy.Setting`), so a
+misspelt setting is a type error. A plugin that works with std's settings
+takes the same `List(Config.Setting)` value the project gives std.
+
+## Commands
+
+```roc
+Command.{
+	name: "deploy",
+	summary: "...",
+	help: { description: "...", examples: ["kai deploy web"], config: [...] },
+	args: [
+		Name({ name: "host", help: "...", choices: [...], default: Required }),
+	],
+	lock: ReadsLock,
+}
 ```
 
-Custom registries are ordered as supplied and precede `StdPlugin`; the first registry declaring a command owns it. During the build, the generated `kai` validates that every registry has commands, backends, and implementations, that implementation references resolve, and that no command or backend is left unimplemented. An invalid registry is rejected before the resulting binary is published.
+Arguments are data; the platform builds kai's parser and help from them.
+A command takes at most one `Name` (a project entry; each choice becomes a
+subcommand, so help and usage errors list the project's names; no choices
+means any name) and at most one `Trailing` (everything after `--`,
+exact). `Command.name(args, "host")` and `Command.trailing(args, "args")`
+read the parsed values. Only the one command that owns the lock
+(`OwnsLock`, std's `update`) may publish it.
 
-For the build only, `xkai` writes its embedded API, executor, standard plugin, and supplied custom plugins to a temporary directory and invokes Roc. `basic-cli` is the compile-time Roc platform for both standard and customized binaries. The result is a portable `kai` binary with that registry compiled in; the temporary build inputs are removed. At runtime, `kai` reads `Kaifile`. The `.kai/` directory contains backend output such as `.kai/flake.nix`, never Roc source or plugin build inputs.
+## Backends and implementations
 
-The registry contains data seams for features tracked in the [roadmap](../roadmap.md).
+A backend is `Backend.{ id, summary, program, flag }`: kai checks it by
+running `program --version` (or `-v`, `version`), bounded and side-effect
+free. std declares `nix` and `guix`; other plugins usually implement
+commands on those.
+
+```roc
+Implementation.{
+	command: "deploy",
+	backend: On("nix"),          # or Independent: no backend, no --backend
+	fit: |args| ...,             # Err(why) when this backend cannot serve it
+	plan: |ctx| ...,             # Ok(Plan) or Err(message)
+}
+```
+
+For every request, the platform asks each backend's implementation, in
+preference order (`Kaifile.prefer`, else declaration order), whether it
+fits and for its plan. kai then runs the first fitting implementation
+whose backend program works. A plan that fails is reported; kai never
+falls back to another backend after choosing one.
+
+`ctx` holds the parsed `args`, the chosen `backend`, the `host` system,
+the `layout` of the project and its `.kai` workspace, the `lock` text,
+and, for continued plans, `phase` and the `observed` files.
+
+## Plans
+
+A plan is a list of steps and what comes next:
+
+| Step | Effect |
+|---|---|
+| `Note(text)`, `Print(text)` | a note on stderr, a result on stdout (JSON events with `--json`) |
+| `Confirm(prompt)` | ask before anything runs; refused without `--yes` unless a person is at a terminal |
+| `Write(files)` | write generated files, only beneath the generated root |
+| `Run({ what, argv, output })` | run exact argv from the project root, never through a shell |
+| `VerifyPath`, `CheckSource`, `Snapshot`, `InstallRunner` | std's checks and build sandbox steps |
+| `PublishLock({ previous, contents })` | replace the lock, only for the lock owner |
+
+`next: Observe(paths)` asks kai to read generated files and ask again with
+`phase` 1 and their contents (std's `update` resolves with Nix, then
+publishes). kai checks the whole plan before its first step and refuses
+anything outside these rules; `kai --dry-run` prints the plan instead.
+
+std's `Std.run_in(project, ctx, { environment, argv, what })` plans argv
+inside one of std's environments from the locked Nix inputs, as a task
+would run; the deploy example uses it for `nixos-rebuild`.
+
+## Combining plugins
+
+Kaifile.roc fails to compile when two plugins declare the same command,
+implement the same command on the same backend, name kai's own commands
+(`check`, `describe`, `help`), or leave a command without an
+implementation. Resolve a clash explicitly:
+
+```roc
+Std.plugin(project).without({ command: "shell", backend: "nix" })
+Std.plugin(project).without_command("workflow")
+```
+
+## Testing
+
+`zig build e2e-plugins` runs a real kai against a project using
+`examples/plugins/deploy`. A plugin package's own expects run with
+`roc test` once the Roc test runner handles platform packages whose
+dependencies share module names with the platform
+([roc-issues BUG-012](https://github.com/thebrandonlucas/roc-issues/tree/master/bugs/BUG-012-test-platform-and-package-module-same-name)).

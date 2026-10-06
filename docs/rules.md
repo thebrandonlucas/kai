@@ -1,6 +1,12 @@
-- After every change, run `zig build ci`. This should pass on every commit.
-- After changing examples, run `zig build kaifiles-smoke`. Run the full
-  `zig build kaifiles` integration suite occasionally.
+- After every change, run `zig build test` plus the integration step(s) for the
+  area you touched. Full `zig build ci` runs on GitHub; run it locally only
+  when asked or before a merge. It should pass on every commit.
+- The end-to-end steps are `e2e-run`, `e2e-build`, `e2e-workflow`,
+  `e2e-update`, `e2e-overlays`, `e2e-help`, `e2e-plugins` and `e2e-bundle`
+  (`e2e` runs them all), plus `config-fixtures`, each run with
+  `zig build <step>`; add `-- --nix` or `-- --guix` to run one backend.
+  `zig build smoke` runs `e2e-update` and `e2e-run` on Nix. Run
+  `zig build guix-integration` when a real Guix is available.
 - Do not commit changes unless explicitly instructed. Never push. Never create issues. Never open PRs.
 - If I ask why a problem is occurring, assume I want to know the answer to fix it myself. Don't fix or edit files without being told to.
 - Don't make "fix" commits in a PR with fresh code. Fix commits are for PRs with bugs that already existed.

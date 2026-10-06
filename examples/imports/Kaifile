@@ -1,4 +1,0 @@
-import "parts/environment.kai"
-shell {
-  environment: dev
-}

@@ -10,38 +10,232 @@ Imagine everything about how your computer works is a portable config in one fil
 
 To attempt a solution, `kai` wraps `nix` in a friendly frontend so that you can actually use it with confidence.
 
-Eventually `kai` plans to support the other determinate system, [Guix](https://guix.gnu.org/), and, if we're lucky, maybe even a custom implementation which learns from the mistakes of the others :eyes:
+`kai` can already enter shells with the other determinate system, [Guix](https://guix.gnu.org/), and plans to support more of it. If we're lucky, maybe it will even get a custom implementation which learns from the mistakes of the others :eyes:
 
 The goal is to make using determinate systems so easy and powerful that they become the de-facto choice for computer use in all its forms: from desktops to servers and beyond. Practically, this means adopting Nix under the hood and creating useful abstractions on top in the short term, like [jujutsu](https://github.com/jj-vcs/jj) does with `git`.
 
 A personal motivation is to stimulate not just Linux adoption but _determinate_ computing adoption by eventually creating a custom NixOS-based competitor to [Omarchy](https://omarchy.org).
 
-### Installation
+## Installation
 
-### Prerequisites
-
-1. [Nix with flakes enabled](https://docs.determinate.systems/?phid=019ef5f5-e228-7eb4-9a1e-4dbe9b75b79e)
-
-That should be it! Then run `nix develop` (or `direnv allow` once, if using direnv) and you should be all set. If that doesn't work, please open an issue for me to add the missing dependency to `flake.nix` and I will.
-
-When Kai becomes self-hosted, that will change to just be `kai` :)
-
-### Run without installing
+Kai runs on Linux and needs
+[Nix with flakes enabled](https://docs.determinate.systems/?phid=019ef5f5-e228-7eb4-9a1e-4dbe9b75b79e).
 
 One immediate benefit of a determinate system is you can do things like this!
 
 ```sh
-nix run github:thebrandonlucas/kai -- version
+nix run github:thebrandonlucas/kai -- --version
+nix shell github:thebrandonlucas/kai    # kai on PATH in a new shell
 ```
 
-### Build locally
+The Nix package includes the Roc compiler Kai uses to evaluate `Kaifile.roc`
+and pre-seeds Roc's package cache with the matching Kai platform.
+
+Release archives contain only the `kai` binary. To use one, also install Nix
+and the Roc compiler named in [`.roc-version`](.roc-version) (available from
+[roc-overlay](https://github.com/roc-lang/roc-overlay)), either on `PATH` or
+set as `ROC=/path/to/roc`. Roc downloads the platform the first time it checks
+a `Kaifile.roc`.
+
+## Getting started
+
+A project is configured by `Kaifile.roc`, an ordinary
+[Roc](https://roc-lang.org/) app on Kai's plugin platform. Its `kaifile` is
+made of plugins; Kai's standard plugin, std, takes a list of settings:
+
+```roc
+app [kaifile] {
+	pf: platform "https://github.com/thebrandonlucas/kai/releases/download/v0.0.8/8eM3r3RE4n1BFSWqD7wvqch5UW3ACJ7LLJiiin5nxJdK.tar.zst",
+	std: "https://github.com/thebrandonlucas/kai/releases/download/v0.0.8/std-6zJHFrCtGkKhyuiNbmnJNHPx2DQvcgUeDL2znXw86ZEx.tar.zst",
+}
+
+import std.Std
+
+kaifile = Std.kaifile([
+	Name("hello"),
+	Systems(["x86_64-linux", "aarch64-linux"]),
+	Environment("dev", [Tools(["cowsay", "python3"])]),
+	Shell("default", [Use("dev")]),
+	Task("hello", [Use("dev"), Run(["cowsay", "hello from kai"])]),
+	Build(
+		"greeting",
+		[
+			Use("dev"),
+			Run(["sh", "-c", "cowsay built by kai > greeting.txt"]),
+			Output("greeting.txt"),
+		],
+	),
+	Workflow("ci", [RunTask("hello", []), BuildArtifact("greeting")]),
+])
+```
+
+`kai --help` prints the header for the installed version: the platform and
+std must come from the same release. Then:
+
+```sh
+kai check                         # compile and validate Kaifile.roc
+kai update                        # pin package sources in .kai/lock.json
+kai shell                         # enter the default shell
+kai shell default -- cowsay hi    # or run one command in it
+kai run hello                     # run a task
+kai run hello -- again            # arguments after -- are appended
+kai build greeting                # sandboxed build; prints the store path
+kai workflow ci                   # run steps in order, stop at a failure
+```
+
+Tool names are the backend's own package names: Nix attributes such as
+`python3`, or Guix specifications. Tasks run their argv exactly, without a
+shell, so use `Run(["sh", "-c", "..."])` for pipes. Every command has help with
+examples, e.g. `kai run --help`; inside a project, help lists its shells,
+tasks, builds and workflows.
+
+### Settings
+
+| Setting | Purpose |
+| --- | --- |
+| `Name(name)` | Project name. Required. |
+| `Systems([...])` | Systems the generated flake declares. Optional (default `x86_64-linux` and `aarch64-linux`); must include the system of the host Kai runs on. |
+| `Packages(name, source)` | A package source: `Auto`, `From(NixPackages(flakeRef))` or `From(GuixPackages(...))`. Tools use the `default` source (`Auto`: nixpkgs unstable on Nix, the installed channels on Guix) unless written `"source#tool"`. |
+| `Overlay(name, flakeRef)` | A Nix overlay, applied only where an environment selects it. |
+| `Environment(name, [...])` | A set of tools: `Tools([...])`, `Overlays([...])` in order, and `Extend(parent)` to inherit the parent's tools and overlays first. |
+| `Shell(name, [Use(environment)])` | A shell for `kai shell`. |
+| `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. |
+| `Source(name, flakeRef)` | A locked, non-flake source that builds can read. |
+| `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, in `$KAI_INPUTS/<name>`) and `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`). |
+| `Workflow(name, [...])` | Steps for `kai workflow`: `RunTask(task, args)`, `BuildArtifact(build)`, `RunWorkflow(workflow)`. |
+| `Raw("nix", target, value)` | Extra attributes for the generated flake (`"flake"`) or one shell (`"shell:<name>"`), e.g. `Attrs([("shellHook", Str("echo hi"))])`. |
+
+Names and references are checked as the file compiles, so `kai check` reports
+mistakes before anything runs. See [examples](examples/) for overlays, sources
+and builds, and Guix.
+
+### Reusing configuration
+
+Reuse is ordinary Roc: a module returns settings and `Kaifile.roc` imports it.
+Shortened from [examples/composition](examples/composition):
+
+```roc
+# ProjectTasks.roc
+import std.Config
+import std.EnvName
+
+ProjectTasks :: [].{
+	settings : EnvName -> List(Config.Setting)
+	settings = |environment| [
+		Task("test", [Use(environment), Run(["git", "--version"])]),
+	]
+}
+```
+
+```roc
+# Kaifile.roc, after the app header
+import ProjectTasks
+import std.Std
+
+kaifile = Std.kaifile(
+	[
+		Name("composed"),
+		Environment("dev", [Tools(["git"])]),
+		Shell("default", [Use("dev")]),
+	].concat(ProjectTasks.settings("dev")),
+)
+```
+
+A module can only add settings. New commands, and replacements for one
+command on one backend, come from plugins: Roc packages next to std in
+`Kaifile.new([...])`. See [docs/plugin.md](docs/plugin.md) and
+[examples/plugins/deploy](examples/plugins/deploy), which adds `kai deploy`.
+
+## Backends
+
+Kai picks a backend for each command. Nix is preferred when it is installed and
+can serve the request. Guix is used when Nix is not installed, or when the
+environment's tools come from a `GuixPackages` source. `--backend nix` or
+`--backend guix` forces one; Kai never falls back to the other.
+
+On Guix, `kai shell` and `kai run` run `guix time-machine -C CHANNELS --
+shell -q --pure` with the environment's tools, at the Guix channel commit
+Kai's lock pins. `kai build` runs `guix build -f` on a generated file whose
+derivation runs the same sandboxed build runner as on Nix, and `kai workflow`
+runs tasks and builds in order. `kai update` pins every installed backend that
+fits, each in its own section of `.kai/lock.json` (`kai --backend guix update`
+pins only Guix), and Guix commands refuse to run without a Guix pin. The first
+Guix command at a new commit downloads, or builds, that Guix, which can take a
+long time. Overlays and build inputs (`Inputs([...])`) need Nix. See
+[examples/channels](examples/channels).
+
+## The `.kai` directory
+
+`kai update` is the only command that resolves package sources. It writes
+`.kai/lock.json`. `kai shell`, `run`, `build` and `workflow` only read it, and
+ask you to run `kai update` when it is missing or a locked local source has
+changed. Commit the lock; the rest of `.kai` is generated:
+
+```gitignore
+/.kai/*
+!/.kai/lock.json
+```
+
+`KAI_DIR=<name>` moves the whole directory to another top-level name in the
+project.
+
+## Options
+
+- `-f`, `--file PATH`: use another configuration file. Its directory is the
+  project root.
+- `--json`: print Kai's own messages as JSON Lines on stdout. Each has `type`
+  and `message`, plus fields for its type (e.g. `backend`, `step_started`,
+  `artifact`, or `error` with `error` and `exit_code`). Output from shells and
+  tasks passes through unchanged.
+- `--no-color`, or a non-empty `NO_COLOR`: plain text.
+- `--backend nix|guix`: see [Backends](#backends).
+- `ROC`: the Roc compiler that evaluates `Kaifile.roc` (default: `roc`). It
+  must be the pinned version; Kai says which one otherwise.
+
+A failing child's exit status becomes Kai's. Usage errors exit 2 and other
+errors 1.
+
+## Limits
+
+- Linux only. Kai runs on `x86_64-linux` and `aarch64-linux`, and generates
+  shells and builds for the system it runs on.
+- Services, machines, deploy, switch, rollback, generations, images, ISOs and
+  secrets are not in this version, and the old `Kaifile` format is not read.
+  If you need them, stay on
+  [v0.0.7](https://github.com/thebrandonlucas/kai/releases/tag/v0.0.7)
+  (`nix run github:thebrandonlucas/kai/v0.0.7`).
+
+## Development
 
 ```sh
 git clone https://github.com/thebrandonlucas/kai.git
 cd kai
-nix develop
+nix develop    # or `direnv allow` once
 zig build ci
 ```
+
+`zig build ci` includes the end-to-end tests, which run a built kai against
+real Nix and, when it is installed, Guix, so it needs network access or a warm
+Nix cache. `zig build e2e -- --nix` or `-- --guix` runs them on one backend,
+and `zig build e2e-run` (or `-build`, `-workflow`, `-update`, ...) runs one;
+`zig build guix-integration` runs every Guix test and fails without Guix. If
+`nix develop` is missing a dependency, please open an issue.
+
+The code follows the pipeline:
+
+- `platform`: Kai's plugin platform, the Roc platform `Kaifile.roc` builds
+  on and the API every plugin uses: commands, backends, implementations,
+  plans and the protocol kai speaks. It validates the Kaifile's plugins at
+  compile time.
+- `plugins/std`: the std plugin. It lowers its settings to its project model
+  at compile time.
+  - `plugins/std/model`: std's project model and its validation.
+  - `plugins/std/backends/nix`, `plugins/std/backends/guix`: std's pure
+    backends that plan files and argv from the model.
+- `cli`: `kai` itself. It asks the compiled Kaifile for the command's
+  candidate plans, chooses a backend, checks the plan and runs it.
+- `devtool`: checks, integration tests and release tooling; see
+  [devtool/README.md](devtool/README.md) and [RELEASE.md](docs/RELEASE.md).
 
 ## Design
 
@@ -49,21 +243,7 @@ zig build ci
 
 - [Alan Kay](https://www.quora.com/What-is-the-story-behind-Alan-Kay-s-adage-Simple-things-should-be-simple-complex-things-should-be-possible)
 
-The design is heavily inspired by [`caddy`](https://caddyserver.com/). `caddy`'s [architecture](https://caddyserver.com/docs/architecture) allows users to write plugins to extend behavior, but the core library comes with everything most users would want, and the default behavior ships with features that beat out any other web server I've used.
-
-It is a masterclass in tool design.
-
-Thus Kai uses a similar architecture. The standard `kai` binary includes `StdPlugin`, which reads `Kaifile` and provides the default commands and Nix backend. For example:
-
-```kai
-on linux {
-  shell {
-    packages: ["cowsay", "fortune"]
-  }
-}
-```
-
-See the [plugin documentation](docs/plugin.md) for the plugin contract and `xkai` build details.
+See [design.md](docs/design.md).
 
 ## Goals
 
@@ -85,6 +265,6 @@ Aside from making a great tool for programmers to encourage the use of determina
 
 ### Attribution
 
-Huge thank you to Luke Boswell for inspiring the initial portable typed configuration idea with [roc-blueprint](https://github.com/lukewilliamboswell/roc-blueprint) and his enthusiastic evangelism of this idea.
+Huge thank you to Luke Boswell for inspiring the initial portable typed configuration idea with [roc-blueprint](https://github.com/lukewilliamboswell/roc-blueprint) and his enthusiastic evangelism of this idea. The Kaifile platform, IR and Nix backend in `kaifile/` began as roc-blueprint's code (see [LICENSE](LICENSE)).
 
 Also thank you to the longstanding efforts of the Nix and Guix developers without which this would be impossible, the [Roc](https://roc-lang.org/) team for their encouragement and making a great language to build in, and the [caddy](https://caddyserver.com/) devs from which this project takes heavy inspiration.

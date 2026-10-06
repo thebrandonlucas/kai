@@ -1,8 +1,8 @@
 # kai repo devtool entry point
 app [main!] {
-	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.22.0/${
-		""
-	}F1JVZPYfWP71s8vk6tHcV1Qx1Ef6CZkwswGoCn8VHZmL.tar.zst",
+	pf: platform "../.basic-cli/main.roc",
+	api: "../platform/api.roc",
+	nix: "../plugins/std/backends/nix/main.roc",
 }
 
 import pf.Cmd
@@ -12,15 +12,25 @@ import pf.Path
 import pf.Stdout
 
 import Cli
-import Kaifiles
+import ConfigFixtures
+import Fuzz
 import GitHub
+import Bundles
+import E2e
+import E2eBuild
+import E2eBundle
+import E2eHelp
+import E2eOverlays
+import E2ePlugins
+import E2eRun
+import E2eUpdate
+import E2eWorkflow
 import PrepareRelease
-import PrepareXkai
 import Release
 import Tidy
 
 validate_metadata! = || {
-	version = Path.read_utf8!(Path.utf8("xkai/VERSION"))?
+	version = Path.read_utf8!(Path.utf8("VERSION"))?
 	if !Release.is_semver(version) {
 		Err(InvalidReleaseVersion(version))
 	} else {
@@ -39,17 +49,6 @@ validate_metadata! = || {
 				}),
 			)
 		}
-	}
-}
-
-nix_output_path! = |attribute| {
-	output = Cmd.new_str("nix")
-		.args_str(["build", attribute, "--no-link", "--print-out-paths"])
-		.exec_output!()?
-	paths = output.stdout_utf8.split_on("\n").keep_if(|line| !line.is_empty())
-	match paths {
-		[path] => Ok(Path.utf8(path))
-		_ => Err(UnexpectedNixOutput({ attribute, output: output.stdout_utf8 }))
 	}
 }
 
@@ -119,8 +118,8 @@ extract_archive! = |archive, destination| {
 check_x64! = |archive, destination, version| {
 	archive_contents!(archive)?
 	binary = extract_archive!(archive, destination)?
-	output = Cmd.new(Path.to_os_str(binary)).arg_str("version").exec_output!()?
-	expected = "kai version ${version}\n"
+	output = Cmd.new(Path.to_os_str(binary)).arg_str("--version").exec_output!()?
+	expected = "${version}\n"
 	if output.stdout_utf8 == expected {
 		Ok({})
 	} else {
@@ -163,24 +162,60 @@ generate_checksums! = |root, dist, archive_names| {
 	}
 }
 
+# A release publishes the platform and std bundles their recorded URLs name,
+# so the URLs cannot go stale.
+check_bundle_urls! = |version, pf_bundle, std_bundle| {
+	origin = Cmd.new_str("git")
+		.args_str(["config", "--get", "remote.origin.url"])
+		.exec_output!()?
+		.stdout_utf8
+		.trim()
+	repository = match Release.parse_github_origin(origin) {
+		Ok(repo) => "${repo.owner}/${repo.repository}"
+		Err(_) => return Err(UnsupportedReleaseOrigin(origin))
+	}
+	for (file, expected) in [
+		(
+			Release.platform_file,
+			Release.platform_url(repository, version, pf_bundle.hash),
+		),
+		(Release.std_file, Release.std_url(repository, version, std_bundle.hash)),
+	] {
+		recorded = Path.read_utf8!(Path.utf8(file))?.trim()
+		if recorded != expected {
+			return Err(StaleBundleUrl({ file, expected, recorded }))
+		}
+	}
+	Ok({})
+}
+
 build_release_stage! = |root, dist, workspace, version| {
-	names = Release.archive_names(version)
-	x64_archive = Path.join(dist, names.x64)
-	arm64_archive = Path.join(dist, names.arm64)
+	Stdout.line!("Building the Kai platform and std bundles through Nix...")?
+	pf_bundle = Bundles.platform!()?
+	std_bundle = Bundles.bundle!(".#kai-std")?
+	check_bundle_urls!(version, pf_bundle, std_bundle)?
+	bundles = ["${pf_bundle.hash}.tar.zst", "std-${std_bundle.hash}.tar.zst"]
+	copy_file!(pf_bundle.archive, Path.join(dist, "${pf_bundle.hash}.tar.zst"))?
+	std_asset = "std-${std_bundle.hash}.tar.zst"
+	copy_file!(std_bundle.archive, Path.join(dist, std_asset))?
 
-	Stdout.line!("Building portable Linux CLI archives through Nix...")?
-	x64_store = nix_output_path!(".#release-x86_64-linux")?
-	arm64_store = nix_output_path!(".#release-aarch64-linux")?
-	copy_file!(x64_store, x64_archive)?
-	copy_file!(arm64_store, arm64_archive)?
-
-	Stdout.line!("Checking packaged x86_64 Linux CLI...")?
-	check_x64!(x64_archive, Path.join(workspace, "x64-cli-test"), version)?
-	Stdout.line!("Checking packaged aarch64 Linux CLI...")?
-	check_arm64!(arm64_archive, Path.join(workspace, "arm64-cli-test"))?
+	systems = Release.release_systems(
+		Path.read_utf8!(Path.utf8(Release.systems_file))?,
+	)?
+	for system in systems {
+		archive = Path.join(dist, Release.archive_name(version, system))
+		Stdout.line!("Building and checking the ${system} CLI archive...")?
+		copy_file!(Bundles.nix_output!(".#release-${system}")?, archive)?
+		destination = Path.join(workspace, "${system}-cli-test")
+		if system == "x86_64-linux" {
+			check_x64!(archive, destination, version)?
+		} else {
+			check_arm64!(archive, destination)?
+		}
+	}
 
 	archive_inventory = directory_inventory!(dist)?
-	expected_archives = Release.archive_inventory(version)
+	expected_archives = Release.archive_inventory(version, systems, bundles)
 	if !Release.is_exact_inventory(archive_inventory, expected_archives) {
 		Err(
 			UnexpectedArtifactInventory({
@@ -192,7 +227,7 @@ build_release_stage! = |root, dist, workspace, version| {
 		Stdout.line!("Generating checksums...")?
 		generate_checksums!(root, dist, expected_archives)?
 		inventory = directory_inventory!(dist)?
-		expected = Release.inventory(version)
+		expected = Release.inventory(version, systems, bundles)
 		if Release.is_exact_inventory(inventory, expected) {
 			Ok(expected)
 		} else {
@@ -253,19 +288,59 @@ build_release! = || {
 	}
 }
 
+## Each named test's Nix half, then its Guix half when it has one. Guix
+## halves share one Nix-free PATH, removed afterwards.
+e2e! = |{ test, only, require_guix, kai, bare }| {
+	names = if test == "all" Cli.e2e_tests else [test]
+	guix = if only == Nix Missing else E2e.guix!(require_guix)?
+	result = e2e_each!(names, only, kai, bare, guix)
+	match guix {
+		Ready(dir) => Path.delete_all!(dir)?
+		Missing => {}
+	}
+	result
+}
+
+e2e_each! = |names, only, kai, bare, guix| {
+	for name in names {
+		if only != Guix {
+			match name {
+				"run" => E2eRun.nix!(kai)?
+				"build" => E2eBuild.nix!(kai)?
+				"workflow" => E2eWorkflow.nix!(kai)?
+				"update" => E2eUpdate.nix!(kai)?
+				"overlays" => E2eOverlays.nix!(kai)?
+				"help" => E2eHelp.nix!(kai)?
+				"plugins" => E2ePlugins.nix!(kai)?
+				_ => E2eBundle.nix!(bare)?
+			}
+		}
+		if only != Nix {
+			match name {
+				"run" => E2eRun.guix!(bare, guix)?
+				"build" => E2eBuild.guix!(bare, guix)?
+				"workflow" => E2eWorkflow.guix!(bare, guix)?
+				"update" => E2eUpdate.guix!(bare, guix)?
+				_ if only == Guix => Stdout.line!("${name} runs on Nix only")?
+				_ => {}
+			}
+		}
+	}
+	Ok({})
+}
+
 main! : List(OsStr) => Try({}, _)
 main! = |args|
-	match Cli.parse(args.drop_first(1).map(OsStr.display)) {
+	match Cli.parse(args.map(OsStr.display)) {
 		Ok(Cli.Command.Help) => Stdout.line!(Cli.usage)
 		Ok(Cli.Command.BuildRelease) => build_release!()
-		Ok(Cli.Command.Kaifiles) => Kaifiles.run!()
-		Ok(Cli.Command.KaifilesSmoke) => Kaifiles.run_smoke!()
+		Ok(Cli.Command.ConfigFixtures) => ConfigFixtures.run!()
+		Ok(Cli.Command.Fuzz({ seconds, apps })) => Fuzz.run!(seconds, apps)
+		Ok(Cli.Command.E2e(run)) => e2e!(run)
 		Ok(Cli.Command.PrepareRelease({ name, version })) => PrepareRelease.run!(
 			name,
 			version,
 		)
-		Ok(Cli.Command.PrepareXkai({ bundle_dir, output_dir, source_dir })) =>
-			PrepareXkai.run!(bundle_dir, source_dir, output_dir)
 		Ok(Cli.Command.Tidy(paths)) => Tidy.run!(paths)
 		Err(error) => Err(InvalidArguments(Cli.error_message(error)))
 	}
@@ -276,8 +351,55 @@ parse_cases = [
 	{ args: [], expected: Ok(Cli.Command.Help) },
 	{ args: ["help"], expected: Ok(Cli.Command.Help) },
 	{ args: ["build-release"], expected: Ok(Cli.Command.BuildRelease) },
-	{ args: ["kaifiles"], expected: Ok(Cli.Command.Kaifiles) },
-	{ args: ["kaifiles-smoke"], expected: Ok(Cli.Command.KaifilesSmoke) },
+	{ args: ["config-fixtures"], expected: Ok(Cli.Command.ConfigFixtures) },
+	{
+		args: ["e2e", "run", "kai", "bare"],
+		expected: Ok(
+			Cli.Command.E2e({
+				test: "run",
+				only: Both,
+				require_guix: Bool.False,
+				kai: "kai",
+				bare: "bare",
+			}),
+		),
+	},
+	{
+		args: ["e2e", "all", "--guix", "--require-guix", "kai", "bare"],
+		expected: Ok(
+			Cli.Command.E2e({
+				test: "all",
+				only: Guix,
+				require_guix: Bool.True,
+				kai: "kai",
+				bare: "bare",
+			}),
+		),
+	},
+	{
+		args: ["e2e", "update", "--nix", "--guix", "kai", "bare"],
+		expected: Ok(
+			Cli.Command.E2e({
+				test: "update",
+				only: Both,
+				require_guix: Bool.False,
+				kai: "kai",
+				bare: "bare",
+			}),
+		),
+	},
+	{
+		args: ["e2e", "build", "--nix", "kai"],
+		expected: Err(Cli.Error.ExpectedKaiBinaries),
+	},
+	{
+		args: ["e2e", "deploy", "kai", "bare"],
+		expected: Err(Cli.Error.UnknownTest("deploy")),
+	},
+	{
+		args: ["e2e", "run", "--nixx", "kai", "bare"],
+		expected: Err(Cli.Error.UnknownOption("--nixx")),
+	},
 	{
 		args: ["prepare-release", "μοριων", "0.0.3"],
 		expected: Ok(
@@ -292,14 +414,6 @@ parse_cases = [
 		expected: Err(Cli.Error.ArgumentsNotAllowed("build-release")),
 	},
 	{
-		args: ["kaifiles", "extra"],
-		expected: Err(Cli.Error.ArgumentsNotAllowed("kaifiles")),
-	},
-	{
-		args: ["kaifiles-smoke", "extra"],
-		expected: Err(Cli.Error.ArgumentsNotAllowed("kaifiles-smoke")),
-	},
-	{
 		args: ["prepare-release", "only-name"],
 		expected: Err(Cli.Error.ExpectedArguments("prepare-release")),
 	},
@@ -309,10 +423,9 @@ parse_cases = [
 usage_lines = [
 	"Usage: kai-devtool <command> [arguments]",
 	"build-release",
-	"kaifiles",
-	"kaifiles-smoke",
+	"config-fixtures",
+	"e2e TEST [--nix | --guix] [--require-guix] KAI_BINARY BARE_KAI_BINARY",
 	"prepare-release NAME VERSION",
-	"prepare-xkai BUNDLE_DIR SOURCE_DIR OUTPUT_DIR",
 	"tidy ROC_FILE...",
 	"help",
 ]
