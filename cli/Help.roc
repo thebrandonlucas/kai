@@ -8,21 +8,62 @@ Help := [].{
 	# How a Kaifile.roc starts: with the platform and std bundles this Kai's
 	# release publishes. Each URL is one unbroken line, however help wraps.
 	header =
-		"app [kaifile] {\npf: platform \"${platform_release.trim()}\",\n"
-			.concat("std: \"${std_release.trim()}\",\n}\n\nimport std.Std\n\n")
-			.concat("kaifile = Std.kaifile([...])")
+		\\  app [kaifile] {
+		\\      pf: platform "${platform_release.trim()}",
+		\\      std: "${std_release.trim()}",
+		\\  }
+		\\
+		\\  import std.Std
+		\\
+		\\  kaifile = Std.kaifile([...])
+
+	# What kai's own help ends with, with or without a Kaifile.roc.
+	notes =
+		\\Kaifile.roc starts with:
+		\\${Help.header}
+		\\
+		\\Put arguments for a shell command or task after --.
+		\\Set ROC to choose the Roc compiler (default: roc).
+
+	# The Kaifile cannot know kai's version, so kai adds it to the title.
+	versioned : Str, Str -> Str
+	versioned = |text, version|
+		match text.split_first("\n") {
+			Ok({ before, after }) => "${before} ${version}\n${after}"
+			Err(_) => text
+		}
 
 	# Shown when Kaifile.roc is missing or does not compile, since its
-	# plugins define the commands.
+	# plugins define the rest of the commands.
 	generic : Str, Str -> Str
 	generic = |version, why|
-		"kai ${version}"
-			.concat("\n\nDeveloper environments, tasks and builds from a Kaifile.roc.")
-			.concat("\n\n${why}")
-			.concat("\n\nKaifile.roc starts with:\n${Help.header}")
-			.concat("\n\nUsage:\n  kai [-f/--file PATH] [--json] check")
-			.concat("\n  kai [OPTIONS] <COMMAND> --help")
-			.concat("\n\nSet ROC to choose the Roc compiler (default: roc).")
+		\\kai ${version}
+		\\
+		\\Developer environments, tasks and builds from a Kaifile.roc.
+		\\
+		\\${why}
+		\\
+		\\Usage:
+		\\  kai [OPTIONS] <COMMAND>
+		\\
+		\\Commands:
+		\\  check     Compile Kaifile.roc and report whether it is valid.
+		\\  describe  List the plugins, commands and backends Kaifile.roc defines.
+		\\
+		\\A Kaifile.roc's plugins add the other commands: std adds shell, run, build,
+		\\workflow, update and model.
+		\\
+		\\Options:
+		\\  -f STR, --file STR  Read configuration from PATH (default: Kaifile.roc).
+		\\  --no-color          Print plain text without colors.
+		\\  --json              Print kai's own output as JSON Lines.
+		\\  --backend STR       Use this backend instead of choosing automatically.
+		\\  --yes               Answer yes to every confirmation.
+		\\  --dry-run           Print the plan instead of running it.
+		\\  -h, --help          Show this help page.
+		\\  -V, --version       Show the version.
+		\\
+		\\${Help.notes}
 
 	# Color is decoration only: NO_COLOR (when non-empty), --no-color or output
 	# that is not a terminal all get plain text.

@@ -48,9 +48,10 @@ Argv := [].{
 			Err(Help(message)) =>
 				if message == top(parser.config) {
 					config = parser.config
-					Err(Help(top({ ..config, subcommands: Argv.summarized(config) })))
+					shown = top({ ..config, subcommands: Argv.summarized(config) })
+					Err(Help(Argv.indented(root, commands, shown)))
 				} else {
-					Err(Help(message))
+					Err(Help(Argv.indented(root, commands, message)))
 				}
 			Err(Version(message)) => Err(Help(message))
 			Err(InvalidUsage(message)) => Err(Usage(message))
@@ -96,24 +97,88 @@ Argv := [].{
 				name: "kai",
 				version: "",
 				authors: [],
-				description: Argv.describe(root),
+				description: Argv.describe("kai", root),
 				text_style: style,
 			},
 		)
 
-	## A page as Weaver shows it. Weaver drops leading spaces, so headings
-	## rather than indentation mark the sections; a parent shows only the
-	## first paragraph.
-	describe : Command.Page -> Str
-	describe = |page| {
+	## A page as Weaver shows it: its description, then a one-word marker that
+	## `indented` replaces with the page's sections, because Weaver drops
+	## leading spaces. A parent shows only the first paragraph.
+	describe : Str, Command.Page -> Str
+	describe = |name, page|
+		if page.examples.is_empty() and page.config.is_empty() {
+			page.description
+		} else {
+			"${page.description}\n\n${Argv.marker(name)}"
+		}
+
+	marker : Str -> Str
+	marker = |name| "<kai-help:${name}>"
+
+	## The shown page's marker becomes its indented sections, and the page
+	## names its arguments when Weaver lists a name's choices instead.
+	indented : Command.Page, List(Command), Str -> Str
+	indented = |root, commands, text|
+		[("kai", root, [])]
+			.concat(commands.map(|c| (c.name, c.help, c.args)))
+			.fold(
+				text,
+				|shown, (name, page, args)|
+					if shown.contains(Argv.marker(name)) {
+						# Options, always present, end the page.
+						parts = shown
+							.replace_each(Argv.marker(name), Argv.sections(page))
+							.split_on("\n\n")
+						Str.join_with(
+							parts.drop_last(1)
+								.concat(Argv.arguments(args))
+								.concat(parts.take_last(1)),
+							"\n\n",
+						)
+					} else {
+						shown
+					},
+			)
+
+	sections : Command.Page -> Str
+	sections = |page| {
 		section = |heading, lines|
-			if lines.is_empty() [] else [Str.join_with([heading].concat(lines), "\n")]
+			if lines.is_empty() {
+				[]
+			} else {
+				[Str.join_with([heading].concat(lines.map(|line| "  ${line}")), "\n")]
+			}
 		Str.join_with(
-			[page.description]
-				.concat(section("Examples:", page.examples))
+			section("Examples:", page.examples)
 				.concat(section("Kaifile.roc (inside Std.kaifile):", page.config)),
 			"\n\n",
 		)
+	}
+
+	arguments : List(Command.Arg) -> List(Str)
+	arguments = |args| {
+		chosen = args.any(
+			|arg|
+				match arg {
+					Name(n) => !n.choices.is_empty()
+					Trailing(_) => Bool.False
+				},
+		)
+		rows = args.map(
+			|arg|
+				match arg {
+					Name(n) => ("<${n.name}>", n.help)
+					Trailing(t) => ("<${t.name}...>", t.help)
+				},
+		)
+		width = rows.fold(
+			0,
+			|widest, (label, _)| widest.max(label.count_utf8_bytes()),
+		)
+		row = |(label, help)|
+			"  ${label}${Str.repeat(" ", width + 2 - label.count_utf8_bytes())}${help}"
+		if chosen ["Arguments:\n${Str.join_with(rows.map(row), "\n")}"] else []
 	}
 
 	summary : Str -> Str
@@ -135,7 +200,7 @@ Argv := [].{
 	# One command: a name chosen from its choices (each a subcommand, so help
 	# lists them) or any name, then the words after `--`.
 	subcommand = |command| {
-		description = Argv.describe(command.help)
+		description = Argv.describe(command.name, command.help)
 		finish = |builder|
 			SubCmd.finish(
 				builder,

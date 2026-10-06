@@ -20,11 +20,14 @@ E2eHelp := [].{
 		result
 	}
 
-	# Lines under a help heading, up to the next blank line.
+	# Indented lines under a help heading, up to the next blank line.
 	section : Str, Str -> List(Str)
 	section = |text, heading|
 		match text.split_on("\n${heading}\n") {
-			[_, after] => (after.split_on("\n\n").first() ?? "").split_on("\n")
+			[_, after] =>
+				(after.split_on("\n\n").first() ?? "")
+					.split_on("\n")
+					.map(|line| line.drop_prefix("  "))
 			_ => []
 		}
 
