@@ -106,38 +106,39 @@ tasks, builds and workflows.
 | `Raw("nix", target, value)` | Extra attributes for the generated flake (`"flake"`) or one shell (`"shell:<name>"`), e.g. `Attrs([("shellHook", Str("echo hi"))])`. |
 
 Names and references are checked as the file compiles, so `kai check` reports
-mistakes before anything runs. See [examples](examples/) for overlays, sources
-and builds, and Guix.
+mistakes before anything runs. [examples](examples/) has a small project for
+each setting and command, from a first shell to builds, workflows and Guix.
 
 ### Reusing configuration
 
 Reuse is ordinary Roc: a module returns settings and `Kaifile.roc` imports it.
-Shortened from [examples/composition](examples/composition):
+From [examples/modules](examples/modules):
 
 ```roc
-# ProjectTasks.roc
+# CowTasks.roc
 import std.Config
 import std.EnvName
 
-ProjectTasks :: [].{
+CowTasks :: [].{
 	settings : EnvName -> List(Config.Setting)
 	settings = |environment| [
-		Task("test", [Use(environment), Run(["git", "--version"])]),
+		Task("moo", [Use(environment), Run(["cowsay", "moo"])]),
+		Task("say", [Use(environment), Run(["cowsay"])]),
 	]
 }
 ```
 
 ```roc
 # Kaifile.roc, after the app header
-import ProjectTasks
+import CowTasks
 import std.Std
 
 kaifile = Std.kaifile(
 	[
-		Name("composed"),
-		Environment("dev", [Tools(["git"])]),
-		Shell("default", [Use("dev")]),
-	].concat(ProjectTasks.settings("dev")),
+		Name("modules"),
+		Environment("cow", [Tools(["cowsay"])]),
+		Shell("default", [Use("cow")]),
+	].concat(CowTasks.settings("cow")),
 )
 ```
 
@@ -162,7 +163,7 @@ fits, each in its own section of `.kai/lock.json` (`kai --backend guix update`
 pins only Guix), and Guix commands refuse to run without a Guix pin. The first
 Guix command at a new commit downloads, or builds, that Guix, which can take a
 long time. Overlays and build inputs (`Inputs([...])`) need Nix. See
-[examples/channels](examples/channels).
+[examples/guix](examples/guix).
 
 ## The `.kai` directory
 

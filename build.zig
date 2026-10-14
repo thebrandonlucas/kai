@@ -227,6 +227,7 @@ pub fn build(b: *std.Build) void {
     for ([_][]const u8{
         "Bundles",     "E2e",        "E2eBuild", "E2eBundle", "E2eHelp",
         "E2eOverlays", "E2ePlugins", "E2eRun",   "E2eUpdate", "E2eWorkflow",
+        "E2eExamples",
     }) |module| {
         build_devtool.addFileInput(b.path(b.fmt("devtool/{s}.roc", .{module})));
     }
@@ -451,10 +452,11 @@ pub fn build(b: *std.Build) void {
     ).path(b, "bin/kai");
     // Every maintained example must load and lower to std's model.
     const examples = [_][]const u8{
-        "examples/artifacts",
-        "examples/composition",
-        "examples/channels",
-        "examples/overlays",
+        "examples/build",    "examples/environment",  "examples/extend",
+        "examples/guix",     "examples/modules",      "examples/needs",
+        "examples/overlay",  "examples/packages",     "examples/raw",
+        "examples/shell",    "examples/source-build", "examples/task",
+        "examples/workflow",
     };
     for (examples) |example| {
         for ([_][]const u8{ "check", "model" }) |command| {
@@ -477,7 +479,7 @@ pub fn build(b: *std.Build) void {
     // `zig build e2e` runs them all and `zig build e2e-<test>` one; pass
     // `-- --nix` or `-- --guix` to run one backend.
     const e2e_tests = [_][]const u8{
-        "run", "build", "workflow", "update", "overlays", "help", "plugins", "bundle",
+        "run", "build", "workflow", "update", "overlays", "help", "plugins", "bundle", "examples",
     };
     const e2e_step = b.step("e2e", "Run every end-to-end test (-- --nix | --guix)");
     const run_e2e = addE2e(b, devtool, "all", cli_binary, bare_binary, &.{});

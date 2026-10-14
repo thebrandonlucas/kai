@@ -1,10 +1,10 @@
-# kai workflow and kai --json. On Nix, on a copy of examples/artifacts: steps
+# kai workflow and kai --json. On Nix, on a copy of the artifacts fixture: steps
 # run in order, a failing step stops the rest and keeps its exit code,
 # repeated steps repeat, each build snapshots the project afresh, a changed
 # locked source stops a workflow before its first effect, and the lock is
 # never written. In JSON mode kai's stdout is whole JSON objects without
-# terminal escapes. On Guix, on a copy of examples/channels with Nix off PATH: a
-# workflow runs its task, then its build.
+# terminal escapes. On Guix, on a copy of the channels fixture with Nix off
+# PATH: a workflow runs its task, then its build.
 import pf.Cmd
 import pf.Path
 import pf.Stdout

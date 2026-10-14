@@ -2,8 +2,8 @@
   area you touched. Full `zig build ci` runs on GitHub; run it locally only
   when asked or before a merge. It should pass on every commit.
 - The end-to-end steps are `e2e-run`, `e2e-build`, `e2e-workflow`,
-  `e2e-update`, `e2e-overlays`, `e2e-help`, `e2e-plugins` and `e2e-bundle`
-  (`e2e` runs them all), plus `config-fixtures`, each run with
+  `e2e-update`, `e2e-overlays`, `e2e-help`, `e2e-plugins`, `e2e-bundle` and
+  `e2e-examples` (`e2e` runs them all), plus `config-fixtures`, each run with
   `zig build <step>`; add `-- --nix` or `-- --guix` to run one backend.
   `zig build smoke` runs `e2e-update` and `e2e-run` on Nix. Run
   `zig build guix-integration` when a real Guix is available.

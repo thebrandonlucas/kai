@@ -1,7 +1,8 @@
+# Test fixture (see devtool/fixtures/README.md), not an example.
 # Environments select ordered overlay stacks; Extend applies the parent's first.
 app [kaifile] {
-	pf: platform "../../platform/main.roc",
-	std: "../../plugins/std/main.roc",
+	pf: platform "../../../platform/main.roc",
+	std: "../../../plugins/std/main.roc",
 }
 
 import std.Std

@@ -19,6 +19,7 @@ import Bundles
 import E2e
 import E2eBuild
 import E2eBundle
+import E2eExamples
 import E2eHelp
 import E2eOverlays
 import E2ePlugins
@@ -312,7 +313,8 @@ e2e_each! = |names, only, kai, bare, guix| {
 				"overlays" => E2eOverlays.nix!(kai)?
 				"help" => E2eHelp.nix!(kai)?
 				"plugins" => E2ePlugins.nix!(kai)?
-				_ => E2eBundle.nix!(bare)?
+				"bundle" => E2eBundle.nix!(bare)?
+				_ => E2eExamples.nix!(kai)?
 			}
 		}
 		if only != Nix {
