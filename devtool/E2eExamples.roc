@@ -36,7 +36,7 @@ E2eExamples := [].{
 			entries = Path.list!(dir)?
 				.map(|path| Path.display(Path.filename(path) ?? path))
 				.keep_if(|entry| !E2eExamples.metadata.contains(entry))
-			(kai, project) = E2e.copy!(binary, "examples/${name}", entries)?
+			(kai, project) = E2e.nix_copy!(binary, "examples/${name}", entries)?
 			result = E2eExamples.run_in!(kai, project, name, lines)
 			match result {
 				Ok(_) if $offered.is_empty() => {

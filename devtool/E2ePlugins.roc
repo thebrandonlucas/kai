@@ -11,6 +11,7 @@ import pf.Stdout
 import Exec
 
 import ConfigFixtures
+import E2e
 
 E2ePlugins := [].{
 	body =
@@ -77,7 +78,7 @@ E2ePlugins := [].{
 		header = "${opened}\tdeploy: \"${deploy}\",\n}"
 		Path.write_utf8!(
 			Path.join(project, "Kaifile.roc"),
-			"${header}\n\n${E2ePlugins.body}",
+			E2e.pin_nixpkgs("${header}\n\n${E2ePlugins.body}", E2e.nixpkgs!(root)?),
 		)?
 		kai! = |args| {
 			command = Cmd.new(Path.to_os_str(kai)).args(Exec.strs(args))

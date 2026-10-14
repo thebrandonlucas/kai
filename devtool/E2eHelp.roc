@@ -10,6 +10,7 @@ import pf.Stdout
 import Exec
 
 import ConfigFixtures
+import E2e
 
 E2eHelp := [].{
 	nix! = |binary| {
@@ -78,7 +79,8 @@ E2eHelp := [].{
 					.concat(["])", ""]),
 				"\n",
 			)
-			Path.write_utf8!(Path.join(project, "Kaifile.roc"), kaifile)
+			pinned = E2e.pin_nixpkgs(kaifile, E2e.nixpkgs!(root)?)
+			Path.write_utf8!(Path.join(project, "Kaifile.roc"), pinned)
 		}
 		write!([])?
 		# Output to a pipe is plain even without --no-color.

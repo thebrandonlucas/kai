@@ -20,7 +20,7 @@ import E2e
 
 E2eRun := [].{
 	nix! = |binary| {
-		(kai, project) = E2e.fixture!(
+		(kai, project) = E2e.nix_fixture!(
 			binary,
 			"composition",
 			["ProjectTasks.roc"],
