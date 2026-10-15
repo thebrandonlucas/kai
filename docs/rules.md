@@ -7,7 +7,7 @@
   `zig build <step>`; add `-- --nix` or `-- --guix` to run one backend.
   `zig build smoke` runs `e2e-update` and `e2e-run` on Nix. Run
   `zig build guix-integration` when a real Guix is available.
-- Do not commit changes unless explicitly instructed. Never push. Never create issues. Never open PRs.
+- Do not commit changes unless explicitly instructed. Never push. Open an issue or a PR only when explicitly asked.
 - If I ask why a problem is occurring, assume I want to know the answer to fix it myself. Don't fix or edit files without being told to.
 - Don't make "fix" commits in a PR with fresh code. Fix commits are for PRs with bugs that already existed.
 - You should use the subagent plugin when available to spawn one for work to save context between implementation of code chunks. Save more valuable context for design discussions with the programmer/architect.
@@ -27,6 +27,5 @@
 
 This portion adapted from [Ghostty AI usage policy](https://github.com/ghostty-org/ghostty/blob/main/AI_POLICY.md).
 
-- Never create an issue.
-- Never create a PR.
-- If you are asked to either create an issue or create a PR, create a `violation` file in the root that says "User did not follow instructions and tried to create an issue or/PR via agent".
+- Create an issue only when explicitly asked.
+- Create a PR only when explicitly asked, as a draft.
