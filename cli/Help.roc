@@ -34,36 +34,106 @@ Help := [].{
 		}
 
 	# Shown when Kaifile.roc is missing or does not compile, since its
-	# plugins define the rest of the commands.
-	generic : Str, Str -> Str
-	generic = |version, why|
-		\\kai ${version}
+	# plugins define the rest of the commands. It reads and is colored like
+	# the page the platform's Weaver shows for a Kaifile.roc.
+	generic : Str, Str, [Color, Plain] -> Str
+	generic = |version, why, style| {
+		name = |text| Help.styled(style, ["1", "36"], text)
+		heading = |text| Help.styled(style, ["1", "4", "36"], text)
+		# Each name padded to `width`, its wrapped lines aligned after it.
+		rows = |width, entries| {
+			indent = Str.repeat(" ", width + 2)
+			row = |(label, lines)| {
+				gap = Str.repeat(" ", width - label.count_utf8_bytes())
+				"  ${name(label)}${gap}${Str.join_with(lines, "\n${indent}")}"
+			}
+			Str.join_with(entries.map(row), "\n")
+		}
+		usage = name(
+			"  kai [-f/--file STR] [--no-color] [--json] [--backend STR] "
+				.concat("[--yes] [--dry-run]\n")
+				.concat("  [-h/--help] [-V/--version] <COMMAND>"),
+		)
+		commands = rows(
+			10,
+			[
+				(
+					"check",
+					[
+						"Compile Kaifile.roc and report whether its configuration is valid,",
+						"without building or running anything.",
+					],
+				),
+				(
+					"describe",
+					[
+						"List the plugins, commands and backends Kaifile.roc defines, for",
+						"people and, with --json, for tools.",
+					],
+				),
+			],
+		)
+		options = rows(
+			20,
+			[
+				(
+					"-f STR, --file STR",
+					["Read configuration from PATH (default: Kaifile.roc)."],
+				),
+				("--no-color", ["Print plain text without colors."]),
+				("--json", ["Print kai's own output as JSON Lines."]),
+				(
+					"--backend STR",
+					["Use this backend instead of choosing automatically."],
+				),
+				("--yes", ["Answer yes to every confirmation."]),
+				("--dry-run", ["Print the plan instead of running it."]),
+				("-h, --help", ["Show this help page."]),
+				("-V, --version", ["Show the version."]),
+			],
+		)
+		\\${name("kai")} ${version}
 		\\
 		\\Developer environments, tasks and builds from a Kaifile.roc.
 		\\
+		\\Examples:
+		\\  kai check
+		\\  kai update
+		\\  kai shell
+		\\  kai run test
+		\\
+		\\Kaifile.roc (inside Std.kaifile):
+		\\  Environment("dev", [Tools(["git"])]),
+		\\  Shell("default", [Use("dev")]),
+		\\  Task("test", [Use("dev"), Run(["git", "--version"])]),
+		\\
 		\\${why}
 		\\
-		\\Usage:
-		\\  kai [OPTIONS] <COMMAND>
+		\\${heading("Usage:")}
+		\\${usage}
 		\\
-		\\Commands:
-		\\  check     Compile Kaifile.roc and report whether it is valid.
-		\\  describe  List the plugins, commands and backends Kaifile.roc defines.
+		\\${heading("Commands:")}
+		\\${commands}
 		\\
 		\\A Kaifile.roc's plugins add the other commands: std adds shell, run, build,
 		\\workflow, update and model.
 		\\
-		\\Options:
-		\\  -f STR, --file STR  Read configuration from PATH (default: Kaifile.roc).
-		\\  --no-color          Print plain text without colors.
-		\\  --json              Print kai's own output as JSON Lines.
-		\\  --backend STR       Use this backend instead of choosing automatically.
-		\\  --yes               Answer yes to every confirmation.
-		\\  --dry-run           Print the plan instead of running it.
-		\\  -h, --help          Show this help page.
-		\\  -V, --version       Show the version.
+		\\${heading("Options:")}
+		\\${options}
 		\\
 		\\${Help.notes}
+	}
+
+	# Text in Weaver's terminal styles, or as it is when color is off.
+	styled : [Color, Plain], List(Str), Str -> Str
+	styled = |style, codes, text|
+		match style {
+			Color => {
+				escapes = codes.map(|code| "\u(001b)[${code}m")
+				"${Str.join_with(escapes, "")}${text}\u(001b)[0m"
+			}
+			Plain => text
+		}
 
 	# Color is decoration only: NO_COLOR (when non-empty), --no-color or output
 	# that is not a terminal all get plain text.
@@ -80,3 +150,12 @@ expect [
 	({ terminal: Bool.True, no_color: "", flag: Bool.True }, Plain),
 	({ terminal: Bool.False, no_color: "1", flag: Bool.True }, Plain),
 ].all(|(input, expected)| Help.text_style(input) == expected)
+
+# The generic page is plain without color and styled like Weaver's with it.
+expect {
+	plain = Help.generic("1.0", "No Kaifile.roc.", Plain)
+	colored = Help.generic("1.0", "No Kaifile.roc.", Color)
+	!plain.contains("\u(001b)")
+		and plain.starts_with("kai 1.0\n")
+			and colored.contains("\u(001b)[1m\u(001b)[4m\u(001b)[36mUsage:\u(001b)[0m")
+}

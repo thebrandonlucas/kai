@@ -68,6 +68,11 @@ run! = |shown, mode| {
 	if requests(shown, "--version") or requests(shown, "-V") {
 		return Stdout.line!(version)
 	}
+	style = Help.text_style({
+		terminal: is_terminal!("1") and is_terminal!("2"),
+		no_color: Env.var_str!("NO_COLOR") ?? "",
+		flag: requests(shown, "--no-color") or mode == Json,
+	})
 	located = Load.project!(requested_file(shown))
 	if command_word(shown) == Ok("check") and !asks_help(shown) {
 		project = located?
@@ -82,15 +87,12 @@ run! = |shown, mode| {
 	project = match located {
 		Ok(found) => found
 		Err(NoKaifile(_)) if asks_help(shown) =>
-			return Stdout.line!(Help.generic(version, "There is no Kaifile.roc here."))
+			return Stdout.line!(
+				Help.generic(version, "There is no Kaifile.roc here.", style),
+			)
 		Err(err) => return Err(err)
 	}
 	layout = Workspace.locate!(project.root)?
-	style = Help.text_style({
-		terminal: is_terminal!("1") and is_terminal!("2"),
-		no_color: Env.var_str!("NO_COLOR") ?? "",
-		flag: requests(shown, "--no-color") or mode == Json,
-	})
 	asked = { project, layout, shown, style }
 	body = match ask!(asked, Fresh) {
 		Ok(answered) => answered
@@ -101,6 +103,7 @@ run! = |shown, mode| {
 						version,
 						"Kaifile.roc could not be loaded, so its commands aren't "
 							.concat("listed; run `kai check` for details."),
+						style,
 					),
 				)
 			} else {
