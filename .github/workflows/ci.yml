@@ -1,8 +1,12 @@
 name: CI
 
-# Every branch push runs the fast checks. The full suite runs on pull requests to
-# master once they are ready for review, in merge queues and on demand; a
-# release runs it again through build-release.
+# Every push, and every ready pull request to master, runs the fast job:
+# static checks and unit tests. Ready pull requests also run the end-to-end
+# suite on x86_64-linux, which still reports success for a change to docs
+# alone without running, as the required check.
+# aarch64-linux and real Guix are slower, so they run nightly and on demand
+# rather than on every pull request; a release runs its own copies through
+# release.yml.
 on:
   push:
     branches:
@@ -12,21 +16,25 @@ on:
       - master
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
+  # Nightly at 07:00 UTC, every day, against master: runs the aarch64-linux
+  # and real-Guix jobs, which pull requests skip.
+  schedule:
+    - cron: "0 7 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A newer run replaces an older one for the same ref and draft state, so a
+# push to a draft never cancels the run its "ready for review" started.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.event.pull_request.draft }}
   cancel-in-progress: true
 
 jobs:
-  # A push to a branch with an open ready pull request also runs the full
-  # suite, which repeats these checks.
   fast:
     name: fast
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.draft != true)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -39,8 +47,20 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run tests and smoke checks
-        run: nix develop --command zig build test smoke
+      # Restore the Nix store GitHub's cache holds for master. Only master runs
+      # save it, since a pull request's cache is visible to that pull request
+      # alone. The dev shell is rooted with --profile, so garbage collection
+      # before saving keeps it; 6 GB stays under the repository's 10 GB limit.
+      - name: Restore the Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-fast-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: nix-fast-${{ runner.arch }}-
+          save: ${{ github.ref == 'refs/heads/master' }}
+          gc-max-store-size-linux: 6G
+
+      - name: Check and run unit tests
+        run: nix develop --profile "$RUNNER_TEMP/dev" --command zig build test
 
   ci:
     name: ci
@@ -52,19 +72,49 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # A pull request that changes only Markdown, docs/ or LICENSE needs no
+      # build; the job still succeeds, so the required check passes.
+      - name: Look for changes beyond docs
+        id: changes
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "${{ github.event_name }}" != pull_request ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --depth=1 origin "$BASE_REF"
+          if git diff --name-only FETCH_HEAD HEAD | grep -qvE '(\.md$|^docs/|^LICENSE$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install Nix
+        if: steps.changes.outputs.code == 'true'
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run Project CI
-        run: nix develop --command zig build ci
+      - name: Restore the Nix store
+        if: steps.changes.outputs.code == 'true'
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-ci-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: |
+            nix-ci-${{ runner.arch }}-
+            nix-fast-${{ runner.arch }}-
+          save: ${{ github.ref == 'refs/heads/master' }}
+          gc-max-store-size-linux: 6G
 
-  # The same CI natively on aarch64-linux. Release publishes the aarch64-linux
-  # archive only after release.yml's copy of this job passes.
+      - name: Run Project CI
+        if: steps.changes.outputs.code == 'true'
+        run: nix develop --profile "$RUNNER_TEMP/dev" --command zig build ci
+
+  # The same CI natively on aarch64-linux, nightly and on demand. Release
+  # publishes the aarch64-linux archive only after release.yml's copy of this
+  # job passes.
   ci-aarch64:
     name: ci (aarch64-linux)
-    if: github.event_name != 'push' && github.event.pull_request.draft != true
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
 
@@ -77,17 +127,28 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run Project CI
-        run: nix develop --command zig build ci
+      - name: Restore the Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-ci-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: |
+            nix-ci-${{ runner.arch }}-
+            nix-fast-${{ runner.arch }}-
+          save: ${{ github.ref == 'refs/heads/master' }}
+          gc-max-store-size-linux: 6G
 
-  # The release gate for Guix: real Guix, with Nix hidden from kai. A cold
+      - name: Run Project CI
+        run: nix develop --profile "$RUNNER_TEMP/dev" --command zig build ci
+
+  # Real Guix, with Nix hidden from kai, nightly and on demand: run it from
+  # the Actions tab before merging a change to the Guix backend. A cold
   # channel checkout authenticates the whole history (about 35 minutes), so
   # it is cached; the first time-machine run at the pinned release downloads
   # that Guix.
   # Ubuntu's guix package brings a daemon and its substitute keys.
   guix:
     name: guix
-    if: github.event_name != 'push' && github.event.pull_request.draft != true
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
