@@ -1,0 +1,16 @@
+# Tasks are named commands that run in an environment: `kai run moo` makes
+# the cow say a pithy quote. Arguments after `--` are appended to the task.
+app [kaifile] {
+	pf: platform "../../platform/main.roc",
+	std: "../../plugins/std/main.roc",
+}
+
+import std.Std
+
+kaifile = Std.kaifile([
+	Name("task"),
+	Systems(["x86_64-linux", "aarch64-linux"]),
+	Environment("cow", [Tools(["cowsay", "fortune"])]),
+	Task("moo", [Use("cow"), Run(["sh", "-c", "fortune | cowsay"])]),
+	Task("say", [Use("cow"), Run(["cowsay"])]),
+])

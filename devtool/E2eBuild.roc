@@ -1,8 +1,8 @@
-# kai build. On Nix, on a copy of examples/artifacts: artifacts have exact
+# kai build. On Nix, on a copy of the artifacts fixture: artifacts have exact
 # bytes, every build snapshots the project afresh, a missing output or
 # symlink never reports success, a changed locked source needs `kai update`,
 # the sandbox hides host files and TCP, and the lock is never written. On
-# Guix, on a copy of examples/channels with Nix off PATH: a sandboxed build
+# Guix, on a copy of the channels fixture with Nix off PATH: a sandboxed build
 # prints the store path of its exact artifact.
 import pf.Cmd
 import pf.Env

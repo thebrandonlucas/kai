@@ -1,0 +1,4 @@
+update
+run moo
+run pika
+shell pokemon -- pokemonsay -p Pikachu hi

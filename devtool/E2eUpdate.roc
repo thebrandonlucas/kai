@@ -1,7 +1,8 @@
-# kai update. On Nix, on a copy of examples/composition: it must publish a
+# kai update. On Nix, on a copy of the composition fixture: it must publish a
 # decodable lock, keep another backend's section, succeed again, and refuse
 # to publish while another update holds the writer lock. On Guix, on a copy
-# of examples/composition with Nix off PATH: it locks the Guix channels alone.
+# of the composition fixture with Nix off PATH: it locks the Guix channels
+# alone.
 import pf.Cmd
 import pf.Path
 import pf.Stderr

@@ -12,11 +12,17 @@ ConfigFixtures := [].{
 
 	Fixture : { name : Str, body : Str, expected : Expected }
 
-	composition_header =
-		\\app [kaifile] {
-		\\	pf: platform "../../platform/main.roc",
-		\\	std: "../../plugins/std/main.roc",
-		\\}
+	## A Kaifile.roc split around its `app [kaifile] { ... }` header, whatever
+	## paths that header names.
+	header_parts = |kaifile|
+		match kaifile.split_first("app [kaifile] {") {
+			Ok({ before, after }) =>
+				match after.split_first("\n}") {
+					Ok(rest) => Ok({ before, after: rest.after })
+					Err(_) => Err(UnexpectedKaifileHeader(kaifile))
+				}
+			Err(_) => Err(UnexpectedKaifileHeader(kaifile))
+		}
 
 	# A Kaifile.roc header naming this checkout's platform and std by paths
 	# relative to `dir`: evaluating an app needs relative paths.
@@ -1062,12 +1068,10 @@ ConfigFixtures := [].{
 	}
 
 	run_in! = |root, roc, workspace| {
-		composition = Path.join(root, "examples/composition")
+		composition = Path.join(root, "devtool/fixtures/composition")
 		kaifile = Path.read_utf8!(Path.join(composition, "Kaifile.roc"))?
-		composed = match kaifile.split_on(ConfigFixtures.composition_header) {
-			[before, after] => "${before}${after}"
-			_ => return Err(UnexpectedCompositionHeader(kaifile))
-		}
+		parts = ConfigFixtures.header_parts(kaifile)?
+		composed = "${parts.before}${parts.after}"
 		tasks = Path.read_utf8!(Path.join(composition, "ProjectTasks.roc"))?
 		helpers = ConfigFixtures.helper_modules.append(
 			{ name: "ProjectTasks", source: tasks },
