@@ -3,6 +3,7 @@
 ## these files, so a platform value is also a value of the package's type.
 package
 	[
+		About,
 		Backend,
 		Command,
 		Implementation,
