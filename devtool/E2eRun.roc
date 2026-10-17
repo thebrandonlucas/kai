@@ -1,12 +1,13 @@
-# kai run and kai shell. On Nix, on a copy of examples/composition: without a
+# kai run and kai shell. On Nix, on a copy of the composition fixture: without a
 # lock they refuse and create none; with one they pass exact argv, keep a
 # task's exit code, run raw shell hooks, print a dry run's plan without
 # running it and leave the lock untouched, even though the Kaifile.roc has
-# warnings. On Guix: STUBBED process-boundary checks on examples/channels
+# warnings. On Guix: STUBBED process-boundary checks on the channels fixture
 # show that Guix commands need a Guix lock, then run under `guix
 # time-machine` at the locked channels with exact argv, and that a failing
 # Guix shell never falls back to Nix; then real Guix runs a shell and a task
-# on examples/composition and the channel source's shell on examples/channels.
+# on the composition fixture, and the channel source's shell on the channels
+# fixture.
 import pf.Cmd
 import pf.Env
 import pf.Path

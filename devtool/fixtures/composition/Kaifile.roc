@@ -1,7 +1,8 @@
+# Test fixture (see devtool/fixtures/README.md), not an example.
 # Imported pure functions compose ordinary settings for std.
 app [kaifile] {
-	pf: platform "../../platform/main.roc",
-	std: "../../plugins/std/main.roc",
+	pf: platform "../../../platform/main.roc",
+	std: "../../../plugins/std/main.roc",
 }
 
 import ProjectTasks

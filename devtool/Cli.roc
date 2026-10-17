@@ -74,6 +74,7 @@ Cli := [].{
 		"help",
 		"plugins",
 		"bundle",
+		"examples",
 	]
 
 	usage : Str
@@ -85,7 +86,7 @@ Cli := [].{
 		\\  config-fixtures
 		\\  e2e TEST [--nix | --guix] [--require-guix] KAI_BINARY BARE_KAI_BINARY
 		\\      TEST is all, run, build, workflow, update, overlays, help,
-		\\      plugins or bundle
+		\\      plugins, bundle or examples
 		\\  fuzz SECONDS ROC_APP...
 		\\  prepare-release NAME VERSION
 		\\  tidy [ROC_FILE...]

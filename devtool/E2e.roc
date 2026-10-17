@@ -16,20 +16,24 @@ E2e := [].{
 	## time-machine run downloads Guix rather than building it.
 	release = "230aa373f315f247852ee07dff34146e9b480aec"
 
-	## A temporary copy of an example's Kaifile.roc and listed files or
-	## directories (symlinks preserved), plus the absolute kai binary.
-	fixture! = |binary, example, entries| {
+	## A copy of the fixture `name` in devtool/fixtures; see `copy!`.
+	fixture! = |binary, name, entries|
+		E2e.copy!(binary, "devtool/fixtures/${name}", entries)
+
+	## A temporary copy of the project in `dir`, relative to the repository:
+	## its Kaifile.roc, with a header naming this checkout's platform and std,
+	## and the listed files or directories (symlinks preserved), plus the
+	## absolute kai binary.
+	copy! = |binary, dir, entries| {
 		root = Path.canonicalize!(Env.cwd!()?)?
 		kai = Path.canonicalize!(Path.utf8(binary))?
 		temporary = Env.create_temp_dir_with_prefix!("kai-fixture-")?
 		project = Path.canonicalize!(temporary)?
-		source = Path.join(root, "examples/${example}")
+		source = Path.join(root, dir)
 		kaifile = Path.read_utf8!(Path.join(source, "Kaifile.roc"))?
 		header = ConfigFixtures.header(root, project)
-		body = match kaifile.split_on(ConfigFixtures.composition_header) {
-			[before, after] => "${before}${header}${after}"
-			_ => return Err(UnexpectedCompositionHeader(kaifile))
-		}
+		parts = ConfigFixtures.header_parts(kaifile)?
+		body = "${parts.before}${header}${parts.after}"
 		Path.write_utf8!(Path.join(project, "Kaifile.roc"), body)?
 		for entry in entries {
 			from = Path.join(source, entry)

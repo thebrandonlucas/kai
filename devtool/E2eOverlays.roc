@@ -1,5 +1,5 @@
 # Nix overlays, which Guix does not have: a built `kai shell` and `kai run`
-# on a copy of examples/overlays against real Nix. Overlay stacks apply in
+# on a copy of the overlays fixture against real Nix. Overlay stacks apply in
 # order only to environments that select them, Extend applies the parent's
 # stack first, and shells aliasing different environments differ. One update
 # serves every request unchanged.

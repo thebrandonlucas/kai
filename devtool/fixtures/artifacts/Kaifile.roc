@@ -1,9 +1,10 @@
+# Test fixture (see devtool/fixtures/README.md), not an example.
 # Two sandboxed artifacts: a library built from a fresh snapshot of the
 # project, and an app that reads the locked assets source and the library.
 # The ci workflow checks the working tree, then builds the app.
 app [kaifile] {
-	pf: platform "../../platform/main.roc",
-	std: "../../plugins/std/main.roc",
+	pf: platform "../../../platform/main.roc",
+	std: "../../../plugins/std/main.roc",
 }
 
 import std.Std
