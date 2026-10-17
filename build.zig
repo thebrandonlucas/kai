@@ -481,9 +481,9 @@ pub fn build(b: *std.Build) void {
     const e2e_tests = [_][]const u8{
         "run", "build", "workflow", "update", "overlays", "help", "plugins", "bundle", "examples",
     };
+    // Each test is its own step, so `e2e` and `ci` run them concurrently; each
+    // works in its own temporary directories and on ports the system assigns.
     const e2e_step = b.step("e2e", "Run every end-to-end test (-- --nix | --guix)");
-    const run_e2e = addE2e(b, devtool, "all", cli_binary, bare_binary, &.{});
-    e2e_step.dependOn(&run_e2e.step);
     ci_step.dependOn(e2e_step);
     for (e2e_tests) |test_name| {
         const step = b.step(
@@ -491,6 +491,7 @@ pub fn build(b: *std.Build) void {
             b.fmt("Run the {s} end-to-end test (-- --nix | --guix)", .{test_name}),
         );
         step.dependOn(&addE2e(b, devtool, test_name, cli_binary, bare_binary, &.{}).step);
+        e2e_step.dependOn(step);
     }
 
     const smoke_step = b.step(
