@@ -1,6 +1,7 @@
 # Run what a built kai's help teaches: gather every command's examples and
 # Kaifile.roc settings from its plain help, compile the settings as one real
-# Kaifile.roc, then run each non-interactive example against real Nix.
+# Kaifile.roc, then run each non-interactive example against real Nix. Then
+# kai init: it writes a Kaifile.roc whose shell works, and never replaces one.
 import pf.Cmd
 import pf.Env
 import pf.Path
@@ -43,10 +44,12 @@ E2eHelp := [].{
 	add_new = |kept, lines|
 		lines.fold(kept, |acc, line| if acc.contains(line) acc else acc.append(line))
 
-	# Without a command, kai shell is interactive; update runs first anyway.
+	# Without a command, kai shell is interactive; update runs first anyway, and
+	# init is checked on its own.
 	runnable : List(Str) -> Bool
 	runnable = |args|
 		match args {
+			[.., "init"] => Bool.False
 			["shell", ..] => args.contains("--")
 			["update"] => Bool.False
 			_ => Bool.True
@@ -100,6 +103,31 @@ E2eHelp := [].{
 					.map_err(|err| ExampleFailed(example, Str.inspect(err)))?
 			}
 		}
-		Stdout.line!("kai help examples compile and run")
+		Stdout.line!("kai help examples compile and run")?
+		E2eHelp.init!(root, kai, Path.join(project, "init"))
+	}
+
+	# kai init writes a starting Kaifile.roc and refuses to replace it. Its
+	# header names the bundles a release publishes, so it is pointed at this
+	# checkout before its shell runs.
+	init! = |root, kai, project| {
+		Path.create_dir!(project)?
+		kai! = |args| Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(project)
+			.exec_output!()
+		_ = kai!(["init"])?
+		match kai!(["init"]) {
+			Err(NonZeroExitCode({ exit_code, .. })) if exit_code == 1 => {}
+			other => return Err(InitReplacedKaifile(Str.inspect(other)))
+		}
+		file = Path.join(project, "Kaifile.roc")
+		parts = ConfigFixtures.header_parts(Path.read_utf8!(file)?)?
+		header = ConfigFixtures.header(root, project)
+		Path.write_utf8!(file, "${parts.before}${header}${parts.after}")?
+		_ = kai!(["update"])?
+		said = kai!(["shell", "default", "--", "cowsay", "moo"])?.stdout_utf8
+		if !said.contains("moo") {
+			return Err(InitShellFailed(said))
+		}
+		Stdout.line!("kai init wrote a Kaifile.roc whose shell works, once")
 	}
 }
