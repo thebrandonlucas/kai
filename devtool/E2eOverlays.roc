@@ -11,7 +11,7 @@ import E2e
 
 E2eOverlays := [].{
 	nix! = |binary| {
-		(kai, project) = E2e.fixture!(binary, "overlays", ["overlays"])?
+		(kai, project) = E2e.nix_fixture!(binary, "overlays", ["overlays"])?
 		result = E2eOverlays.run_in!(kai, project)
 		Path.delete_all!(project)?
 		result

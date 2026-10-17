@@ -14,7 +14,7 @@ import E2e
 
 E2eWorkflow := [].{
 	nix! = |binary| {
-		(kai, project) = E2e.fixture!(
+		(kai, project) = E2e.nix_fixture!(
 			binary,
 			"artifacts",
 			["assets", "src"],

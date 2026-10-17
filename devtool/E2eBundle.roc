@@ -13,6 +13,7 @@ import pf.Stdout
 import pf.Tcp
 
 import Bundles
+import E2e
 
 E2eBundle := [].{
 	# The URL packages the platform imports: Weaver, and the ansi and path
@@ -221,7 +222,8 @@ E2eBundle := [].{
 		}
 		link = Path.display(Path.join(cache, "nix"))
 		Cmd.new_str("ln").args_str(["-s", nix_cache, link]).exec_cmd!()?
-		Path.write_utf8!(Path.join(dir, "Kaifile.roc"), text)?
+		pinned = E2e.pin_nixpkgs(text, E2e.nixpkgs!(Env.cwd!()?)?)
+		Path.write_utf8!(Path.join(dir, "Kaifile.roc"), pinned)?
 		Ok(cache)
 	}
 
