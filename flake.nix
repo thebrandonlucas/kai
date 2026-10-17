@@ -214,6 +214,7 @@
           src,
           source,
           binaryName,
+          preBuild ? "",
         }:
         let
           roc = rocFor pkgs;
@@ -247,6 +248,7 @@
             pkgs.llvmPackages.bintools
             pkgs.zstd
           ];
+          inherit preBuild;
           dontConfigure = true;
           dontFixup = true;
 
@@ -283,10 +285,25 @@
 
         };
 
+      # kai embeds the URLs of the platform and std bundles built here, as this
+      # release publishes them, rather than the committed platform-release and
+      # plugins/std-release, which only a release preparation updates. Its
+      # wrapper seeds Roc's cache with those same bundles, so a Kaifile.roc
+      # from `kai init` loads before the release is published.
       mkKaiBinary =
         pkgs: rocTarget:
+        let
+          platform = kaiPlatformFor pkgs;
+          std = kaiStdFor pkgs;
+          base = "https://github.com/${releaseRepository}/releases/download/v${version}";
+        in
         mkRocBinary pkgs rocTarget {
           pname = "kai";
+          preBuild = ''
+            chmod u+w platform-release plugins/std-release
+            echo "${base}/$(basename ${platform}/*.tar.zst)" > platform-release
+            echo "${base}/std-$(basename ${std}/*.tar.zst)" > plugins/std-release
+          '';
           # Only what the CLI compiles or embeds, so other edits keep the build.
           src = lib.fileset.toSource {
             root = ./.;

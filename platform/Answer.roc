@@ -41,6 +41,22 @@ Answer := [].{
 		lock: ReadsLock,
 	}
 
+	## kai runs `init` itself, without a Kaifile.roc; it is listed here so
+	## help shows it.
+	init : Command
+	init = Command.{
+		name: "init",
+		summary: "Create a Kaifile.roc here to start a project.",
+		help: {
+			description: "Create a starter Kaifile.roc, with a shell containing cowsay "
+				.concat("and fortune and a task that runs them."),
+			examples: ["kai init", "kai --file other.roc init"],
+			config: [],
+		},
+		args: [],
+		lock: ReadsLock,
+	}
+
 	## kai answers `describe` with the Kaifile's plugins, commands and
 	## backends.
 	describe : Command
@@ -59,11 +75,12 @@ Answer := [].{
 
 	body : Kaifile, Protocol.Request -> Protocol.Body
 	body = |kaifile, request| {
-		commands = [Answer.check, Answer.describe]
+		commands = [Answer.init, Answer.check, Answer.describe]
 			.concat(kaifile.plugins.join_map(|p| p.commands))
 		match Argv.parse(Answer.kai, commands, request.style, request.argv) {
 			Err(Help(text)) => Help(text)
 			Err(Usage(text)) => Usage(text)
+			Ok({ command: "init", .. }) => Refused("kai creates Kaifile.roc itself")
 			Ok({ command: "check", .. }) => Refused("kai checks Kaifile.roc itself")
 			Ok({ command: "describe", .. }) =>
 				Describe(
