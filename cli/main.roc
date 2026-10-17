@@ -82,7 +82,7 @@ run! = |shown, mode| {
 	project = match located {
 		Ok(found) => found
 		Err(NoKaifile(_)) if asks_help(shown) =>
-			return Stdout.line!(Help.generic(version, "There is no Kaifile.roc here."))
+			return Stdout.line!(Help.generic(version, Help.starter))
 		Err(err) => return Err(err)
 	}
 	layout = Workspace.locate!(project.root)?
