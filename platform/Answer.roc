@@ -2,6 +2,7 @@
 # or the candidate plans for the command kai was asked to run.
 import Argv
 import Command
+import About
 import Kaifile
 import Protocol
 import Sexpr
@@ -11,12 +12,12 @@ Answer := [].{
 	## kai's own page, above every plugin command.
 	kai : Command.Page
 	kai = {
-		description: "Developer environments, tasks and builds from a Kaifile.roc.",
-		examples: ["kai check", "kai update", "kai shell", "kai run test"],
+		description: About.text,
+		examples: ["kai check", "kai update", "kai shell cow", "kai run moo"],
 		config: [
-			"Environment(\"dev\", [Tools([\"git\"])]),",
-			"Shell(\"default\", [Use(\"dev\")]),",
-			"Task(\"test\", [Use(\"dev\"), Run([\"git\", \"--version\"])]),",
+			"Environment(\"cow\", [Tools([\"cowsay\"])]),",
+			"Shell(\"cow\", [Use(\"cow\")]),",
+			"Task(\"moo\", [Use(\"cow\"), Run([\"cowsay\", \"moo\"])]),",
 		],
 	}
 
