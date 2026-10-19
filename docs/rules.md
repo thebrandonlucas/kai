@@ -1,6 +1,8 @@
 - After every change, run `zig build test` plus the integration step(s) for the
-  area you touched. Full `zig build ci` runs on GitHub; run it locally only
-  when asked or before a merge. It should pass on every commit.
+  area you touched. On GitHub, pull requests run `zig build test` (the
+  required ci check) and the end-to-end tests, and the full `zig build ci`
+  runs nightly; run it locally only when asked or before a merge. It should
+  pass on every commit.
 - The end-to-end steps are `e2e-run`, `e2e-build`, `e2e-workflow`,
   `e2e-update`, `e2e-overlays`, `e2e-help`, `e2e-plugins`, `e2e-bundle` and
   `e2e-examples` (`e2e` runs them all), plus `config-fixtures`, each run with

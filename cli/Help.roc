@@ -3,27 +3,76 @@
 # plugins.
 import "../platform-release" as platform_release : Str
 import "../plugins/std-release" as std_release : Str
+import api.About
 
 Help := [].{
-	# How a Kaifile.roc starts: with the platform and std bundles this Kai's
-	# release publishes. Each URL is one unbroken line, however help wraps.
-	header =
+	# The README's Getting started section, which has the full header.
+	readme = "https://github.com/thebrandonlucas/kai#getting-started"
+
+	examples = "https://github.com/thebrandonlucas/kai/tree/master/examples"
+
+	# A release URL shortened to its release and the start of its file name,
+	# such as `…/v0.0.8/8eM3r3RE….tar.zst`: the full URLs overflow a terminal.
+	short : Str -> Str
+	short = |url| {
+		parts = url.split_on("/")
+		file = parts.last() ?? url
+		release = parts.drop_last(1).last() ?? ""
+		name = file.drop_suffix(".tar.zst")
+		kept = if name.starts_with("std-") 12 else 8
+		start = Str.from_utf8(name.to_utf8().take_first(kept)) ?? name
+		"…/${release}/${start}….tar.zst"
+	}
+
+	# How a Kaifile.roc starts, with the platform and std bundles this Kai's
+	# release publishes, shortened to fit; `settings` is the list given to std.
+	header : Str -> Str
+	header = |settings|
 		\\  app [kaifile] {
-		\\      pf: platform "${platform_release.trim()}",
-		\\      std: "${std_release.trim()}",
+		\\      pf: platform "${Help.short(platform_release.trim())}",
+		\\      std: "${Help.short(std_release.trim())}",
 		\\  }
 		\\
 		\\  import std.Std
 		\\
-		\\  kaifile = Std.kaifile([...])
+		\\  kaifile = Std.kaifile(${settings})
 
-	# What kai's own help ends with, with or without a Kaifile.roc.
-	notes =
-		\\Kaifile.roc starts with:
-		\\${Help.header}
-		\\
+	# The last lines of every help page kai prints itself.
+	tips =
 		\\Put arguments for a shell command or task after --.
 		\\Set ROC to choose the Roc compiler (default: roc).
+
+	# What kai's help in a project ends with.
+	notes =
+		\\Kaifile.roc starts with:
+		\\${Help.header("[...]")}
+		\\
+		\\The README's Getting started has these URLs in full:
+		\\  ${Help.readme}
+		\\
+		\\${Help.tips}
+
+	# The settings a new Kaifile.roc starts with: a shell with cowsay.
+	cow =
+		\\[
+		\\      Name("hello"),
+		\\      Environment("cow", [Tools(["cowsay"])]),
+		\\      Shell("default", [Use("cow")]),
+		\\  ]
+
+	# Why kai's own help is shown when there is no Kaifile.roc, and how to
+	# start one.
+	starter =
+		\\There is no Kaifile.roc here. To start one, create Kaifile.roc with:
+		\\
+		\\${Help.header(Help.cow)}
+		\\
+		\\with this release's full URLs, from the README's Getting started:
+		\\  ${Help.readme}
+		\\
+		\\Then run `kai update` to pin its packages, `kai shell` to enter it, and
+		\\`cowsay "Hello from Kai!"` inside. Every setting has an example in:
+		\\  ${Help.examples}
 
 	# The Kaifile cannot know kai's version, so kai adds it to the title.
 	versioned : Str, Str -> Str
@@ -39,7 +88,7 @@ Help := [].{
 	generic = |version, why|
 		\\kai ${version}
 		\\
-		\\Developer environments, tasks and builds from a Kaifile.roc.
+		\\${About.text}
 		\\
 		\\${why}
 		\\
@@ -63,7 +112,7 @@ Help := [].{
 		\\  -h, --help          Show this help page.
 		\\  -V, --version       Show the version.
 		\\
-		\\${Help.notes}
+		\\${Help.tips}
 
 	# Color is decoration only: NO_COLOR (when non-empty), --no-color or output
 	# that is not a terminal all get plain text.
@@ -80,3 +129,15 @@ expect [
 	({ terminal: Bool.True, no_color: "", flag: Bool.True }, Plain),
 	({ terminal: Bool.False, no_color: "1", flag: Bool.True }, Plain),
 ].all(|(input, expected)| Help.text_style(input) == expected)
+
+# A release URL keeps its release and the start of its file name.
+expect
+	Help.short(
+		"https://github.com/o/kai/releases/download/v0.0.8/8eM3r3RE4n1BFSWq.tar.zst",
+	)
+		== "…/v0.0.8/8eM3r3RE….tar.zst"
+
+# std's bundle keeps its std- prefix.
+expect
+	Help.short("https://example.com/v0.0.8/std-6zJHFrCtGkKhyuiN.tar.zst")
+		== "…/v0.0.8/std-6zJHFrCt….tar.zst"
