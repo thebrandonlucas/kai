@@ -31,3 +31,6 @@ This portion adapted from [Ghostty AI usage policy](https://github.com/ghostty-o
 
 - Create an issue only when explicitly asked.
 - Create a PR only when explicitly asked, as a draft.
+- A PR with one commit uses that commit's subject as its title and the
+  commit's body as its description, unchanged. Only a PR with several commits
+  gets a title and description that summarize them.
