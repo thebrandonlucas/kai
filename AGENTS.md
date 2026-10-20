@@ -15,3 +15,7 @@
 - Never add an AI agent as an author or co-author of a commit or PR: no
   `Co-Authored-By`, `Generated with` or similar attribution trailers. The
   human developer is the sole author.
+- Keep anything published (commits, pull requests, issues, comments)
+  general: never include personal information or details of the developer's
+  machine, such as home-directory paths, hostnames, disk or store usage, or
+  local setup. Describe problems as any contributor would meet them.
