@@ -1,4 +1,6 @@
-# Kai - A friendly frontend for determinate computing
+<h1 align="center">
+  <img src="docs/images/kai-banner.jpg" alt="kαί: a friendly frontend for determinate computing" width="100%">
+</h1>
 
 [![Join the Kai Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/pnANfSe4V)
 
@@ -6,7 +8,13 @@
 
 Kai is a CLI that makes using determinate systems easy, friendly, and fun.
 
-Imagine everything about how your computer works is a portable config in one file you can just send to your friends or bring with you to a new computer. Spend very little time thinking about installing software, dependencies, developer environments, etc., and once you figure it out once, you _shouldn't have to figure it out again_. We have that, with [Nix](https://determinate.systems/)! The problem is Nix is so hard to learn and use that people often give up (even agents get confused!). This is a complete paradigm shift in how we interact with software! But if no one uses it, what's the point?
+What if any computer device could be rebuilt _exactly_ from a file that you could easily backup, upload to a fresh device, or send to friends? What if the non-determinism introduced by modifying your computer with AI agents could be deterministically restrained, version-controlled? What if your whole setup was just code? What if, once you painstakingly figured out your setup, you never had to figure it out again?
+
+And what if this was _easy_, _flexible_, and _fun_?
+
+[Nix](https://determinate.systems/) opened the door for the former, Kai aims to bring us home to the latter.
+
+Spend very little time thinking about installing software, dependencies, developer environments, etc., and once you figure it out once, you _shouldn't have to figure it out again_. The problem is Nix is so hard to learn and use that people often give up (even agents get confused!). This is a complete paradigm shift in how we interact with software! But if no one uses it, what's the point?
 
 To attempt a solution, `kai` wraps `nix` in a friendly frontend so that you can actually use it with confidence.
 
@@ -14,7 +22,11 @@ To attempt a solution, `kai` wraps `nix` in a friendly frontend so that you can 
 
 The goal is to make using determinate systems so easy and powerful that they become the de-facto choice for computer use in all its forms: from desktops to servers and beyond. Practically, this means adopting Nix under the hood and creating useful abstractions on top in the short term, like [jujutsu](https://github.com/jj-vcs/jj) does with `git`.
 
-A personal motivation is to stimulate not just Linux adoption but _determinate_ computing adoption by eventually creating a custom NixOS-based competitor to [Omarchy](https://omarchy.org).
+## Use Cases
+
+- Completely reproducible machine setups for spinning up VMs/VPS/Self-hosted services
+- Easy to understand, low-token cost dotfile setups for your desktop
+- Easily customizable and shareable Linux "distros" from a single fileset
 
 ## Installation
 
@@ -266,6 +278,8 @@ Aside from making a great tool for programmers to encourage the use of determina
 
 ### Attribution
 
-Huge thank you to Luke Boswell for inspiring the initial portable typed configuration idea with [roc-blueprint](https://github.com/lukewilliamboswell/roc-blueprint) and his enthusiastic evangelism of this idea. The Kaifile platform, IR and Nix backend in `kaifile/` began as roc-blueprint's code (see [LICENSE](LICENSE)).
+Huge thank you to Luke Boswell for inspiring the initial portable typed configuration idea with [roc-blueprint](https://github.com/lukewilliamboswell/roc-blueprint) and his enthusiastic evangelism of this idea. Kai's plugin platform (`platform/`), std's model (`plugins/std/model/`) and its Nix backend (`plugins/std/backends/nix/`) began as roc-blueprint's code (see [LICENSE](LICENSE)).
 
 Also thank you to the longstanding efforts of the Nix and Guix developers without which this would be impossible, the [Roc](https://roc-lang.org/) team for their encouragement and making a great language to build in, and the [caddy](https://caddyserver.com/) devs from which this project takes heavy inspiration.
+
+The banner shows Thomas Cole's *The Course of Empire: The Arcadian or Pastoral State* (1834), public domain, from [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Cole_Thomas_The_Course_of_Empire_The_Arcadian_or_Pastoral_State_1836.jpg).
