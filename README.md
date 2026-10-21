@@ -10,8 +10,6 @@ Kai is a CLI that makes using determinate systems easy, friendly, and fun.
 
 What if any computer device could be rebuilt _exactly_ from a file that you could easily backup, upload to a fresh device, or send to friends? What if the non-determinism introduced by modifying your computer with AI agents could be deterministically restrained, version-controlled? What if your whole setup was just code? What if, once you painstakingly figured out your setup, you never had to figure it out again?
 
-And what if this was _easy_, _flexible_, and _fun_?
-
 [Nix](https://determinate.systems/) opened the door for the former, Kai aims to bring us home to the latter.
 
 Spend very little time thinking about installing software, dependencies, developer environments, etc., and once you figure it out once, you _shouldn't have to figure it out again_. The problem is Nix is so hard to learn and use that people often give up (even agents get confused!). This is a complete paradigm shift in how we interact with software! But if no one uses it, what's the point?
