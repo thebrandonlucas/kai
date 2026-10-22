@@ -3,7 +3,7 @@
 Kai releases use a protected release branch. Release preparation pushes only that branch; merging its required pull request triggers publication automatically.
 
 > [!WARNING]
-> `.github/workflows/release.yml` publishes on **any** push to `master` that changes `VERSION`, not only on release-branch merges. A change that bumps `VERSION` must also carry the matching `RELEASE_NAME` and `platform-release`, or the release is published under a stale name or fails. Prefer `zig build release`, which updates all of them together.
+> `.github/workflows/release.yml` publishes on **any** push to `master` that changes `VERSION` or `RELEASE_NAME`, not only on release-branch merges. A change that bumps `VERSION` must also carry the matching `RELEASE_NAME` and `platform-release`, or the release is published under a stale name or fails. Prefer `zig build release`, which updates all of them together.
 
 ## Metadata ownership
 
@@ -50,7 +50,7 @@ Remove the line to stop publishing it.
 
 ## Prepare the protected release pull request
 
-Start from a clean local `master` that exactly matches freshly fetched `origin/master`. The origin must be a supported SSH or HTTPS GitHub remote, and the requested version must be newer than the committed version with no existing release branch or tag.
+Start from a clean local `master` that exactly matches freshly fetched `origin/master`. The origin must be a supported SSH or HTTPS GitHub remote, and the requested version must be newer than the committed version, or equal to it when that version was never released, with no existing release branch or tag.
 
 ```sh
 zig build release -- "Kai X.Y.Z" X.Y.Z
@@ -69,7 +69,7 @@ Open that URL, create the required pull request, review it, and merge it. Openin
 
 ## Automatic publication after merge
 
-A push to `master` that changes `VERSION`, such as the release pull request's merge, triggers `.github/workflows/release.yml`; it can also be run manually. The workflow validates that the merged commit is on `origin/master` and that all committed metadata agrees, then runs:
+A push to `master` that changes `VERSION` or `RELEASE_NAME`, such as the release pull request's merge, triggers `.github/workflows/release.yml`; it can also be run manually. The workflow validates that the merged commit is on `origin/master` and that all committed metadata agrees, then runs:
 
 ```sh
 zig build publish-release

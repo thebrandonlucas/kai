@@ -6,6 +6,8 @@ on:
       - master
     paths:
       - VERSION
+      # A release of the committed, unreleased VERSION changes only its name.
+      - RELEASE_NAME
   workflow_dispatch:
 
 permissions:
