@@ -6,11 +6,14 @@
 # two bundles and the packages the platform imports. A std bundled against
 # another platform is refused.
 import pf.Cmd
+import pf.Duration
 import pf.Env
 import pf.OsStr
 import pf.Path
 import pf.Stdout
 import pf.Tcp
+
+import Exec
 
 import Bundles
 
@@ -58,9 +61,11 @@ E2eBundle := [].{
 		Path.create_all!(output)?
 		Path.create_all!(store)?
 		copy! = |from, to|
-			Cmd.new_str("cp")
-				.args_str(["-R", "--no-preserve=mode", "--", from, Path.display(to)])
-				.exec_cmd!()
+			Exec.cmd!(
+				Exec.cmd("cp")
+					.args(Exec.strs(["-R", "--no-preserve=mode", "--"]))
+					.args(Exec.strs([from, Path.display(to)])),
+			)
 		copy!(Path.display(pf_bundle.unpacked), Path.join(store, pf_bundle.hash))?
 		copy!("plugins/std", source)?
 		rewrite! = |file, from, to|
@@ -85,21 +90,23 @@ E2eBundle := [].{
 				"api: platform \"${url}\"",
 			)?
 		}
-		listed = Cmd.new_str("find")
-			.args_str([".", "-type", "f", "!", "-path", "./main.roc"])
-			.cwd(source)
-			.exec_output!()?
+		listed = Exec.output!(
+			Exec.cmd("find")
+				.args(Exec.strs([".", "-type", "f", "!", "-path", "./main.roc"]))
+				.cwd(source),
+		)?
 		files = listed.stdout_utf8.split_on("\n").keep_if(|f| !f.is_empty())
-		_ = Cmd.new_str("roc")
-			.args_str(["bundle", "main.roc"])
-			.args_str(files)
-			.args_str(["--output-dir", Path.display(output)])
-			.cwd(source)
-			.env(
-				OsStr.utf8("XDG_CACHE_HOME"),
-				Path.to_os_str(Path.join(work, "bundle-cache")),
-			)
-			.exec_output!()?
+		_ = Exec.output!(
+			Exec.cmd("roc")
+				.args(Exec.strs(["bundle", "main.roc"]))
+				.args(Exec.strs(files))
+				.args(Exec.strs(["--output-dir", Path.display(output)]))
+				.cwd(source)
+				.env(
+					OsStr.utf8("XDG_CACHE_HOME"),
+					Path.to_os_str(Path.join(work, "bundle-cache")),
+				),
+		)?
 		Bundles.found!(output, "std for ${url}")
 	}
 
@@ -116,7 +123,7 @@ E2eBundle := [].{
 	}
 
 	run_in! = |kai, installed, pf_bundle, std, version, work| {
-		listener = Tcp.listen!("127.0.0.1", 0, 5000)?
+		listener = Tcp.listen!("127.0.0.1", 0, Duration.millis(5000))?
 		base = "http://127.0.0.1:${listener.local_port!()?.to_str()}"
 		path = |hash| "/v${version}/${hash}.tar.zst"
 		# Roc tells packages apart by URL minus version and hash, so std's
@@ -157,7 +164,7 @@ E2eBundle := [].{
 			),
 			[pf_bundle.hash, std.hash].concat(E2eBundle.platform_packages),
 			Path.join(work, "installed"),
-			|command| Ok(command.exec_output!()?.stdout_utf8),
+			|command| Ok(Exec.output!(command)?.stdout_utf8),
 		)?
 		Stdout.line!("kai loads the platform and std bundles served and pre-seeded")
 	}
@@ -168,32 +175,37 @@ E2eBundle := [].{
 		child = command.stdout(Capture).stderr(Capture).spawn!()
 			.map_err(|err| ServerFailed(Str.inspect(err)))?
 		while Bool.True {
-			match child.try_wait!().map_err(|err| ServerFailed(Str.inspect(err)))? {
-				[{ status: Exited(0), stdout_bytes, .. }] =>
-					return Ok(Str.from_utf8_lossy(stdout_bytes))
-				[output] => return Err(
+			match child.poll!().map_err(|err| ServerFailed(Str.inspect(err)))? {
+				Finished(output) if output.status == Exited(0) =>
+					return Ok(Str.from_utf8_lossy(output.stdout_bytes))
+				Finished(output) => return Err(
 					KaiFailed(
 						Str.inspect(output.status)
 							.concat(Str.from_utf8_lossy(output.stderr_bytes)),
 					),
 				)
-				_ => {}
+				Running => {}
 			}
-			match listener.accept!(100) {
+			waiting = {
+				accept_timeout: After(Duration.millis(100)),
+				io_timeout: Duration.seconds(30),
+			}
+			match listener.accept!(waiting) {
 				Ok(stream) => {
 					_ = E2eBundle.respond!(stream, routes)
 				}
 				Err(_) => {}
 			}
 		}
-		Err(ServerStopped)
 	}
 
 	respond! = |stream, routes| {
-		request = stream.read_line!(8192, 5000)?
+		connection = stream.with_line_limit(8192)
+		request = connection.read_line!()?
+		# Headers end at the first blank line, however its ending is trimmed.
 		var $header = request
-		while $header != "\r\n" and $header != "\n" and $header != "" {
-			$header = stream.read_line!(8192, 5000)?
+		while $header.trim() != "" {
+			$header = connection.read_line!()?
 		}
 		target = match request.split_on(" ") {
 			["GET", path, ..] => path
@@ -205,7 +217,7 @@ E2eBundle := [].{
 		}
 		head = "HTTP/1.1 ${status}\r\nContent-Length: ${body.len().to_str()}"
 			.concat("\r\nConnection: close\r\n\r\n")
-		stream.write!(head.to_utf8().concat(body), 30000)
+		connection.write_bytes!(head.to_utf8().concat(body))
 	}
 
 	# A fresh project and Roc cache; Nix keeps the caller's cache.
@@ -220,7 +232,7 @@ E2eBundle := [].{
 			}
 		}
 		link = Path.display(Path.join(cache, "nix"))
-		Cmd.new_str("ln").args_str(["-s", nix_cache, link]).exec_cmd!()?
+		Exec.cmd!(Exec.cmd("ln").args(Exec.strs(["-s", nix_cache, link])))?
 		Path.write_utf8!(Path.join(dir, "Kaifile.roc"), text)?
 		Ok(cache)
 	}
@@ -230,7 +242,7 @@ E2eBundle := [].{
 	project! = |kai, text, hashes, dir, execute!| {
 		cache = E2eBundle.fresh!(dir, text)?
 		kai! = |args| execute!(
-			Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(dir)
+			Cmd.new(Path.to_os_str(kai)).args(Exec.strs(args)).cwd(dir)
 				.env(OsStr.utf8("XDG_CACHE_HOME"), Path.to_os_str(cache)),
 		)
 		_ = kai!(["check"])?
@@ -253,7 +265,7 @@ E2eBundle := [].{
 	mismatch! = |kai, text, dir, execute!| {
 		cache = E2eBundle.fresh!(dir, text)?
 		checked = execute!(
-			Cmd.new(Path.to_os_str(kai)).args_str(["check"]).cwd(dir)
+			Cmd.new(Path.to_os_str(kai)).args(Exec.strs(["check"])).cwd(dir)
 				.env(OsStr.utf8("XDG_CACHE_HOME"), Path.to_os_str(cache)),
 		)
 		match checked {

@@ -7,6 +7,8 @@ import pf.Cmd
 import pf.Path
 import pf.Stderr
 import pf.Stdout
+
+import Exec
 import api.LockJson
 import nix.Locks
 
@@ -27,8 +29,10 @@ E2eUpdate := [].{
 	nix_in! = |kai, project| {
 		lock = Path.join(project, ".kai/lock.json")
 		nix_update = ["--backend", "nix", "update"]
-		update! = || Cmd.new(Path.to_os_str(kai)).args_str(nix_update)
-			.cwd(project).exec_cmd!()
+		update! = || Exec.cmd!(
+			Cmd.new(Path.to_os_str(kai)).args(Exec.strs(nix_update))
+				.cwd(project),
+		)
 		update!()?
 		_ = Locks.decode(Path.read_utf8!(lock)?).map_err(|err| BadLock(err))?
 		# A Nix update keeps another backend's section as it is.

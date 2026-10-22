@@ -113,7 +113,7 @@ Cli := [].{
 					"e2e" => Err(ExpectedKaiBinaries)
 					unknown => Err(UnknownCommand(unknown))
 				}
-			}
+		}
 
 	## Backend flags may come in any order before the two binaries; both
 	## --nix and --guix together mean both backends.
@@ -139,7 +139,7 @@ Cli := [].{
 				$binaries = $binaries.append(arg)
 			}
 		}
-		only = if $nix and !$guix Nix else if $guix and !$nix Guix else Both
+		only = if ($nix and !$guix) Nix else if ($guix and !$nix) Guix else Both
 		match $binaries {
 			[kai, bare] =>
 				Ok(E2e({ test, only, require_guix: $require_guix, kai, bare }))

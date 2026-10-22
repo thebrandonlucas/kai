@@ -70,7 +70,7 @@ Sexpr :: [].{
 		encode_str = |value, out| Ok(append(out, quote(value)))
 
 		encode_bool : Bool, Out -> Try(Out, _never_fails)
-		encode_bool = |value, out| Ok(append(out, if value "true" else "false"))
+		encode_bool = |value, out| Ok(append(out, if (value) "true" else "false"))
 
 		encode_u8 : U8, Out -> Try(Out, _never_fails)
 		encode_u8 = |value, out| Ok(append(out, value.to_str()))
@@ -400,7 +400,7 @@ Sexpr :: [].{
 				first = bytes.get(start) ?? 0
 				is_number = (first >= '0' and first <= '9') or
 					(first == '-' and word != "-")
-				$tokens = $tokens.append(if is_number Number(word) else Symbol(word))
+				$tokens = $tokens.append(if (is_number) Number(word) else Symbol(word))
 			}
 		}
 		Ok($tokens)
@@ -466,7 +466,7 @@ Sexpr :: [].{
 
 	## Separates items with a space, except straight after an open paren.
 	separate : Out -> Out
-	separate = |out| if out.text.ends_with("(") out else append(out, " ")
+	separate = |out| if (out.text.ends_with("(")) out else append(out, " ")
 
 	write_item : Out, (Out -> Try(Out, err)) -> Try(Out, err)
 	write_item = |out, write_value| write_value(separate(out))
@@ -546,7 +546,6 @@ Sexpr :: [].{
 				}
 			}
 		}
-		Ok($rest)
 	}
 
 	expected : Str, List(Token) -> [InvalidSexpr(Str), ..others]

@@ -5,6 +5,8 @@ import pf.Path
 import pf.Stderr
 import pf.Stdout
 
+import Exec
+
 import Bundles
 import Release
 
@@ -43,18 +45,19 @@ PrepareRelease := [].{
 		Ok({})
 	}
 	git_output! = |args| {
-		output = Cmd.new_str("git").args_str(args).exec_output!()?
+		output = Exec.output!(Exec.cmd("git").args(Exec.strs(args)))?
 		Ok(output.stdout_utf8)
 	}
-	git! = |args| Cmd.new_str("git").args_str(args).exec_cmd!()
+	git! = |args| Exec.cmd!(Exec.cmd("git").args(Exec.strs(args)))
 	git_lines! = |args| {
 		output = PrepareRelease.git_output!(args)?
 		Ok(output.split_on("\n").keep_if(|line| !line.is_empty()))
 	}
 	require_local_ref_absent! = |ref| {
-		exit_code = Cmd.new_str("git")
-			.args_str(["show-ref", "--verify", "--quiet", ref])
-			.exec_exit_code!()?
+		exit_code = Exec.exit_code!(
+			Exec.cmd("git")
+				.args(Exec.strs(["show-ref", "--verify", "--quiet", ref])),
+		)?
 		match exit_code {
 			0 => Err(LocalReleaseRefExists(ref))
 			1 => Ok({})
@@ -84,9 +87,10 @@ PrepareRelease := [].{
 	}
 	delete_release_branch_if_exists! = |branch| {
 		ref = "refs/heads/${branch}"
-		exit_code = Cmd.new_str("git")
-			.args_str(["show-ref", "--verify", "--quiet", ref])
-			.exec_exit_code!()?
+		exit_code = Exec.exit_code!(
+			Exec.cmd("git")
+				.args(Exec.strs(["show-ref", "--verify", "--quiet", ref])),
+		)?
 		match exit_code {
 			0 => PrepareRelease.git!(["branch", "--delete", "--force", branch])
 			1 => Ok({})
@@ -198,7 +202,7 @@ PrepareRelease := [].{
 	build_release_branch! = |name, version, tag, branch, repository| {
 		PrepareRelease.write_release_metadata!(name, version, repository)?
 		Stdout.line!("Building and checking ${name} (${version})...")?
-		Cmd.new_str("zig").args_str(["build", "build-release"]).exec_cmd!()?
+		Exec.cmd!(Exec.cmd("zig").args(Exec.strs(["build", "build-release"])))?
 		PrepareRelease.verify_release_changes!()?
 		PrepareRelease.git!(["commit", "--no-gpg-sign", "-m", "Release ${name}"])?
 		committed = PrepareRelease.git_lines!([
@@ -264,7 +268,6 @@ PrepareRelease := [].{
 			Err(_) => {
 				Stderr.line!(
 					\\error: push status is ambiguous; local release state was retained
-					,
 				)?
 				Stderr.line!("error: inspect with: git ls-remote origin ${ref}")?
 				Stderr.line!("error: return with: git switch master")?
@@ -430,7 +433,6 @@ PrepareRelease := [].{
 									Err(_) => {
 										Stderr.line!(
 											\\error: release branch was pushed, but local cleanup failed
-											,
 										)?
 										Stderr.line!("error: inspect remote branch: ${release_branch}")?
 										Stderr.line!("error: pull request: ${url}")?
@@ -439,7 +441,7 @@ PrepareRelease := [].{
 								}
 							}
 						}
-					}
-			}
+				}
+		}
 	}
 }

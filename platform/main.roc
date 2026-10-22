@@ -43,14 +43,12 @@ platform ""
 		Sexpr,
 	]
 	packages {
-		weaver: "https://github.com/lukewilliamboswell/weaver/releases/download/${
-			""
-		}0.9.0/7j6KBFBEZ8pNMLQHkx9xiwyZ2PmwQPgKNDPUih6gKe77.tar.zst",
+		weaver: "https://github.com/lukewilliamboswell/weaver/releases/download/0.9.0/7j6KBFBEZ8pNMLQHkx9xiwyZ2PmwQPgKNDPUih6gKe77.tar.zst",
 	}
 	provides { "roc_main": main_for_host! }
 	hosted {
-		"roc_stdin_read_to_end": Host.stdin_read_to_end!,
 		"roc_stderr_line": Host.stderr_line!,
+		"roc_stdin_read_to_end": Host.stdin_read_to_end!,
 		"roc_stdout_line": Host.stdout_line!,
 	}
 	targets: {

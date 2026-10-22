@@ -49,7 +49,7 @@ GitHubApi := [].{
 			api,
 			["repos", repository.owner, repository.repository],
 		)
-		response = Http.send!(GitHubApi.request(GET, url, token))?
+		response = Http.send!(GitHubApi.request(GET, url, token), {})?
 		_ = GitHubApi.require_status(response, 200)?
 		Ok({})
 	}
@@ -92,6 +92,7 @@ GitHubApi := [].{
 				GitHubApi.release_url(api, repository, tag),
 				token,
 			),
+			{},
 		)?
 		match Response.status(response) {
 			200 => Ok(FoundRelease(GitHubApi.decode_release_response(response)?))
@@ -113,6 +114,7 @@ GitHubApi := [].{
 				GitHubApi.release_by_id_url(api, repository, id),
 				token,
 			),
+			{},
 		)?
 		match Response.status(response) {
 			200 => Ok(FoundRelease(GitHubApi.decode_release_response(response)?))
@@ -136,6 +138,7 @@ GitHubApi := [].{
 		response = Http.send_json!(
 			api_request,
 			GitHub.create_release_request(release),
+			{},
 		)?
 		_ = GitHubApi.require_status(response, 201)?
 		draft = GitHubApi.decode_release_response(response)?
@@ -159,7 +162,7 @@ GitHubApi := [].{
 				U64.to_str(asset.id),
 			],
 		)
-		response = Http.send!(GitHubApi.request(DELETE, url, token))?
+		response = Http.send!(GitHubApi.request(DELETE, url, token), {})?
 		status = Response.status(response)
 		if status == 204 or status == 404 {
 			Ok({})
@@ -201,7 +204,7 @@ GitHubApi := [].{
 		upload_request = GitHubApi.request(POST, url, token)
 			.add_header("Content-Type", "application/octet-stream")
 			.with_body(Path.read_bytes!(artifact.path)?)
-		response = Http.send!(upload_request)?
+		response = Http.send!(upload_request, {})?
 		_ = GitHubApi.require_status(response, 201)?
 		Ok({})
 	}
@@ -211,6 +214,7 @@ GitHubApi := [].{
 		response = Http.send_json!(
 			GitHubApi.request(PATCH, url, token),
 			{ draft: Bool.False },
+			{},
 		)?
 		_ = GitHubApi.require_status(response, 200)?
 		published = GitHubApi.decode_release_response(response)?
@@ -221,7 +225,7 @@ GitHubApi := [].{
 				{
 					Err(PublishedReleaseMismatch)
 				} else {
-					Ok({})
-				}
+			Ok({})
+		}
 	}
 }

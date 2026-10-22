@@ -42,7 +42,7 @@ GuixBackend :: [].{
 		if specs.any(|spec| spec.starts_with("-")) {
 			return Err("invalid Guix tool in environment ${environment.name}")
 		}
-		tail = if command.is_empty() [] else ["--"].concat(command)
+		tail = if (command.is_empty()) [] else ["--"].concat(command)
 		Ok(["shell", "-q", "--pure"].concat(specs).concat(tail))
 	}
 
@@ -208,7 +208,7 @@ GuixBackend :: [].{
 					return Err(stale)
 				}
 				commit = LockJson.string(LockJson.field(entry, "commit")?)?
-				if GuixBackend.hex40(commit) Ok({ channel, commit }) else Err(stale)
+				if (GuixBackend.hex40(commit)) Ok({ channel, commit }) else Err(stale)
 			},
 		)
 	}
@@ -541,10 +541,10 @@ expect {
 	back = pins.map_ok(|p| GuixBackend.pinned(channels, GuixBackend.section(p)))
 	pins == Ok([{ channel: GuixBackend.default_channel, commit: hex }])
 		and back == Ok(pins)
-			and GuixBackend.pins(channels, result.replace_each(hex, "HEAD")).is_err()
-				and pins.map_ok(|p| GuixBackend.pinned([moved], GuixBackend.section(p)))
-					.map_ok(|r| r.is_err())
-					== Ok(Bool.True)
+		and GuixBackend.pins(channels, result.replace_each(hex, "HEAD")).is_err()
+		and pins.map_ok(|p| GuixBackend.pinned([moved], GuixBackend.section(p)))
+			.map_ok(|r| r.is_err())
+			== Ok(Bool.True)
 }
 
 # A shell runs under time-machine at the locked channels, exact argv.
@@ -560,8 +560,8 @@ expect {
 				[Write([{ path, .. }]), Run({ argv, what, .. })] =>
 					path == channels
 						and what == "shell dev"
-							and argv == ["guix", "time-machine", "-C", channels, "--"]
-								.concat(["shell", "-q", "--pure", "hello", "--", "hello", "a b"])
+						and argv == ["guix", "time-machine", "-C", channels, "--"]
+							.concat(["shell", "-q", "--pure", "hello", "--", "hello", "a b"])
 				_ => Bool.False
 			}
 		Err(_) => Bool.False
@@ -589,7 +589,7 @@ expect {
 	order = before.contains("kai-build-lib")
 	lib
 		and order
-			and rendered.contains("(\"lib\" ,kai-build-lib)")
-				and rendered.ends_with("kai-build-app\n")
-					and GuixBackend.build_scm(model, "data", "/p/.kai").is_err()
+		and rendered.contains("(\"lib\" ,kai-build-lib)")
+		and rendered.ends_with("kai-build-app\n")
+		and GuixBackend.build_scm(model, "data", "/p/.kai").is_err()
 }

@@ -6,6 +6,8 @@ import pf.Env
 import pf.Path
 import pf.Stdout
 
+import Exec
+
 import ConfigFixtures
 
 E2eHelp := [].{
@@ -41,7 +43,10 @@ E2eHelp := [].{
 
 	add_new : List(Str), List(Str) -> List(Str)
 	add_new = |kept, lines|
-		lines.fold(kept, |acc, line| if acc.contains(line) acc else acc.append(line))
+		lines.fold(
+			kept,
+			|acc, line| if (acc.contains(line)) acc else acc.append(line),
+		)
 
 	# Without a command, kai shell is interactive; update runs first anyway.
 	runnable : List(Str) -> Bool
@@ -53,8 +58,10 @@ E2eHelp := [].{
 		}
 
 	run_in! = |root, kai, project| {
-		kai! = |args| Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(project)
-			.exec_output!()
+		kai! = |args| {
+			command = Cmd.new(Path.to_os_str(kai)).args(Exec.strs(args))
+			Exec.output!(command.cwd(project))
+		}
 		# Commands and their help come from the Kaifile's plugins.
 		write! = |settings| {
 			systems = "Systems([\"x86_64-linux\", \"aarch64-linux\"]),"

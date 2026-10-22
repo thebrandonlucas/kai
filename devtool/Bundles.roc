@@ -3,12 +3,15 @@
 import pf.Cmd
 import pf.Path
 
+import Exec
+
 Bundles := [].{
 	# Build a flake output and return its store path.
 	nix_output! = |attribute| {
-		output = Cmd.new_str("nix")
-			.args_str(["build", attribute, "--no-link", "--print-out-paths"])
-			.exec_output!()?
+		output = Exec.output!(
+			Exec.cmd("nix")
+				.args(Exec.strs(["build", attribute, "--no-link", "--print-out-paths"])),
+		)?
 		match output.stdout_utf8.split_on("\n").keep_if(|line| !line.is_empty()) {
 			[path] => Ok(Path.utf8(path))
 			_ => Err(UnexpectedNixOutput({ attribute, output: output.stdout_utf8 }))

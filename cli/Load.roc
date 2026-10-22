@@ -6,6 +6,7 @@ import pf.OsStr
 import pf.Path
 import pf.Random
 import pf.Stderr
+import pf.System
 
 import api.Protocol
 import api.Sexpr
@@ -35,14 +36,14 @@ Load := [].{
 
 	resolve : Str, Str -> Str
 	resolve = |base, value|
-		if value.starts_with("/") value else "${base}/${value}"
+		if (value.starts_with("/")) value else "${base}/${value}"
 
 	split_file : Str -> Location
 	split_file = |location| {
 		parts = location.split_on("/")
 		file = parts.last() ?? location
 		root = Str.join_with(parts.drop_last(1), "/")
-		{ root: if root.is_empty() "/" else root, file }
+		{ root: if (root.is_empty()) "/" else root, file }
 	}
 
 	# Probe the compiler's identity before it evaluates configuration. A
@@ -62,10 +63,10 @@ Load := [].{
 		} else {
 			override
 		}
-		output = Cmd.new_str(compiler).args_str(["version"]).exec_output!()
+		output = Cmd.new(OsStr.from_str(compiler)).arg("version").capture!()
 			.map_err(|err| CompilerUnavailable(compiler, Load.why(err)))?
 		expected = "Roc compiler version ${Load.pinned_compiler}"
-		actual = output.stdout_utf8.trim()
+		actual = output.trim()
 		if actual != expected {
 			return Err(CompilerMismatch(compiler, actual))
 		}
@@ -97,9 +98,10 @@ Load := [].{
 		Load.path(store).create_all!()?
 		staging = "${store}/${hash}.${Random.seed_u64!()?.to_str()}.tmp"
 		Load.path(staging).create_dir!()?
-		copied = Cmd.new_str("cp")
-			.args_str(["-R", "--no-preserve=mode", "--", "${bundle}/.", staging])
-			.exec_output!()
+		copied = Cmd.new("cp")
+			.args(["-R", "--no-preserve=mode", "--"])
+			.args([OsStr.from_str("${bundle}/."), OsStr.from_str(staging)])
+			.call!()
 		result = match copied {
 			Ok(_) => Load.path(staging).rename!(Load.path("${store}/${hash}"))
 			Err(_) => Err(CopyFailed)
@@ -115,19 +117,21 @@ Load := [].{
 
 	why = |err|
 		match err {
-			FailedToGetExitCode({ err: NotFound, .. }) => "not found"
+			CmdErr(StartFailed(NotFound, _)) => "not found"
 			_ => Str.inspect(err)
 		}
 
 	# The host's Nix system. Kai evaluates Kaifile.roc and runs Nix only on
 	# these hosts; Update.target! selects the generated outputs for it.
 	system! : () => Try(Str, [UnsupportedHost])
-	system! = ||
-		match Env.platform!() {
-			{ arch: X64, os: LINUX } => Ok("x86_64-linux")
-			{ arch: AARCH64, os: LINUX } => Ok("aarch64-linux")
+	system! = || {
+		host = System.target!()
+		match (host.arch(), host.os()) {
+			(X64, Linux(_)) => Ok("x86_64-linux")
+			(Arm64, Linux(_)) => Ok("aarch64-linux")
 			_ => Err(UnsupportedHost)
 		}
+	}
 
 	# A Kaifile.roc from before plugins provided `config` on the platform
 	# alone; roc would only report a type mismatch. An unreadable file is left
@@ -140,7 +144,7 @@ Load := [].{
 
 	current : Str -> Try({}, [PreviousHeader])
 	current = |text|
-		if text.contains("app [config]") Err(PreviousHeader) else Ok({})
+		if (text.contains("app [config]")) Err(PreviousHeader) else Ok({})
 
 	# Type-check the whole configuration, reporting compiler diagnostics as-is;
 	# in JSON mode the compiler's stdout goes to stderr instead. roc exits 2
@@ -149,20 +153,20 @@ Load := [].{
 	check! = |project, mode| {
 		_ = Load.system!()?
 		Load.current!(project)?
-		command = Cmd.new_str(Load.compiler!()?)
-			.args_str(["check", project.file])
+		command = Cmd.new(OsStr.from_str(Load.compiler!()?))
+			.args(["check", OsStr.from_str(project.file)])
 			.cwd(Load.path(project.root))
+		valid = |status| status == Exited(0) or status == Exited(2)
 		match mode {
 			Human =>
-				match command.exec_cmd!() {
-					Ok({}) => Ok({})
-					Err(ExecCmdFailed({ exit_code, .. })) if exit_code == 2 => Ok({})
-					Err(_) => Err(KaifileInvalid(project.file))
+				match command.inherit_stdio().run!() {
+					Ok(output) if valid(output.status) => Ok({})
+					_ => Err(KaifileInvalid(project.file))
 				}
 			Json => {
 				output = command.stderr(Inherit).run!()?
 				Stderr.write_bytes!(output.stdout_bytes)?
-				if output.status == Exited(0) or output.status == Exited(2) {
+				if valid(output.status) {
 					Ok({})
 				} else {
 					Err(KaifileInvalid(project.file))
@@ -178,17 +182,19 @@ Load := [].{
 	ask! = |project, request| {
 		_ = Load.system!()?
 		Load.current!(project)?
-		output = Cmd.new_str(Load.compiler!()?)
-			.args_str([project.file])
+		output = Cmd.new(OsStr.from_str(Load.compiler!()?))
+			.arg(OsStr.from_str(project.file))
 			.cwd(Load.path(project.root))
 			.stdin(Bytes(Sexpr.to_str(request).to_utf8()))
-			.exec_output!()
+			.run!()
 		match output {
-			Ok({ stdout_utf8, .. }) => Load.answer(stdout_utf8)
-			Err(NonZeroExitCode(failed)) => {
-				out = failed.stdout_utf8_lossy
-				failure = KaifileFailed(project.file, out.concat(failed.stderr_utf8_lossy))
-				if failed.exit_code == 2 {
+			Ok(ran) if ran.status == Exited(0) =>
+				Load.answer(Str.from_utf8_lossy(ran.stdout_bytes))
+			Ok(ran) => {
+				out = Str.from_utf8_lossy(ran.stdout_bytes)
+				errors = Str.from_utf8_lossy(ran.stderr_bytes)
+				failure = KaifileFailed(project.file, out.concat(errors))
+				if ran.status == Exited(2) {
 					Load.answer(out).map_err(
 						|err|
 							match err {

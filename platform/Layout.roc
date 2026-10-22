@@ -23,10 +23,10 @@ Layout := {
 		] {
 			if !path.starts_with("/") or path == "/"
 				or path.to_utf8().any(|b| b < 32 or b == 127)
-					or ["#", "?", "%", "\\"].any(|part| path.contains(part))
-						or path.split_on("/").drop_first(1).any(
-							|part| part.is_empty() or part == "." or part == "..",
-						) {
+				or ["#", "?", "%", "\\"].any(|part| path.contains(part))
+				or path.split_on("/").drop_first(1).any(
+					|part| part.is_empty() or part == "." or part == "..",
+				) {
 				return Err("layout paths must be normalized absolute paths")
 			}
 		}

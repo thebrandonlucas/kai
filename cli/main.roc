@@ -1,7 +1,7 @@
 # kai: developer environments, tasks and builds from a Kaifile.roc.
 app [main!] {
-	pf: platform "../.basic-cli/main.roc",
 	api: "../platform/api.roc",
+	pf: platform "../.basic-cli/main.roc",
 }
 
 import pf.Cmd
@@ -27,9 +27,9 @@ import "../VERSION" as canonical_version : Str
 version = canonical_version.trim()
 
 is_terminal! = |descriptor|
-	match Cmd.new_str("test").args_str(["-t", descriptor]).exec_exit_code!() {
-		Ok(0) => Bool.True
-		_ => Bool.False
+	match Cmd.new("test").args(["-t", OsStr.from_str(descriptor)]).run!() {
+		Ok(output) => output.status == Exited(0)
+		Err(_) => Bool.False
 	}
 
 main! : List(OsStr) => Try({}, [Exit(I32)])
@@ -41,7 +41,7 @@ main! = |args| {
 			return BuildRunner.run!(spec)
 		_ => {}
 	}
-	mode = if requests(shown, "--json") Json else Human
+	mode = if (requests(shown, "--json")) Json else Human
 	match run!(shown, mode) {
 		Ok({}) => Ok({})
 		Err(Usage(message)) => {
@@ -106,7 +106,7 @@ run! = |shown, mode| {
 			} else {
 				return Err(err)
 			}
-		}
+	}
 	match body {
 		# kai knows the release URLs a Kaifile.roc starts with; the platform
 		# cannot name its own bundle.
@@ -116,7 +116,8 @@ run! = |shown, mode| {
 		Usage(text) => Err(Usage(text))
 		Refused(text) => Err(Refused(text))
 		Describe({ plugins, commands, backends }) => {
-			versioned = |p| if p.version.is_empty() p.name else "${p.name} ${p.version}"
+			versioned = |p|
+				if (p.version.is_empty()) p.name else "${p.name} ${p.version}"
 			named = plugins.map(versioned)
 			lines = [
 				"plugins: ${Str.join_with(named, ", ")}",
@@ -150,7 +151,7 @@ run! = |shown, mode| {
 					interactive,
 				},
 				# Workflow steps are reported under the name kai was given.
-				if command == "workflow" operand(shown) else "",
+				if (command == "workflow") operand(shown) else "",
 			)
 		}
 	}
@@ -204,7 +205,7 @@ command_word = |args|
 		[] | ["--", ..] => Err(NoCommand)
 		["-f", _, .. as rest] | ["--file", _, .. as rest] => command_word(rest)
 		["--backend", _, .. as rest] => command_word(rest)
-		[arg, .. as rest] => if arg.starts_with("-") command_word(rest) else Ok(arg)
+		[arg, .. as rest] => if (arg.starts_with("-")) command_word(rest) else Ok(arg)
 	}
 
 operand : List(Str) -> Str
@@ -214,8 +215,8 @@ operand = |args|
 		["-f", _, .. as rest] | ["--file", _, .. as rest] => operand(rest)
 		["--backend", _, .. as rest] => operand(rest)
 		[arg, .. as rest] =>
-			if arg.starts_with("-") operand(rest) else command_word(rest) ?? ""
-		}
+			if (arg.starts_with("-")) operand(rest) else command_word(rest) ?? ""
+	}
 
 # Help depends on the configuration, so --file is found before parsing, the
 # way the parser reads it. Arguments after -- belong to a task or command.
@@ -230,7 +231,7 @@ requested_file = |args|
 			} else {
 				requested_file(rest)
 			}
-		}
+	}
 
 # kai's flags count only before --; after it they are the task's.
 requests : List(Str), Str -> Bool
@@ -339,4 +340,4 @@ expect [
 # every other failure is 1.
 expect exit_status(ChildExited("task fail", 7)) == 7
 	and exit_status(Refused("--backend must be one of nix, guix")) == 2
-		and exit_status(PlanFailed("no lock file")) == 1
+	and exit_status(PlanFailed("no lock file")) == 1

@@ -31,7 +31,7 @@ Workspace := [].{
 	validate_dir : Str -> Try({}, Str)
 	validate_dir = |dir| {
 		lower = Str.from_utf8_lossy(
-			dir.to_utf8().map(|b| if b >= 'A' and b <= 'Z' b + 32 else b),
+			dir.to_utf8().map(|b| if (b >= 'A' and b <= 'Z') b + 32 else b),
 		)
 		allowed = |b|
 			(b >= 'a' and b <= 'z') or (b >= 'A' and b <= 'Z')
@@ -46,7 +46,6 @@ Workspace := [].{
 			Err(
 				\\KAI_DIR must be one relative top-level directory name
 				\\containing only ASCII letters, digits, '.', '_', and '-'
-				,
 			)
 		} else if lower == Workspace.default_dir and dir != Workspace.default_dir {
 			Err("use the canonical '.kai' spelling for KAI_DIR")
@@ -100,7 +99,7 @@ Workspace := [].{
 	parent : Str -> Str
 	parent = |value| {
 		result = Str.join_with(value.split_on("/").drop_last(1), "/")
-		if result.is_empty() "/" else result
+		if (result.is_empty()) "/" else result
 	}
 
 	# A default workspace is Kai's by name; a custom one must carry Kai's

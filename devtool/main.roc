@@ -1,8 +1,8 @@
 # kai repo devtool entry point
 app [main!] {
-	pf: platform "../.basic-cli/main.roc",
 	api: "../platform/api.roc",
 	nix: "../plugins/std/backends/nix/main.roc",
+	pf: platform "../.basic-cli/main.roc",
 }
 
 import pf.Cmd
@@ -10,6 +10,9 @@ import pf.Env
 import pf.OsStr
 import pf.Path
 import pf.Stdout
+import pf.System
+
+import Exec
 
 import Cli
 import ConfigFixtures
@@ -54,15 +57,15 @@ validate_metadata! = || {
 }
 
 copy_file! = |source, destination|
-	Cmd.exec!(
+	Cmd.call!(
 		OsStr.utf8("cp"),
 		[OsStr.utf8("--"), Path.to_os_str(source), Path.to_os_str(destination)],
 	)
 
 require_release_host! = || {
-	host = Env.platform!()
-	match (host.os, host.arch) {
-		(LINUX, X64) => Ok({})
+	host = System.target!()
+	match (host.os(), host.arch()) {
+		(Linux(_), X64) => Ok({})
 		_ => Err(
 			UnsupportedReleaseHost(
 				"build-release requires an x86_64 Linux host",
@@ -84,9 +87,10 @@ remove_stale_workspaces! = |root| {
 }
 
 archive_contents! = |archive| {
-	output = Cmd.new_str("tar")
-		.args([OsStr.utf8("-tzf"), Path.to_os_str(archive)])
-		.exec_output!()?
+	output = Exec.output!(
+		Exec.cmd("tar")
+			.args([OsStr.utf8("-tzf"), Path.to_os_str(archive)]),
+	)?
 	contents = output.stdout_utf8.split_on("\n").keep_if(|line| !line.is_empty())
 	if contents == ["kai"] {
 		Ok({})
@@ -97,7 +101,7 @@ archive_contents! = |archive| {
 
 extract_archive! = |archive, destination| {
 	Path.create_dir!(destination)?
-	Cmd.exec!(
+	Cmd.call!(
 		OsStr.utf8("tar"),
 		[
 			OsStr.utf8("-xzf"),
@@ -119,7 +123,7 @@ extract_archive! = |archive, destination| {
 check_x64! = |archive, destination, version| {
 	archive_contents!(archive)?
 	binary = extract_archive!(archive, destination)?
-	output = Cmd.new(Path.to_os_str(binary)).arg_str("--version").exec_output!()?
+	output = Exec.output!(Cmd.new(Path.to_os_str(binary)).arg("--version"))?
 	expected = "${version}\n"
 	if output.stdout_utf8 == expected {
 		Ok({})
@@ -131,7 +135,7 @@ check_x64! = |archive, destination, version| {
 check_arm64! = |archive, destination| {
 	archive_contents!(archive)?
 	binary = extract_archive!(archive, destination)?
-	output = Cmd.new_str("file").arg(Path.to_os_str(binary)).exec_output!()?
+	output = Exec.output!(Exec.cmd("file").arg(Path.to_os_str(binary)))?
 	if output.stdout_utf8.contains("ARM aarch64") {
 		Ok({})
 	} else {
@@ -145,9 +149,9 @@ directory_inventory! = |directory| {
 }
 
 generate_checksums_here! = |dist, archive_names| {
-	output = Cmd.new_str("sha256sum").args_str(archive_names).exec_output!()?
+	output = Exec.output!(Exec.cmd("sha256sum").args(Exec.strs(archive_names)))?
 	Path.write_utf8!(Path.join(dist, "SHA256SUMS"), output.stdout_utf8)?
-	Cmd.exec!(
+	Cmd.call!(
 		OsStr.utf8("sha256sum"),
 		[OsStr.utf8("-c"), OsStr.utf8("SHA256SUMS")],
 	)
@@ -166,9 +170,10 @@ generate_checksums! = |root, dist, archive_names| {
 # A release publishes the platform and std bundles their recorded URLs name,
 # so the URLs cannot go stale.
 check_bundle_urls! = |version, pf_bundle, std_bundle| {
-	origin = Cmd.new_str("git")
-		.args_str(["config", "--get", "remote.origin.url"])
-		.exec_output!()?
+	origin = Exec.output!(
+		Exec.cmd("git")
+			.args(Exec.strs(["config", "--get", "remote.origin.url"])),
+	)?
 		.stdout_utf8
 		.trim()
 	repository = match Release.parse_github_origin(origin) {
@@ -248,14 +253,15 @@ build_release! = || {
 	}
 	Path.create_dir!(dist)?
 
-	workspace_output = Cmd.new_str("mktemp")
-		.args([
-			OsStr.utf8("-d"),
-			OsStr.utf8("-p"),
-			Path.to_os_str(root),
-			OsStr.utf8(".release-build.XXXXXX"),
-		])
-		.exec_output!()
+	workspace_output = Exec.output!(
+		Exec.cmd("mktemp")
+			.args([
+				OsStr.utf8("-d"),
+				OsStr.utf8("-p"),
+				Path.to_os_str(root),
+				OsStr.utf8(".release-build.XXXXXX"),
+			]),
+	)
 	match workspace_output {
 		Err(error) => {
 			Path.delete_all!(dist) ?? {}
@@ -284,7 +290,7 @@ build_release! = || {
 							Ok({})
 						}
 					}
-				}
+			}
 		}
 	}
 }
@@ -292,8 +298,8 @@ build_release! = || {
 ## Each named test's Nix half, then its Guix half when it has one. Guix
 ## halves share one Nix-free PATH, removed afterwards.
 e2e! = |{ test, only, require_guix, kai, bare }| {
-	names = if test == "all" Cli.e2e_tests else [test]
-	guix = if only == Nix Missing else E2e.guix!(require_guix)?
+	names = if (test == "all") Cli.e2e_tests else [test]
+	guix = if (only == Nix) Missing else E2e.guix!(require_guix)?
 	result = e2e_each!(names, only, kai, bare, guix)
 	match guix {
 		Ready(dir) => Path.delete_all!(dir)?

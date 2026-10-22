@@ -9,9 +9,12 @@
 # on the composition fixture, and the channel source's shell on the channels
 # fixture.
 import pf.Cmd
+import pf.OsStr
 import pf.Env
 import pf.Path
 import pf.Stdout
+
+import Exec
 
 import E2e
 
@@ -55,8 +58,10 @@ E2eRun := [].{
 		}
 		Path.write_utf8!(kaifile, config)?
 		lock = Path.join(project, ".kai/lock.json")
-		kai! = |args| Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(project)
-			.exec_output!()
+		kai! = |args| {
+			command = Cmd.new(Path.to_os_str(kai)).args(Exec.strs(args))
+			Exec.output!(command.cwd(project))
+		}
 		checked = kai!(["check"])?
 		shown = checked.stdout_utf8.concat(checked.stderr_utf8_lossy)
 		if !shown.contains("unused variable") {
@@ -134,7 +139,7 @@ E2eRun := [].{
 
 	## Run each case on a pinned copy of `example` and compare its stdout.
 	guix_on! = |bare, path, example, cases| {
-		entries = if example == "composition" ["ProjectTasks.roc"] else []
+		entries = if (example == "composition") ["ProjectTasks.roc"] else []
 		(kai, project) = E2e.guix_project!(bare, example, entries)?
 		result = E2eRun.guix_in!(kai, project, path, cases)
 		Path.delete_all!(project)?
@@ -146,14 +151,15 @@ E2eRun := [].{
 		log = Path.join(stubs, "log")
 		Path.write_utf8!(Path.join(stubs, "nix"), E2e.stub("nix", "1"))?
 		Path.write_utf8!(Path.join(stubs, "guix"), E2e.stub("guix", "0"))?
-		Cmd.new_str("chmod").args_str(["+x", "nix", "guix"]).cwd(stubs)
-			.exec_cmd!()?
-		kai! = |args| Cmd.new(Path.to_os_str(kai)).args_str(args)
-			.cwd(project)
-			.env_str("PATH", Path.display(stubs))
-			.env_str("ROC", roc)
-			.env_str("KAI_STUB_LOG", Path.display(log))
-			.exec_output!()
+		chmod = Exec.cmd("chmod").args(Exec.strs(["+x", "nix", "guix"]))
+		Exec.cmd!(chmod.cwd(stubs))?
+		kai! = |args| Exec.output!(
+			Cmd.new(Path.to_os_str(kai)).args(Exec.strs(args))
+				.cwd(project)
+				.env(OsStr.from_str("PATH"), OsStr.from_str(Path.display(stubs)))
+				.env(OsStr.from_str("ROC"), OsStr.from_str(roc))
+				.env(OsStr.from_str("KAI_STUB_LOG"), OsStr.from_str(Path.display(log))),
+		)
 		command = ["hello", "--greeting", "two words"]
 		match kai!(["shell", "default", "--"].concat(command)) {
 			Err(NonZeroExitCode({ exit_code, stderr_utf8_lossy, .. })) if exit_code == 1

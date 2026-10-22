@@ -178,7 +178,7 @@ Argv := [].{
 		)
 		row = |(label, help)|
 			"  ${label}${Str.repeat(" ", width + 2 - label.count_utf8_bytes())}${help}"
-		if chosen ["Arguments:\n${Str.join_with(rows.map(row), "\n")}"] else []
+		if (chosen) ["Arguments:\n${Str.join_with(rows.map(row), "\n")}"] else []
 	}
 
 	summary : Str -> Str
@@ -206,14 +206,19 @@ Argv := [].{
 				builder,
 				{ name: command.name, description, mapper: |args| (command.name, args) },
 			)
-		named = command.args.keep_oks(
+		# List.keep_oks as a function, not a method: nightly-2026-10-21-5349569
+		# gives two calls of one method on one value the same type (roc-issues
+		# BUG-016, not reported upstream yet). Use the method once Roc fixes it.
+		named = List.keep_oks(
+			command.args,
 			|arg|
 				match arg {
 					Name(n) => Ok(n)
 					_ => Err({})
 				},
 		)
-		rest = command.args.keep_oks(
+		rest = List.keep_oks(
+			command.args,
 			|arg|
 				match arg {
 					Trailing(t) => Ok(t)
@@ -249,7 +254,7 @@ Argv := [].{
 								description: about,
 								value: [picked(n, c.value)],
 							})
-						}
+					}
 				}
 				choices = n.choices.map(choice)
 				match n.default {
@@ -258,7 +263,7 @@ Argv := [].{
 						finish(
 							Cli.map(SubCmd.optional(choices), |p| p ?? [picked(n, value)]),
 						)
-					}
+				}
 			}
 			([n, ..], _) => {
 				name = match n.default {
@@ -272,7 +277,7 @@ Argv := [].{
 							Param.maybe_str({ name: n.name, help: n.help }),
 							|value| [picked(n, value ?? fallback)],
 						)
-					}
+				}
 				match rest {
 					[t, ..] => finish(Cli.weave(name, trailing(t), |a, b| a.concat(b)))
 					[] => finish(name)

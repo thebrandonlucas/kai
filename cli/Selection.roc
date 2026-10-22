@@ -68,7 +68,7 @@ Selection := [].{
 						NoEligibleBackend(fitting.map(|c| "${c.backend} ${text(c)}"))
 					},
 				)
-			}
+		}
 	}
 
 	## One line saying which backend runs the request and why.
@@ -121,7 +121,7 @@ only_guix = { nix: Missing, guix: Usable }
 only_nix = { nix: Usable, guix: Missing }
 
 probed = |observed| |program|
-	if program == "nix" observed.nix else observed.guix
+	if (program == "nix") observed.nix else observed.guix
 
 outcome = |choice, options, observed|
 	match Selection.choose(choice, options, probed(observed)) {

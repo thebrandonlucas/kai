@@ -1,8 +1,8 @@
 # Mutate .kai/lock.json text without requiring a resolvable lock.
 app [target] {
-	pf: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.4.0-rc1/9k2cfuAWoBfcRBRiVbriXFf1dHktoRBbieifYN7NmTHc.tar.zst",
-	nix: "../../main.roc",
 	api: "../../../../../../platform/api.roc",
+	nix: "../../main.roc",
+	pf: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.4.0-rc1/9k2cfuAWoBfcRBRiVbriXFf1dHktoRBbieifYN7NmTHc.tar.zst",
 }
 
 import pf.Fuzz

@@ -8,6 +8,8 @@ import pf.Env
 import pf.Path
 import pf.Stdout
 
+import Exec
+
 import ConfigFixtures
 
 E2ePlugins := [].{
@@ -77,8 +79,10 @@ E2ePlugins := [].{
 			Path.join(project, "Kaifile.roc"),
 			"${header}\n\n${E2ePlugins.body}",
 		)?
-		kai! = |args| Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(project)
-			.exec_output!()
+		kai! = |args| {
+			command = Cmd.new(Path.to_os_str(kai)).args(Exec.strs(args))
+			Exec.output!(command.cwd(project))
+		}
 		failed! = |args, code, text|
 			match kai!(args) {
 				Err(NonZeroExitCode(out)) => {

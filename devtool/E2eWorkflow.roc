@@ -8,6 +8,8 @@
 import pf.Cmd
 import pf.Path
 import pf.Stdout
+
+import Exec
 import api.LockJson
 
 import E2e
@@ -74,7 +76,7 @@ E2eWorkflow := [].{
 		}
 		Path.write_utf8!(kaifile, config)?
 		file = |relative| Path.join(project, relative)
-		kai! = |args| Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(project)
+		kai! = |args| Cmd.new(Path.to_os_str(kai)).args(Exec.strs(args)).cwd(project)
 			.run!()
 		# Runs kai with --json, expecting its exit code and event types.
 		json! = |args, code, types| {
@@ -93,7 +95,7 @@ E2eWorkflow := [].{
 			if Path.exists!(markers)? {
 				Path.delete!(markers)?
 			}
-			if actual != expected Err(WrongMarkers(expected, actual)) else Ok({})
+			if (actual != expected) Err(WrongMarkers(expected, actual)) else Ok({})
 		}
 		# Each artifact's bytes, in the order kai built them.
 		built! = |reported, expected| {
@@ -105,7 +107,7 @@ E2eWorkflow := [].{
 				path = Path.utf8(E2eWorkflow.text(artifact, "path"))
 				$actual = $actual.append(Path.read_utf8!(path)?)
 			}
-			if $actual != expected Err(WrongArtifacts($actual)) else Ok({})
+			if ($actual != expected) Err(WrongArtifacts($actual)) else Ok({})
 		}
 		_ = json!(["check"], 0, ["check"])?
 		_ = json!(["--backend", "nix", "update"], 0, ["backend", "update"])?
