@@ -63,11 +63,11 @@ Lower :: [].{
 			_ => return Err("DuplicateSystems: declare Systems at most once")
 		}
 		requires_ =
-			(if acc.extensions.is_empty() [] else ["extensions"])
-				.concat(if acc.raw.is_empty() [] else ["raw"])
-				.concat(if acc.build_sources.is_empty() [] else ["sources"])
-				.concat(if acc.builds.is_empty() [] else ["builds"])
-				.concat(if acc.workflows.is_empty() [] else ["workflows"])
+			(if (acc.extensions.is_empty()) [] else ["extensions"])
+				.concat(if (acc.raw.is_empty()) [] else ["raw"])
+				.concat(if (acc.build_sources.is_empty()) [] else ["sources"])
+				.concat(if (acc.builds.is_empty()) [] else ["builds"])
+				.concat(if (acc.workflows.is_empty()) [] else ["workflows"])
 		Project.validate(
 			Model.{
 				format: Model.current_format,

@@ -366,9 +366,9 @@ NixBackend :: [].{
 		}
 		if Layout.contains(isolation, layout.generated_root)
 			or Layout.contains(isolation, layout.lock_path)
-				or Layout.contains(snapshot, layout.generated_root)
-					or Layout.contains(snapshot, layout.lock_path)
-						or Layout.contains(layout.generated_root, layout.lock_path) {
+			or Layout.contains(snapshot, layout.generated_root)
+			or Layout.contains(snapshot, layout.lock_path)
+			or Layout.contains(layout.generated_root, layout.lock_path) {
 			return Err("generated files, snapshot and authority must not overlap")
 		}
 		for input in Locks.inputs(project)? {
@@ -376,9 +376,9 @@ NixBackend :: [].{
 				path = "${layout.project_root}/${Locks.local_path(input)}"
 				if Layout.contains(path, layout.workspace)
 					or Layout.contains(layout.workspace, path)
-						or Layout.contains(path, layout.generated_root)
-							or Layout.contains(layout.generated_root, path)
-								or Layout.contains(path, layout.lock_path) {
+					or Layout.contains(path, layout.generated_root)
+					or Layout.contains(layout.generated_root, path)
+					or Layout.contains(path, layout.lock_path) {
 					return Err("local input overlaps caller-generated paths or lock")
 				}
 			}
@@ -463,7 +463,7 @@ NixBackend :: [].{
 		}
 		selected_names = names.fold(
 			[],
-			|seen, name| if seen.contains(name) seen else seen.append(name),
+			|seen, name| if (seen.contains(name)) seen else seen.append(name),
 		)
 		for name in selected_names {
 			Project.check_environment(model, Nix, name)?
@@ -556,7 +556,7 @@ NixBackend :: [].{
 			Some(data) => {
 				for input in data.inputs {
 					url = quote(Locks.input_url(input, data.layout))
-					flake = if input.flake "true" else "false"
+					flake = if (input.flake) "true" else "false"
 					$rendered = append_rendered(
 						$rendered,
 						"    ${quote(input.name)} = { url = ${url}; "
@@ -661,7 +661,7 @@ NixBackend :: [].{
 		environment.tools.map(|t| t.source).fold(
 			[],
 			|seen, name|
-				if seen.contains(name) seen else seen.append(name),
+				if (seen.contains(name)) seen else seen.append(name),
 		)
 	}
 
@@ -704,7 +704,7 @@ NixBackend :: [].{
 	## Runner tool paths are explicit; argv and metadata enter through JSON.
 	render_build : Model.Build, Model.Environment, Str, Str -> Str
 	render_build = |build, environment, system, workspace| {
-		snapshot = if workspace.is_empty() "" else "${workspace}/snapshot"
+		snapshot = if (workspace.is_empty()) "" else "${workspace}/snapshot"
 		sources = source_names(environment)
 		primary = sources.first() ?? "default"
 		overlays = environment.overlays.map(
@@ -809,8 +809,8 @@ NixBackend :: [].{
 	value_to_nix : Value -> Str
 	value_to_nix = |value| match value {
 		Str(s) => quote(s)
-		Int(n) => if n < 0 "(${n.to_str()})" else n.to_str()
-		Bool(b) => if b "true" else "false"
+		Int(n) => if (n < 0) "(${n.to_str()})" else n.to_str()
+		Bool(b) => if (b) "true" else "false"
 		List([]) => "[ ]"
 		List(items) => "[ ${Str.join_with(items.map(value_to_nix), " ")} ]"
 		Attrs([]) => "{ }"
@@ -1429,16 +1429,16 @@ expect match single(Request.Build("app")) {
 			"\"\" \"two words\" \"line\\nbreak\" \"$HOME\"",
 		)
 			and file.contents.contains("path = artifacts.\"library\";")
-				and file.contents.contains("path = inputs.\"assets\";")
-					and file.contents.contains("path = /. + \"/work/snapshot\";")
-						and file.contents.contains(
-							"builtins.readFile \"/work/snapshot.isolation.json\"",
-						)
-							and file.contents.contains(
-								"\"/work/build-runner\"; name = \"kai-build-runner\";",
-							)
-								and file.contents.contains("pkgs.runCommand")
-									and !file.contents.contains("outputHash")
+			and file.contents.contains("path = inputs.\"assets\";")
+			and file.contents.contains("path = /. + \"/work/snapshot\";")
+			and file.contents.contains(
+				"builtins.readFile \"/work/snapshot.isolation.json\"",
+			)
+			and file.contents.contains(
+				"\"/work/build-runner\"; name = \"kai-build-runner\";",
+			)
+			and file.contents.contains("pkgs.runCommand")
+			and !file.contents.contains("outputHash")
 		Err(_) => False
 	}
 	_ => False
@@ -1722,8 +1722,8 @@ expect ["flake.nix", "flake.lock"].all(
 						"x86_64-linux",
 						layout,
 					).is_err()
-						and NixBackend.local_checks(project, "x86_64-linux", layout).is_err()
-							and NixBackend.update_files(project, "x86_64-linux", layout).is_err()
+					and NixBackend.local_checks(project, "x86_64-linux", layout).is_err()
+					and NixBackend.update_files(project, "x86_64-linux", layout).is_err()
 			},
 		)
 	},
@@ -1825,7 +1825,7 @@ expect {
 				}
 			["one", "two", "three"].all(once)
 				and before("one", "two")
-					and before("two", "three")
+				and before("two", "three")
 		}
 		_ => False
 	}
@@ -2019,19 +2019,19 @@ expect {
 	diagnostic = "workflow plan exceeds 16 MiB of distinct rendered requests"
 	Project.validate(project).is_ok()
 		and Project.build_closure(project, "root").map_ok(List.len) == Ok(64)
-			and NixBackend.preflight(
-				project,
-				Request.Workflow("large"),
-				"x86_64-linux",
-				TestData.layout,
-			) == Err(diagnostic)
-				and NixBackend.plan(
-					project,
-					Request.Workflow("large"),
-					"x86_64-linux",
-					TestData.layout,
-					plan_locks?,
-				).map_ok(|plan| plan.steps) == Err(diagnostic)
+		and NixBackend.preflight(
+			project,
+			Request.Workflow("large"),
+			"x86_64-linux",
+			TestData.layout,
+		) == Err(diagnostic)
+		and NixBackend.plan(
+			project,
+			Request.Workflow("large"),
+			"x86_64-linux",
+			TestData.layout,
+			plan_locks?,
+		).map_ok(|plan| plan.steps) == Err(diagnostic)
 }
 
 # A closure exactly at the public cap succeeds (even repeated); adding one
@@ -2219,7 +2219,7 @@ expect {
 		|stage| match split(stage.steps) {
 			Ok(step) => step.before.first() == library.before.first()
 				and step.files.last() == library.files.last()
-					and !step.files.any(|file| file.path == TestData.layout.lock_path)
+				and !step.files.any(|file| file.path == TestData.layout.lock_path)
 			Err(_) => False
 		},
 	) and Locks.encode(locks) == before
@@ -2267,12 +2267,12 @@ expect {
 			TestData.layout,
 			locks,
 		).map_ok(|plan| plan.steps)
-			and NixBackend.preflight(
-				project,
-				Request.Workflow("later"),
-				"x86_64-linux",
-				TestData.layout,
-			).is_err()
+		and NixBackend.preflight(
+			project,
+			Request.Workflow("later"),
+			"x86_64-linux",
+			TestData.layout,
+		).is_err()
 }
 
 # A later build's transitive dependency provider is checked before returning
@@ -2313,12 +2313,12 @@ expect {
 			TestData.layout,
 			locks,
 		).map_ok(|plan| plan.steps)
-			and NixBackend.preflight(
-				project,
-				Request.Workflow("ci"),
-				"x86_64-linux",
-				TestData.layout,
-			).is_err()
+		and NixBackend.preflight(
+			project,
+			Request.Workflow("ci"),
+			"x86_64-linux",
+			TestData.layout,
+		).is_err()
 }
 
 # A task-safe layout can collide only with a later build's installed runner.

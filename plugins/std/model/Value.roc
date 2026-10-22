@@ -27,5 +27,5 @@ expect {
 	text = Sexpr.to_str(Value.Attrs([{ name: "k", value: Value.Bool(False) }]))
 	text.starts_with("(Attrs ")
 		and text.contains("(name \"k\")")
-			and text.contains("(value (Bool false))")
+		and text.contains("(value (Bool false))")
 }

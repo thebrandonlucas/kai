@@ -24,7 +24,6 @@ kaifile = Std.kaifile([
 				\\[ -s src/message.txt ] && [ -z "$(tail -c 1 src/message.txt)" ] ||
 				\\{ echo 'src/message.txt must end with a newline' >&2; exit 1; }
 				\\echo source checked
-				,
 			]),
 		],
 	),

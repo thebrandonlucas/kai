@@ -19,7 +19,7 @@ Help := [].{
 		file = parts.last() ?? url
 		release = parts.drop_last(1).last() ?? ""
 		name = file.drop_suffix(".tar.zst")
-		kept = if name.starts_with("std-") 12 else 8
+		kept = if (name.starts_with("std-")) 12 else 8
 		start = Str.from_utf8(name.to_utf8().take_first(kept)) ?? name
 		"…/${release}/${start}….tar.zst"
 	}
@@ -118,7 +118,7 @@ Help := [].{
 	# that is not a terminal all get plain text.
 	text_style : { terminal : Bool, no_color : Str, flag : Bool } -> [Color, Plain]
 	text_style = |{ terminal, no_color, flag }|
-		if terminal and no_color.is_empty() and !flag Color else Plain
+		if (terminal and no_color.is_empty() and !flag) Color else Plain
 }
 
 # Only an interactive terminal without an opt-out gets color.

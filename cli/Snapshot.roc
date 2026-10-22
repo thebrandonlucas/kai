@@ -64,12 +64,12 @@ Snapshot := [].{
 		if
 			observed == "${name}:[${digits}]"
 				and !digits.is_empty()
-					and digits.to_utf8().all(|b| b >= '0' and b <= '9')
+				and digits.to_utf8().all(|b| b >= '0' and b <= '9')
 				{
 					Ok(observed)
 				} else {
-					Err("invalid caller ${name} namespace identity")
-				}
+			Err("invalid caller ${name} namespace identity")
+		}
 	}
 
 	# The build runner compares these with its own namespaces; kept apart from
@@ -149,9 +149,9 @@ Snapshot := [].{
 		link = "/proc/self/ns/${name}"
 		remedy = "cannot observe caller build isolation; use Linux with "
 			.concat("readable ${link}")
-		output = Cmd.new_str("readlink").args_str([link]).exec_output!()
+		output = Cmd.new("readlink").arg(OsStr.from_str(link)).capture!()
 			.map_err(|err| SnapshotFailed("${remedy}: ${Str.inspect(err)}"))?
-		Snapshot.identity(name, output.stdout_utf8.trim())
+		Snapshot.identity(name, output.trim())
 			.map_err(|message| SnapshotFailed(message))
 	}
 
@@ -228,7 +228,7 @@ Snapshot := [].{
 			Symlink => SnapshotFailed("snapshot refuses symlink: ${path.display()}")
 			Special =>
 				SnapshotFailed("snapshot refuses special file: ${path.display()}")
-			}
+		}
 
 	# basic-cli cannot open without following links or set file modes, so GNU
 	# cp copies with O_NOFOLLOW (a file swapped for a link or special file is
@@ -266,16 +266,19 @@ Snapshot := [].{
 	}
 
 	tool! = |program, flags, operands, cwd| {
-		_ = Cmd.new_str(program)
-			.args_str(flags)
+		_ = Cmd.new(OsStr.from_str(program))
+			.args(flags.map(OsStr.from_str))
 			.args(operands.map(OsStr.unix_bytes))
 			.cwd(Path.unix_bytes(cwd))
-			.exec_output!()
+			.stderr(Capture)
+			.call!()
 			.map_err(
 				|err|
 					match err {
-						NonZeroExitCode({ stderr_utf8_lossy, .. }) =>
-							SnapshotFailed("${program} failed: ${stderr_utf8_lossy.trim()}")
+						BadExitStatus(output) => {
+							failure = Str.from_utf8_lossy(output.stderr_bytes).trim()
+							SnapshotFailed("${program} failed: ${failure}")
+						}
 						_ => SnapshotFailed("${program} failed: ${Str.inspect(err)}")
 					},
 			)?

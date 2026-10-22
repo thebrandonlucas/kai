@@ -70,7 +70,7 @@ Project :: [].{
 		if valid {
 			Ok({})
 		} else {
-			Err("invalid ${if backend == Nix "Nix" else "Guix"} tool: ${name}")
+			Err("invalid ${if (backend == Nix) "Nix" else "Guix"} tool: ${name}")
 		}
 	}
 
@@ -78,7 +78,7 @@ Project :: [].{
 	check_names = |names, kind| {
 		var $seen = []
 		for name in names {
-			if !(if kind == "Task" valid_task_name(name) else valid_name(name)) {
+			if !(if (kind == "Task") valid_task_name(name) else valid_name(name)) {
 				return Err("invalid name for ${kind}: ${name}")
 			}
 			if $seen.contains(name) {
@@ -613,7 +613,7 @@ Project :: [].{
 
 	unique : List(a) -> List(a) where [a.is_eq : a, a -> Bool]
 	unique = |items|
-		items.fold([], |acc, item| if acc.contains(item) acc else acc.append(item))
+		items.fold([], |acc, item| if (acc.contains(item)) acc else acc.append(item))
 }
 
 # A bare tool name resolves against the implicit "default" source.
@@ -1109,7 +1109,7 @@ chain_fixture = |count| {
 	var $index = 0.U64
 	while $index < count {
 		name = $index.to_str()
-		needs = if $index == 0 [] else [($index - 1).to_str()]
+		needs = if ($index == 0) [] else [($index - 1).to_str()]
 		$builds = $builds.append({ ..library, name, needs })
 		$index = $index + 1
 	}
@@ -1344,9 +1344,9 @@ workflow_chain = |count, double, leaf| {
 	var $workflows = []
 	var $index = 0.U64
 	while $index < count {
-		steps = if $index == 0 leaf else {
+		steps = if ($index == 0) leaf else {
 			step = RunWorkflow(($index - 1).to_str())
-			if double [step, step] else [step]
+			if (double) [step, step] else [step]
 		}
 		$workflows = $workflows.append({ name: $index.to_str(), steps })
 		$index = $index + 1

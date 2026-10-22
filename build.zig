@@ -423,11 +423,9 @@ pub fn build(b: *std.Build) void {
     test_std_guix.step.dependOn(check_step);
     test_step.dependOn(&test_std_guix.step);
 
-    // plugins/std has no test root yet: `roc test` panics when the platform
-    // and a package it depends on share a module name (model, nix and guix
-    // reach the platform's modules again through api.roc, so Sexpr appears
-    // twice; roc-issues-repro BUG-012, not yet reported upstream). Add
-    // `roc test plugins/std/main.roc` with a Roc release that fixes it.
+    const test_std = b.addSystemCommand(&.{ "roc", "test", "plugins/std/main.roc" });
+    test_std.step.dependOn(check_step);
+    test_step.dependOn(&test_std.step);
 
     const test_cli = b.addSystemCommand(&.{ "roc", "test", "cli/main.roc" });
     test_cli.step.dependOn(check_step);

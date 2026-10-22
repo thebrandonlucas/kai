@@ -1,7 +1,7 @@
 # Mutate protocol text in both directions without requiring a sensible exchange.
 app [target] {
-	pf: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.4.0-rc1/9k2cfuAWoBfcRBRiVbriXFf1dHktoRBbieifYN7NmTHc.tar.zst",
 	api: "../../api.roc",
+	pf: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.4.0-rc1/9k2cfuAWoBfcRBRiVbriXFf1dHktoRBbieifYN7NmTHc.tar.zst",
 }
 
 import pf.Fuzz

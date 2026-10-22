@@ -6,6 +6,7 @@
 # $out. It uses the spec's coreutils, never the user's PATH.
 import pf.Cmd
 import pf.Env
+import pf.OsStr
 import pf.Path
 import pf.Stderr
 
@@ -135,14 +136,14 @@ BuildRunner := [].{
 			[first, .. as rest] => (first, rest)
 			[] => return Err(Refused("empty build argv"))
 		}
-		result = Cmd.new_str(program)
-			.args_str(args)
+		result = Cmd.new(OsStr.from_str(program))
+			.args(args.map(OsStr.from_str))
 			.cwd(Path.unix(work))
-			.envs_str([
-				("PATH", spec.path),
-				("HOME", home),
-				("KAI_INPUTS", spec.inputs),
-				("KAI_ARTIFACTS", spec.artifacts),
+			.envs([
+				("PATH", OsStr.from_str(spec.path)),
+				("HOME", OsStr.from_str(home)),
+				("KAI_INPUTS", OsStr.from_str(spec.inputs)),
+				("KAI_ARTIFACTS", OsStr.from_str(spec.artifacts)),
 			])
 			.stdin(Inherit)
 			.stdout(Inherit)
@@ -248,22 +249,24 @@ BuildRunner := [].{
 				)
 			}
 			target = tool!("readlink", ["--", entry.to_str()?])?.drop_suffix("\n")
-			resolved = if target.starts_with("/") target else "${farm}/${target}"
+			resolved = if (target.starts_with("/")) target else "${farm}/${target}"
 			BuildRunner.safe_tree!(Path.unix(resolved))?
 		}
 		Ok({})
 	}
 
 	tool! = |coreutils, program, args|
-		Cmd.new_str("${coreutils}/${program}")
-			.args_str(args)
-			.exec_output!()
-			.map_ok(|output| output.stdout_utf8)
+		Cmd.new(OsStr.from_str("${coreutils}/${program}"))
+			.args(args.map(OsStr.from_str))
+			.stderr(Capture)
+			.capture!()
 			.map_err(
 				|err|
 					match err {
-						NonZeroExitCode({ stderr_utf8_lossy, .. }) =>
-							Refused("${program} failed: ${stderr_utf8_lossy.trim()}")
+						BadExitStatus(output) => {
+							failure = Str.from_utf8_lossy(output.stderr_bytes).trim()
+							Refused("${program} failed: ${failure}")
+						}
 						_ => Refused("${program} failed: ${Str.inspect(err)}")
 					},
 			)

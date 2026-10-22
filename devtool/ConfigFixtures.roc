@@ -1,6 +1,7 @@
 # Kaifile.roc configurations that `roc check` must accept or reject at compile
 # time, plus the project model that equivalent configurations must share.
 import pf.Cmd
+import pf.Duration
 import pf.Env
 import pf.OsStr
 import pf.Path
@@ -82,7 +83,6 @@ ConfigFixtures := [].{
 				\\ settings : List(Config.Setting)
 				\\ settings = [${ConfigFixtures.build_settings}]
 				\\}
-			,
 		},
 		{
 			name: "ProjectWorkflows",
@@ -92,7 +92,6 @@ ConfigFixtures := [].{
 				\\ settings : List(Config.Setting)
 				\\ settings = [${ConfigFixtures.workflow_steps}]
 				\\}
-			,
 		},
 	]
 
@@ -135,7 +134,6 @@ ConfigFixtures := [].{
 				\\config = [Name("registry"), Environment("dev", [])]
 				\\
 				\\kaifile = Kaifile.new([Std.plugin(config), extra])
-			,
 		}
 
 	registry_fixtures : List(Fixture)
@@ -185,7 +183,6 @@ ConfigFixtures := [].{
 			expected: Valid,
 			body: \\config = [Name("valid"), Environment("dev", [Tools(["git"])]),
 				\\ Shell("default", [Use("dev")])]
-			,
 		},
 		{
 			name: "ExplicitAuto",
@@ -193,7 +190,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("auto"), Packages("default", Auto),
 				\\ Environment("dev", [Tools(["hello@2.12.1", "glibc:debug"])]),
 				\\ Shell("default", [Use("dev")])]
-			,
 		},
 		{
 			name: "ExplicitNix",
@@ -203,7 +199,6 @@ ConfigFixtures := [].{
 				\\ Environment("dev",
 				\\  [Tools(["python3Packages.requests", "7zip", "2bwm"])]),
 				\\ Shell("default", [Use("dev")])]
-			,
 		},
 		{
 			name: "ExplicitGuix",
@@ -213,7 +208,6 @@ ConfigFixtures := [].{
 				\\ Environment("dev",
 				\\  [Tools(["guix#hello@2.12.1", "guix#glibc:debug"])]),
 				\\ Shell("default", [Use("dev")])]
-			,
 		},
 		{
 			name: "ForwardInheritance",
@@ -226,14 +220,12 @@ ConfigFixtures := [].{
 				\\ Environment("alias", [Extend("dev"), Overlays([])]),
 				\\ Environment("empty", []), Shell("default", [Use("alias")]),
 				\\ Task("check.version", [Use("dev"), Run(["git", "--version"])])]
-			,
 		},
 		{
 			name: "TasksWithoutShells",
 			expected: Valid,
 			body: \\config = [Name("tasks"), Environment("dev", [Tools(["git"])]),
 				\\ Task("check", [Use("dev"), Run(["git", "--version"])])]
-			,
 		},
 		{
 			name: "EquivalentInline",
@@ -247,7 +239,6 @@ ConfigFixtures := [].{
 				\\  Overlays(["tools"])]),
 				\\ Environment("empty", []), Shell("default", [Use("alias")]),
 				\\ Task("check.version", [Use("dev"), Run(["git", "--version"])])]
-			,
 		},
 		{
 			name: "EquivalentDefault",
@@ -255,7 +246,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("valid"), Packages("default", Auto),
 				\\ Environment("dev", [Tools(["git"])]),
 				\\ Shell("default", [Use("dev")])]
-			,
 		},
 		{
 			name: "EquivalentComposition",
@@ -271,7 +261,6 @@ ConfigFixtures := [].{
 				\\  "printf '<%s>' \\"$@\\"; echo", "args",
 				\\  "configured argument"])]),
 				\\ Task("fail", [Use("dev"), Run(["sh", "-c", "exit 7"])])]
-			,
 		},
 		{
 			name: "MissingName",
@@ -288,7 +277,6 @@ ConfigFixtures := [].{
 			expected: Rejected("DuplicateSystems"),
 			body: \\config = [Name("duplicate"), Systems(["x86_64-linux"]),
 				\\ Systems(["aarch64-linux"])]
-			,
 		},
 		{
 			name: "NoSystems",
@@ -305,14 +293,12 @@ ConfigFixtures := [].{
 			expected: Rejected("DuplicateShell"),
 			body: \\config = [Name("duplicate"), Environment("dev", []),
 				\\ Shell("default", [Use("dev")]), Shell("default", [Use("dev")])]
-			,
 		},
 		{
 			name: "DuplicateEnvironment",
 			expected: Rejected("DuplicateEnvironment"),
 			body: \\config = [Name("duplicate"), Environment("dev", []),
 				\\ Environment("dev", [])]
-			,
 		},
 		{
 			name: "DuplicateTask",
@@ -320,14 +306,12 @@ ConfigFixtures := [].{
 			body: \\config = [Name("duplicate"), Environment("dev", []),
 				\\ Task("check", [Use("dev"), Run(["git"])]),
 				\\ Task("check", [Use("dev"), Run(["git"])])]
-			,
 		},
 		{
 			name: "DuplicateSource",
 			expected: Rejected("DuplicateSource"),
 			body: \\config = [Name("duplicate"), Packages("default", Auto),
 				\\ Packages("default", Auto)]
-			,
 		},
 		{
 			name: "DuplicateInput",
@@ -335,7 +319,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("duplicate"),
 				\\ Input("tools", "github:numtide/flake-utils"),
 				\\ Overlay("tools", "github:roc-lang/roc-overlay")]
-			,
 		},
 		{
 			name: "MissingShellUse",
@@ -347,103 +330,88 @@ ConfigFixtures := [].{
 			expected: Rejected("DuplicateUse"),
 			body: \\config = [Name("invalid"), Environment("dev", []),
 				\\ Shell("default", [Use("dev"), Use("dev")])]
-			,
 		},
 		{
 			name: "MissingTaskUse",
 			expected: Rejected("MissingUse"),
 			body: \\config = [Name("invalid"), Task("check", [Run(["git"])])]
-			,
 		},
 		{
 			name: "DuplicateTaskUse",
 			expected: Rejected("DuplicateUse"),
 			body: \\config = [Name("invalid"), Environment("dev", []),
 				\\ Task("check", [Use("dev"), Use("dev"), Run(["git"])])]
-			,
 		},
 		{
 			name: "MissingRun",
 			expected: Rejected("MissingRun"),
 			body: \\config = [Name("invalid"), Environment("dev", []),
 				\\ Task("check", [Use("dev")])]
-			,
 		},
 		{
 			name: "DuplicateRun",
 			expected: Rejected("DuplicateRun"),
 			body: \\config = [Name("invalid"), Environment("dev", []),
 				\\ Task("check", [Use("dev"), Run(["git"]), Run(["git"])])]
-			,
 		},
 		{
 			name: "EmptyRun",
 			expected: Rejected("empty argv"),
 			body: \\config = [Name("invalid"), Environment("dev", []),
 				\\ Task("check", [Use("dev"), Run([])])]
-			,
 		},
 		{
 			name: "EmptyExecutable",
 			expected: Rejected("empty argv"),
 			body: \\config = [Name("invalid"), Environment("dev", []),
 				\\ Task("check", [Use("dev"), Run([""])])]
-			,
 		},
 		{
 			name: "DuplicateTools",
 			expected: Rejected("DuplicateTools"),
 			body: \\config = [Name("invalid"),
 				\\ Environment("dev", [Tools([]), Tools([])])]
-			,
 		},
 		{
 			name: "DuplicateOverlays",
 			expected: Rejected("DuplicateOverlays"),
 			body: \\config = [Name("invalid"),
 				\\ Environment("dev", [Overlays([]), Overlays([])])]
-			,
 		},
 		{
 			name: "DuplicateExtend",
 			expected: Rejected("DuplicateExtend"),
 			body: \\config = [Name("invalid"), Environment("base", []),
 				\\ Environment("dev", [Extend("base"), Extend("base")])]
-			,
 		},
 		{
 			name: "UnknownShellEnvironment",
 			expected: Rejected("unknown environment"),
 			body: \\config = [Name("invalid"), Shell("default", [Use("missing")])]
-			,
 		},
 		{
 			name: "UnknownTaskEnvironment",
 			expected: Rejected("unknown environment"),
 			body: \\config = [Name("invalid"),
 				\\ Task("check", [Use("missing"), Run(["git"])])]
-			,
 		},
 		{
 			name: "UnknownParent",
 			expected: Rejected("unknown environment"),
 			body: \\config = [Name("invalid"),
 				\\ Environment("dev", [Extend("missing")])]
-			,
 		},
 		{
 			name: "UnknownSource",
 			expected: Rejected("unknown source"),
 			body: \\config = [Name("invalid"),
 				\\ Environment("dev", [Tools(["missing#git"])])]
-			,
 		},
 		{
 			name: "UnknownOverlay",
 			expected: Rejected("unknown overlay"),
 			body: \\config = [Name("invalid"),
 				\\ Environment("dev", [Overlays(["missing"])])]
-			,
 		},
 		{
 			name: "FlakeIsNotOverlay",
@@ -451,7 +419,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("invalid"),
 				\\ Input("utils", "github:numtide/flake-utils"),
 				\\ Environment("dev", [Overlays(["utils"])])]
-			,
 		},
 		{
 			name: "InputIsNotSource",
@@ -459,13 +426,11 @@ ConfigFixtures := [].{
 			body: \\config = [Name("invalid"),
 				\\ Input("utils", "github:numtide/flake-utils"),
 				\\ Environment("dev", [Tools(["utils#git"])])]
-			,
 		},
 		{
 			name: "SelfCycle",
 			expected: Rejected("environment cycle"),
 			body: \\config = [Name("invalid"), Environment("dev", [Extend("dev")])]
-			,
 		},
 		{
 			name: "EnvironmentCycle",
@@ -473,7 +438,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("invalid"), Environment("one", [Extend("two")]),
 				\\ Environment("two", [Extend("three")]),
 				\\ Environment("three", [Extend("one")])]
-			,
 		},
 		{
 			name: "InvalidNixTool",
@@ -481,7 +445,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("invalid"), Packages("default",
 				\\  From(NixPackages("github:NixOS/nixpkgs/nixos-unstable"))),
 				\\ Environment("dev", [Tools(["hello@2.12.1"])])]
-			,
 		},
 		{
 			name: "InvalidGuixTool",
@@ -489,21 +452,18 @@ ConfigFixtures := [].{
 			body: \\config = [Name("invalid"), Packages("default",
 				\\  From(GuixPackages("https://git.savannah.gnu.org/git/guix.git"))),
 				\\ Environment("dev", [Tools(["git@"])])]
-			,
 		},
 		{
 			name: "Builds",
 			expected: Valid,
 			body: \\config = [${ConfigFixtures.build_base},
 				\\ ${ConfigFixtures.build_settings}]
-			,
 		},
 		{
 			name: "SourcesOnly",
 			expected: Valid,
 			body: \\config = [Name("sources"),
 				\\ Source("assets", "github:example/assets")]
-			,
 		},
 		{
 			name: "BuildNoSources",
@@ -511,34 +471,29 @@ ConfigFixtures := [].{
 			body: \\config = [Name("build"), Environment("builder", []),
 				\\ Build("app", [Use("builder"), Run(["true"]),
 				\\  Output("dist/app")])]
-			,
 		},
 		{
 			name: "DuplicateBuildSource",
 			expected: Rejected("DuplicateBuildSource"),
 			body: \\config = [Name("bad"), Source("assets", "path:./assets"),
 				\\ Source("assets", "path:./other")]
-			,
 		},
 		{
 			name: "SourceInputCollision",
 			expected: Rejected("DuplicateInput"),
 			body: \\config = [Name("bad"), Source("assets", "path:./assets"),
 				\\ Input("assets", "github:example/assets")]
-			,
 		},
 		{
 			name: "SourcePackageCollision",
 			expected: Rejected("DuplicateInput"),
 			body: \\config = [Name("bad"), Source("assets", "path:./assets"),
 				\\ Packages("assets", Auto)]
-			,
 		},
 		{
 			name: "SourceDefaultCollision",
 			expected: Rejected("DuplicateInput"),
 			body: \\config = [Name("bad"), Source("default", "path:./assets")]
-			,
 		},
 		{
 			name: "DuplicateBuild",
@@ -546,70 +501,60 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Environment("builder", []),
 				\\ Build("app", [Use("builder"), Run(["true"]), Output("out")]),
 				\\ Build("app", [Use("builder"), Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "MissingBuildUse",
 			expected: Rejected("MissingUse"),
 			body: \\config = [Name("bad"),
 				\\ Build("app", [Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "MissingBuildRun",
 			expected: Rejected("MissingRun"),
 			body: \\config = [Name("bad"),
 				\\ Build("app", [Use("builder"), Output("out")])]
-			,
 		},
 		{
 			name: "MissingBuildOutput",
 			expected: Rejected("MissingOutput"),
 			body: \\config = [Name("bad"),
 				\\ Build("app", [Use("builder"), Run(["true"])])]
-			,
 		},
 		{
 			name: "DuplicateBuildUse",
 			expected: Rejected("DuplicateUse"),
 			body: \\config = [Name("bad"), Build("app", [Use("builder"),
 				\\ Use("builder"), Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "DuplicateBuildRun",
 			expected: Rejected("DuplicateRun"),
 			body: \\config = [Name("bad"), Build("app", [Use("builder"),
 				\\ Run(["true"]), Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "DuplicateBuildOutput",
 			expected: Rejected("DuplicateOutput"),
 			body: \\config = [Name("bad"), Build("app", [Use("builder"),
 				\\ Run(["true"]), Output("out"), Output("out")])]
-			,
 		},
 		{
 			name: "DuplicateBuildInputs",
 			expected: Rejected("DuplicateInputs"),
 			body: \\config = [Name("bad"), Build("app", [Use("builder"),
 				\\ Inputs([]), Inputs([]), Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "DuplicateBuildNeeds",
 			expected: Rejected("DuplicateNeeds"),
 			body: \\config = [Name("bad"), Build("app", [Use("builder"),
 				\\ Needs([]), Needs([]), Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "UnknownBuildEnvironment",
 			expected: Rejected("unknown environment"),
 			body: \\config = [Name("bad"),
 				\\ Build("app", [Use("missing"), Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "UnknownBuildInput",
@@ -617,7 +562,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Environment("builder", []),
 				\\ Build("app", [Use("builder"), Inputs(["missing"]),
 				\\  Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "PackageIsNotBuildSource",
@@ -625,7 +569,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Environment("builder", []),
 				\\ Build("app", [Use("builder"), Inputs(["default"]),
 				\\  Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "UnknownBuildDependency",
@@ -633,7 +576,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Environment("builder", []),
 				\\ Build("app", [Use("builder"), Needs(["missing"]),
 				\\  Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "TaskIsNotBuildDependency",
@@ -642,7 +584,6 @@ ConfigFixtures := [].{
 				\\ Task("library", [Use("builder"), Run(["true"])]),
 				\\ Build("app", [Use("builder"), Needs(["library"]),
 				\\  Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "BuildSelfCycle",
@@ -650,7 +591,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Environment("builder", []),
 				\\ Build("app", [Use("builder"), Needs(["app"]),
 				\\  Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "BuildCycle",
@@ -660,21 +600,18 @@ ConfigFixtures := [].{
 				\\  Run(["true"]), Output("out")]),
 				\\ Build("library", [Use("builder"), Needs(["app"]),
 				\\  Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "EmptyBuildRun",
 			expected: Rejected("empty argv"),
 			body: \\config = [Name("bad"), Environment("builder", []),
 				\\ Build("app", [Use("builder"), Run([]), Output("out")])]
-			,
 		},
 		{
 			name: "EmptyBuildExecutable",
 			expected: Rejected("empty argv"),
 			body: \\config = [Name("bad"), Environment("builder", []),
 				\\ Build("app", [Use("builder"), Run([""]), Output("out")])]
-			,
 		},
 		{
 			name: "NulBuildRun",
@@ -682,7 +619,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Environment("builder", []),
 				\\ Build("app", [Use("builder"),
 				\\  Run(["true", Str.from_utf8([0]) ?? ""]), Output("out")])]
-			,
 		},
 		{
 			name: "DuplicateBuildInputReference",
@@ -691,7 +627,6 @@ ConfigFixtures := [].{
 				\\ Source("assets", "path:./assets"),
 				\\ Build("app", [Use("builder"), Inputs(["assets", "assets"]),
 				\\  Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "DuplicateBuildNeedReference",
@@ -699,7 +634,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Environment("builder", []),
 				\\ Build("app", [Use("builder"), Needs(["library", "library"]),
 				\\  Run(["true"]), Output("out")])]
-			,
 		},
 		{
 			name: "BuildDepth",
@@ -712,14 +646,12 @@ ConfigFixtures := [].{
 			body: \\import ProjectBuilds
 				\\config = [${ConfigFixtures.build_base}]
 				\\ .concat(ProjectBuilds.settings)
-			,
 		},
 		{
 			name: "Workflows",
 			expected: Valid,
 			body: \\config = [${ConfigFixtures.workflow_base},
 				\\ ${ConfigFixtures.workflow_steps}]
-			,
 		},
 		{
 			name: "EmptyWorkflow",
@@ -736,54 +668,46 @@ ConfigFixtures := [].{
 			expected: RejectedName("invalid workflow name"),
 			body: \\config = [Name("bad"),
 				\\ Workflow("ci", [RunWorkflow("bad/name")])]
-			,
 		},
 		{
 			name: "BadRunTaskName",
 			expected: RejectedName("is not a task name"),
 			body: \\config = [Name("bad"),
 				\\ Workflow("ci", [RunTask("bad..name", [])])]
-			,
 		},
 		{
 			name: "BadArtifactName",
 			expected: RejectedName("is not an input name"),
 			body: \\config = [Name("bad"),
 				\\ Workflow("ci", [BuildArtifact("bad/name")])]
-			,
 		},
 		{
 			name: "DuplicateWorkflow",
 			expected: Rejected("DuplicateWorkflow"),
 			body: \\config = [Name("bad"), Workflow("ci", []), Workflow("ci", [])]
-			,
 		},
 		{
 			name: "UnknownWorkflowTask",
 			expected: Rejected("unknown task"),
 			body: \\config = [${ConfigFixtures.workflow_base},
 				\\ Workflow("ci", [RunTask("missing", [])])]
-			,
 		},
 		{
 			name: "UnknownWorkflowBuild",
 			expected: Rejected("unknown build"),
 			body: \\config = [${ConfigFixtures.workflow_base},
 				\\ Workflow("ci", [BuildArtifact("missing")])]
-			,
 		},
 		{
 			name: "UnknownWorkflow",
 			expected: Rejected("unknown workflow"),
 			body: \\config = [${ConfigFixtures.workflow_base},
 				\\ Workflow("ci", [RunWorkflow("missing")])]
-			,
 		},
 		{
 			name: "WorkflowSelfCycle",
 			expected: Rejected("workflow cycle"),
 			body: \\config = [Name("bad"), Workflow("ci", [RunWorkflow("ci")])]
-			,
 		},
 		{
 			name: "UnusedWorkflowCycle",
@@ -791,7 +715,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Workflow("safe", []),
 				\\ Workflow("a", [RunWorkflow("b")]),
 				\\ Workflow("b", [RunWorkflow("a")])]
-			,
 		},
 		{
 			name: "WorkflowTaskIsNotBuild",
@@ -799,14 +722,12 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Environment("dev", []),
 				\\ Task("check", [Use("dev"), Run(["true"])]),
 				\\ Workflow("ci", [BuildArtifact("check")])]
-			,
 		},
 		{
 			name: "WorkflowBuildIsNotTask",
 			expected: Rejected("unknown task"),
 			body: \\config = [${ConfigFixtures.workflow_base},
 				\\ Workflow("ci", [RunTask("app", [])])]
-			,
 		},
 		{
 			name: "WorkflowNul",
@@ -814,7 +735,6 @@ ConfigFixtures := [].{
 			body: \\config = [${ConfigFixtures.workflow_base},
 				\\ Workflow("ci",
 				\\  [RunTask("check.all", [Str.from_utf8([0]) ?? ""])])]
-			,
 		},
 		{
 			name: "WorkflowEmptyDiamond",
@@ -846,7 +766,6 @@ ConfigFixtures := [].{
 				\\ }
 				\\ $steps
 				\\})]
-			,
 		},
 		{
 			name: "WorkflowArgv",
@@ -858,7 +777,6 @@ ConfigFixtures := [].{
 				\\  while $argv.len() < 4096 { $argv = $argv.append("") }
 				\\  $argv
 				\\ })])]
-			,
 		},
 		{
 			name: "WorkflowArgvBytes",
@@ -872,7 +790,6 @@ ConfigFixtures := [].{
 				\\  [$arg]
 				\\ })]),
 				\\ Workflow("twice", [RunWorkflow("leaf"), RunWorkflow("leaf")])]
-			,
 		},
 		{
 			name: "ComposedWorkflows",
@@ -880,7 +797,6 @@ ConfigFixtures := [].{
 			body: \\import ProjectWorkflows
 				\\config = [${ConfigFixtures.workflow_base}]
 				\\ .concat(ProjectWorkflows.settings)
-			,
 		},
 		# Capability support is checked for a selected request, not globally.
 		{
@@ -890,7 +806,6 @@ ConfigFixtures := [].{
 				\\ Packages("default", From(GuixPackages("current"))),
 				\\ Overlay("tools", "github:example/tools"),
 				\\ Environment("dev", [Tools(["git"]), Overlays(["tools"])])]
-			,
 		},
 	].concat(ConfigFixtures.bad_outputs).concat(ConfigFixtures.bad_sources)
 
@@ -911,7 +826,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Environment("builder", []),
 				\\ Build("app", [Use("builder"), Run(["true"]),
 				\\  Output("${output}")])]
-			,
 		},
 	)
 
@@ -930,7 +844,6 @@ ConfigFixtures := [].{
 			name: "BadBuildSource${U64.to_str(index)}",
 			expected: Rejected("invalid build source reference"),
 			body: \\config = [Name("bad"), Source("assets", "${reference}")]
-			,
 		},
 	)
 
@@ -960,7 +873,7 @@ ConfigFixtures := [].{
 			|_, index| {
 				steps = if index > 0 {
 					step = "RunWorkflow(\"w${U64.to_str(index - 1)}\")"
-					if double [step, step] else [step]
+					if (double) [step, step] else [step]
 				} else if atomic {
 					["RunTask(\"check\", [])"]
 				} else {
@@ -1148,14 +1061,14 @@ ConfigFixtures := [].{
 	}
 
 	roc_command = |roc, args|
-		Cmd.new(Path.to_os_str(roc)).args(args).timeout_ms(300_000)
+		Cmd.new(Path.to_os_str(roc)).args(args).timeout(Duration.millis(300_000))
 
 	check! = |roc, workspace, fixture| {
 		path = Path.join(workspace, "${fixture.name}.roc")
 		output = ConfigFixtures.roc_command(
 			roc,
 			[OsStr.utf8("check"), Path.to_os_str(path)],
-		).merge_stderr(Bool.True).run!()?
+		).stderr(MergeWithStdout).run!()?
 		log = Str.from_utf8_lossy(output.stdout_bytes)
 		if ConfigFixtures.accepts(fixture.expected, output.status, log) {
 			Ok({})
@@ -1174,7 +1087,7 @@ ConfigFixtures := [].{
 	model! = |roc, workspace, name, envs| {
 		path = Path.join(workspace, "${name}.roc")
 		output = ConfigFixtures.roc_command(roc, [Path.to_os_str(path)])
-			.envs_str(envs)
+			.envs(envs.map(|(key, value)| (OsStr.from_str(key), OsStr.from_str(value))))
 			.run!()?
 		ir = Str.from_utf8_lossy(output.stdout_bytes)
 		match output.status {

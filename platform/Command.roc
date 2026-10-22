@@ -16,7 +16,6 @@ Command := {
 
 	## At most one `Name` then at most one `Trailing`, in that order.
 	Arg := [
-
 		## A name chosen from the project; each choice becomes a subcommand
 		## so help lists it. No choices means any name.
 		Name(

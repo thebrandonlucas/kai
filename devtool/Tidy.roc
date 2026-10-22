@@ -70,9 +70,14 @@ Tidy := [].{
 	is_comment = |line| line.trim().starts_with("#")
 
 	# `roc fmt` keeps these platform header entries on one line.
+	# A header dependency is one unbroken string: Roc reads it exactly as
+	# written, without interpolation, so a long URL cannot be split.
 	is_platform_header_line = |line| {
 		trimmed = line.trim()
-		trimmed.starts_with("pf: platform \"") or trimmed.contains(": { inputs: [")
+		trimmed.starts_with("pf: platform \"")
+			or trimmed.contains(": \"https://")
+			or trimmed.contains(": platform \"https://")
+			or trimmed.contains(": { inputs: [")
 	}
 
 	has_module_comment = |line|
@@ -94,7 +99,7 @@ Tidy := [].{
 			[] => []
 			[first, .. as rest] => {
 				trimmed = first.text.trim()
-				current = if trimmed.is_empty() previous else trimmed
+				current = if (trimmed.is_empty()) previous else trimmed
 				violation = if Tidy.is_expect(trimmed) and
 					!Tidy.has_module_comment(previous) {
 					[{ kind: MissingExpectComment, line: first.line }]
@@ -175,8 +180,8 @@ Tidy := [].{
 				{
 					Bool.False
 				} else {
-					Tidy.bytes_match(bytes, index + 1, expected, expected_index + 1)
-				}
+			Tidy.bytes_match(bytes, index + 1, expected, expected_index + 1)
+		}
 
 	is_identifier_byte = |byte|
 		(byte >= 'a' and byte <= 'z') or
@@ -196,8 +201,8 @@ Tidy := [].{
 				{
 					Tidy.identifier_end(bytes, index + 1)
 				} else {
-					index
-				}
+			index
+		}
 
 	is_byte_identifier = |bytes, start, end| {
 		identifier = Str.from_utf8_lossy(
@@ -216,10 +221,10 @@ Tidy := [].{
 				{
 					ComparisonEnd(index + 2)
 				} else if first == '<' or first == '>' {
-					ComparisonEnd(index + 1)
-				} else {
-					NoComparison
-				}
+			ComparisonEnd(index + 1)
+		} else {
+			NoComparison
+		}
 	}
 
 	digit_value : U8 -> [Digit(U8), NotDigit]
@@ -310,7 +315,7 @@ Tidy := [].{
 								Tidy.is_byte_identifier(bytes, identifier, end)
 						}
 					}
-				}
+			}
 		} else {
 			Bool.False
 		}
@@ -352,8 +357,8 @@ Tidy := [].{
 				{
 					Tidy.skip_indentation(bytes, index + 1)
 				} else {
-					index
-				}
+			index
+		}
 
 	static_line_string_end = |bytes, index|
 		if index >= bytes.len() {
@@ -368,8 +373,8 @@ Tidy := [].{
 						{
 							Tidy.static_line_string_end(bytes, next + 2)
 						} else {
-							StaticEnd(index)
-						}
+					StaticEnd(index)
+				}
 			} else if byte == '\\' {
 				Tidy.static_line_string_end(bytes, index + 2)
 			} else if byte == '$' and Tidy.byte_at(bytes, index + 1) == '{' {
@@ -388,8 +393,8 @@ Tidy := [].{
 				{
 					Tidy.static_line_string_end(bytes, index + 2)
 				} else {
-					NotStatic
-				}
+			NotStatic
+		}
 
 	static_list_end = |bytes, raw_index, count| {
 		index = Tidy.skip_trivia(bytes, raw_index)
@@ -433,25 +438,25 @@ Tidy := [].{
 								{
 									Bool.False
 								} else {
-									separator = Tidy.skip_trivia(bytes, after_list + 1)
-									match Tidy.static_literal_end(bytes, separator) {
-										NotStatic => Bool.False
-										StaticEnd(separator_end) => {
-											after_separator = Tidy.skip_trivia(
-												bytes,
-												separator_end,
-											)
-											closing = if
-												Tidy.byte_at(bytes, after_separator) == ','
-													{
-														Tidy.skip_trivia(bytes, after_separator + 1)
-													} else {
-														after_separator
-													}
-											Tidy.byte_at(bytes, closing) == ')'
-										}
+							separator = Tidy.skip_trivia(bytes, after_list + 1)
+							match Tidy.static_literal_end(bytes, separator) {
+								NotStatic => Bool.False
+								StaticEnd(separator_end) => {
+									after_separator = Tidy.skip_trivia(
+										bytes,
+										separator_end,
+									)
+									closing = if
+										Tidy.byte_at(bytes, after_separator) == ','
+											{
+												Tidy.skip_trivia(bytes, after_separator + 1)
+											} else {
+										after_separator
 									}
+									Tidy.byte_at(bytes, closing) == ')'
 								}
+							}
+						}
 					}
 				}
 			}
@@ -517,7 +522,7 @@ Tidy := [].{
 		if index >= end {
 			line
 		} else {
-			next_line = if Tidy.byte_at(bytes, index) == '\n' line + 1 else line
+			next_line = if (Tidy.byte_at(bytes, index) == '\n') line + 1 else line
 			Tidy.line_through(bytes, index + 1, end, next_line)
 		}
 
@@ -619,15 +624,15 @@ Tidy := [].{
 							limit,
 						)
 					} else {
-						next_line = if byte == '\n' line + 1 else line
-						Tidy.scan_static_joins(
-							bytes,
-							index + 1,
-							next_line,
-							violations,
-							limit,
-						)
-					}
+				next_line = if (byte == '\n') line + 1 else line
+				Tidy.scan_static_joins(
+					bytes,
+					index + 1,
+					next_line,
+					violations,
+					limit,
+				)
+			}
 		}
 
 	static_join_violations = |source| {
@@ -660,8 +665,8 @@ Tidy := [].{
 				{
 					Ok([path])
 				} else {
-					Ok([])
-				}
+			Ok([])
+		}
 	}
 
 	discover_entries! = |entries|
@@ -776,8 +781,8 @@ Tidy := [].{
 		}
 
 	print_check! = |label, passed| {
-		color = if passed Tidy.ansi_green else Tidy.ansi_red
-		status = if passed "PASS" else "FAIL"
+		color = if (passed) Tidy.ansi_green else Tidy.ansi_red
+		status = if (passed) "PASS" else "FAIL"
 		Stderr.line!(Tidy.colorize(color, "  ${status}  ${label}"))
 	}
 
@@ -905,9 +910,9 @@ Tidy := [].{
 		)?
 
 		count = diagnostics.len()
-		label = if count == 1 "violation" else "violations"
+		label = if (count == 1) "violation" else "violations"
 		total = "Total: ${U64.to_str(count)} ${label}"
-		color = if diagnostics.is_empty() Tidy.ansi_green else Tidy.ansi_red
+		color = if (diagnostics.is_empty()) Tidy.ansi_green else Tidy.ansi_red
 		Stderr.line!(Tidy.colorize(color, total))
 	}
 

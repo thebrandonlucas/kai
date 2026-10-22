@@ -4,22 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
+    # The official Roc nightlies; .roc-version picks one.
     roc-overlay = {
-      url = "github:thebrandonlucas/roc-overlay/75e0d3ae5c9a4d99eb14d2b13cac5a0e22fcd89d";
+      url = "github:roc-lang/roc-overlay/0563d2a0ba55a751449c54058328832309b0f3a1";
       inputs.nixpkgs.follows = "nixpkgs";
-    };
-
-    # No basic-cli release supports the pinned Roc yet (0.23.0-rc1 predates
-    # nightly-2026-09-23), so build PR #499 from source; main (e416ec0) has the
-    # same tree. Switch to the first release made for these nightlies.
-    basic-cli-src = {
-      url = "github:roc-lang/basic-cli/473caa2cc4f3fe9ce4e4682158bb80ebc2e19169";
-      flake = false;
-    };
-
-    rust-overlay = {
-      url = "github:oxalica/rust-overlay/4e9bb05a9ab6c37dc74c22974ebed6e36dc73eb2";
-      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.nixpkgs-darwin.follows = "nixpkgs";
     };
   };
 
@@ -28,8 +17,6 @@
       self,
       nixpkgs,
       roc-overlay,
-      basic-cli-src,
-      rust-overlay,
       ...
     }:
     let
@@ -39,80 +26,33 @@
 
       rocVersion = lib.trim (builtins.readFile ./.roc-version);
 
-      # Only Linux hosts are built and tested; basic-cli comes from source.
+      # Only Linux hosts are built and tested.
       supportedSystems = [
         "x86_64-linux"
         "aarch64-linux"
       ];
       forAllSystems = lib.genAttrs supportedSystems;
-      pkgsFor =
-        system:
-        import nixpkgs {
-          inherit system;
-          overlays = [ rust-overlay.overlays.default ];
-        };
+      pkgsFor = system: nixpkgs.legacyPackages.${system};
 
       rocTargetFor = {
         x86_64-linux = "x64musl";
         aarch64-linux = "arm64musl";
       };
 
-      rustTargetFor = {
-        x64musl = "x86_64-unknown-linux-musl";
-        arm64musl = "aarch64-unknown-linux-musl";
-      };
-
       rocFor = pkgs: roc-overlay.packages.${pkgs.stdenv.hostPlatform.system}.${rocVersion};
 
-      # The basic-cli platform with hosts for every supported Roc target.
+      # The basic-cli platform release, with hosts for every Roc target.
       basicCliFor =
         pkgs:
-        let
-          rustToolchain = pkgs.rust-bin.fromRustupToolchain {
-            channel =
-              (builtins.fromTOML (builtins.readFile "${basic-cli-src}/rust-toolchain.toml")).toolchain.channel;
-            components = [ "llvm-tools-preview" ];
-            targets = lib.attrValues rustTargetFor;
-          };
-          rustPlatform = pkgs.makeRustPlatform {
-            cargo = rustToolchain;
-            rustc = rustToolchain;
-          };
-          buildTarget = rocTarget: rustTarget: ''
-            python3 scripts/build.py --target ${rocTarget}
-            # Keep the unstripped host; Kai strips its final executables.
-            cp target/${rustTarget}/release/libhost.a platform/targets/${rocTarget}/libhost.a
-          '';
-        in
-        rustPlatform.buildRustPackage {
-          pname = "basic-cli-platform";
-          version = "0.23.0-pr499";
-          src = basic-cli-src;
-          cargoLock.lockFile = "${basic-cli-src}/Cargo.lock";
-          nativeBuildInputs = [
-            pkgs.python3
-            pkgs.zig_0_16
-          ];
-          postPatch = ''
-            patchShebangs ci scripts
-          '';
-          buildPhase = ''
-            runHook preBuild
-            export CARGO_NET_OFFLINE=true
-            export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
-            ${lib.concatStrings (lib.mapAttrsToList buildTarget rustTargetFor)}
-            runHook postBuild
-          '';
-          # Roc supplies the host's unresolved symbols when linking an app.
-          doCheck = false;
-          dontStrip = true;
-          installPhase = ''
-            runHook preInstall
-            mkdir -p "$out"
-            cp -R platform/. "$out/"
-            runHook postInstall
-          '';
-        };
+        pkgs.runCommand "basic-cli-platform-0.26.0" { nativeBuildInputs = [ pkgs.zstd ]; } ''
+          mkdir -p "$out"
+          zstd -dc ${
+            pkgs.fetchurl {
+              url = "https://github.com/roc-lang/basic-cli/releases/download/0.26.0/GddgvsGjiNXrHFW6au5i5dUDbTs8FinQdrgE2Gqmw53t.tar.zst";
+              hash = "sha256-Mcp0Ov/meyQB/X0wTGNwD67FMPNg8WTwlGVU5jSQwmw=";
+            }
+          } | tar -x -C "$out"
+        '';
 
       # The Kai platform as a Roc package bundle, <hash>.tar.zst, which a
       # release publishes for Kaifile.roc headers to reference by URL; also

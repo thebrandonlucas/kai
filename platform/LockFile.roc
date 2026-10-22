@@ -45,7 +45,7 @@ LockFile := [].{
 			}
 		var $sections = []
 		for name in ["guix", "nix"] {
-			found = if name == backend Present(contents) else kept(name)?
+			found = if (name == backend) Present(contents) else kept(name)?
 			match found {
 				Present(value) => {
 					$sections = $sections.append({ name, value })
@@ -83,7 +83,7 @@ expect {
 			),
 		)
 		and LockFile.section(v1, "guix") == Ok(Absent)
-			and kept == Ok(nix)
-				and spliced.map_ok(|text| LockFile.section(text, "guix"))
-					== Ok(Ok(Present(section)))
+		and kept == Ok(nix)
+		and spliced.map_ok(|text| LockFile.section(text, "guix"))
+			== Ok(Ok(Present(section)))
 }

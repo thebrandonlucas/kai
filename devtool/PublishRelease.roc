@@ -6,6 +6,8 @@ import pf.Path
 import pf.Stdout
 import pf.Url
 
+import Exec
+
 import GitHub
 import GitHubApi
 import Release
@@ -13,12 +15,13 @@ import Release
 PublishRelease := [].{
 	git_output! = |args|
 		Ok(
-			Cmd.new_str("git")
-				.args_str(args)
-				.exec_output!()?
+			Exec.output!(
+				Exec.cmd("git")
+					.args(Exec.strs(args)),
+			)?
 				.stdout_utf8,
 		)
-	git! = |args| Cmd.new_str("git").args_str(args).exec_cmd!()
+	git! = |args| Exec.cmd!(Exec.cmd("git").args(Exec.strs(args)))
 
 	required_env! = |name| {
 		value = Env.var_str!(OsStr.utf8(name))?
@@ -88,9 +91,10 @@ PublishRelease := [].{
 
 	artifact! = |root, name| {
 		path = Path.join(Path.join(root, "dist"), name)
-		output = Cmd.new_str("sha256sum")
-			.args([OsStr.utf8("--"), Path.to_os_str(path)])
-			.exec_output!()?
+		output = Exec.output!(
+			Exec.cmd("sha256sum")
+				.args([OsStr.utf8("--"), Path.to_os_str(path)]),
+		)?
 		digest = output.stdout_utf8
 			.split_on(" ")
 			.keep_if(|part| !part.is_empty())
@@ -111,7 +115,7 @@ PublishRelease := [].{
 						PublishRelease.artifacts_help!(root, rest)?,
 					),
 				)
-			}
+		}
 
 	artifacts! = |root, release|
 		PublishRelease.artifacts_help!(root, release.assets)
@@ -154,9 +158,10 @@ PublishRelease := [].{
 
 	local_tag_state! = |tag| {
 		ref = "refs/tags/${tag}"
-		exit_code = Cmd.new_str("git")
-			.args_str(["show-ref", "--verify", "--quiet", ref])
-			.exec_exit_code!()?
+		exit_code = Exec.exit_code!(
+			Exec.cmd("git")
+				.args(Exec.strs(["show-ref", "--verify", "--quiet", ref])),
+		)?
 		if exit_code == 1 {
 			Ok(NoTag)
 		} else if exit_code != 0 {
@@ -291,14 +296,17 @@ PublishRelease := [].{
 			"origin",
 			"+refs/heads/master:refs/remotes/origin/master",
 		])?
-		ancestor = Cmd.new_str("git")
-			.args_str([
-				"merge-base",
-				"--is-ancestor",
-				target,
-				"refs/remotes/origin/master",
-			])
-			.exec_exit_code!()?
+		ancestor = Exec.exit_code!(
+			Exec.cmd("git")
+				.args(
+					Exec.strs([
+						"merge-base",
+						"--is-ancestor",
+						target,
+						"refs/remotes/origin/master",
+					]),
+				),
+		)?
 		if ancestor != 0 {
 			return Err(PublishTargetNotOnMaster)
 		}
@@ -338,7 +346,7 @@ PublishRelease := [].{
 		}) ? InvalidPublicationMetadata
 
 		GitHubApi.require_repository!(api, repository, token) ? RepositoryProbeFailed
-		Cmd.new_str("zig").args_str(["build", "build-release"]).exec_cmd!()?
+		Exec.cmd!(Exec.cmd("zig").args(Exec.strs(["build", "build-release"])))?
 		root = Env.cwd!()?
 		artifacts = PublishRelease.artifacts!(root, release)?
 		expected_assets = artifacts.map(

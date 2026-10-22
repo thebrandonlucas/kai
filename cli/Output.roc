@@ -67,7 +67,7 @@ Output := [].{
 			if upper(b) and $lower {
 				$bytes = $bytes.append('_')
 			}
-			$bytes = $bytes.append(if upper(b) b + 32 else b)
+			$bytes = $bytes.append(if (upper(b)) b + 32 else b)
 			$lower = !upper(b)
 		}
 		Str.from_utf8_lossy($bytes)
@@ -126,8 +126,8 @@ expect {
 			("path", LockJson.String("/p/a b")),
 		]
 		and !line.contains("\n")
-			and !line.contains("\u(001b)")
-				and line.contains("é 😀")
+		and !line.contains("\u(001b)")
+		and line.contains("é 😀")
 }
 
 # Errors carry a stable kind, the readable message and kai's exit code.
@@ -162,5 +162,5 @@ expect {
 				("action", LockJson.String("build")),
 				("name", LockJson.String("app")),
 			]
-			and planned.finished.starts_with("{\"type\":\"step_finished\"")
+		and planned.finished.starts_with("{\"type\":\"step_finished\"")
 }

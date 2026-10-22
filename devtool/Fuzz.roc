@@ -6,6 +6,8 @@ import pf.Path
 import pf.Stderr
 import pf.Stdout
 
+import Exec
+
 Fuzz := [].{
 	run! = |seconds, apps| {
 		Path.create_all!(Path.utf8("zig-out/fuzz"))?
@@ -28,9 +30,9 @@ Fuzz := [].{
 		out = "zig-out/fuzz/${name}"
 		# A build with type errors still emits a binary but exits 1; roc-fuzz's
 		# own Roc pin warns, which exits 2. Accept warnings, never errors.
-		built = Cmd.new_str("roc")
-			.args_str(["build", "--fuzz", source, "--output=${out}"])
-			.merge_stderr(Bool.True)
+		built = Exec.cmd("roc")
+			.args(Exec.strs(["build", "--fuzz", source, "--output=${out}"]))
+			.stderr(MergeWithStdout)
 			.run!()?
 		match built.status {
 			Exited(0) | Exited(2) => {}
@@ -48,20 +50,22 @@ Fuzz := [].{
 			.map(|path| "-dict=${path}")
 		seeds = entries.keep_if(|path| path.ends_with("/corpus"))
 		Stdout.line!("==> ${name} (${seconds}s)")?
-		fuzzed = Cmd.new_str(out)
-			.args_str(
-				[
-					"-max_total_time=${seconds}",
-					"-timeout=10",
-					"-print_final_stats=1",
-					"-artifact_prefix=${out}-",
-				]
-					.concat(dicts)
-					.concat([corpus])
-					.concat(seeds),
+		fuzzed = Exec.cmd(out)
+			.args(
+				Exec.strs(
+					[
+						"-max_total_time=${seconds}",
+						"-timeout=10",
+						"-print_final_stats=1",
+						"-artifact_prefix=${out}-",
+					]
+						.concat(dicts)
+						.concat([corpus])
+						.concat(seeds),
+				),
 			)
-			.merge_stderr(Bool.True)
-			.output_limit(268435456)
+			.stderr(MergeWithStdout)
+			.output_limit(MaxBytes(268435456))
 			.run!()?
 		log = Str.from_utf8_lossy(fuzzed.stdout_bytes)
 		Path.write_utf8!(Path.utf8("${out}.log"), log)?

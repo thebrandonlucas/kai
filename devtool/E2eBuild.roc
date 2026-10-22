@@ -5,10 +5,13 @@
 # Guix, on a copy of the channels fixture with Nix off PATH: a sandboxed build
 # prints the store path of its exact artifact.
 import pf.Cmd
+import pf.Duration
 import pf.Env
 import pf.Path
 import pf.Stdout
 import pf.Tcp
+
+import Exec
 
 import E2e
 
@@ -51,10 +54,9 @@ E2eBuild := [].{
 		}
 		Path.write_utf8!(kaifile, config)?
 		lock = Path.join(project, ".kai/lock.json")
-		kai! = |args| Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(project)
+		kai! = |args| Cmd.new(Path.to_os_str(kai)).args(Exec.strs(args)).cwd(project)
 			.run!()
-		_ = Cmd.new(Path.to_os_str(kai)).arg_str("update").cwd(project)
-			.exec_output!()?
+		_ = Exec.output!(Cmd.new(Path.to_os_str(kai)).arg("update").cwd(project))?
 		published = Path.read_bytes!(lock)?
 		modified = Path.time_modified!(lock)?
 		file = |relative| Path.join(project, relative)
@@ -68,8 +70,8 @@ E2eBuild := [].{
 			if
 				output.status != Exited(0)
 					or !path.starts_with("/nix/store/")
-						or !stderr.contains("built ${name}: ")
-							or !stderr.contains(" -> ${path}\n")
+					or !stderr.contains("built ${name}: ")
+					or !stderr.contains(" -> ${path}\n")
 					{
 						return Err(BuildFailed(name, E2eBuild.show(output)))
 					}
@@ -86,8 +88,8 @@ E2eBuild := [].{
 			if
 				output.status != Exited(1)
 					or !output.stdout_bytes.is_empty()
-						or stderr.contains("built ")
-							or !stderr.contains(diagnostic)
+					or stderr.contains("built ")
+					or !stderr.contains(diagnostic)
 					{
 						return Err(NotRefused(name, diagnostic, E2eBuild.show(output)))
 					}
@@ -118,8 +120,10 @@ E2eBuild := [].{
 		Path.write_utf8!(file("src/message.txt"), "second revision\n")?
 		built!("library", "SECOND REVISION\n")?
 		witness = Path.read_bytes!(file(".kai/snapshot.isolation.json"))?
-		_ = Cmd.new_str("ln").args_str(["-s", "src/message.txt", "link"])
-			.cwd(project).exec_output!()?
+		_ = Exec.output!(
+			Exec.cmd("ln").args(Exec.strs(["-s", "src/message.txt", "link"]))
+				.cwd(project),
+		)?
 		stderr = refused!("library", "snapshot refuses symlink: ")?
 		if stderr.contains("building ") {
 			return Err(BuiltPastSymlink(stderr))
@@ -155,12 +159,12 @@ E2eBuild := [].{
 	}
 
 	probe! = |kai!, project, built!, directory| {
-		_ = Cmd.new_str("chmod").args_str(["0755", Path.display(directory)])
-			.exec_output!()?
+		mode = Exec.cmd("chmod").args(Exec.strs(["0755", Path.display(directory)]))
+		_ = Exec.output!(mode)?
 		marker = Path.join(directory, "marker")
 		token = Path.display(directory)
 		Path.write_utf8!(marker, token)?
-		listener = Tcp.listen!("127.0.0.1", 0, 5000)?
+		listener = Tcp.listen!("127.0.0.1", 0, Duration.millis(5000))?
 		port = listener.local_port!()?
 		args = "${Path.display(marker)} ${token} ${port.to_str()}\n"
 		Path.write_utf8!(Path.join(project, "probe.args"), args)?

@@ -63,7 +63,7 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 						Ok(plan) => Planned(plan)
 						Err(message) => Failed(message)
 					}
-				}
+			}
 			{ backend, plugin, probes, outcome }
 		}
 		independent = owned.keep_if(
@@ -93,7 +93,7 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 										option(found, b.id, [{ program: b.program, flag: b.flag }]),
 								),
 					)
-			}
+		}
 		Candidates({ command, plugin: owner, choice, lock, options })
 	}
 
@@ -185,7 +185,7 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 				return Err("${plugin}: ${name} uses unknown backend ${backend}")
 			}
 			if $pairs.contains((implementation.command, backend)) {
-				target = if backend.is_empty() "no backend" else backend
+				target = if (backend.is_empty()) "no backend" else backend
 				return Err(
 					"${implementation.command} on ${target} "
 						.concat("is implemented twice; drop one with Plugin.without"),
@@ -308,10 +308,10 @@ expect {
 	overlays = Unfit("uses overlays")
 	outcomes("shell", Auto) == Ok([("nix", note("nix shell")), ("guix", overlays)])
 		and outcomes("shell", Only("guix")) == Ok([("guix", overlays)])
-			and outcomes("shell", Only("apt"))
-				== Err("--backend must be one of nix, guix")
-				and outcomes("ir", Only("guix")) == Ok([("", note("ir"))])
-					and outcomes("build", Auto) == Ok([("nix", Failed("no lock"))])
+		and outcomes("shell", Only("apt"))
+			== Err("--backend must be one of nix, guix")
+		and outcomes("ir", Only("guix")) == Ok([("", note("ir"))])
+		and outcomes("build", Auto) == Ok([("nix", Failed("no lock"))])
 }
 
 command = |name, lock|

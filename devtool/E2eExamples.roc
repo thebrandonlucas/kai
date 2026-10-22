@@ -10,6 +10,8 @@ import pf.Env
 import pf.Path
 import pf.Stdout
 
+import Exec
+
 import E2e
 
 E2eExamples := [].{
@@ -77,7 +79,7 @@ E2eExamples := [].{
 			if
 				Path.is_dir!(dir)?
 					and Path.is_file!(Path.join(dir, "Kaifile.roc"))?
-						and Path.is_file!(Path.join(dir, "commands"))?
+					and Path.is_file!(Path.join(dir, "commands"))?
 					{
 						$names = $names.append(name)
 					}
@@ -92,13 +94,13 @@ E2eExamples := [].{
 		var $stdout = ""
 		for line in lines {
 			args = line.split_on(" ").keep_if(|arg| !arg.is_empty())
-			argv = if args == ["update"] ["--backend", "nix", "update"] else args
-			command = Cmd.new(Path.to_os_str(kai)).args_str(argv).cwd(project)
-			output = match command.exec_output!() {
+			argv = if (args == ["update"]) ["--backend", "nix", "update"] else args
+			command = Cmd.new(Path.to_os_str(kai)).args(Exec.strs(argv)).cwd(project)
+			output = match Exec.output!(command) {
 				Ok(ran) => ran
 				Err(failure) =>
 					return Err(ExampleCommandFailed({ example: name, command: line, failure }))
-				}
+			}
 			if args != ["update"] {
 				$stdout = $stdout.concat(output.stdout_utf8)
 			}
@@ -108,9 +110,10 @@ E2eExamples := [].{
 
 	## The commands the Kaifile's plugins offer, from `kai describe`.
 	offered! = |kai, project| {
-		described = Cmd.new(Path.to_os_str(kai)).args_str(["describe"])
-			.cwd(project)
-			.exec_output!()?
+		described = Exec.output!(
+			Cmd.new(Path.to_os_str(kai)).args(Exec.strs(["describe"]))
+				.cwd(project),
+		)?
 		Ok(E2eExamples.described_commands(described.stdout_utf8))
 	}
 
@@ -211,7 +214,6 @@ expect
 		\\	]
 		\\	PackageSource : [Auto, From(Provider)]
 		\\	ShellSetting : [Use(EnvName)]
-		,
 	)
 		== [
 			{ tag: "Name", payload: Bool.True },

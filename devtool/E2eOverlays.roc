@@ -7,6 +7,8 @@ import pf.Cmd
 import pf.Path
 import pf.Stdout
 
+import Exec
+
 import E2e
 
 E2eOverlays := [].{
@@ -28,8 +30,10 @@ E2eOverlays := [].{
 
 	run_in! = |kai, project| {
 		lock = Path.join(project, ".kai/lock.json")
-		kai! = |args| Cmd.new(Path.to_os_str(kai)).args_str(args).cwd(project)
-			.exec_output!()
+		kai! = |args| {
+			command = Cmd.new(Path.to_os_str(kai)).args(Exec.strs(args))
+			Exec.output!(command.cwd(project))
+		}
 		_ = kai!(["update"])?
 		published = Path.read_bytes!(lock)?
 		for case in E2eOverlays.expected {

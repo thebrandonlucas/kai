@@ -3,6 +3,8 @@
 # order, then continue a plan that asks to observe files. Only a command
 # that owns the lock may publish it.
 import pf.Cmd
+import pf.Duration
+import pf.OsStr
 import pf.Path
 import pf.Stderr
 import pf.Stdin
@@ -62,7 +64,7 @@ Execute := [].{
 		probe = Execute.lookup($observed)
 		chosen = Selection.choose(answer.choice, answer.options, probe)?
 		usable = |c| Selection.fits(c) and Selection.status(c, probe) == Usable
-		ran = if every answer.options.keep_if(usable) else [chosen]
+		ran = if (every) answer.options.keep_if(usable) else [chosen]
 		for candidate in ran {
 			if candidate.backend != "" {
 				why = if ran.len() > 1 {
@@ -160,15 +162,20 @@ Execute := [].{
 			DashV => "-v"
 			VersionWord => "version"
 		}
-		version = Cmd.new_str(program).args_str([arg]).timeout_ms(10000)
+		version = Cmd.new(OsStr.from_str(program))
+			.arg(OsStr.from_str(arg))
+			.timeout(Duration.seconds(10))
 		match version.run!() {
-			Ok({ status: Exited(0), .. }) => Usable
-			Ok({ status: Exited(code), .. }) =>
-				Unusable("`${program} ${arg}` exited with code ${code.to_str()}")
-			Ok({ status: Signaled(signal), .. }) =>
-				Unusable("`${program} ${arg}` got signal ${signal.to_str()}")
-			Err(IO(NotFound)) => Missing
-			Err(Timeout(_)) => Unusable("`${program} ${arg}` timed out")
+			Ok(output) =>
+				match output.status {
+					Exited(0) => Usable
+					Exited(code) =>
+						Unusable("`${program} ${arg}` exited with code ${code.to_str()}")
+					Signaled(signal) =>
+						Unusable("`${program} ${arg}` got signal ${signal.to_str()}")
+				}
+			Err(CmdErr(StartFailed(NotFound, _))) => Missing
+			Err(CmdErr(TimedOut(_))) => Unusable("`${program} ${arg}` timed out")
 			Err(err) => Unusable(Str.inspect(err))
 		}
 	}
@@ -214,7 +221,7 @@ Execute := [].{
 	# Close the open workflow step, if any.
 	finish! : Output.Mode, Str => Try({}, _)
 	finish! = |mode, finished|
-		if finished.is_empty() Ok({}) else Output.json!(mode, finished)
+		if (finished.is_empty()) Ok({}) else Output.json!(mode, finished)
 
 	# Every step is checked before the first runs: files only beneath the
 	# generated root, the snapshot and runner only in the workspace, verified
@@ -233,7 +240,7 @@ Execute := [].{
 						Err(UnsafePlan("observes a file outside the generated files: ${path}"))
 					Err(_) => Ok({})
 				}
-			}
+		}
 	}
 
 	under : Str, Str -> Bool
@@ -248,12 +255,12 @@ Execute := [].{
 					if
 						program.is_empty()
 							or program.starts_with("-")
-								or (program.contains("/") and !program.starts_with("/"))
+							or (program.contains("/") and !program.starts_with("/"))
 							{
 								Err("not a program name or absolute path: ${program}")
 							} else {
-								Ok({})
-							}
+						Ok({})
+					}
 				[] => Err("an empty command")
 			}
 		match step {
@@ -337,12 +344,13 @@ Execute := [].{
 					[first, .. as rest] => (first, rest)
 					[] => return Err(RenderFailed("the plan has an empty command"))
 				}
-				observed = Cmd.new_str(program)
-					.args_str(args)
+				observed = Cmd.new(OsStr.from_str(program))
+					.args(args.map(OsStr.from_str))
 					.cwd(Workspace.path(root))
-					.exec_output!()?
-				Stderr.write!(observed.stderr_utf8_lossy)?
-				if observed.stdout_utf8.trim() != stdout {
+					.run!()?
+					.require_success()?
+				Stderr.write_bytes!(observed.stderr_bytes)?
+				if Str.from_utf8_lossy(observed.stdout_bytes).trim() != stdout {
 					return Err(LocalChanged(path))
 				}
 				Ok({})
@@ -388,8 +396,8 @@ Execute := [].{
 			[first, .. as rest] => (first, rest)
 			[] => return Err(RenderFailed("the plan has no build command"))
 		}
-		output = Cmd.new_str(program)
-			.args_str(args)
+		output = Cmd.new(OsStr.from_str(program))
+			.args(args.map(OsStr.from_str))
 			.cwd(Workspace.path(root))
 			.stderr(Inherit)
 			.run!()?
@@ -420,11 +428,16 @@ Execute := [].{
 	child! = |argv, what, root|
 		match argv {
 			[program, .. as args] => {
-				code = Cmd.new_str(program)
-					.args_str(args)
+				ran = Cmd.new(OsStr.from_str(program))
+					.args(args.map(OsStr.from_str))
 					.cwd(Workspace.path(root))
-					.exec_exit_code!()?
-				if code == 0 Ok({}) else Err(ChildExited(what, code))
+					.inherit_stdio()
+					.run!()?
+				match ran.status {
+					Exited(0) => Ok({})
+					Exited(code) => Err(ChildExited(what, code))
+					Signaled(signal) => Err(ChildExited(what, 128 + signal))
+				}
 			}
 			[] => Err(RenderFailed("the plan has an empty command"))
 		}
@@ -432,7 +445,7 @@ Execute := [].{
 	# A child's status becomes kai's own; statuses a process cannot exit with,
 	# such as a signal report, become a generic failure.
 	exit_code : I32 -> I32
-	exit_code = |code| if code > 0 and code < 256 code else 1
+	exit_code = |code| if (code > 0 and code < 256) code else 1
 }
 
 # A failing child's status is kept rather than collapsed to 1.
@@ -500,8 +513,8 @@ expect {
 	checked = |plan, lock| Execute.validate(plan, layout, lock)
 	checked(observing("/p/.kai/generated/flake.lock"), ReadsLock) == Ok({})
 		and checked(observing("/p/.kai/lock.json"), ReadsLock) != Ok({})
-			and Execute.validate(publish, layout, OwnsLock) == Ok({})
-				and Execute.validate(publish, layout, ReadsLock) != Ok({})
+		and Execute.validate(publish, layout, OwnsLock) == Ok({})
+		and Execute.validate(publish, layout, ReadsLock) != Ok({})
 }
 
 # A confirmation needs --yes or a person at a terminal; otherwise the plan

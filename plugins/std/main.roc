@@ -1,11 +1,11 @@
 ## Kai's standard plugin: environments, shells, tasks, builds and workflows.
 package
 	[
-		Std,
 		Config,
 		EnvName,
 		FlakeRef,
 		InputName,
+		Std,
 		System,
 		TaskName,
 		Tool,
@@ -13,8 +13,8 @@ package
 		WorkflowName,
 	]
 	{
-		pf: platform "../../platform/main.roc",
+		guix: "backends/guix/main.roc",
 		model: "model/main.roc",
 		nix: "backends/nix/main.roc",
-		guix: "backends/guix/main.roc",
+		pf: platform "../../platform/main.roc",
 	}

@@ -4,9 +4,12 @@
 # the bare kai with a PATH holding only guix and coreutils, so Nix cannot
 # leak in; a missing guix is reported as skipped, never passed.
 import pf.Cmd
+import pf.OsStr
 import pf.Env
 import pf.Path
 import pf.Stdout
+
+import Exec
 
 import ConfigFixtures
 
@@ -70,7 +73,7 @@ E2e := [].{
 		}
 		dir = Path.canonicalize!(Env.create_temp_dir_with_prefix!("kai-guix-")?)?
 		link! = |target|
-			Cmd.new_str("ln").args_str(["-s", target, Path.display(dir)]).exec_cmd!()
+			Exec.cmd!(Exec.cmd("ln").args(Exec.strs(["-s", target, Path.display(dir)])))
 		link!("${guix}/guix")?
 		coreutils = E2e.which!("readlink")?
 		for tool in ["cp", "chmod", "readlink", "test"] {
@@ -86,12 +89,13 @@ E2e := [].{
 	## reachable through ROC.
 	guix_kai! = |kai, project, path, args| {
 		roc = "${E2e.which!("roc")?}/roc"
-		Cmd.new(Path.to_os_str(kai))
-			.args_str(args)
-			.cwd(project)
-			.env_str("PATH", Path.display(path))
-			.env_str("ROC", roc)
-			.exec_output!()
+		Exec.output!(
+			Cmd.new(Path.to_os_str(kai))
+				.args(Exec.strs(args))
+				.cwd(project)
+				.env(OsStr.from_str("PATH"), OsStr.from_str(Path.display(path)))
+				.env(OsStr.from_str("ROC"), OsStr.from_str(roc)),
+		)
 	}
 
 	## A copy of an example, locked at `release`.
