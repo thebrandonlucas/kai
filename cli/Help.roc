@@ -52,27 +52,49 @@ Help := [].{
 		\\
 		\\${Help.tips}
 
-	# The settings a new Kaifile.roc starts with: a shell with cowsay.
-	cow =
-		\\[
-		\\      Name("hello"),
-		\\      Environment("cow", [Tools(["cowsay"])]),
-		\\      Shell("default", [Use("cow")]),
-		\\  ]
+	# The Kaifile.roc `kai init` writes for project `name`: this release's
+	# platform and std, in full, and a shell and task with cowsay and fortune.
+	kaifile : Str -> Str
+	kaifile = |name| {
+		quoted = name
+			.replace_each("\\", "\\\\")
+			.replace_each("\"", "\\\"")
+			.replace_each("$", "\\$")
+		Help.kaifile_named(quoted)
+	}
+
+	kaifile_named : Str -> Str
+	kaifile_named = |name|
+		\\# This project's Kai configuration. Every setting has an example in
+		\\# ${Help.examples}
+		\\app [kaifile] {
+		\\	pf: platform "${platform_release.trim()}",
+		\\	std: "${std_release.trim()}",
+		\\}
+		\\
+		\\import std.Std
+		\\
+		\\kaifile = Std.kaifile([
+		\\	Name("${name}"),
+		\\	Environment("cow", [Tools(["cowsay", "fortune"])]),
+		\\	Shell("default", [Use("cow")]),
+		\\	Task("wisdom", [Use("cow"), Run(["sh", "-c", "fortune | cowsay"])]),
+		\\])
+		\\
+
+	# What to do after `kai init`, or instead of a missing Kaifile.roc.
+	next_steps =
+		\\Then run `kai update` to pin its packages, then `kai run wisdom` for a
+		\\wise cow, or `kai shell` to enter its environment. Every setting has an
+		\\example in:
+		\\  ${Help.examples}
 
 	# Why kai's own help is shown when there is no Kaifile.roc, and how to
 	# start one.
 	starter =
-		\\There is no Kaifile.roc here. To start one, create Kaifile.roc with:
-		\\
-		\\${Help.header(Help.cow)}
-		\\
-		\\with this release's full URLs, from the README's Getting started:
-		\\  ${Help.readme}
-		\\
-		\\Then run `kai update` to pin its packages, `kai shell` to enter it, and
-		\\`cowsay "Hello from Kai!"` inside. Every setting has an example in:
-		\\  ${Help.examples}
+		\\There is no Kaifile.roc here. Run `kai init` to create a starter one, with
+		\\a shell containing cowsay and fortune and a task that runs them.
+		\\${Help.next_steps}
 
 	# The Kaifile cannot know kai's version, so kai adds it to the title.
 	versioned : Str, Str -> Str
@@ -96,6 +118,7 @@ Help := [].{
 		\\  kai [OPTIONS] <COMMAND>
 		\\
 		\\Commands:
+		\\  init      Create a Kaifile.roc here to start a project.
 		\\  check     Compile Kaifile.roc and report whether it is valid.
 		\\  describe  List the plugins, commands and backends Kaifile.roc defines.
 		\\
@@ -141,3 +164,6 @@ expect
 expect
 	Help.short("https://example.com/v0.0.8/std-6zJHFrCtGkKhyuiN.tar.zst")
 		== "…/v0.0.8/std-6zJHFrCt….tar.zst"
+
+# A project name is quoted as a Roc string, whatever its directory is called.
+expect Help.kaifile("a\"b\\c$d").contains("Name(\"a\\\"b\\\\c\\$d\"),")

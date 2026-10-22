@@ -68,6 +68,9 @@ run! = |shown, mode| {
 	if requests(shown, "--version") or requests(shown, "-V") {
 		return Stdout.line!(version)
 	}
+	if command_word(shown) == Ok("init") and !asks_help(shown) {
+		return init!(requested_file(shown), mode)
+	}
 	located = Load.project!(requested_file(shown))
 	if command_word(shown) == Ok("check") and !asks_help(shown) {
 		project = located?
@@ -218,6 +221,24 @@ operand = |args|
 			if (arg.starts_with("-")) operand(rest) else command_word(rest) ?? ""
 	}
 
+# `kai init`: write a starting Kaifile.roc, never replacing an existing file.
+init! = |requested, mode| {
+	cwd = Env.cwd!()?.to_str()?
+	location = Load.resolve(cwd, requested ?? Load.default_file)
+	if Load.path(location).exists!() ?? Bool.True {
+		return Err(KaifileExists(location))
+	}
+	# The project is named after its directory, as a starting point.
+	name = Load.split_file(location).root.split_on("/").last() ?? "project"
+	Load.path(location).write_utf8!(Help.kaifile(name))?
+	created = "Created ${location}."
+	Output.result!(
+		mode,
+		"${created}\n${Help.next_steps}",
+		Output.event("init", created, [("file", Output.text(location))]),
+	)
+}
+
 # Help depends on the configuration, so --file is found before parsing, the
 # way the parser reads it. Arguments after -- belong to a task or command.
 requested_file : List(Str) -> Try(Str, [NoValue])
@@ -252,6 +273,8 @@ describe : _ -> Str
 describe = |err|
 	match err {
 		NoKaifile(location) => "no Kaifile.roc at ${location}"
+		KaifileExists(location) =>
+			"${location} already exists; kai init never replaces a file"
 		PreviousHeader =>
 			"Kaifile.roc uses the pre-plugin header `app [config]`; start it as "
 				.concat("`kai --help` shows and wrap the settings in ")
