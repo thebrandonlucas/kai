@@ -283,19 +283,20 @@ Release := [].{
 		"VERSION",
 	]
 
+	# A new version changes VERSION and its build.zig.zon mirror together; a
+	# release of the committed, never released version changes only its name.
+	# Either way the bundle URLs change.
 	are_allowed_release_files : List(Str) -> Bool
 	are_allowed_release_files = |files| {
-		expected_length = if files.contains("RELEASE_NAME") {
-			5
-		} else {
-			4
-		}
-		files.contains("build.zig.zon") and
-			files.contains("VERSION") and
-				files.contains(Release.platform_file) and
-					files.contains(Release.std_file) and
-						files.len() == expected_length and
-							List.all(files, |file| Release.release_files.contains(file))
+		bumped = files.contains("VERSION") and files.contains("build.zig.zon")
+		kept = !files.contains("VERSION") and !files.contains("build.zig.zon")
+		renamed = files.contains("RELEASE_NAME")
+		expected_length = 2 + (if (bumped) 2 else 0) + (if (renamed) 1 else 0)
+		(bumped or (kept and renamed)) and
+			files.contains(Release.platform_file) and
+				files.contains(Release.std_file) and
+					files.len() == expected_length and
+						List.all(files, |file| Release.release_files.contains(file))
 	}
 
 	manifest_version :
@@ -462,3 +463,17 @@ invalid_versions = [
 	" 1.2.3",
 	"1.2.3\n",
 ]
+
+# A release changes the bundle URLs and either bumps the version or, for the
+# committed, never released version, only renames it.
+expect {
+	urls = [Release.platform_file, Release.std_file]
+	bump = ["VERSION", "build.zig.zon"]
+	allowed = |files| Release.are_allowed_release_files(urls.concat(files))
+	allowed(bump)
+		and allowed(bump.concat(["RELEASE_NAME"]))
+		and allowed(["RELEASE_NAME"])
+		and !allowed([])
+		and !allowed(["VERSION", "RELEASE_NAME"])
+		and !allowed(["RELEASE_NAME", "README.md"])
+}
