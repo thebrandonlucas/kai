@@ -368,8 +368,11 @@ PrepareRelease := [].{
 			return Err(MasterNotSynced({ local: starting_head, remote: remote_head }))
 		}
 
+		# The committed version may be released as is if it never was: the tag
+		# and release branch checks below refuse one that was.
 		current_version = PrepareRelease.validate_metadata!()?
-		if Release.version_order(version, current_version) != Ok(GT) {
+		order = Release.version_order(version, current_version)
+		if order != Ok(GT) and order != Ok(EQ) {
 			return Err(
 				ReleaseVersionNotNewer({
 					requested: version,
