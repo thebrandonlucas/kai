@@ -456,11 +456,11 @@ pub fn build(b: *std.Build) void {
     const bare_binary = cli_binary;
     // Every maintained example must load and convert to std's model.
     const examples = [_][]const u8{
-        "examples/build",    "examples/environment",  "examples/extend",
-        "examples/guix",     "examples/modules",      "examples/needs",
-        "examples/overlay",  "examples/packages",     "examples/raw",
-        "examples/shell",    "examples/source-build", "examples/task",
-        "examples/workflow",
+        "examples/build",   "examples/environment", "examples/extend",
+        "examples/guix",    "examples/modules",     "examples/needs",
+        "examples/overlay", "examples/packages",    "examples/path-source",
+        "examples/raw",     "examples/shell",       "examples/source-build",
+        "examples/task",    "examples/workflow",
     };
     for (examples) |example| {
         for ([_][]const u8{ "check", "model" }) |command| {
