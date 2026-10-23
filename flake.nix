@@ -71,7 +71,7 @@
 
             mkdir -p stage/targets bundle
             cp platform/*.roc stage/
-            cp -R platform/targets/{x64musl,arm64musl} stage/targets/
+            cp -R platform/targets/*/ stage/targets/
             (cd stage && roc bundle main.roc $(find . -type f ! -path ./main.roc | LC_ALL=C sort) --output-dir ../bundle)
             runHook postBuild
           '';
