@@ -1,7 +1,7 @@
 # kai: developer environments, tasks and builds from a Kaifile.roc.
 app [main!] {
 	api: "../platform/api.roc",
-	pf: platform "../.basic-cli/main.roc",
+	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.26.0/GddgvsGjiNXrHFW6au5i5dUDbTs8FinQdrgE2Gqmw53t.tar.zst",
 }
 
 import pf.Cmd

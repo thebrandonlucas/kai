@@ -8,7 +8,6 @@ result
 result-*
 kai
 kai-issues/
-.basic-cli
 /platform/targets/*/libhost.a
 /platform/.zig-cache/
 /platform/zig-out/
