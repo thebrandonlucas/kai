@@ -118,9 +118,10 @@ Help := [].{
 		\\  kai [OPTIONS] <COMMAND>
 		\\
 		\\Commands:
-		\\  init      Create a Kaifile.roc here to start a project.
-		\\  check     Compile Kaifile.roc and report whether it is valid.
-		\\  describe  List the plugins, commands and backends Kaifile.roc defines.
+		\\  init           Create a Kaifile.roc here to start a project.
+		\\  check          Compile Kaifile.roc and report whether it is valid.
+		\\  describe       List Kaifile.roc's plugins, commands and backends.
+		\\  bundle-plugin  Bundle a plugin package for this kai's release.
 		\\
 		\\A Kaifile.roc's plugins add the other commands: std adds shell, run, build,
 		\\workflow, update and model.
@@ -136,6 +137,16 @@ Help := [].{
 		\\  -V, --version       Show the version.
 		\\
 		\\${Help.tips}
+
+	# `kai bundle-plugin`'s help, also its usage error.
+	bundle_plugin =
+		\\Usage:
+		\\  kai bundle-plugin [DIR] [--output-dir DIR]
+		\\
+		\\Bundle the plugin package in DIR (default: the current directory) with
+		\\`roc bundle`, its header naming this kai's platform and std releases, into
+		\\<hash>.tar.zst in --output-dir (default: DIR). Host it, and a Kaifile.roc
+		\\using this kai's platform and std can name it by its URL.
 
 	# Color is decoration only: NO_COLOR (when non-empty), --no-color or output
 	# that is not a terminal all get plain text.

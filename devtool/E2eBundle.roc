@@ -4,7 +4,8 @@
 # seeding the Roc package cache from the bundles KAI_PLATFORM_BUNDLE and
 # KAI_STD_BUNDLE name. Each uses a fresh Roc cache, which must end up holding
 # exactly those two bundles and the packages the platform imports. A std
-# bundled against another platform is refused.
+# bundled against another platform is refused. kai bundle-plugin bundles the
+# example deploy plugin, which a Kaifile.roc then loads from its served URL.
 import pf.Cmd
 import pf.Duration
 import pf.Env
@@ -40,6 +41,27 @@ E2eBundle := [].{
 		\\	Environment("dev", [Tools(["git"])]),
 		\\	Task("version", [Use("dev"), Run(["git", "--version"])]),
 		\\])
+		\\
+
+	plugin_kaifile = |pf_url, std_url, deploy_url|
+		\\app [kaifile] {
+		\\	pf: platform "${pf_url}",
+		\\	std: "${std_url}",
+		\\	deploy: "${deploy_url}",
+		\\}
+		\\
+		\\import pf.Kaifile
+		\\import std.Config
+		\\import std.Std
+		\\import deploy.Deploy
+		\\
+		\\project : List(Config.Setting)
+		\\project = [Name("bundled"), Environment("ops", [Tools(["coreutils"])])]
+		\\
+		\\address = Address("root@203.0.113.7")
+		\\web = Host("web", [address, Flake(".#web"), Tools("ops")])
+		\\
+		\\kaifile = Kaifile.new([Std.plugin(project), Deploy.plugin(project, [web])])
 		\\
 
 	# The platform URL a std bundle's header names.
@@ -130,10 +152,22 @@ E2eBundle := [].{
 		std_path = |hash| "/v${version}/std-${hash}.tar.zst"
 		platform_url = "${base}${path(pf_bundle.hash)}"
 		served_std = E2eBundle.std_for!(platform_url, pf_bundle, work)?
+		# The platform and std URLs kai embeds, which only the seeded cache
+		# supplies until the release is published.
+		release_url = E2eBundle.platform_url!(std)?
+		release_std_url = Str.join_with(release_url.split_on("/").drop_last(1), "/")
+			.concat("/std-${std.hash}.tar.zst")
+		seeded = |command|
+			command
+				.env(OsStr.utf8("KAI_PLATFORM_BUNDLE"), Path.to_os_str(pf_bundle.unpacked))
+				.env(OsStr.utf8("KAI_STD_BUNDLE"), Path.to_os_str(std.unpacked))
+		deploy = E2eBundle.deploy!(kai, seeded, work)?
+		deploy_path = "/v${version}/deploy-${deploy.hash}.tar.zst"
 		routes = [
 			(path(pf_bundle.hash), Path.read_bytes!(pf_bundle.archive)?),
 			(std_path(served_std.hash), Path.read_bytes!(served_std.archive)?),
 			(std_path(std.hash), Path.read_bytes!(std.archive)?),
+			(deploy_path, Path.read_bytes!(deploy.archive)?),
 		]
 		serve! = |command| E2eBundle.serving!(listener, routes, command)
 		served = E2eBundle.project!(
@@ -150,27 +184,66 @@ E2eBundle := [].{
 			Path.join(work, "mismatched"),
 			serve!,
 		)
+		plugin = E2eBundle.plugin!(
+			kai,
+			E2eBundle.plugin_kaifile(
+				release_url,
+				release_std_url,
+				"${base}${deploy_path}",
+			),
+			Path.join(work, "plugin"),
+			|command| serve!(seeded(command)),
+		)
 		listener.close!()?
 		_ = served?
 		_ = mismatched?
+		_ = plugin?
 		# Unreachable, so only the seeded cache can supply std; the platform
 		# URL must be the one std names, which is not published yet.
 		E2eBundle.project!(
 			kai,
-			E2eBundle.kaifile(
-				E2eBundle.platform_url!(std)?,
-				"https://kai.invalid${std_path(std.hash)}",
-			),
+			E2eBundle.kaifile(release_url, "https://kai.invalid${std_path(std.hash)}"),
 			[pf_bundle.hash, std.hash].concat(E2eBundle.platform_packages),
 			Path.join(work, "installed"),
-			|command| {
-				seeded = command
-					.env(OsStr.utf8("KAI_PLATFORM_BUNDLE"), Path.to_os_str(pf_bundle.unpacked))
-					.env(OsStr.utf8("KAI_STD_BUNDLE"), Path.to_os_str(std.unpacked))
-				Ok(Exec.output!(seeded)?.stdout_utf8)
-			},
+			|command| Ok(Exec.output!(seeded(command))?.stdout_utf8),
 		)?
-		Stdout.line!("kai loads the platform and std bundles served and pre-seeded")
+		Stdout.line!(
+			"kai loads the platform, std and a bundled plugin, served and pre-seeded",
+		)
+	}
+
+	# examples/plugins/deploy as kai bundle-plugin bundles it, against the
+	# platform and std the seeded cache supplies.
+	deploy! = |kai, seeded, work| {
+		output = Path.join(work, "deploy-bundle")
+		bundled = Exec.output!(
+			seeded(Cmd.new(Path.to_os_str(kai)))
+				.args(Exec.strs(["bundle-plugin", "examples/plugins/deploy"]))
+				.args(Exec.strs(["--output-dir", Path.display(output)]))
+				.env(
+					OsStr.utf8("XDG_CACHE_HOME"),
+					Path.to_os_str(Path.join(work, "deploy-cache")),
+				),
+		)?
+		deploy = Bundles.found!(output, "deploy")?
+		header = "deploy: \"https://…/${deploy.hash}.tar.zst\""
+		if !bundled.stdout_utf8.contains(header) {
+			return Err(WrongBundleOutput(bundled.stdout_utf8))
+		}
+		Ok(deploy)
+	}
+
+	# The deploy plugin loads from its URL: its help lists the project's host.
+	plugin! = |kai, text, dir, execute!| {
+		cache = E2eBundle.fresh!(dir, text)?
+		help = execute!(
+			Cmd.new(Path.to_os_str(kai)).args(Exec.strs(["deploy", "--help"])).cwd(dir)
+				.env(OsStr.utf8("XDG_CACHE_HOME"), Path.to_os_str(cache)),
+		)?
+		if !help.contains("root@203.0.113.7") {
+			return Err(DeployHelpMissing(help))
+		}
+		Ok({})
 	}
 
 	# Run a command while answering its HTTP requests, one connection at a

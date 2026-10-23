@@ -91,6 +91,7 @@ kai run hello                     # run a task
 kai run hello -- again            # arguments after -- are appended
 kai build greeting                # sandboxed build; prints the store path
 kai workflow ci                   # run steps in order, stop at a failure
+kai bundle-plugin plugins/deploy  # bundle a plugin package for hosting
 ```
 
 Tool names are the backend's own package names: Nix attributes such as
