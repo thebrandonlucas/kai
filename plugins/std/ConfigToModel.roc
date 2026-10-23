@@ -5,9 +5,10 @@ import model.Value
 import model.Model
 import model.Project
 
-## Lower authoring settings, then share semantic validation with the backends.
+## Convert the Kaifile settings to std's model, then share semantic
+## validation with the backends.
 ## Setting cardinality belongs here because the model stores only one value.
-Lower :: [].{
+ConfigToModel :: [].{
 	Acc : {
 		names : List(Str),
 		systems : List(List(Str)),
@@ -32,10 +33,11 @@ Lower :: [].{
 
 	## The settings as Kaifile model text, or why they are invalid.
 	render : List(Config.Setting) -> Try(Str, Str)
-	render = |settings| Lower.lower(settings).map_ok(|model| model.to_str())
+	render = |settings|
+		ConfigToModel.convert(settings).map_ok(|model| model.to_str())
 
-	lower : List(Config.Setting) -> Try(Model, Str)
-	lower = |settings| {
+	convert : List(Config.Setting) -> Try(Model, Str)
+	convert = |settings| {
 		initial : Acc
 		initial = {
 			names: [],

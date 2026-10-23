@@ -454,7 +454,7 @@ pub fn build(b: *std.Build) void {
     const kai_binary = addKaiBuild(b, test_step, native_kai);
     const cli_binary = kai_binary.addOutputFileArg("kai").path(b, "kai");
     const bare_binary = cli_binary;
-    // Every maintained example must load and lower to std's model.
+    // Every maintained example must load and convert to std's model.
     const examples = [_][]const u8{
         "examples/build",    "examples/environment",  "examples/extend",
         "examples/guix",     "examples/modules",      "examples/needs",

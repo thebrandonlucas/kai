@@ -23,7 +23,7 @@
 ## ```
 ##
 ## std's settings, and the checks that run as Kaifile.roc compiles, are in
-## plugins/std (`Config`, `Lower`).
+## plugins/std (`Config`, `ConfigToModel`).
 platform ""
 	requires {
 		kaifile : Kaifile

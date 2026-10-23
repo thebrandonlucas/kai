@@ -1,4 +1,4 @@
-# Typed authoring values lower into the shared semantic project model.
+# Typed authoring values convert into the shared semantic project model.
 import EnvName
 import FlakeRef
 import InputName
