@@ -27,6 +27,7 @@ TestData :: [].{
 		needs: [],
 		run: ["python3", "build.py"],
 		output: "dist/library",
+		files: All,
 	}
 
 	application : Model.Build
@@ -35,6 +36,7 @@ TestData :: [].{
 		name: "app",
 		needs: ["library"],
 		output: "dist/app",
+		files: All,
 		run: ["python3", "build.py", "", "two words", "line\nbreak", "$HOME"],
 	}
 

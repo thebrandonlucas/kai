@@ -291,6 +291,15 @@ Project :: [].{
 			if !valid_output(build.output) {
 				return Err("invalid build output: ${build.name}: ${build.output}")
 			}
+			files = match build.files {
+				All => []
+				Only(paths) => paths
+			}
+			for path in files {
+				if !valid_output(path) {
+					return Err("invalid build file: ${build.name}: ${path}")
+				}
+			}
 			check_names(build.inputs, "BuildInput")?
 			check_names(build.needs, "BuildDependency")?
 			for input in build.inputs {
@@ -884,6 +893,7 @@ library = {
 		"line\nbreak",
 	],
 	output: "dist/library",
+	files: All,
 }
 
 application : Model.Build

@@ -137,6 +137,18 @@ binary_script = |target|
 		\\install -m755 kai bin/kai
 	)
 
+# What cli/main.roc reads: its modules, the files they embed, and the
+# platform, whose api.roc package it imports.
+binary_files = [
+	"cli",
+	"platform",
+	"VERSION",
+	".roc-version",
+	".roc-overlay",
+	"platform-release",
+	"plugins/std-release",
+]
+
 binary = |name, target|
 	Build(
 		name,
@@ -146,6 +158,7 @@ binary = |name, target|
 			Needs(["kai-platform", "kai-std"]),
 			Run(["sh", "-c", binary_script(target)]),
 			Output("bin"),
+			Files(binary_files),
 		],
 	)
 
@@ -166,6 +179,7 @@ release = |name, binary_name|
 			Needs([binary_name]),
 			Run(["sh", "-c", release_script]),
 			Output("archive"),
+			Files([]),
 		],
 	)
 
@@ -230,6 +244,7 @@ kaifile = Std.kaifile(
 				Use("build"),
 				Inputs(roc_inputs),
 				Run(["sh", "-c", bundle(platform_script)]),
+				Files(["platform"]),
 				Output("bundle"),
 			],
 		),
@@ -240,6 +255,7 @@ kaifile = Std.kaifile(
 				Inputs(roc_inputs),
 				Needs(["kai-platform"]),
 				Run(["sh", "-c", bundle(std_script)]),
+				Files(["plugins/std", "VERSION"]),
 				Output("bundle"),
 			],
 		),
