@@ -196,9 +196,9 @@ check_bundle_urls! = |version, pf_bundle, std_bundle| {
 }
 
 build_release_stage! = |root, dist, workspace, version| {
-	Stdout.line!("Building the Kai platform and std bundles through Nix...")?
+	Stdout.line!("Building the Kai platform and std bundles with Kai...")?
 	pf_bundle = Bundles.platform!()?
-	std_bundle = Bundles.bundle!(".#kai-std")?
+	std_bundle = Bundles.bundle!("kai-std")?
 	check_bundle_urls!(version, pf_bundle, std_bundle)?
 	bundles = ["${pf_bundle.hash}.tar.zst", "std-${std_bundle.hash}.tar.zst"]
 	copy_file!(pf_bundle.archive, Path.join(dist, "${pf_bundle.hash}.tar.zst"))?
@@ -211,7 +211,8 @@ build_release_stage! = |root, dist, workspace, version| {
 	for system in systems {
 		archive = Path.join(dist, Release.archive_name(version, system))
 		Stdout.line!("Building and checking the ${system} CLI archive...")?
-		copy_file!(Bundles.nix_output!(".#release-${system}")?, archive)?
+		release = "release-".concat(system.replace_each("_", "-"))
+		copy_file!(Bundles.output!(release)?, archive)?
 		destination = Path.join(workspace, "${system}-cli-test")
 		if system == "x86_64-linux" {
 			check_x64!(archive, destination, version)?

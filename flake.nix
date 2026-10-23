@@ -463,6 +463,8 @@
             packages = [
               (rocFor pkgs)
               pkgs.zig_0_16
+              # Builds Kaifile.roc's artifacts until CI uses a released kai.
+              self.packages.${system}.kai.unwrapped
 
               pkgs.actionlint
               pkgs.coreutils
