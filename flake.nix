@@ -4,7 +4,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # The official Roc nightlies; .roc-version picks one.
+    # The official Roc nightlies; .roc-version picks one. Keep the revision
+    # equal to .roc-overlay, where kai gets its compiler when none is given.
     roc-overlay = {
       url = "github:roc-lang/roc-overlay/0563d2a0ba55a751449c54058328832309b0f3a1";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -308,6 +309,7 @@
               ./plugins/std-release
               ./VERSION
               ./.roc-version
+              ./.roc-overlay
             ];
           };
           source = "cli/main.roc";

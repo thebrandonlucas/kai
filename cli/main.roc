@@ -286,6 +286,7 @@ describe = |err|
 				.concat(needs_compiler)
 		CompilerMismatch(compiler, actual) =>
 			"`${compiler}` is ${actual}; ${needs_compiler}"
+		NixMissing => "Nix is not installed; ${needs_compiler}"
 		KaifileInvalid(file) => "${file} did not compile; see the errors above"
 		KaifileFailed(file, output) => "${file} did not compile:\n${output}"
 		IncompatibleProtocol(major, minor) =>
@@ -329,7 +330,8 @@ describe = |err|
 
 needs_compiler =
 	"kai evaluates Kaifile.roc with Roc ${Load.pinned_compiler}; put it on "
-		.concat("PATH or set ROC to its path")
+		.concat("PATH, set ROC to its path, or install Nix ")
+		.concat("(https://nixos.org/download) for kai to get it")
 
 # --file is found where the parser reads it, and never after --.
 expect [
