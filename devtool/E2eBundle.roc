@@ -60,12 +60,11 @@ E2eBundle := [].{
 		store = Path.join(work, "bundle-cache/roc/packages")
 		Path.create_all!(output)?
 		Path.create_all!(store)?
-		copy! = |from, to|
-			Exec.cmd!(
-				Exec.cmd("cp")
-					.args(Exec.strs(["-R", "--no-preserve=mode", "--"]))
-					.args(Exec.strs([from, Path.display(to)])),
-			)
+		copy! = |from, to| {
+			target = Path.display(to)
+			Exec.cmd!(Exec.cmd("cp").args(Exec.strs(["-R", "--", from, target])))?
+			Exec.cmd!(Exec.cmd("chmod").args(Exec.strs(["-R", "u+w", "--", target])))
+		}
 		copy!(Path.display(pf_bundle.unpacked), Path.join(store, pf_bundle.hash))?
 		copy!("plugins/std", source)?
 		rewrite! = |file, from, to|

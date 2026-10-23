@@ -280,7 +280,7 @@ describe = |err|
 				.concat("`kai --help` shows and wrap the settings in ")
 				.concat("`kaifile = Std.kaifile([...])`")
 		UnsupportedHost =>
-			"Kai runs only on x86_64 and aarch64 Linux hosts"
+			"Kai runs only on x86_64 and aarch64 Linux and Apple Silicon macOS hosts"
 		CompilerUnavailable(compiler, message) =>
 			"could not run the Roc compiler `${compiler}` (${message}); "
 				.concat(needs_compiler)
