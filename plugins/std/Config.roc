@@ -1,4 +1,4 @@
-# Typed authoring values lower into the shared semantic project model.
+# Typed authoring values convert into the shared semantic project model.
 import EnvName
 import FlakeRef
 import InputName
@@ -58,11 +58,13 @@ Config :: [].{
 	## Builds require Use, Run and one relative Output. Optional Inputs select
 	## locked non-flake Sources; Needs selects build artifacts, not task names.
 	## Sources and artifacts remain separate read-only inputs, never merged.
+	## Files limits the project copy to the given project-relative paths.
 	BuildSetting : [
 		Use(EnvName),
 		Inputs(List(InputName)),
 		Needs(List(InputName)),
 		Run(List(Str)),
 		Output(Str),
+		Files(List(Str)),
 	]
 }

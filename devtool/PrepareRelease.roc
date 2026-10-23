@@ -194,7 +194,7 @@ PrepareRelease := [].{
 		bundle = Bundles.platform!()?
 		url = Release.platform_url(repository, version, bundle.hash)
 		Path.write_utf8!(Path.utf8(Release.platform_file), "${url}\n")?
-		std = Bundles.bundle!(".#kai-std")?
+		std = Bundles.bundle!("kai-std")?
 		std_url = Release.std_url(repository, version, std.hash)
 		Path.write_utf8!(Path.utf8(Release.std_file), "${std_url}\n")?
 		Ok({})

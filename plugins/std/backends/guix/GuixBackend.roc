@@ -254,13 +254,21 @@ GuixBackend :: [].{
 				.map_err(|_| "unknown environment: ${build.environment}")?
 			specs = Str.join_with(environment.tools.map(|t| q(t.name)), " ")
 			argv = LockJson.encode(Array(build.run.map(|a| String(a))))
+			project_file = match build.files {
+				All => "project"
+				Only(paths) =>
+					"(local-file ${q("${workspace}/snapshot")} \"kai-project\" "
+						.concat("#:recursive? #t #:select? (kai-files ")
+						.concat("${q("${workspace}/snapshot/")} ")
+						.concat("'(${Str.join_with(paths.map(q), " ")})))")
+			}
 			needs = build.needs.map(|n| "(${q(n)} ,kai-build-${n})")
 			artifacts = "(file-union ${q("kai-artifacts-${build.name}")} "
 				.concat("`(${Str.join_with(needs, " ")}))")
 			$defines = $defines.append(
 				"(define kai-build-${build.name}\n"
 					.concat("  (kai-build ${q(build.name)} '(${specs})\n")
-					.concat("    ${q(argv)} ${q(build.output)}\n")
+					.concat("    ${project_file} ${q(argv)} ${q(build.output)}\n")
 					.concat("    ${artifacts}))"),
 			)
 		}
@@ -277,7 +285,8 @@ GuixBackend :: [].{
 					"",
 				),
 			)
-		header = "(use-modules (guix) (guix gexp) (guix profiles) (gnu))\n\n"
+		header = "(use-modules (srfi srfi-1) (guix) (guix gexp) (guix profiles)"
+			.concat(" (gnu))\n\n")
 		Ok(
 			header
 				.concat(files)
@@ -294,7 +303,20 @@ GuixBackend :: [].{
 		\\  (profile (content (specifications->manifest
 		\\                     (append specs '("coreutils" "bash"))))))
 		\\
-		\\(define (kai-build name specs argv-json output-dir artifacts)
+		\\;; Keeps a selected path, what lies inside it and the directories above it.
+		\\(define (kai-files root paths)
+		\\  (lambda (file stat)
+		\\    (let ((r (if (string-prefix? root file)
+		\\                 (substring file (string-length root))
+		\\                 "")))
+		\\      (or (string-null? r)
+		\\          (any (lambda (s)
+		\\                 (or (string=? r s)
+		\\                     (string-prefix? (string-append s "/") r)
+		\\                     (string-prefix? (string-append r "/") s)))
+		\\               paths)))))
+		\\
+		\\(define (kai-build name specs project argv-json output-dir artifacts)
 		\\  (computed-file (string-append "kai-" name)
 		\\    #~(begin
 		\\        (use-modules (ice-9 textual-ports))
@@ -577,6 +599,7 @@ expect {
 		needs,
 		run: ["true"],
 		output: "out",
+		files: All,
 	}
 	model = {
 		..fixture([env("dev", ["hello"])]),

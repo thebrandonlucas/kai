@@ -193,17 +193,25 @@ fn addE2e(
     return run;
 }
 
-fn addNixOutLink(
+// Builds a Kaifile.roc artifact with `kai build`, which prints its store
+// path last on stdout; the caller adds the output file to link it as.
+// Concurrent Kai builds in one project collide on .kai/snapshot, so callers
+// run them one at a time.
+fn addKaiBuild(
     b: *std.Build,
     prerequisite: *std.Build.Step,
-    installable: []const u8,
-    name: []const u8,
-) std.Build.LazyPath {
-    const build_package = b.addSystemCommand(&.{ "nix", "build", installable, "--out-link" });
-    const out_link = build_package.addOutputFileArg(name);
-    build_package.has_side_effects = true;
-    build_package.step.dependOn(prerequisite);
-    return out_link;
+    artifact: []const u8,
+) *std.Build.Step.Run {
+    const build_artifact = b.addSystemCommand(&.{
+        "sh",
+        "-c",
+        "set -e; path=\"$(kai build \"$1\")\"; mkdir -p \"$(dirname \"$2\")\"; ln -sfn \"$(echo \"$path\" | tail -n 1)\" \"$2\"",
+        "sh",
+        artifact,
+    });
+    build_artifact.has_side_effects = true;
+    build_artifact.step.dependOn(prerequisite);
+    return build_artifact;
 }
 
 fn artifactName(b: *std.Build, source_path: []const u8) []const u8 {
@@ -335,18 +343,17 @@ pub fn build(b: *std.Build) void {
     );
     check_step.dependOn(&nix_fmt.step);
 
+    // Configuration apps link the native configuration platform's host.
+    const build_platform_host = b.addSystemCommand(&.{ "zig", "build", "--release" });
+    build_platform_host.setCwd(b.path("platform"));
+
     const platform_bundle_step = b.step(
         "platform-bundle",
         "Build the Kai platform bundle a release publishes, into zig-out",
     );
-    const platform_bundle = b.addSystemCommand(&.{
-        "nix", "build", ".#kai-platform", "--out-link", "zig-out/kai-platform",
-    });
+    const platform_bundle = addKaiBuild(b, &build_platform_host.step, "kai-platform");
+    platform_bundle.addArg("zig-out/kai-platform");
     platform_bundle_step.dependOn(&platform_bundle.step);
-
-    // Configuration apps link the native configuration platform's host.
-    const build_platform_host = b.addSystemCommand(&.{ "zig", "build", "--release" });
-    build_platform_host.setCwd(b.path("platform"));
 
     for (sources.roc_roots) |root| {
         const check_roc = b.addSystemCommand(&.{ "roc", "check" });
@@ -438,17 +445,16 @@ pub fn build(b: *std.Build) void {
     ci_step.dependOn(test_step);
 
     // Integration steps run the kai that ships, not a --opt=dev build: the
-    // Nix package's wrapper, and the bare binary a release archive holds for
-    // steps that must not see the wrapper's Nix or seeded Roc cache. Nix
-    // decides what to rebuild, so these always run; new files need `git add`.
-    const cli_binary = addNixOutLink(b, test_step, ".#kai", "kai").path(b, "bin/kai");
-    const bare_binary = addNixOutLink(
-        b,
-        test_step,
-        ".#kai.unwrapped",
-        "kai-unwrapped",
-    ).path(b, "bin/kai");
-    // Every maintained example must load and lower to std's model.
+    // bare binary a release archive holds. Kai decides what to rebuild, so
+    // this always runs.
+    const native_kai = switch (b.graph.host.result.cpu.arch) {
+        .aarch64 => "kai-arm64musl",
+        else => "kai-x64musl",
+    };
+    const kai_binary = addKaiBuild(b, test_step, native_kai);
+    const cli_binary = kai_binary.addOutputFileArg("kai").path(b, "kai");
+    const bare_binary = cli_binary;
+    // Every maintained example must load and convert to std's model.
     const examples = [_][]const u8{
         "examples/build",    "examples/environment",  "examples/extend",
         "examples/guix",     "examples/modules",      "examples/needs",
@@ -539,19 +545,17 @@ pub fn build(b: *std.Build) void {
         &.{ "nix", "flake", "check" },
     );
 
-    _ = addCiCommand(
-        b,
-        ci_step,
-        test_step,
-        "build Linux release outputs",
-        &.{
-            "nix",
-            "build",
-            ".#release-x86_64-linux",
-            ".#release-aarch64-linux",
-            "--no-link",
-        },
-    );
+    // One Kai build at a time, after those of the end-to-end tests.
+    var previous_build: *std.Build.Step = e2e_step;
+    for ([_][]const u8{ "release-x86-64-linux", "release-aarch64-linux" }) |release| {
+        previous_build = &addCiCommand(
+            b,
+            ci_step,
+            previous_build,
+            b.fmt("build {s}", .{release}),
+            &.{ "kai", "build", release },
+        ).step;
+    }
 
     // Avoid shell redirection or mkdir inside a script.
     const prepare_outputs = b.addSystemCommand(&.{

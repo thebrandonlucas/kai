@@ -5,9 +5,10 @@ import model.Value
 import model.Model
 import model.Project
 
-## Lower authoring settings, then share semantic validation with the backends.
+## Convert the Kaifile settings to std's model, then share semantic
+## validation with the backends.
 ## Setting cardinality belongs here because the model stores only one value.
-Lower :: [].{
+ConfigToModel :: [].{
 	Acc : {
 		names : List(Str),
 		systems : List(List(Str)),
@@ -32,10 +33,11 @@ Lower :: [].{
 
 	## The settings as Kaifile model text, or why they are invalid.
 	render : List(Config.Setting) -> Try(Str, Str)
-	render = |settings| Lower.lower(settings).map_ok(|model| model.to_str())
+	render = |settings|
+		ConfigToModel.convert(settings).map_ok(|model| model.to_str())
 
-	lower : List(Config.Setting) -> Try(Model, Str)
-	lower = |settings| {
+	convert : List(Config.Setting) -> Try(Model, Str)
+	convert = |settings| {
 		initial : Acc
 		initial = {
 			names: [],
@@ -68,6 +70,7 @@ Lower :: [].{
 				.concat(if (acc.build_sources.is_empty()) [] else ["sources"])
 				.concat(if (acc.builds.is_empty()) [] else ["builds"])
 				.concat(if (acc.workflows.is_empty()) [] else ["workflows"])
+				.concat(if (acc.builds.all(|b| b.files == All)) [] else ["files"])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -260,7 +263,14 @@ Lower :: [].{
 	build : Str, List(Config.BuildSetting) -> Try(Model.Build, Str)
 	build = |name, inner| {
 		draft = inner.fold(
-			{ environments: [], inputs: [], needs: [], runs: [], outputs: [] },
+			{
+				environments: [],
+				inputs: [],
+				needs: [],
+				runs: [],
+				outputs: [],
+				files: [],
+			},
 			|acc, setting|
 				match setting {
 					Use(env) => { ..acc, environments: acc.environments.append(env.to_str()) }
@@ -274,6 +284,7 @@ Lower :: [].{
 					}
 					Run(argv) => { ..acc, runs: acc.runs.append(argv) }
 					Output(path) => { ..acc, outputs: acc.outputs.append(path) }
+					Files(paths) => { ..acc, files: acc.files.append(paths) }
 				},
 		)
 		environment_name = match draft.environments {
@@ -297,6 +308,11 @@ Lower :: [].{
 		if draft.needs.len() > 1 {
 			return Err("DuplicateNeeds: build ${name}")
 		}
+		files = match draft.files {
+			[] => All
+			[one] => Only(one)
+			_ => return Err("DuplicateFiles: build ${name}")
+		}
 		Ok({
 			name,
 			environment: environment_name,
@@ -304,6 +320,7 @@ Lower :: [].{
 			needs: draft.needs.first() ?? [],
 			run,
 			output,
+			files,
 		})
 	}
 

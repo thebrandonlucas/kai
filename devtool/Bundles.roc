@@ -1,20 +1,18 @@
-# The platform and std bundles Kai releases, as the flake builds them: each
+# The platform and std bundles Kai releases, as Kaifile.roc builds them: each
 # is <hash>.tar.zst beside its unpacked <hash>/.
-import pf.Cmd
 import pf.Path
 
 import Exec
 
 Bundles := [].{
-	# Build a flake output and return its store path.
-	nix_output! = |attribute| {
-		output = Exec.output!(
-			Exec.cmd("nix")
-				.args(Exec.strs(["build", attribute, "--no-link", "--print-out-paths"])),
-		)?
-		match output.stdout_utf8.split_on("\n").keep_if(|line| !line.is_empty()) {
-			[path] => Ok(Path.utf8(path))
-			_ => Err(UnexpectedNixOutput({ attribute, output: output.stdout_utf8 }))
+	# Build a Kaifile.roc artifact and return its store path, which
+	# `kai build` prints last on stdout.
+	output! = |name| {
+		output = Exec.output!(Exec.cmd("kai").args(Exec.strs(["build", name])))?
+		lines = output.stdout_utf8.split_on("\n").keep_if(|line| !line.is_empty())
+		match lines.last() {
+			Ok(path) => Ok(Path.utf8(path))
+			Err(_) => Err(UnexpectedKaiOutput({ name, output: output.stdout_utf8 }))
 		}
 	}
 
@@ -37,10 +35,10 @@ Bundles := [].{
 		}
 	}
 
-	bundle! = |attribute|
-		Bundles.found!(Bundles.nix_output!(attribute)?, attribute)
+	bundle! = |name|
+		Bundles.found!(Bundles.output!(name)?, name)
 
 	# The platform bundle.
-	platform! = || Bundles.bundle!(".#kai-platform")
+	platform! = || Bundles.bundle!("kai-platform")
 
 }

@@ -1,4 +1,4 @@
-# Checked tool references that lower into model tools for environments.
+# Checked tool references that convert into model tools for environments.
 import model.Model
 import model.Project
 

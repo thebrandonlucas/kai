@@ -36,6 +36,7 @@ Model := {
 			needs : List(Str),
 			run : List(Str),
 			output : Str,
+			files : [All, Only(List(Str))],
 		},
 	),
 	workflows : List(
@@ -82,6 +83,7 @@ Model := {
 		needs : List(Str),
 		run : List(Str),
 		output : Str,
+		files : [All, Only(List(Str))],
 	}
 
 	## Ordered declarations, not command strings or executor recipes.
@@ -95,7 +97,7 @@ Model := {
 	Raw : { backend : Str, target : Str, value : Value }
 
 	current_format : Format
-	current_format = { major: 2, minor: 2 }
+	current_format = { major: 2, minor: 3 }
 
 	empty : Str -> Model
 	empty = |name| Model.{

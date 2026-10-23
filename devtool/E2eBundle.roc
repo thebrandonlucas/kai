@@ -1,10 +1,10 @@
 # Load a Kaifile.roc from outside the repository through the platform and std
 # bundles a release publishes: served from localhost, the bare kai a release
-# archive holds checks, updates and runs it; a Nix-installed kai does the
-# same offline, seeding the Roc package cache from the bundles its wrapper
-# names. Each uses a fresh Roc cache, which must end up holding exactly those
-# two bundles and the packages the platform imports. A std bundled against
-# another platform is refused.
+# archive holds checks, updates and runs it, and does the same offline,
+# seeding the Roc package cache from the bundles KAI_PLATFORM_BUNDLE and
+# KAI_STD_BUNDLE name. Each uses a fresh Roc cache, which must end up holding
+# exactly those two bundles and the packages the platform imports. A std
+# bundled against another platform is refused.
 import pf.Cmd
 import pf.Duration
 import pf.Env
@@ -114,15 +114,14 @@ E2eBundle := [].{
 		kai = Path.canonicalize!(Path.utf8(binary))?
 		version = Path.read_utf8!(Path.utf8("VERSION"))?.trim()
 		pf_bundle = Bundles.platform!()?
-		std = Bundles.bundle!(".#kai-std")?
-		installed = Path.join(Bundles.nix_output!(".#kai")?, "bin/kai")
+		std = Bundles.bundle!("kai-std")?
 		work = Path.canonicalize!(Env.create_temp_dir_with_prefix!("kai-bundle-")?)?
-		result = E2eBundle.run_in!(kai, installed, pf_bundle, std, version, work)
+		result = E2eBundle.run_in!(kai, pf_bundle, std, version, work)
 		Path.delete_all!(work)?
 		result
 	}
 
-	run_in! = |kai, installed, pf_bundle, std, version, work| {
+	run_in! = |kai, pf_bundle, std, version, work| {
 		listener = Tcp.listen!("127.0.0.1", 0, Duration.millis(5000))?
 		base = "http://127.0.0.1:${listener.local_port!()?.to_str()}"
 		path = |hash| "/v${version}/${hash}.tar.zst"
@@ -157,14 +156,19 @@ E2eBundle := [].{
 		# Unreachable, so only the seeded cache can supply std; the platform
 		# URL must be the one std names, which is not published yet.
 		E2eBundle.project!(
-			installed,
+			kai,
 			E2eBundle.kaifile(
 				E2eBundle.platform_url!(std)?,
 				"https://kai.invalid${std_path(std.hash)}",
 			),
 			[pf_bundle.hash, std.hash].concat(E2eBundle.platform_packages),
 			Path.join(work, "installed"),
-			|command| Ok(Exec.output!(command)?.stdout_utf8),
+			|command| {
+				seeded = command
+					.env(OsStr.utf8("KAI_PLATFORM_BUNDLE"), Path.to_os_str(pf_bundle.unpacked))
+					.env(OsStr.utf8("KAI_STD_BUNDLE"), Path.to_os_str(std.unpacked))
+				Ok(Exec.output!(seeded)?.stdout_utf8)
+			},
 		)?
 		Stdout.line!("kai loads the platform and std bundles served and pre-seeded")
 	}

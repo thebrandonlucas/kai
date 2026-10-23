@@ -12,6 +12,7 @@ import api.Protocol
 import api.Sexpr
 
 import "../.roc-version" as compiler_version : Str
+import "../.roc-overlay" as roc_overlay : Str
 
 import Output
 
@@ -46,32 +47,92 @@ Load := [].{
 		{ root: if (root.is_empty()) "/" else root, file }
 	}
 
-	# Probe the compiler's identity before it evaluates configuration. A
-	# relative ROC executable belongs to the invocation directory.
+	# Choose the Roc compiler that evaluates Kaifile.roc. It must be the version
+	# .roc-version pins. If the ROC environment variable is set, kai uses only
+	# that compiler. Otherwise it uses the `roc` on PATH if that is the pinned
+	# version, or else has Nix download the pinned version (see `fetched!`).
 	compiler! : () => Try(Str, _)
 	compiler! = || {
-		seeded = ["KAI_PLATFORM_BUNDLE", "KAI_STD_BUNDLE", "KAI_ROC_PACKAGES"]
-		for variable in seeded {
+		bundle_variables = [
+			"KAI_PLATFORM_BUNDLE",
+			"KAI_STD_BUNDLE",
+			"KAI_ROC_PACKAGES",
+		]
+		for variable in bundle_variables {
 			for bundle in (Env.var_str!(variable) ?? "").split_on(":") {
 				_ = Load.seed!(bundle)
 			}
 		}
-		override = Env.var_str!("ROC") ?? "roc"
-		compiler = if override.contains("/") and !override.starts_with("/") {
-			cwd = Env.cwd!()?.to_str()?
-			"${cwd}/${override}"
-		} else {
-			override
+		match Env.var_str!("ROC") {
+			# A command such as `roc`, an absolute path, or a path relative to
+			# the directory kai was started in, such as `./bin/roc`.
+			Ok(requested_compiler_override) => {
+				relative = requested_compiler_override.contains("/")
+					and !requested_compiler_override.starts_with("/")
+				compiler = if relative {
+					current_working_directory = Env.cwd!()?.to_str()?
+					"${current_working_directory}/${requested_compiler_override}"
+				} else {
+					requested_compiler_override
+				}
+				Load.pinned!(compiler)?
+				Ok(compiler)
+			}
+			Err(_) =>
+				if Load.pinned!("roc").is_ok() {
+					Ok("roc")
+				} else {
+					Load.fetched!()
+				}
 		}
+	}
+
+	# Whether `compiler` runs and is the Roc version .roc-version pins.
+	pinned! : Str => Try({}, _)
+	pinned! = |compiler| {
 		output = Cmd.new(OsStr.from_str(compiler)).arg("version").capture!()
 			.map_err(|err| CompilerUnavailable(compiler, Load.why(err)))?
-		expected = "Roc compiler version ${Load.pinned_compiler}"
 		actual = output.trim()
-		if actual != expected {
+		if actual != "Roc compiler version ${Load.pinned_compiler}" {
 			return Err(CompilerMismatch(compiler, actual))
 		}
+		Ok({})
+	}
+
+	# The pinned compiler, which Nix downloads from roc-overlay at the revision
+	# .roc-overlay pins. Kai keeps a link to it in its cache, so Nix downloads
+	# it only once and its garbage collection leaves it in place.
+	fetched! : () => Try(Str, _)
+	fetched! = || {
+		link = "${Load.cache!()?}/kai/roc/${Load.pinned_compiler}"
+		compiler = "${link}/bin/roc"
+		if Load.pinned!(compiler).is_ok() {
+			return Ok(compiler)
+		}
+		Stderr.line!("kai: getting Roc ${Load.pinned_compiler} with Nix")?
+		installable = "${roc_overlay.trim()}#${Load.pinned_compiler}"
+		built = Cmd.new("nix")
+			.args(["build", "--out-link", OsStr.from_str(link)])
+			.arg(OsStr.from_str(installable))
+			.inherit_stdio()
+			.run!()
+		match built {
+			Ok(output) if output.status == Exited(0) => {}
+			Ok(_) => return Err(CompilerUnavailable(installable, "nix build failed"))
+			Err(CmdErr(StartFailed(NotFound, _))) => return Err(NixMissing)
+			Err(err) => return Err(CompilerUnavailable(installable, Load.why(err)))
+		}
+		Load.pinned!(compiler)?
 		Ok(compiler)
 	}
+
+	# XDG_CACHE_HOME, or ~/.cache.
+	cache! : () => Try(Str, _)
+	cache! = ||
+		match Env.var_str!("XDG_CACHE_HOME") {
+			Ok(value) if !value.is_empty() => Ok(value)
+			_ => Ok("${Env.var_str!("HOME")?}/.cache")
+		}
 
 	# A Nix-installed Kai's wrapper sets KAI_PLATFORM_BUNDLE and KAI_STD_BUNDLE
 	# to its unpacked platform and std bundles, <hash>/, and KAI_ROC_PACKAGES to
@@ -87,11 +148,7 @@ Load := [].{
 		if ["", ".", ".."].contains(hash) {
 			return Err(InvalidBundle(bundle))
 		}
-		cache = match Env.var_str!("XDG_CACHE_HOME") {
-			Ok(value) if !value.is_empty() => value
-			_ => "${Env.var_str!("HOME")?}/.cache"
-		}
-		store = "${cache}/roc/packages"
+		store = "${Load.cache!()?}/roc/packages"
 		if Load.path("${store}/${hash}/main.roc").exists!()? {
 			return Ok({})
 		}

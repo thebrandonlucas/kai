@@ -4,7 +4,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # The official Roc nightlies; .roc-version picks one.
+    # The official Roc nightlies; .roc-version picks one. Keep the revision
+    # equal to .roc-overlay, where kai gets its compiler when none is given.
     roc-overlay = {
       url = "github:roc-lang/roc-overlay/0563d2a0ba55a751449c54058328832309b0f3a1";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -40,19 +41,6 @@
       };
 
       rocFor = pkgs: roc-overlay.packages.${pkgs.stdenv.hostPlatform.system}.${rocVersion};
-
-      # The basic-cli platform release, with hosts for every Roc target.
-      basicCliFor =
-        pkgs:
-        pkgs.runCommand "basic-cli-platform-0.26.0" { nativeBuildInputs = [ pkgs.zstd ]; } ''
-          mkdir -p "$out"
-          zstd -dc ${
-            pkgs.fetchurl {
-              url = "https://github.com/roc-lang/basic-cli/releases/download/0.26.0/GddgvsGjiNXrHFW6au5i5dUDbTs8FinQdrgE2Gqmw53t.tar.zst";
-              hash = "sha256-Mcp0Ov/meyQB/X0wTGNwD67FMPNg8WTwlGVU5jSQwmw=";
-            }
-          } | tar -x -C "$out"
-        '';
 
       # The Kai platform as a Roc package bundle, <hash>.tar.zst, which a
       # release publishes for Kaifile.roc headers to reference by URL; also
@@ -154,10 +142,16 @@
           '';
         };
 
-      # Packages the apps import (basic-cli imports http; kai imports Weaver,
-      # which imports ansi and path); unpacked where Roc looks for downloads.
+      # Packages the apps import (the basic-cli platform, which imports http;
+      # kai imports Weaver, which imports ansi and path); unpacked where Roc
+      # looks for downloads.
       # http stays at 1.0.0, which basic-cli names; 2.0.0 is the same archive.
       rocPackages = [
+        {
+          name = "GddgvsGjiNXrHFW6au5i5dUDbTs8FinQdrgE2Gqmw53t";
+          release = "roc-lang/basic-cli/releases/download/0.26.0";
+          hash = "sha256-Mcp0Ov/meyQB/X0wTGNwD67FMPNg8WTwlGVU5jSQwmw=";
+        }
         {
           name = "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS";
           release = "roc-lang/http/releases/download/1.0.0";
@@ -183,7 +177,11 @@
       # The URL packages the platform depends on (Weaver, which imports ansi and
       # path), unpacked for kai to seed Roc's package cache with offline.
       platformRocPackages = builtins.filter (
-        p: p.name != "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS"
+        p:
+        !builtins.elem p.name [
+          "GddgvsGjiNXrHFW6au5i5dUDbTs8FinQdrgE2Gqmw53t"
+          "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS"
+        ]
       ) rocPackages;
       platformRocPackagesFor =
         pkgs:
@@ -260,9 +258,6 @@
 
             ${lib.concatMapStrings unpackRocPackage rocPackages}
 
-            # Roc apps import the platform from the ignored .basic-cli link.
-            ln -s ${basicCliFor pkgs} .basic-cli
-
             roc build \
               ${source} \
               --opt=size \
@@ -314,6 +309,7 @@
               ./plugins/std-release
               ./VERSION
               ./.roc-version
+              ./.roc-overlay
             ];
           };
           source = "cli/main.roc";
@@ -467,6 +463,8 @@
             packages = [
               (rocFor pkgs)
               pkgs.zig_0_16
+              # Builds Kaifile.roc's artifacts until CI uses a released kai.
+              self.packages.${system}.kai.unwrapped
 
               pkgs.actionlint
               pkgs.coreutils
@@ -478,12 +476,6 @@
               pkgs.file
               pkgs.sops
             ];
-            # Roc apps in this repository import the platform through .basic-cli.
-            shellHook = ''
-              if [ -f flake.nix ] && [ -d platform ]; then
-                ln -sfn ${basicCliFor pkgs} .basic-cli
-              fi
-            '';
           };
         }
       );

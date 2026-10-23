@@ -7,7 +7,7 @@ import Config
 import pf.Implementation
 import pf.Kaifile
 import pf.Layout
-import Lower
+import ConfigToModel
 import pf.Plan
 import pf.Plugin
 import model.Model
@@ -29,7 +29,7 @@ Std := [].{
 	## to compile.
 	plugin : List(Config.Setting) -> Plugin
 	plugin = |settings|
-		match Lower.lower(settings) {
+		match ConfigToModel.convert(settings) {
 			Ok(model) =>
 				Plugin.new({
 					name: "std",
@@ -253,7 +253,7 @@ Std := [].{
 	## declares. `what` names the step in progress and errors.
 	run_in : List(Config.Setting), Implementation.Context, Run -> Try(Plan, Str)
 	run_in = |settings, ctx, { environment, argv, what }| {
-		model = Lower.lower(settings)?
+		model = ConfigToModel.convert(settings)?
 		task = "_kai_plugin_run"
 		with_task = Model.{
 			format: model.format,

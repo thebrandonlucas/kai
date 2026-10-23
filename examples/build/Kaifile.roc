@@ -23,6 +23,8 @@ kaifile = Std.kaifile([
 					.concat("\"$(command -v cowsay)\" > wisecow && chmod +x wisecow"),
 			]),
 			Output("wisecow"),
+			# It reads no project files, so its copy holds none.
+			Files([]),
 		],
 	),
 ])

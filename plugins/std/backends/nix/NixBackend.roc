@@ -18,7 +18,7 @@ NixBackend :: [].{
 
 	## The model features this backend renders.
 	features : List(Str)
-	features = ["raw", "sources", "builds", "workflows"]
+	features = ["raw", "sources", "builds", "workflows", "files"]
 
 	default_nixpkgs : Str
 	default_nixpkgs = Locks.default_nixpkgs
@@ -732,7 +732,7 @@ NixBackend :: [].{
 				.concat("and a caller snapshot\"")
 		} else {
 			"builtins.path { path = /. + ${quote(snapshot)}; "
-				.concat("name = \"kai-project\"; }")
+				.concat("name = \"kai-project\";${files_filter(build, snapshot)} }")
 		}
 		# Namespace observations belong to materialization, not project bytes.
 		isolation = if snapshot.is_empty() {
@@ -783,6 +783,23 @@ NixBackend :: [].{
 			]),
 		)
 	}
+
+	## Keeps a selected path, what lies inside it and the directories above it.
+	files_filter : Model.Build, Str -> Str
+	files_filter = |build, snapshot|
+		match build.files {
+			All => ""
+			Only(paths) => {
+				selected = Str.join_with(paths.map(quote), " ")
+				\\ filter = p: _: let
+				\\   len = builtins.stringLength;
+				\\   r = builtins.substring (len ${quote("${snapshot}/")}) (len p) p;
+				\\   under = a: b: builtins.substring 0 (len a) b == a;
+				\\ in builtins.any
+				\\   (s: r == s || under (s + "/") r || under (r + "/") s)
+				\\   [ ${selected} ];
+			}
+		}
 
 	raw_attrs : Model.Raw -> Try(List({ name : Str, value : Value }), Str)
 	raw_attrs = |r| match r.value {

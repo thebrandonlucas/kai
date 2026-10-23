@@ -1,8 +1,9 @@
 # Materialize one build's project snapshot: copy the filtered project tree and
 # publish the caller's namespace witness beside it, replacing the previous
-# snapshot only once the new one is completely staged. Symbolic links and
-# special files are refused, never followed. Callers serialize workspace use
-# and must not mutate the project concurrently.
+# snapshot only once the new one is completely staged. What the project's
+# .gitignore files ignore is left out. Symbolic links and special files are
+# refused, never followed. Callers serialize workspace use and must not mutate
+# the project concurrently.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -121,8 +122,12 @@ Snapshot := [].{
 			Snapshot.observe!("mnt")?,
 			Snapshot.observe!("net")?,
 		)
-		exclusions = Snapshot.filter(exclude)
+		filtered = Snapshot.filter(exclude)
 			.map_err(|message| SnapshotFailed(message))?
+		exclusions = {
+			..filtered,
+			paths: filtered.paths.concat(Snapshot.ignored!(root)),
+		}
 		for path in exclude.keep_if(|item| item.starts_with("/")) {
 			Workspace.safe_path!(path)?
 		}
@@ -141,6 +146,33 @@ Snapshot := [].{
 		)
 		_ = temporary.delete_all!()
 		result
+	}
+
+	# What the .gitignore files under root ignore, as absolute paths: build
+	# output, caches and links such as Nix's `result`. Only the project's own
+	# .gitignore files count, not a user's global ones, so every machine
+	# snapshots the same files. Outside a git repository nothing is ignored.
+	ignored! : Str => List(List(U8))
+	ignored! = |root| {
+		listed = Cmd.new("git")
+			.args(["ls-files", "-z", "--others", "--ignored", "--directory"])
+			.arg("--exclude-per-directory=.gitignore")
+			.cwd(Workspace.path(root))
+			.run!()
+		match listed {
+			Ok(output) if output.status == Exited(0) =>
+				output.stdout_bytes
+					.split_on(0)
+					.keep_if(|path| !path.is_empty())
+					.map(
+						|path| {
+							directory = path.last() == Ok('/')
+							relative = if (directory) path.drop_last(1) else path
+							Snapshot.join(root.to_utf8(), relative)
+						},
+					)
+			_ => []
+		}
 	}
 
 	# Readlink runs in a child, which shares this process's namespaces.
