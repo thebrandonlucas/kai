@@ -34,3 +34,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [plugins/deploy](plugins/deploy) | A third-party plugin adding `kai deploy` | see [plugin.md](../docs/plugin.md) |
 
 Run `kai update` first in each: it locks the packages the commands use.
+
+Shells and tasks run on your machine with your files and network; builds run
+sandboxed with only what they declare. See
+[Tasks and builds](../README.md#tasks-and-builds).
