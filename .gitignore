@@ -1,6 +1,8 @@
 .direnv/
 .zig-cache/
-.kai
+# kai update writes the root lock; the rest of every .kai is generated.
+**/.kai/*
+!/.kai/lock.json
 generated-docs
 zig-out/
 dist/
