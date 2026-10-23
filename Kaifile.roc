@@ -95,7 +95,7 @@ platform_script =
 	\\(cd platform/targets && sha256sum --quiet -c x64musl.sha256 arm64musl.sha256)
 	\\mkdir stage/targets
 	\\cp platform/*.roc stage/
-	\\cp -R platform/targets/x64musl platform/targets/arm64musl stage/targets/
+	\\cp -R platform/targets/*/ stage/targets/
 
 # std's own packages reach the platform's modules through api.roc; bundled,
 # they depend on the platform itself, by the URL this release publishes it at.
