@@ -29,6 +29,7 @@ NixBackend :: [].{
 	supported_systems = [
 		"x86_64-linux",
 		"aarch64-linux",
+		"aarch64-darwin",
 	]
 
 	## Reserved shell prefix keeps aliases distinct from task environment refs.
@@ -155,6 +156,10 @@ NixBackend :: [].{
 				}
 			}
 			Request.Build(name) => {
+				# Build isolation relies on the Linux sandbox and namespaces.
+				if target.ends_with("-darwin") {
+					return Err("kai build does not support macOS yet (#133)")
+				}
 				builds = Project.build_closure(project, name)?
 				built = builds.find_first(|b| b.name == name)
 					.map_err(|_| "unknown build: ${name}")?
@@ -1967,7 +1972,7 @@ expect {
 	names = ["one", "two", "three", "four", "five", "six", "seven", "eight"]
 	project = TestData.project({
 		..TestData.workflow_data,
-		systems: NixBackend.supported_systems,
+		systems: ["x86_64-linux", "aarch64-linux"],
 		builds: names.map(
 			|name| {
 				..TestData.library,
