@@ -38,6 +38,7 @@ Model := {
 			output : Str,
 		},
 	),
+	exclude : List(Str),
 	workflows : List(
 		{
 			name : Str,
@@ -95,7 +96,7 @@ Model := {
 	Raw : { backend : Str, target : Str, value : Value }
 
 	current_format : Format
-	current_format = { major: 2, minor: 2 }
+	current_format = { major: 2, minor: 3 }
 
 	empty : Str -> Model
 	empty = |name| Model.{
@@ -110,6 +111,7 @@ Model := {
 		tasks: [],
 		build_sources: [],
 		builds: [],
+		exclude: [],
 		workflows: [],
 		extensions: [],
 		raw: [],

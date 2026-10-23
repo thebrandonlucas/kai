@@ -332,6 +332,7 @@ GuixBackend :: [].{
 		entries = locked.map(|p| { channel: p.channel, commit: Pinned(p.commit) })
 		exclude = [".git", ".hg", ".svn", ".jj"]
 			.concat([workspace, layout.generated_root, layout.lock_path])
+			.concat(Project.snapshot_exclusions(model, layout.project_root))
 		Ok(
 			Steps.{
 				steps: [

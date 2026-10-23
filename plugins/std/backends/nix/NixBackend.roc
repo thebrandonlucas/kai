@@ -18,7 +18,7 @@ NixBackend :: [].{
 
 	## The model features this backend renders.
 	features : List(Str)
-	features = ["raw", "sources", "builds", "workflows"]
+	features = ["raw", "sources", "builds", "workflows", "exclude"]
 
 	default_nixpkgs : Str
 	default_nixpkgs = Locks.default_nixpkgs
@@ -47,6 +47,7 @@ NixBackend :: [].{
 	## run reports (a build's artifact), and its workflow stage.
 	Prepared : {
 		inputs : List(Locks.Input),
+		snapshot_exclude : List(Str),
 		argv : List(Str),
 		contents : Str,
 		what : Str,
@@ -204,6 +205,7 @@ NixBackend :: [].{
 		check_layout(project, target, layout, !selected.builds.is_empty())?
 		Ok({
 			inputs,
+			snapshot_exclude: Project.snapshot_exclusions(project, layout.project_root),
 			argv: selected.argv,
 			contents,
 			what: selected.what,
@@ -253,6 +255,7 @@ NixBackend :: [].{
 					layout.lock_path,
 				]
 					.concat(local)
+					.concat(selected.snapshot_exclude)
 				[
 					Snapshot({
 						root: layout.project_root,
@@ -1005,6 +1008,7 @@ mk = |t| Model.{
 	tasks: t.tasks,
 	build_sources: [],
 	builds: [],
+	exclude: [],
 	workflows: [],
 	requires_: t.requires_,
 	raw: t.raw,

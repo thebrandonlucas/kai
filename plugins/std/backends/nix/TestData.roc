@@ -119,6 +119,7 @@ TestData :: [].{
 		tasks: t.tasks,
 		build_sources: t.build_sources,
 		builds: t.builds,
+		exclude: [],
 		workflows: t.workflows,
 		requires_: t.requires_,
 		raw: t.raw,

@@ -14,6 +14,8 @@ Config :: [].{
 	## Named sources describe provider intent, not host discovery. Omitting the
 	## "default" source is equivalent to `Packages("default", Auto)`.
 	## Overlay inputs apply only where an environment selects them.
+	## `Exclude` leaves paths out of the project snapshot every build sees: a
+	## name at any depth, or a project-relative path after a leading "/".
 	## `Custom` and `Raw` retain consumer-specific extension data.
 	Setting : [
 		Name(Str),
@@ -27,6 +29,7 @@ Config :: [].{
 		Source(InputName, FlakeRef),
 		Build(InputName, List(BuildSetting)),
 		Workflow(WorkflowName, List(WorkflowStep)),
+		Exclude(List(Str)),
 		Custom(Str, Str, Val),
 		Raw(Str, Str, Val),
 	]

@@ -117,6 +117,26 @@ Project :: [].{
 					|part| !part.is_empty() and part != "." and part != "..",
 				)
 
+	## An exclusion is a file or directory name, left out wherever it appears
+	## in the project ("zig-out"), or a path from the project root after a
+	## leading "/" ("/platform/zig-out"). Neither may name the project itself
+	## or a path outside it.
+	valid_exclusion : Str -> Bool
+	valid_exclusion = |path|
+		if path.starts_with("/") {
+			valid_output(path.drop_prefix("/"))
+		} else {
+			valid_output(path) and !path.contains("/")
+		}
+
+	## The Exclude setting as snapshot exclusions under the project root: names
+	## stay names, and project-relative paths become absolute.
+	snapshot_exclusions : Model, Str -> List(Str)
+	snapshot_exclusions = |model, root|
+		model.exclude.map(
+			|path| if (path.starts_with("/")) "${root}${path}" else path,
+		)
+
 	## Local locked sources must be project-relative subtrees, not the project
 	## root or machine-specific absolute paths. Remote references are not fetched.
 	valid_build_source_ref : Str -> Bool
@@ -299,6 +319,11 @@ Project :: [].{
 				}
 			}
 		}
+		for path in model.exclude {
+			if !valid_exclusion(path) {
+				return Err("invalid exclusion: ${path}")
+			}
+		}
 		var $done = []
 		for build in model.builds {
 			$done = visit_build(model.builds, build.name, [], $done)?
@@ -333,6 +358,7 @@ Project :: [].{
 				tasks: model.tasks,
 				build_sources: model.build_sources,
 				builds: model.builds,
+				exclude: model.exclude,
 				workflows: model.workflows,
 				extensions: model.extensions,
 				raw: model.raw,
@@ -673,6 +699,7 @@ fixture = |environments| Model.{
 	tasks: [],
 	build_sources: [],
 	builds: [],
+	exclude: [],
 	workflows: [],
 	extensions: [],
 	raw: [],
@@ -863,6 +890,7 @@ build_fixture = |builds| Model.{
 	tasks: [],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
 	builds,
+	exclude: [],
 	workflows: [],
 	extensions: [],
 	raw: [],
@@ -1050,6 +1078,7 @@ build_source_fixture = |build_sources, requires_| {
 		tasks: model.tasks,
 		build_sources,
 		builds: model.builds,
+		exclude: model.exclude,
 		workflows: model.workflows,
 		extensions: model.extensions,
 		raw: model.raw,
@@ -1190,6 +1219,7 @@ workflow_features = |workflows, features| Model.{
 	tasks: [{ name: "check.all", environment: "builder", run: ["cmd"] }],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
 	builds: [library],
+	exclude: [],
 	workflows,
 	extensions: [],
 	raw: [],

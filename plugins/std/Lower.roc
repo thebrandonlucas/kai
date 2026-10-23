@@ -18,6 +18,7 @@ Lower :: [].{
 		tasks : List(Model.Task),
 		build_sources : List(Model.BuildSource),
 		builds : List(Model.Build),
+		excludes : List(List(Str)),
 		workflows : List(Model.Workflow),
 		extensions : List(Model.Extension),
 		raw : List(Model.Raw),
@@ -47,6 +48,7 @@ Lower :: [].{
 			tasks: [],
 			build_sources: [],
 			builds: [],
+			excludes: [],
 			workflows: [],
 			extensions: [],
 			raw: [],
@@ -62,12 +64,18 @@ Lower :: [].{
 			[one] => one
 			_ => return Err("DuplicateSystems: declare Systems at most once")
 		}
+		exclude = match acc.excludes {
+			[] => []
+			[one] => one
+			_ => return Err("DuplicateExclude: declare Exclude at most once")
+		}
 		requires_ =
 			(if (acc.extensions.is_empty()) [] else ["extensions"])
 				.concat(if (acc.raw.is_empty()) [] else ["raw"])
 				.concat(if (acc.build_sources.is_empty()) [] else ["sources"])
 				.concat(if (acc.builds.is_empty()) [] else ["builds"])
 				.concat(if (acc.workflows.is_empty()) [] else ["workflows"])
+				.concat(if (exclude.is_empty()) [] else ["exclude"])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -81,6 +89,7 @@ Lower :: [].{
 				tasks: acc.tasks,
 				build_sources: acc.build_sources,
 				builds: acc.builds,
+				exclude,
 				workflows: acc.workflows,
 				extensions: acc.extensions,
 				raw: acc.raw,
@@ -151,6 +160,7 @@ Lower :: [].{
 					steps: steps.map(workflow_step),
 				}),
 			}
+			Exclude(paths) => { ..acc, excludes: acc.excludes.append(paths) }
 			Custom(kind, name, value) => {
 				..acc,
 				extensions: acc.extensions.append({

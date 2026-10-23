@@ -11,6 +11,9 @@ import std.Std
 kaifile = Std.kaifile([
 	Name("build"),
 	Systems(["x86_64-linux", "aarch64-linux"]),
+	# Every build starts from a copy of this project, which cannot hold
+	# symlinks, so leave out the `result` link that `nix build` makes.
+	Exclude(["result"]),
 	Environment("cow", [Tools(["cowsay", "fortune"])]),
 	Build(
 		"wisecow",

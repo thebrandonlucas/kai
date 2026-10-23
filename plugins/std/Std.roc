@@ -267,6 +267,7 @@ Std := [].{
 			tasks: model.tasks.append({ name: task, environment, run: argv }),
 			build_sources: model.build_sources,
 			builds: model.builds,
+			exclude: model.exclude,
 			workflows: model.workflows,
 			extensions: model.extensions,
 			raw: model.raw,
