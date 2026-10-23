@@ -157,10 +157,18 @@ Load := [].{
 		staging = "${store}/${hash}.${Random.seed_u64!()?.to_str()}.tmp"
 		Load.path(staging).create_dir!()?
 		copied = Cmd.new("cp")
-			.args(["-R", "--no-preserve=mode", "--"])
+			.args(["-R", "--"])
 			.args([OsStr.from_str("${bundle}/."), OsStr.from_str(staging)])
 			.call!()
-		result = match copied {
+		# A bundle in the read-only Nix store copies read-only.
+		writable = match copied {
+			Ok(_) =>
+				Cmd.new("chmod")
+					.args(["-R", "u+w", "--", OsStr.from_str(staging)])
+					.call!()
+			Err(err) => Err(err)
+		}
+		result = match writable {
 			Ok(_) => Load.path(staging).rename!(Load.path("${store}/${hash}"))
 			Err(_) => Err(CopyFailed)
 		}
@@ -187,6 +195,7 @@ Load := [].{
 		match (host.arch(), host.os()) {
 			(X64, Linux(_)) => Ok("x86_64-linux")
 			(Arm64, Linux(_)) => Ok("aarch64-linux")
+			(Arm64, MacOS(_)) => Ok("aarch64-darwin")
 			_ => Err(UnsupportedHost)
 		}
 	}
