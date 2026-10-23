@@ -12,6 +12,11 @@ import model.Request
 ## commits Kai's lock pins.
 GuixBackend :: [].{
 
+	## Guix runs only on Linux, so refuse other hosts before planning.
+	check_system : Str -> Try({}, Str)
+	check_system = |system|
+		if (system.ends_with("-linux")) Ok({}) else Err("Guix runs only on Linux")
+
 	## `guix shell` arguments for a shell or task, run under time-machine.
 	plan : Model, Request -> Try(List(Str), Str)
 	plan = |model, request| {

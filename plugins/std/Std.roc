@@ -176,6 +176,7 @@ Std := [].{
 					backend: On("guix"),
 					fit: |args| GuixBackend.fit(model, Std.request(command, args)?),
 					plan: |ctx| {
+						GuixBackend.check_system(ctx.host.system)?
 						wanted = Std.request(command, ctx.args)?
 						locked = Std.guix_pins(ctx)?
 						GuixBackend.request_steps(model, wanted, ctx.layout, locked)
@@ -322,6 +323,7 @@ Std := [].{
 	## section, keeping the others.
 	update_guix : Implementation.Context -> Try(Plan, Str)
 	update_guix = |ctx| {
+		GuixBackend.check_system(ctx.host.system)?
 		dir = "${ctx.layout.generated_root}/guix"
 		result = "${dir}/lock-result.json"
 		channels = [GuixBackend.default_channel]
