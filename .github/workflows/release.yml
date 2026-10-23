@@ -45,9 +45,13 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Kai
+        if: steps.systems.outputs.publish == 'true'
+        uses: ./.github/actions/install-kai
+
       - name: Run Project CI
         if: steps.systems.outputs.publish == 'true'
-        run: nix develop --command zig build ci
+        run: kai shell default -- zig build ci
 
       - name: Record the verified commit
         id: verified
@@ -71,8 +75,11 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Kai
+        uses: ./.github/actions/install-kai
+
       - name: Publish release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KAI_AARCH64_VERIFIED_COMMIT: ${{ needs.aarch64.outputs.verified-commit }}
-        run: nix develop --command zig build publish-release
+        run: kai shell default -- zig build publish-release

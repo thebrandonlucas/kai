@@ -31,21 +31,21 @@ The goal is to make using determinate systems so easy and powerful that they bec
 Kai runs on Linux and needs
 [Nix with flakes enabled](https://docs.determinate.systems/?phid=019ef5f5-e228-7eb4-9a1e-4dbe9b75b79e).
 
-One immediate benefit of a determinate system is you can do things like this!
+Download the archive for your system from the
+[latest release](https://github.com/thebrandonlucas/kai/releases/latest),
+check it against the release's `SHA256SUMS`, and put `kai` on `PATH`:
 
 ```sh
-nix run github:thebrandonlucas/kai -- --version
-nix shell github:thebrandonlucas/kai    # kai on PATH in a new shell
+tar -xzf kai-0.0.9-x86_64-linux.tar.gz
+install -Dm755 kai ~/.local/bin/kai
+kai --version
 ```
 
-The Nix package includes the Roc compiler Kai uses to evaluate `Kaifile.roc`
-and pre-seeds Roc's package cache with the matching Kai platform.
-
-Release archives contain only the `kai` binary. To use one, also install Nix
-and the Roc compiler named in [`.roc-version`](.roc-version) (available from
-[roc-overlay](https://github.com/roc-lang/roc-overlay)), either on `PATH` or
-set as `ROC=/path/to/roc`. Roc downloads the platform the first time it checks
-a `Kaifile.roc`.
+The archive contains only the `kai` binary. Kai evaluates `Kaifile.roc` with
+the Roc compiler named in [`.roc-version`](.roc-version): one on `PATH` or set
+as `ROC=/path/to/roc`, or else one it gets with Nix from
+[roc-overlay](https://github.com/roc-lang/roc-overlay). Roc downloads the
+platform the first time it checks a `Kaifile.roc`.
 
 ## Getting started
 
@@ -221,8 +221,7 @@ errors 1.
 ```sh
 git clone https://github.com/thebrandonlucas/kai.git
 cd kai
-nix develop    # or `direnv allow` once
-zig build ci
+kai shell default -- zig build ci    # or `kai shell`, then `zig build ci`
 ```
 
 `zig build ci` includes the end-to-end tests, which run a built kai against
@@ -230,7 +229,7 @@ real Nix and, when it is installed, Guix, so it needs network access or a warm
 Nix cache. `zig build e2e -- --nix` or `-- --guix` runs them on one backend,
 and `zig build e2e-run` (or `-build`, `-workflow`, `-update`, ...) runs one;
 `zig build guix-integration` runs every Guix test and fails without Guix. If
-`nix develop` is missing a dependency, please open an issue.
+the shell is missing a dependency, please open an issue.
 
 The code follows the pipeline:
 

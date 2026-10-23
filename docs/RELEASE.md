@@ -16,7 +16,7 @@ Kai releases use a protected release branch. Release preparation pushes only tha
 
 ## Build artifacts without releasing
 
-From the Nix development shell on an x86_64 Linux host, build and validate the release artifacts without changing Git state:
+From `kai shell` on an x86_64 Linux host, build and validate the release artifacts without changing Git state:
 
 ```sh
 zig build build-release
@@ -33,7 +33,7 @@ dist/SHA256SUMS
 
 The build fails with `StalePlatformUrl` unless `platform-release` names exactly the bundle just built, for the `origin` repository and `VERSION`. Any change to `platform` changes the hash; `zig build release` rewrites the file, and `zig build platform-bundle` builds the bundle into `zig-out/kai-platform` for inspection.
 
-Each archive contains only the `kai` binary. At runtime it needs Nix and the Roc compiler named in `.roc-version`, on `PATH` or as `ROC`, to load `Kaifile.roc`; Roc downloads the platform bundle from the recorded URL. The Nix package (`nix run github:OWNER/REPOSITORY`) supplies the compiler and pre-seeds Roc's cache with the bundle. The x86_64 archive is checked by running `kai --version`; the aarch64 archive, cross-built on x86_64, is checked here only for its architecture.
+Each archive contains only the `kai` binary. At runtime it needs Nix, and loads `Kaifile.roc` with the Roc compiler named in `.roc-version`: on `PATH`, as `ROC`, or else fetched with Nix; Roc downloads the platform bundle from the recorded URL. The x86_64 archive is checked by running `kai --version`; the aarch64 archive, cross-built on x86_64, is checked here only for its architecture.
 
 ## aarch64-linux archives
 

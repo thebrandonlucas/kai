@@ -1,8 +1,8 @@
-# Kai's own development environment. Until it names released bundles, it
-# loads this checkout's platform, whose hosts `zig build` builds first.
+# Kai's own development environment and release builds, on the platform and
+# std bundles of the last release.
 app [kaifile] {
-	pf: platform "platform/main.roc",
-	std: "plugins/std/main.roc",
+	pf: platform "https://github.com/thebrandonlucas/kai/releases/download/v0.0.9/EenHNXeRqmvf2kHJLLbjroXeLwbQxyH5fbVQVgD3DXg4.tar.zst",
+	std: "https://github.com/thebrandonlucas/kai/releases/download/v0.0.9/std-DiShoF1FRWjQe7BmRnSTmqG44WgHUGuMMTMgBoaBqemq.tar.zst",
 }
 
 import std.FlakeRef
@@ -22,7 +22,7 @@ overlay =
 roc = Tool.from_quote("rocpkgs.${roc_version.trim()}").map_ok(|t| [t]) ?? []
 
 # The Roc packages the platform imports (Weaver, which imports ansi and path),
-# as flake.nix fetches them, each named by its hash as Roc caches it.
+# each named by its hash as Roc caches it.
 roc_packages = [
 	(
 		"lukewilliamboswell/weaver/releases/download/0.9.0",
@@ -71,9 +71,8 @@ seed =
 	\\cp -RL "$KAI_INPUTS"/. "$packages/"
 	\\
 
-# Runs script to fill stage/ and add packages, and bundles stage/ as
-# flake.nix's kaiPlatformFor and kaiStdFor do: bundle/ holds <hash>.tar.zst,
-# and that unpacked as <hash>/.
+# Runs script to fill stage/ and add packages, and bundles stage/:
+# bundle/ holds <hash>.tar.zst, and that unpacked as <hash>/.
 bundle = |script|
 	seed
 		.concat("mkdir stage bundle\n")
@@ -118,8 +117,8 @@ std_script =
 	\\done
 	\\replace stage/main.roc '"../../platform/main.roc"' "$url"
 
-# The bare kai binary for a Roc target, as flake.nix's mkKaiBinary builds it,
-# embedding the URLs this release publishes the bundles built here at.
+# The bare kai binary for a Roc target, embedding the URLs this release
+# publishes the bundles built here at.
 # One Roc worker: the code roc emits depends on how many it uses
 # (roc-lang/roc#11449), so a fixed count builds the same binary anywhere.
 # Use the default once a Roc nightly emits the same code for any count.
@@ -162,7 +161,7 @@ binary = |name, target|
 		],
 	)
 
-# A release archive of a binary, as flake.nix's mkReleaseArchive makes it.
+# A release archive of a binary.
 release_script =
 	\\set -eu
 	\\mkdir staging
@@ -207,7 +206,7 @@ kaifile = Std.kaifile(
 			],
 		),
 		Shell("default", [Use("dev")]),
-		# flake.lock's nixpkgs: its zig names the hosts' objects as the 0.0.8
+		# The nixpkgs whose zig names the hosts' objects as the released
 		# bundles have them.
 		Packages(
 			"default",
@@ -237,7 +236,7 @@ kaifile = Std.kaifile(
 			],
 		),
 		# The Roc package bundles of the platform and the std plugin that a
-		# release publishes, as flake.nix builds them.
+		# release publishes.
 		Build(
 			"kai-platform",
 			[

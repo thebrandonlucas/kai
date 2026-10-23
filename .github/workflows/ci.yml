@@ -3,9 +3,8 @@ name: CI
 # Pull requests wait only on the required ci check: static checks and unit
 # tests, in about two minutes. The end-to-end tests run beside it on ready
 # pull requests, reporting without blocking. Everything slower (the full
-# suite with release builds and the flake check, aarch64-linux and real
-# Guix) runs nightly and on demand, and release.yml runs its own copies
-# before publishing.
+# suite with release builds, aarch64-linux and real Guix) runs nightly and
+# on demand, and release.yml runs its own copies before publishing.
 on:
   push:
     branches:
@@ -33,8 +32,8 @@ concurrency:
 # Every job restores the Nix store GitHub's cache holds for master. Only
 # master runs save it, since a pull request's cache is visible to that pull
 # request alone: pushes save the dev shell (nix-fast), the nightly suite also
-# kai's own builds (nix-ci). The dev shell is rooted with --profile, so
-# garbage collection before saving keeps it; 6 GB stays under the
+# kai's own builds (nix-ci), each keyed by what the dev shell depends on.
+# Garbage collection before saving trims the store to 6 GB, under the
 # repository's 10 GB cache limit.
 jobs:
   # Every branch push: static checks and unit tests.
@@ -53,16 +52,19 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Kai
+        uses: ./.github/actions/install-kai
+
       - name: Restore the Nix store
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-fast-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          primary-key: nix-fast-${{ runner.arch }}-${{ hashFiles('Kaifile.roc', '.kai/lock.json', '.roc-version', '.roc-overlay') }}
           restore-prefixes-first-match: nix-fast-${{ runner.arch }}-
           save: ${{ github.ref == 'refs/heads/master' }}
           gc-max-store-size-linux: 6G
 
       - name: Check and run unit tests
-        run: nix develop --profile "$RUNNER_TEMP/dev" --command zig build test
+        run: kai shell default -- zig build test
 
   # The required check: static checks and unit tests. A pull request that
   # changes only Markdown, docs/ or LICENSE needs no build; the job still
@@ -97,17 +99,21 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Kai
+        if: steps.changes.outputs.code == 'true'
+        uses: ./.github/actions/install-kai
+
       - name: Restore the Nix store
         if: steps.changes.outputs.code == 'true'
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-fast-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          primary-key: nix-fast-${{ runner.arch }}-${{ hashFiles('Kaifile.roc', '.kai/lock.json', '.roc-version', '.roc-overlay') }}
           restore-prefixes-first-match: nix-fast-${{ runner.arch }}-
           save: false
 
       - name: Check and run unit tests
         if: steps.changes.outputs.code == 'true'
-        run: nix develop --profile "$RUNNER_TEMP/dev" --command zig build test
+        run: kai shell default -- zig build test
 
   # The end-to-end tests and configuration fixtures against real Nix, beside
   # the required check: they report on pull requests without blocking them.
@@ -141,11 +147,15 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Kai
+        if: steps.changes.outputs.code == 'true'
+        uses: ./.github/actions/install-kai
+
       - name: Restore the Nix store
         if: steps.changes.outputs.code == 'true'
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-ci-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          primary-key: nix-ci-${{ runner.arch }}-${{ hashFiles('Kaifile.roc', '.kai/lock.json', '.roc-version', '.roc-overlay') }}
           restore-prefixes-first-match: |
             nix-ci-${{ runner.arch }}-
             nix-fast-${{ runner.arch }}-
@@ -153,10 +163,10 @@ jobs:
 
       - name: Run the end-to-end tests
         if: steps.changes.outputs.code == 'true'
-        run: nix develop --profile "$RUNNER_TEMP/dev" --command zig build e2e config-fixtures -- --nix
+        run: kai shell default -- zig build e2e config-fixtures -- --nix
 
-  # Nightly and on demand: everything zig build ci runs, release builds and
-  # the flake check included.
+  # Nightly and on demand: everything zig build ci runs, release builds
+  # included.
   full:
     name: ci (full)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -172,10 +182,13 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Kai
+        uses: ./.github/actions/install-kai
+
       - name: Restore the Nix store
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-ci-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          primary-key: nix-ci-${{ runner.arch }}-${{ hashFiles('Kaifile.roc', '.kai/lock.json', '.roc-version', '.roc-overlay') }}
           restore-prefixes-first-match: |
             nix-ci-${{ runner.arch }}-
             nix-fast-${{ runner.arch }}-
@@ -183,7 +196,7 @@ jobs:
           gc-max-store-size-linux: 6G
 
       - name: Run Project CI
-        run: nix develop --profile "$RUNNER_TEMP/dev" --command zig build ci
+        run: kai shell default -- zig build ci
 
   # The same CI natively on aarch64-linux, nightly and on demand. Release
   # publishes the aarch64-linux archive only after release.yml's copy of this
@@ -203,10 +216,13 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Kai
+        uses: ./.github/actions/install-kai
+
       - name: Restore the Nix store
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
-          primary-key: nix-ci-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          primary-key: nix-ci-${{ runner.arch }}-${{ hashFiles('Kaifile.roc', '.kai/lock.json', '.roc-version', '.roc-overlay') }}
           restore-prefixes-first-match: |
             nix-ci-${{ runner.arch }}-
             nix-fast-${{ runner.arch }}-
@@ -214,7 +230,7 @@ jobs:
           gc-max-store-size-linux: 6G
 
       - name: Run Project CI
-        run: nix develop --profile "$RUNNER_TEMP/dev" --command zig build ci
+        run: kai shell default -- zig build ci
 
   # Real Guix, with Nix hidden from kai, nightly and on demand: run it from
   # the Actions tab before merging a change to the Guix backend. A cold
@@ -244,6 +260,9 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Kai
+        uses: ./.github/actions/install-kai
+
       - name: Install Guix
         run: |
           sudo apt-get update
@@ -255,4 +274,4 @@ jobs:
           guix --version
 
       - name: Run Guix integration
-        run: nix develop --command zig build guix-integration
+        run: kai shell default -- zig build guix-integration
