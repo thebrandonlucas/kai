@@ -38,26 +38,45 @@ roc_packages = [
 	),
 ]
 
-roc_inputs = List.keep_oks(roc_packages, |(_, name)| InputName.from_quote(name))
+# The packages cli/main.roc adds: basic-cli, which imports http.
+cli_packages = [
+	(
+		"roc-lang/basic-cli/releases/download/0.26.0",
+		"GddgvsGjiNXrHFW6au5i5dUDbTs8FinQdrgE2Gqmw53t",
+	),
+	(
+		"roc-lang/http/releases/download/1.0.0",
+		"6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS",
+	),
+]
+
+inputs = |list| List.keep_oks(list, |(_, name)| InputName.from_quote(name))
+
+roc_inputs = inputs(roc_packages)
 
 roc_sources = List.keep_oks(
-	roc_packages,
+	roc_packages.concat(cli_packages),
 	|(release, name)| {
 		url = "tarball+https://github.com/${release}/${name}.tar.zst"
 		Ok(Source(InputName.from_quote(name)?, FlakeRef.from_quote(url)?))
 	},
 )
 
-# Seeds Roc's package cache with the Inputs, runs script to fill stage/ and
-# add packages, and bundles stage/ as flake.nix's kaiPlatformFor and kaiStdFor
-# do: bundle/ holds <hash>.tar.zst, and that unpacked as <hash>/.
-bundle = |script|
+# Seeds Roc's package cache with the Inputs.
+seed =
 	\\set -eu
 	\\export XDG_CACHE_HOME="$HOME/.cache" ZIG_GLOBAL_CACHE_DIR="$HOME/zig"
 	\\packages="$XDG_CACHE_HOME/roc/packages"
-	\\mkdir -p "$packages" stage bundle
+	\\mkdir -p "$packages"
 	\\cp -RL "$KAI_INPUTS"/. "$packages/"
 	\\
+
+# Runs script to fill stage/ and add packages, and bundles stage/ as
+# flake.nix's kaiPlatformFor and kaiStdFor do: bundle/ holds <hash>.tar.zst,
+# and that unpacked as <hash>/.
+bundle = |script|
+	seed
+		.concat("mkdir stage bundle\n")
 		.concat(script)
 		.concat(
 			\\
@@ -98,6 +117,57 @@ std_script =
 	\\  replace "$main" 'api: "../../../../platform/api.roc"' "$api"
 	\\done
 	\\replace stage/main.roc '"../../platform/main.roc"' "$url"
+
+# The bare kai binary for a Roc target, as flake.nix's mkKaiBinary builds it,
+# embedding the URLs this release publishes the bundles built here at.
+# One Roc worker: the code roc emits depends on how many it uses
+# (roc-lang/roc#11449), so a fixed count builds the same binary anywhere.
+# Use the default once a Roc nightly emits the same code for any count.
+binary_script = |target|
+	seed.concat(
+		\\url="https://github.com/thebrandonlucas/kai/releases/download"
+		\\base="$url/v$(cat VERSION)"
+		\\bundle() { basename "$KAI_ARTIFACTS/$1"/*.tar.zst; }
+		\\echo "$base/$(bundle kai-platform)" > platform-release
+		\\echo "$base/std-$(bundle kai-std)" > plugins/std-release
+		\\roc build cli/main.roc --opt=size --target=${target} --jobs=1 --output=kai
+		\\llvm-strip kai
+		\\chmod -R u+w "$packages"
+		\\mkdir bin
+		\\install -m755 kai bin/kai
+	)
+
+binary = |name, target|
+	Build(
+		name,
+		[
+			Use("build"),
+			Inputs(roc_inputs.concat(inputs(cli_packages))),
+			Needs(["kai-platform", "kai-std"]),
+			Run(["sh", "-c", binary_script(target)]),
+			Output("bin"),
+		],
+	)
+
+# A release archive of a binary, as flake.nix's mkReleaseArchive makes it.
+release_script =
+	\\set -eu
+	\\mkdir staging
+	\\cp "$KAI_ARTIFACTS"/*/kai staging/kai
+	\\chmod 0755 staging/kai
+	\\owner="--owner=0 --group=0 --numeric-owner"
+	\\tar --sort=name --mtime='UTC 1970-01-01' $owner -czf archive -C staging kai
+
+release = |name, binary_name|
+	Build(
+		name,
+		[
+			Use("build"),
+			Needs([binary_name]),
+			Run(["sh", "-c", release_script]),
+			Output("archive"),
+		],
+	)
 
 kaifile = Std.kaifile(
 	[Name("kai")].concat(overlay).concat([
@@ -146,6 +216,8 @@ kaifile = Std.kaifile(
 						"gnugrep",
 						"gnused",
 						"gnutar",
+						"gzip",
+						"llvmPackages.bintools-unwrapped",
 					]),
 				),
 			],
@@ -171,5 +243,9 @@ kaifile = Std.kaifile(
 				Output("bundle"),
 			],
 		),
+		binary("kai-x64musl", "x64musl"),
+		binary("kai-arm64musl", "arm64musl"),
+		release("release-x86-64-linux", "kai-x64musl"),
+		release("release-aarch64-linux", "kai-arm64musl"),
 	]).concat(roc_sources),
 )
