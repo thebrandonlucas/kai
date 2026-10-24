@@ -12,7 +12,6 @@
         "cli",
         "devtool",
         "examples",
-        "flake.nix",
         "kaifile",
     },
 }

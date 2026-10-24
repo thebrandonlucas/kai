@@ -19,7 +19,7 @@ import Bundles
 
 E2eBundle := [].{
 	# The URL packages the platform imports: Weaver, and the ansi and path
-	# packages Weaver imports (the flake's rocPackages).
+	# packages Weaver imports (Kaifile.roc's roc_packages).
 	platform_packages = [
 		"7j6KBFBEZ8pNMLQHkx9xiwyZ2PmwQPgKNDPUih6gKe77",
 		"JXLM47L6CzrLXB5HBfqc27VnU6CD4jMm5Mk6dgbbovL",
@@ -51,9 +51,9 @@ E2eBundle := [].{
 		}
 	}
 
-	# std bundled against the platform at `url`, as the flake bundles it
-	# against the release URL. roc bundle resolves the platform, so its cache
-	# holds the unpacked platform bundle.
+	# std bundled against the platform at `url`, as Kaifile.roc's kai-std
+	# bundles it against the release URL. roc bundle resolves the platform, so
+	# its cache holds the unpacked platform bundle.
 	std_for! = |url, pf_bundle, work| {
 		source = Path.join(work, "std")
 		output = Path.join(work, "std-bundle")

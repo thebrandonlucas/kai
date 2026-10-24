@@ -380,7 +380,7 @@ Release := [].{
 
 	aarch64_verified_env = "KAI_AARCH64_VERIFIED_COMMIT"
 
-	# Systems the flake builds a release-<system> archive for.
+	# Systems Kaifile.roc builds a release archive for.
 	archive_systems = ["x86_64-linux", "aarch64-linux"]
 
 	release_systems : Str -> Try(List(Str), [InvalidReleaseSystems(Str)])

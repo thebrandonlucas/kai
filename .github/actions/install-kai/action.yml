@@ -1,0 +1,38 @@
+name: Install Kai
+description: Put the released kai, which runs the repository's Kaifile.roc, on PATH. Needs Nix.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Kai
+      shell: bash
+      env:
+        KAI_VERSION: 0.0.9
+        KAI_X86_64_LINUX_SHA256: 3c5aea7f81e011577f6746f55566a0b6348705ef2c41506d9fca31ff7227e589
+        # The commit of that release, whose flake builds kai for aarch64-linux
+        # until a release publishes its archive.
+        KAI_COMMIT: 32cbee013fb09842cc9f7cc1c6cf5e55f2c41082
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/kai"
+        mkdir -p "$dir"
+        case "$RUNNER_ARCH" in
+          X64)
+            archive="kai-$KAI_VERSION-x86_64-linux.tar.gz"
+            curl -fsSL -o "$dir/$archive" \
+              "https://github.com/thebrandonlucas/kai/releases/download/v$KAI_VERSION/$archive"
+            echo "$KAI_X86_64_LINUX_SHA256  $dir/$archive" | sha256sum -c -
+            tar -xzf "$dir/$archive" -C "$dir" kai
+            ;;
+          ARM64)
+            nix build --out-link "$dir/package" \
+              "github:thebrandonlucas/kai/$KAI_COMMIT#kai.unwrapped"
+            ln -s package/bin/kai "$dir/kai"
+            ;;
+          *)
+            echo "no kai for $RUNNER_ARCH" >&2
+            exit 1
+            ;;
+        esac
+        "$dir/kai" --version
+        echo "$dir" >> "$GITHUB_PATH"

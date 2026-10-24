@@ -337,9 +337,9 @@ pub fn build(b: *std.Build) void {
 
     const nix_fmt = addFilesCommand(
         b,
-        &.{ "nix", "fmt" },
+        &.{ "nixfmt", "--check" },
         sources.nix_files,
-        &.{ "--", "--check" },
+        &.{},
     );
     check_step.dependOn(&nix_fmt.step);
 
@@ -386,7 +386,7 @@ pub fn build(b: *std.Build) void {
 
     const nix_fmt_write = addFilesCommand(
         b,
-        &.{ "nix", "fmt" },
+        &.{"nixfmt"},
         sources.nix_files,
         &.{},
     );
@@ -536,14 +536,6 @@ pub fn build(b: *std.Build) void {
     config_fixtures_step.dependOn(&run_config_fixtures.step);
     ci_step.dependOn(config_fixtures_step);
     build_release.step.dependOn(ci_step);
-
-    _ = addCiCommand(
-        b,
-        ci_step,
-        test_step,
-        "check Nix flake",
-        &.{ "nix", "flake", "check" },
-    );
 
     // One Kai build at a time, after those of the end-to-end tests.
     var previous_build: *std.Build.Step = e2e_step;
