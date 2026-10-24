@@ -345,8 +345,10 @@ describe = |err|
 		CompilerMismatch(compiler, actual) =>
 			"`${compiler}` is ${actual}; ${needs_compiler}"
 		NixMissing => "Nix is not installed; ${needs_compiler}"
-		KaifileInvalid(file) => "${file} did not compile; see the errors above"
-		KaifileFailed(file, output) => "${file} did not compile:\n${output}"
+		KaifileInvalid(file, releases) =>
+			"${file} did not compile; see the errors above${mixed(releases)}"
+		KaifileFailed(file, output, releases) =>
+			"${file} did not compile:\n${output}${mixed(releases)}"
 		IncompatibleProtocol(major, minor) =>
 			"Kaifile.roc uses platform protocol ${major.to_str()}.${minor.to_str()}; "
 				.concat("this kai speaks ${Protocol.current.major.to_str()}.x")
@@ -384,6 +386,17 @@ describe = |err|
 		NoImplementation("") => "no plugin implements this command"
 		NoImplementation(backend) => "no plugin implements this command on ${backend}"
 		other => Str.inspect(other)
+	}
+
+# What to do about bundles from releases other than this kai's.
+mixed : List(Str) -> Str
+mixed = |releases|
+	if releases.is_empty() {
+		""
+	} else {
+		named = Str.join_with(releases, " and ")
+		"\nIts header names bundles from ${named}; use those of this "
+			.concat("kai's release, ${Load.release}, as `kai --help` shows")
 	}
 
 needs_compiler =

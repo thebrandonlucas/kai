@@ -13,6 +13,7 @@ import api.Sexpr
 
 import "../.roc-version" as compiler_version : Str
 import "../.roc-overlay" as roc_overlay : Str
+import "../platform-release" as platform_release : Str
 
 import Output
 import Variables
@@ -200,18 +201,41 @@ Load := [].{
 		}
 	}
 
-	# A Kaifile.roc from before plugins provided `config` on the platform
-	# alone; roc would only report a type mismatch. An unreadable file is left
-	# for roc to report.
-	current! : Location => Try({}, [PreviousHeader])
-	current! = |project| {
-		file = Load.path("${project.root}/${project.file}")
-		Load.current(Path.read_utf8!(file) ?? "")
-	}
+	# Kaifile.roc's text, for the header checks below. An unreadable file is
+	# left for roc to report.
+	text! : Location => Str
+	text! = |project|
+		Path.read_utf8!(Load.path("${project.root}/${project.file}")) ?? ""
 
+	# A Kaifile.roc from before plugins provided `config` on the platform
+	# alone; roc would only report a type mismatch.
 	current : Str -> Try({}, [PreviousHeader])
 	current = |text|
 		if (text.contains("app [config]")) Err(PreviousHeader) else Ok({})
+
+	# The releases of the bundles Kaifile.roc names from its platform's
+	# repository, unless they are all this kai's. Roc reports a mix only as a
+	# platform mismatch, or as type errors when the platform is not this kai's.
+	releases : Str -> List(Str)
+	releases = |text| {
+		header = text.split_on("platform \"").get(1) ?? ""
+		platform_url = header.split_on("\"").first() ?? ""
+		parts = platform_url.split_on("/releases/download/")
+		var $found = []
+		if parts.len() == 2 {
+			download = "\"${parts.first() ?? ""}/releases/download/"
+			for url in text.split_on(download).drop_first(1) {
+				release = url.split_on("/").first() ?? ""
+				if !$found.contains(release) {
+					$found = $found.append(release)
+				}
+			}
+		}
+		if ($found == [Load.release]) [] else $found
+	}
+
+	# The release of this kai's platform and std, such as v0.0.9.
+	release = platform_release.trim().split_on("/").drop_last(1).last() ?? ""
 
 	# Type-check the whole configuration, reporting compiler diagnostics as-is;
 	# in JSON mode the compiler's stdout goes to stderr instead. roc exits 2
@@ -219,7 +243,9 @@ Load := [].{
 	check! : Location, Output.Mode => Try({}, _)
 	check! = |project, mode| {
 		_ = Load.system!()?
-		Load.current!(project)?
+		text = Load.text!(project)
+		Load.current(text)?
+		invalid = KaifileInvalid(project.file, Load.releases(text))
 		command = Cmd.new(OsStr.from_str(Load.compiler!()?))
 			.args(["check", OsStr.from_str(project.file)])
 			.cwd(Load.path(project.root))
@@ -228,7 +254,7 @@ Load := [].{
 			Human =>
 				match command.inherit_stdio().run!() {
 					Ok(output) if valid(output.status) => Ok({})
-					_ => Err(KaifileInvalid(project.file))
+					_ => Err(invalid)
 				}
 			Json => {
 				output = command.stderr(Inherit).run!()?
@@ -236,7 +262,7 @@ Load := [].{
 				if valid(output.status) {
 					Ok({})
 				} else {
-					Err(KaifileInvalid(project.file))
+					Err(invalid)
 				}
 			}
 		}
@@ -248,7 +274,9 @@ Load := [].{
 	ask! : Location, Protocol.Request => Try(Protocol.Body, _)
 	ask! = |project, request| {
 		_ = Load.system!()?
-		Load.current!(project)?
+		text = Load.text!(project)
+		Load.current(text)?
+		header_releases = Load.releases(text)
 		output = Cmd.new(OsStr.from_str(Load.compiler!()?))
 			.arg(OsStr.from_str(project.file))
 			.cwd(Load.path(project.root))
@@ -260,7 +288,11 @@ Load := [].{
 			Ok(ran) => {
 				out = Str.from_utf8_lossy(ran.stdout_bytes)
 				errors = Str.from_utf8_lossy(ran.stderr_bytes)
-				failure = KaifileFailed(project.file, out.concat(errors))
+				failure = KaifileFailed(
+					project.file,
+					out.concat(errors),
+					header_releases,
+				)
 				if ran.status == Exited(2) {
 					Load.answer(out).map_err(
 						|err|
@@ -273,7 +305,7 @@ Load := [].{
 					Err(failure)
 				}
 			}
-			Err(_) => Err(KaifileInvalid(project.file))
+			Err(_) => Err(KaifileInvalid(project.file, header_releases))
 		}
 	}
 
