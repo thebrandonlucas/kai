@@ -6,6 +6,7 @@ import pf.Cmd
 import pf.Duration
 import pf.OsStr
 import pf.Path
+import pf.Sleep
 import pf.Stderr
 import pf.Stdin
 import pf.Stdout
@@ -195,6 +196,50 @@ Execute := [].{
 		if plan.steps.any(Execute.uses_workspace) {
 			Workspace.prepare!(layout)?
 		}
+		snapshots = plan.steps.any(
+			|step| match step {
+				Snapshot(_) => Bool.True
+				_ => Bool.False
+			},
+		)
+		if !snapshots {
+			return Execute.steps!(plan, layout, mode, workflow, options)
+		}
+		guard = "${layout.workspace}/build.lock"
+		Execute.hold!(guard, mode)?
+		result = Execute.steps!(plan, layout, mode, workflow, options)
+		_ = Workspace.path(guard).delete_empty!()
+		result
+	}
+
+	# A directory in the workspace is the build lock: a plan that snapshots
+	# holds it from its first step to its last, so builds take turns.
+	hold! : Str, Output.Mode => Try({}, _)
+	hold! = |guard, mode| {
+		var $noted = Bool.False
+		var $held = Bool.False
+		while !$held {
+			match Workspace.path(guard).create_dir!() {
+				Ok({}) => {
+					$held = Bool.True
+				}
+				Err(PathErr(AlreadyExists, _)) => {
+					if !$noted {
+						message = "waiting for another kai build to release ${guard}; "
+							.concat("if none is running, it is safe to remove that directory")
+						Output.note!(mode, "kai: ${message}", Output.event("note", message, []))?
+						$noted = Bool.True
+					}
+					Sleep.millis!(200)?
+				}
+				Err(err) => return Err(err)
+			}
+		}
+		Ok({})
+	}
+
+	steps! : Plan, Layout, Output.Mode, Str, Options => Try({}, _)
+	steps! = |plan, layout, mode, workflow, options| {
 		count = plan.steps.count_if(
 			|step| match step {
 				Stage(_) => Bool.True

@@ -2,8 +2,8 @@
 # publish the caller's namespace witness beside it, replacing the previous
 # snapshot only once the new one is completely staged. What the project's
 # .gitignore files ignore is left out. Symbolic links and special files are
-# refused, never followed. Callers serialize workspace use and must not mutate
-# the project concurrently.
+# refused, never followed. Callers hold the workspace's build lock and must not
+# mutate the project concurrently.
 import pf.Cmd
 import pf.Env
 import pf.OsStr

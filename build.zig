@@ -195,8 +195,6 @@ fn addE2e(
 
 // Builds a Kaifile.roc artifact with `kai build`, which prints its store
 // path last on stdout; the caller adds the output file to link it as.
-// Concurrent Kai builds in one project collide on .kai/snapshot, so callers
-// run them one at a time.
 fn addKaiBuild(
     b: *std.Build,
     prerequisite: *std.Build.Step,
