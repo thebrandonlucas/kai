@@ -2,7 +2,13 @@
     .name = .kai_platform,
     .version = "0.1.0",
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{},
+    .dependencies = .{
+        // The musl runtime libhost.a links with, see targets/README.md.
+        .link_inputs = .{
+            .url = "https://github.com/lukewilliamboswell/roc-platform-template-zig/releases/download/link-inputs-sha256-2df3df339dfb1ad4ae1fad0f382cc100c5b31b3921cdeff939f6aea51457886d/link-inputs-all.tar",
+            .hash = "N-V-__8AAKhWagC0KzOlY-kNKwZbmwPzI7MZz0JQyrzo7gpT",
+        },
+    },
     .fingerprint = 0x6f26e92e386d9ab1,
     .paths = .{
         "build.zig",

@@ -2,6 +2,7 @@
 .claude/
 .direnv/
 .zig-cache/
+zig-pkg/
 # kai update writes the root lock; the rest of every .kai is generated.
 **/.kai/*
 !/.kai/lock.json
@@ -12,6 +13,6 @@ result
 result-*
 kai
 kai-issues/
-/platform/targets/*/libhost.a
+/platform/targets/*/
 /platform/.zig-cache/
 /platform/zig-out/

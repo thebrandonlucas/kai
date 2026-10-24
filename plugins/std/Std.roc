@@ -197,7 +197,7 @@ Std := [].{
 					command: "update",
 					backend: On("guix"),
 					fit: |_| Std.guix_lockable(model),
-					plan: |ctx| Std.update_guix(ctx),
+					plan: |ctx| Std.update_guix(model, ctx),
 				},
 				Implementation.{
 					command: "model",
@@ -292,8 +292,8 @@ Std := [].{
 			lock_path: layout.lock_path,
 		}
 
-	## The Guix channel pins in the lock, or why they are missing or stale.
-	guix_pins : Implementation.Context -> Try(List(GuixBackend.Pin), Str)
+	## The Guix pins in the lock, or why they are missing or stale.
+	guix_pins : Implementation.Context -> Try(GuixBackend.Locked, Str)
 	guix_pins = |ctx| {
 		missing = "the guix lock is missing or stale; run kai --backend guix update"
 		section = match ctx.lock {
@@ -304,7 +304,7 @@ Std := [].{
 				}
 			Absent => return Err(missing)
 		}
-		GuixBackend.pinned([GuixBackend.default_channel], section)
+		GuixBackend.read_lock(section)
 	}
 
 	## Guix has something to lock when any environment can run on it.
@@ -318,15 +318,16 @@ Std := [].{
 		}
 	}
 
-	## Phase 0 resolves the channels with the installed `guix repl` and asks
-	## kai for the result; phase 1 validates it and publishes the lock's guix
-	## section, keeping the others.
-	update_guix : Implementation.Context -> Try(Plan, Str)
-	update_guix = |ctx| {
+	## Phase 0 resolves the channels and hashes the path: sources with the
+	## installed `guix repl` and asks kai for the result; phase 1 validates it
+	## and publishes the lock's guix section, keeping the others.
+	update_guix : Model, Implementation.Context -> Try(Plan, Str)
+	update_guix = |model, ctx| {
 		GuixBackend.check_system(ctx.host.system)?
 		dir = "${ctx.layout.generated_root}/guix"
 		result = "${dir}/lock-result.json"
 		channels = [GuixBackend.default_channel]
+		trees = GuixBackend.source_trees(model)
 		match ctx.phase {
 			0 => {
 				unpinned = "${dir}/channels-unpinned.scm"
@@ -338,10 +339,13 @@ Std := [].{
 					{ path: script, contents: GuixBackend.lock_script },
 					{ path: result, contents: "" },
 				]
+				path = |t| "${ctx.layout.project_root}/${t.path}"
 				argv = ["guix", "repl", "-q", "--", script, result, unpinned]
+					.concat(trees.join_map(|t| [t.name, path(t)]))
+				lock = Run({ what: "guix lock", argv, output: Inherit })
 				Ok(
 					Plan.{
-						steps: [Write(files), Run({ what: "guix lock", argv, output: Inherit })],
+						steps: trees.map(|t| CheckSource(path(t))).concat([Write(files), lock]),
 						next: Observe([result]),
 					},
 				)
@@ -352,7 +356,9 @@ Std := [].{
 					_ => return Err("Guix produced no ${result}")
 				}
 				pinned = GuixBackend.pins(channels, text)?
-				contents = LockFile.splice(ctx.lock, "guix", GuixBackend.section(pinned))?
+				hashed = GuixBackend.hashes(trees, text)?
+				locked = GuixBackend.section(pinned, hashed)
+				contents = LockFile.splice(ctx.lock, "guix", locked)?
 				publish = PublishLock({ previous: ctx.lock, contents })
 				Ok(Plan.{ steps: [publish], next: Done })
 			}
@@ -528,10 +534,13 @@ guix = { ..context, backend: "guix" }
 
 pin = "0123456789abcdef0123456789abcdef01234567"
 
+assets_hash = "0123456789abcdfghijklmnpqrsvwxyz0123456789abcdfghijk"
+
 guix_lock = published(
 	guix,
 	"/generated/guix/lock-result.json",
-	"{\"channels\":[{\"name\":\"guix\",\"commit\":\"${pin}\"}]}",
+	"{\"channels\":[{\"name\":\"guix\",\"commit\":\"${pin}\"}],"
+		.concat("\"sources\":[{\"name\":\"assets\",\"hash\":\"${assets_hash}\"}]}"),
 )
 
 develop = [
@@ -563,9 +572,13 @@ expect {
 	argv = ["guix", "repl", "-q", "--"]
 		.concat(script)
 		.append("${dir}/channels-unpinned.scm")
+		.concat(["assets", "/project/assets"])
 	runs(planned("update", guix)) == Ok([{ what: "guix lock", argv }])
 		and Std.guix_pins({ ..guix, lock: guix_lock })
-			== Ok([{ channel: GuixBackend.default_channel, commit: pin }])
+			== Ok({
+				channels: [{ channel: GuixBackend.default_channel, commit: pin }],
+				sources: [{ name: "assets", path: "assets", hash: assets_hash }],
+			})
 }
 
 # A Nix shell enters the locked shell; an unknown shell or a missing lock is
@@ -646,4 +659,38 @@ expect {
 expect {
 	ci = { ..guix, args: named("ci"), lock: guix_lock }
 	stages(planned("workflow", ci)) == Ok(["run greet", "build app"])
+}
+
+# The candidates cli/Selection.roc's std test assumes: shell, run, build,
+# workflow and update on each backend --backend allows, in preference
+# order; model on no backend, whatever --backend says.
+expect {
+	context_for = |backend| {
+		args: [],
+		backend,
+		host: { system: "x86_64-linux" },
+		layout: Layout.{
+			project_root: "/p",
+			workspace: "/p/.kai",
+			generated_root: "/p/.kai/generated",
+			lock_path: "/p/.kai/lock.json",
+		},
+		lock: Absent,
+		phase: 0,
+		observed: [],
+	}
+	backends = |command, choice|
+		match Std.kaifile([Name("x")]).candidates(command, choice, context_for) {
+			Candidates({ options, .. }) => options.map(|o| o.backend)
+			_ => []
+		}
+	["shell", "run", "build", "workflow", "update"].all(
+		|command|
+			backends(command, Auto) == ["nix", "guix"]
+				and backends(command, Only("nix")) == ["nix"]
+				and backends(command, Only("guix")) == ["guix"],
+	)
+		and [Auto, Only("nix"), Only("guix")].all(
+			|choice| backends("model", choice) == [""],
+		)
 }

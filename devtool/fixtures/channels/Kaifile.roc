@@ -1,8 +1,8 @@
 # Test fixture (see devtool/fixtures/README.md), not an example.
 # A Guix channel source beside generic tools: the channels shell needs Guix,
 # while generic tools use whichever backend is installed. On Guix, every
-# command runs at the channel commit Kai's lock pins. The build takes no
-# inputs, which Guix builds do not support yet.
+# command runs at the channel commit Kai's lock pins. The quote build
+# reads a locked path: source.
 #
 # Its tools are `hello`, not cowsay like the examples: CI runs this fixture on
 # real Guix with Nix absent, where Guix ships ready-made `hello` binaries,
@@ -30,6 +30,21 @@ kaifile = Std.kaifile([
 			Use("dev"),
 			Run(["sh", "-c", "hello > greeting.txt"]),
 			Output("greeting.txt"),
+		],
+	),
+	Source("words", "path:./words"),
+	Build(
+		"quote",
+		[
+			Use("dev"),
+			Inputs(["words"]),
+			Run([
+				"sh",
+				"-c",
+				"hello --greeting \"$(cat \"$KAI_INPUTS/words/greeting.txt\")\" "
+					.concat("> quote.txt"),
+			]),
+			Output("quote.txt"),
 		],
 	),
 	Workflow("ci", [RunTask("greet", ["from ci"]), BuildArtifact("greeting")]),

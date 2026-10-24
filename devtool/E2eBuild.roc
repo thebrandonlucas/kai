@@ -3,7 +3,8 @@
 # symlink never reports success, a changed locked source needs `kai update`,
 # the sandbox hides host files and TCP, and the lock is never written. On
 # Guix, on a copy of the channels fixture with Nix off PATH: a sandboxed build
-# prints the store path of its exact artifact.
+# prints the store path of its exact artifact, a build reads a locked source,
+# and a changed locked source needs `kai update`.
 import pf.Cmd
 import pf.Duration
 import pf.Env
@@ -181,7 +182,7 @@ E2eBuild := [].{
 		match guix {
 			Missing => E2e.skipped!("kai build")
 			Ready(path) => {
-				(kai, project) = E2e.guix_project!(bare, "channels", [])?
+				(kai, project) = E2e.guix_project!(bare, "channels", ["words"])?
 				result = E2eBuild.guix_in!(kai, project, path)
 				Path.delete_all!(project)?
 				result
@@ -198,6 +199,28 @@ E2eBuild := [].{
 		if Path.read_utf8!(Path.utf8(store))? != "Hello, world!\n" {
 			return Err(WrongGuixArtifact(store))
 		}
-		Stdout.line!("kai built an exact artifact in the Guix sandbox without Nix")
+		# Lock the source beside the release pin, as `kai update` would.
+		words = Path.join(project, "words")
+		guix = Path.to_os_str(Path.join(path, "guix"))
+		nar = ["hash", "-S", "nar", Path.display(words)]
+		hash = Exec.output!(Cmd.new(guix).args(Exec.strs(nar)))?.stdout_utf8.trim()
+		source = "{\"name\": \"words\", \"path\": \"words\", \"hash\": \"${hash}\"}"
+		lock = E2e.lock(E2e.release)
+			.drop_suffix("}}\n")
+			.concat(",\n  \"sources\": [${source}]\n}}\n")
+		Path.write_utf8!(Path.join(project, ".kai/lock.json"), lock)?
+		quote = ["--backend", "guix", "build", "quote"]
+		quoted = E2e.guix_kai!(kai, project, path, quote)?.stdout_utf8.trim()
+		if Path.read_utf8!(Path.utf8(quoted))? != "Hello from a locked source\n" {
+			return Err(WrongGuixArtifact(quoted))
+		}
+		# A locked source edit fails until `kai update`.
+		Path.write_utf8!(Path.join(words, "greeting.txt"), "changed\n")?
+		match E2e.guix_kai!(kai, project, path, quote) {
+			Err(NonZeroExitCode({ stderr_utf8_lossy, .. }))
+			if stderr_utf8_lossy.contains("run `kai update`") => {}
+			other => return Err(GuixBuiltChangedSource(Str.inspect(other)))
+		}
+		Stdout.line!("kai built exact artifacts, one from a source, on Guix")
 	}
 }

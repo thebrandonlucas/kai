@@ -1,8 +1,9 @@
-# Vendored linker inputs
+# Linker inputs
 
-The Kai platform links a fully static musl executable. Only
-`libhost.a` is built here (`zig build`); everything else is vendored so a
-fresh clone needs no other checkout.
+The Kai platform links a fully static musl executable. `zig build` builds
+`libhost.a` and copies the rest from the release below, which
+`build.zig.zon` fetches and the root `Kaifile.roc`'s `kai-platform` build takes as a
+locked source, so none of these files are committed.
 
 | Target    | File               | sha256                                                             |
 |-----------|--------------------|--------------------------------------------------------------------|
