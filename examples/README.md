@@ -32,6 +32,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [overlay](overlay) | An overlay adding a package, seen only where selected | `kai run moo` |
 | [modules](modules) | Settings shared through an ordinary Roc module | `kai run moo` |
 | [guix](guix) | Packages from a Guix channel beside the default source | `kai shell guix` |
+| [agenix](agenix) | A tool from another flake's overlay, encrypting and decrypting a secret | `kai run round-trip` |
 | [plugins/deploy](plugins/deploy) | A third-party plugin adding `kai deploy` | see [plugin.md](../docs/plugin.md) |
 
 Run `kai update` first in each: it locks the packages the commands use.
