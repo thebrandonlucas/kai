@@ -125,7 +125,14 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 	}
 
 	## kai's own commands, which no plugin may declare.
-	builtins = ["init", "check", "help", "describe", "__build-runner"]
+	builtins = [
+		"init",
+		"check",
+		"help",
+		"describe",
+		"bundle-plugin",
+		"__build-runner",
+	]
 
 	## The commands, backends and implementations fit together.
 	registry : Kaifile -> Try({}, Str)

@@ -13,6 +13,7 @@ const Target = struct {
 const targets = [_]Target{
     .{ .dir = "x64musl", .query = .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl } },
     .{ .dir = "arm64musl", .query = .{ .cpu_arch = .aarch64, .os_tag = .linux, .abi = .musl } },
+    .{ .dir = "arm64mac", .query = .{ .cpu_arch = .aarch64, .os_tag = .macos } },
 };
 
 pub fn build(b: *std.Build) void {
@@ -32,8 +33,8 @@ pub fn build(b: *std.Build) void {
                 .pic = true,
             }),
         });
-        // The vendored musl runtime supplies compiler-rt.
-        lib.bundle_compiler_rt = false;
+        // The vendored musl runtime supplies compiler-rt; macOS has none.
+        lib.bundle_compiler_rt = t.query.os_tag == .macos;
         copy.addCopyFileToSource(lib.getEmittedBin(), b.pathJoin(&.{ "targets", t.dir, "libhost.a" }));
     }
 }

@@ -5,9 +5,9 @@
 # warnings. On Guix: STUBBED process-boundary checks on the channels fixture
 # show that Guix commands need a Guix lock, then run under `guix
 # time-machine` at the locked channels with exact argv, and that a failing
-# Guix shell never falls back to Nix; then real Guix runs a shell and a task
-# on the composition fixture, and the channel source's shell on the channels
-# fixture.
+# Guix shell never falls back to Nix; then real Guix runs a shell and tasks,
+# keeping a task's exit code, on the composition fixture, and the channel
+# source's shell on the channels fixture.
 import pf.Cmd
 import pf.OsStr
 import pf.Env
@@ -20,7 +20,7 @@ import E2e
 
 E2eRun := [].{
 	nix! = |binary| {
-		(kai, project) = E2e.fixture!(
+		(kai, project) = E2e.nix_fixture!(
 			binary,
 			"composition",
 			["ProjectTasks.roc"],
@@ -124,20 +124,25 @@ E2eRun := [].{
 			Missing => E2e.skipped!("kai run and shell")
 			Ready(path) => {
 				composed = [
-					(["shell", "default", "--", "echo", "a b"], "a b\n"),
-					(["run", "args", "--", "a b"], "<configured argument><a b>\n"),
+					(["shell", "default", "--", "echo", "a b"], Stdout("a b\n")),
+					(
+						["run", "args", "--", "a b"],
+						Stdout("<configured argument><a b>\n"),
+					),
+					(["run", "fail"], ExitCode(7)),
 				]
 				E2eRun.guix_on!(bare, path, "composition", composed)?
 				greeting = ["hello", "--greeting", "hi"]
 				shell = ["--backend", "guix", "shell", "channels", "--"]
-				channels = [(shell.concat(greeting), "hi\n")]
+				channels = [(shell.concat(greeting), Stdout("hi\n"))]
 				E2eRun.guix_on!(bare, path, "channels", channels)?
 				Stdout.line!("kai ran pinned Guix shells and tasks without Nix")
 			}
 		}
 	}
 
-	## Run each case on a pinned copy of `example` and compare its stdout.
+	## Run each case on a pinned copy of `example` and compare its stdout or
+	## exit code.
 	guix_on! = |bare, path, example, cases| {
 		entries = if (example == "composition") ["ProjectTasks.roc"] else []
 		(kai, project) = E2e.guix_project!(bare, example, entries)?
@@ -202,9 +207,11 @@ E2eRun := [].{
 
 	guix_in! = |kai, project, path, cases| {
 		for (args, expected) in cases {
-			output = E2e.guix_kai!(kai, project, path, args)?
-			if output.stdout_utf8 != expected {
-				return Err(WrongGuixShell(Str.inspect(output)))
+			match (E2e.guix_kai!(kai, project, path, args), expected) {
+				(Ok(output), Stdout(stdout)) if output.stdout_utf8 == stdout => {}
+				(Err(NonZeroExitCode({ exit_code, .. })), ExitCode(code))
+				if exit_code == code => {}
+				(other, _) => return Err(WrongGuixShell(Str.inspect(other)))
 			}
 		}
 		Ok({})

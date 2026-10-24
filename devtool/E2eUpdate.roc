@@ -2,7 +2,7 @@
 # decodable lock, keep another backend's section, succeed again, and refuse
 # to publish while another update holds the writer lock. On Guix, on a copy
 # of the composition fixture with Nix off PATH: it locks the Guix channels
-# alone.
+# alone and refuses to publish while another update holds the writer lock.
 import pf.Cmd
 import pf.Path
 import pf.Stderr
@@ -16,7 +16,7 @@ import E2e
 
 E2eUpdate := [].{
 	nix! = |binary| {
-		(kai, project) = E2e.fixture!(
+		(kai, project) = E2e.nix_fixture!(
 			binary,
 			"composition",
 			["ProjectTasks.roc"],
@@ -79,10 +79,23 @@ E2eUpdate := [].{
 
 	guix_in! = |kai, project, path| {
 		_ = E2e.guix_kai!(kai, project, path, ["update"])?
-		locked = Path.read_utf8!(Path.join(project, ".kai/lock.json"))?
+		lock = Path.join(project, ".kai/lock.json")
+		locked = Path.read_utf8!(lock)?
 		if !locked.contains("\"guix\"") or locked.contains("\"nix\"") {
 			return Err(WrongGuixLock(locked))
 		}
-		Stdout.line!("kai update locked the Guix channels without Nix")
+		guard = Path.join(project, ".kai/lock.json.lock")
+		Path.create_dir!(guard)?
+		match E2e.guix_kai!(kai, project, path, ["update"]) {
+			Err(NonZeroExitCode(_)) => {}
+			other => return Err(UpdateIgnoredLock(Str.inspect(other)))
+		}
+		if Path.read_utf8!(lock)? != locked {
+			return Err(LockChangedWhileHeld)
+		}
+		Path.delete_empty!(guard)?
+		Stdout.line!(
+			"kai update locked the Guix channels without Nix and respected its lock",
+		)
 	}
 }

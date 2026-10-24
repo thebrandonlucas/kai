@@ -5,6 +5,8 @@ import "../platform-release" as platform_release : Str
 import "../plugins/std-release" as std_release : Str
 import api.About
 
+import Variables
+
 Help := [].{
 	# The README's Getting started section, which has the full header.
 	readme = "https://github.com/thebrandonlucas/kai#getting-started"
@@ -104,6 +106,19 @@ Help := [].{
 			Err(_) => text
 		}
 
+	# One aligned line for each environment variable kai reads.
+	environment : Str
+	environment = Str.join_with(
+		Variables.all.map(
+			|{ name, description }| {
+				width = 21 - name.count_utf8_bytes()
+				padding = Str.from_utf8(List.repeat(' ', width)) ?? ""
+				"  ${name}${padding}${description}"
+			},
+		),
+		"\n",
+	)
+
 	# Shown when Kaifile.roc is missing or does not compile, since its
 	# plugins define the rest of the commands.
 	generic : Str, Str -> Str
@@ -118,9 +133,10 @@ Help := [].{
 		\\  kai [OPTIONS] <COMMAND>
 		\\
 		\\Commands:
-		\\  init      Create a Kaifile.roc here to start a project.
-		\\  check     Compile Kaifile.roc and report whether it is valid.
-		\\  describe  List the plugins, commands and backends Kaifile.roc defines.
+		\\  init           Create a Kaifile.roc here to start a project.
+		\\  check          Compile Kaifile.roc and report whether it is valid.
+		\\  describe       List Kaifile.roc's plugins, commands and backends.
+		\\  bundle-plugin  Bundle a plugin package for this kai's release.
 		\\
 		\\A Kaifile.roc's plugins add the other commands: std adds shell, run, build,
 		\\workflow, update and model.
@@ -135,7 +151,20 @@ Help := [].{
 		\\  -h, --help          Show this help page.
 		\\  -V, --version       Show the version.
 		\\
+		\\Environment:
+		\\${Help.environment}
+		\\
 		\\${Help.tips}
+
+	# `kai bundle-plugin`'s help, also its usage error.
+	bundle_plugin =
+		\\Usage:
+		\\  kai bundle-plugin [DIR] [--output-dir DIR]
+		\\
+		\\Bundle the plugin package in DIR (default: the current directory) with
+		\\`roc bundle`, its header naming this kai's platform and std releases, into
+		\\<hash>.tar.zst in --output-dir (default: DIR). Host it, and a Kaifile.roc
+		\\using this kai's platform and std can name it by its URL.
 
 	# Color is decoration only: NO_COLOR (when non-empty), --no-color or output
 	# that is not a terminal all get plain text.

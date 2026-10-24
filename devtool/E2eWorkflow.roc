@@ -4,7 +4,8 @@
 # locked source stops a workflow before its first effect, and the lock is
 # never written. In JSON mode kai's stdout is whole JSON objects without
 # terminal escapes. On Guix, on a copy of the channels fixture with Nix off
-# PATH: a workflow runs its task, then its build.
+# PATH: a workflow runs its task, then its build, and a failing step stops
+# the rest and keeps its exit code.
 import pf.Cmd
 import pf.Path
 import pf.Stdout
@@ -16,7 +17,7 @@ import E2e
 
 E2eWorkflow := [].{
 	nix! = |binary| {
-		(kai, project) = E2e.fixture!(
+		(kai, project) = E2e.nix_fixture!(
 			binary,
 			"artifacts",
 			["assets", "src"],
@@ -27,18 +28,21 @@ E2eWorkflow := [].{
 	}
 
 	# Test-only tasks and workflows, beside the example's own: mark appends
-	# its arguments as one line to markers.txt, and edit changes the source
-	# the library is built from.
-	extra =
+	# its arguments as one line to markers.txt, and stops fails between two
+	# marks.
+	stops =
 		\\	Task("mark", [Use("dev"),
 		\\		Run(["sh", "-c", "echo \\"$*\\" >> markers.txt", "mark"])]),
-		\\	Task("edit", [Use("dev"),
-		\\		Run(["sh", "-c", "echo edited revision > src/message.txt"])]),
 		\\	Task("fail", [Use("dev"), Run(["sh", "-c", "exit 7"])]),
-		\\	Workflow("order", [RunTask("mark", ["one"]), BuildArtifact("library"),
-		\\		RunTask("mark", ["two"])]),
 		\\	Workflow("stops", [RunTask("mark", ["first"]), RunTask("fail", []),
 		\\		RunTask("mark", ["never"])]),
+
+	# More, for Nix only: edit changes the source the library is built from.
+	extra =
+		\\	Task("edit", [Use("dev"),
+		\\		Run(["sh", "-c", "echo edited revision > src/message.txt"])]),
+		\\	Workflow("order", [RunTask("mark", ["one"]), BuildArtifact("library"),
+		\\		RunTask("mark", ["two"])]),
 		\\	Workflow("repeat", [RunTask("mark", ["again"]),
 		\\		RunTask("mark", ["again"])]),
 		\\	Workflow("fresh", [BuildArtifact("library"), RunTask("edit", []),
@@ -71,7 +75,8 @@ E2eWorkflow := [].{
 	nix_in! = |kai, project| {
 		kaifile = Path.join(project, "Kaifile.roc")
 		config = match Path.read_utf8!(kaifile)?.split_on("\n])\n") {
-			[body, ""] => "${body}\n${E2eWorkflow.extra}\n])\n"
+			[body, ""] =>
+				"${body}\n${E2eWorkflow.stops}\n${E2eWorkflow.extra}\n])\n"
 			_ => return Err(UnexpectedKaifileEnd)
 		}
 		Path.write_utf8!(kaifile, config)?
@@ -218,12 +223,35 @@ E2eWorkflow := [].{
 		}
 
 	guix_in! = |kai, project, path| {
-		args = ["--backend", "guix", "workflow", "ci"]
-		workflow = E2e.guix_kai!(kai, project, path, args)?
-		if !workflow.stdout_utf8.starts_with("from ci\n") {
-			return Err(WrongGuixWorkflow(Str.inspect(workflow)))
+		kaifile = Path.join(project, "Kaifile.roc")
+		config = match Path.read_utf8!(kaifile)?.split_on("\n])\n") {
+			[body, ""] => "${body}\n${E2eWorkflow.stops}\n])\n"
+			_ => return Err(UnexpectedKaifileEnd)
 		}
-		Stdout.line!("kai ran a Guix workflow's task and build without Nix")
+		# Guix shells have no sh unless a tool provides it.
+		with_sh = config.replace_each(
+			"Tools([\"hello\"])",
+			"Tools([\"hello\", \"bash\"])",
+		)
+		Path.write_utf8!(kaifile, with_sh)?
+		workflow! = |name|
+			E2e.guix_kai!(kai, project, path, ["--backend", "guix", "workflow", name])
+		ci = workflow!("ci")?
+		if !ci.stdout_utf8.starts_with("from ci\n") {
+			return Err(WrongGuixWorkflow(Str.inspect(ci)))
+		}
+		# The failing step's exit code is kai's; later steps never run.
+		match workflow!("stops") {
+			Err(NonZeroExitCode({ exit_code, .. })) if exit_code == 7 => {}
+			other => return Err(LostExitCode(Str.inspect(other)))
+		}
+		markers = Path.read_utf8!(Path.join(project, "markers.txt")) ?? ""
+		if markers != "first\n" {
+			return Err(WrongMarkers("first\n", markers))
+		}
+		Stdout.line!(
+			"kai ran a Guix workflow's task and build without Nix and kept exit codes",
+		)
 	}
 }
 

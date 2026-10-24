@@ -13,6 +13,7 @@ import pf.Stderr
 import api.LockJson
 
 import Snapshot
+import Variables
 
 BuildRunner := [].{
 	# The subcommand the generated build derivations run; std's NixBackend
@@ -156,7 +157,7 @@ BuildRunner := [].{
 			Signaled(signal) => return Err(RunFailed(128 + signal))
 		}
 		output = BuildRunner.output!(work, spec.output)?
-		out = Env.var_str!("out")?
+		out = Variables.read!(Variables.out)?
 		match Path.unix(out).type!() {
 			Err(PathErr(NotFound, _)) => {}
 			Ok(_) => return Err(

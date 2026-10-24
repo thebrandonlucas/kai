@@ -2,8 +2,8 @@
 # publish the caller's namespace witness beside it, replacing the previous
 # snapshot only once the new one is completely staged. What the project's
 # .gitignore files ignore is left out. Symbolic links and special files are
-# refused, never followed. Callers serialize workspace use and must not mutate
-# the project concurrently.
+# refused, never followed. Callers hold the workspace's build lock and must not
+# mutate the project concurrently.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -231,6 +231,7 @@ Snapshot := [].{
 			directory = $pending.last() ?? []
 			$pending = $pending.drop_last(1)
 			source = Snapshot.join(source_root, directory)
+			var $names = []
 			for entry in Path.unix_bytes(source).list!()? {
 				full = Snapshot.bytes(entry)
 				name = full.drop_first(source.len() + 1)
@@ -245,14 +246,19 @@ Snapshot := [].{
 						IsFile => {
 							executable = entry.is_executable!()?
 							$files = $files.append({ relative, executable })
+							$names = $names.append(name)
 						}
 						IsSymLink => return Err(Snapshot.refused(Symlink, entry))
 						IsOther => return Err(Snapshot.refused(Special, entry))
 					}
 				}
 			}
+			target = Snapshot.join(target_root, directory)
+			for batch in Snapshot.batches($names) {
+				Snapshot.tool!("cp", ["-R", "-P", "--"], batch.append(target), source)?
+			}
 		}
-		Snapshot.copy_files!(source_root, target_root, $files)
+		Snapshot.check_files!(source_root, target_root, $files)
 	}
 
 	refused = |kind, path|
@@ -262,18 +268,11 @@ Snapshot := [].{
 				SnapshotFailed("snapshot refuses special file: ${path.display()}")
 		}
 
-	# basic-cli cannot open without following links or set file modes, so GNU
-	# cp copies with O_NOFOLLOW (a file swapped for a link or special file is
-	# copied as one, then refused below) and chmod normalizes modes as 755/644.
-	copy_files! = |source_root, target_root, files| {
-		for batch in Snapshot.batches(files) {
-			Snapshot.tool!(
-				"cp",
-				["-R", "-P", "--parents", "--"],
-				batch.map(|file| file.relative).append(target_root),
-				source_root,
-			)?
-		}
+	# basic-cli cannot open without following links or set file modes, so
+	# cp -P copies without following links (a file swapped for a link or
+	# special file is copied as one, then refused here) and chmod normalizes
+	# modes as 755/644.
+	check_files! = |source_root, target_root, files| {
 		for file in files {
 			copied = Path.unix_bytes(Snapshot.join(target_root, file.relative))
 			original = Path.unix_bytes(Snapshot.join(source_root, file.relative))

@@ -142,7 +142,7 @@ would run; the deploy example uses it for `nixos-rebuild`.
 
 Kaifile.roc fails to compile when two plugins declare the same command,
 implement the same command on the same backend, name kai's own commands
-(`check`, `describe`, `help`), or leave a command without an
+(`check`, `describe`, `help`, `bundle-plugin`), or leave a command without an
 implementation. Resolve a clash explicitly:
 
 ```roc
@@ -150,8 +150,28 @@ Std.plugin(project).without({ command: "shell", backend: "nix" })
 Std.plugin(project).without_command("workflow")
 ```
 
+## Publishing a plugin
+
+```sh
+kai bundle-plugin plugins/deploy    # or --output-dir DIR
+```
+
+bundles the package with `roc bundle` into `<hash>.tar.zst`, after
+pointing its header at the platform and std releases this kai uses (a
+`platform` entry, std's `api.roc` packages and a `std:` entry). Host the
+file at a URL ending in `<hash>.tar.zst`, which Roc checks the download
+against (a prefix such as `deploy-` is fine), and a Kaifile.roc on the
+same release names it:
+
+```roc
+	deploy: "https://example.com/v0.0.8/deploy-<hash>.tar.zst",
+```
+
+Bundle again for each Kai release.
+
 ## Testing
 
 `zig build e2e-plugins` runs a real kai against a project using
-`examples/plugins/deploy`. A plugin package's own expects run with
-`roc test` on its `main.roc`, as `zig build test` does for std.
+`examples/plugins/deploy`, and `zig build e2e-bundle` loads it from a
+served bundle `kai bundle-plugin` made. A plugin package's own expects run
+with `roc test` on its `main.roc`, as `zig build test` does for std.

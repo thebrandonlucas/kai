@@ -9,6 +9,8 @@ import pf.Env
 import pf.Path
 import pf.Stdout
 
+import api.LockJson
+
 import Exec
 
 import ConfigFixtures
@@ -50,6 +52,59 @@ E2e := [].{
 		}
 		Ok((kai, project))
 	}
+
+	## `fixture!` for a Nix half; see `nix_copy!`.
+	nix_fixture! = |binary, name, entries|
+		E2e.nix_copy!(binary, "devtool/fixtures/${name}", entries)
+
+	## `copy!` for a Nix half: the copy's default package source is pinned to
+	## the nixpkgs Kai's own lock holds, unless the project names its own.
+	nix_copy! = |binary, dir, entries| {
+		(kai, project) = E2e.copy!(binary, dir, entries)?
+		kaifile = Path.join(project, "Kaifile.roc")
+		root = Path.canonicalize!(Env.cwd!()?)?
+		pinned = E2e.pin_nixpkgs(Path.read_utf8!(kaifile)?, E2e.nixpkgs!(root)?)
+		Path.write_utf8!(kaifile, pinned)?
+		Ok((kai, project))
+	}
+
+	## The nixpkgs revision Kai's own .kai/lock.json locks for its default
+	## package source, which the dev shell already holds. Tests pin each
+	## Kaifile to it, so `kai update` reuses it rather than downloading
+	## nixos-unstable whenever that moves.
+	nixpkgs! = |root| {
+		text = Path.read_utf8!(Path.join(root, ".kai/lock.json"))?
+		bad = |err| BadKaiLock(Str.inspect(err))
+		var $node = LockJson.decode(text).map_err(bad)?
+		for name in ["nix", "graph", "nodes", "default", "locked", "rev"] {
+			$node = LockJson.field($node, name).map_err(bad)?
+		}
+		LockJson.string($node).map_err(bad)
+	}
+
+	## A Kaifile with its default package source pinned to nixpkgs `rev`,
+	## added before its Name setting at the same indentation; unchanged when
+	## it names a default source itself.
+	pin_nixpkgs : Str, Str -> Str
+	pin_nixpkgs = |kaifile, rev|
+		if kaifile.contains("Packages(\"default\"") {
+			kaifile
+		} else {
+			source = "github:NixOS/nixpkgs/${rev}"
+			setting = "Packages(\"default\", From(NixPackages(\"${source}\"))),"
+			var $lines = []
+			var $pinned = Bool.False
+			for line in kaifile.split_on("\n") {
+				trimmed = line.trim()
+				if !$pinned and trimmed.starts_with("Name(") {
+					indent = line.split_on(trimmed).first() ?? ""
+					$lines = $lines.append("${indent}${setting}")
+					$pinned = Bool.True
+				}
+				$lines = $lines.append(line)
+			}
+			Str.join_with($lines, "\n")
+		}
 
 	## The PATH directory holding a program, or an error if none does.
 	which! = |program| {
@@ -141,3 +196,16 @@ E2e := [].{
 		\\exit 3
 		\\
 }
+
+# The pinned default source goes before Name, at its indentation.
+expect {
+	pinned = E2e.pin_nixpkgs("kaifile = Std.kaifile([\n\tName(\"x\"),\n])", "abc")
+	source = "github:NixOS/nixpkgs/abc"
+	setting = "\tPackages(\"default\", From(NixPackages(\"${source}\"))),"
+	pinned == "kaifile = Std.kaifile([\n${setting}\n\tName(\"x\"),\n])"
+}
+
+# A Kaifile naming its own default source keeps it.
+expect
+	E2e.pin_nixpkgs("\tPackages(\"default\", Auto),\n\tName(\"x\"),", "abc")
+		== "\tPackages(\"default\", Auto),\n\tName(\"x\"),"

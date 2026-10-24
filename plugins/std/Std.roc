@@ -176,6 +176,7 @@ Std := [].{
 					backend: On("guix"),
 					fit: |args| GuixBackend.fit(model, Std.request(command, args)?),
 					plan: |ctx| {
+						GuixBackend.check_system(ctx.host.system)?
 						wanted = Std.request(command, ctx.args)?
 						locked = Std.guix_pins(ctx)?
 						GuixBackend.request_steps(model, wanted, ctx.layout, locked)
@@ -322,6 +323,7 @@ Std := [].{
 	## section, keeping the others.
 	update_guix : Implementation.Context -> Try(Plan, Str)
 	update_guix = |ctx| {
+		GuixBackend.check_system(ctx.host.system)?
 		dir = "${ctx.layout.generated_root}/guix"
 		result = "${dir}/lock-result.json"
 		channels = [GuixBackend.default_channel]
@@ -435,4 +437,213 @@ expect {
 	valid.map_ok(|model| model.contains("(name \"x\")")) == Ok(Bool.True)
 		and Kaifile.validate(Std.kaifile([]))
 			== Err("std: MissingName: declare Name once")
+}
+
+import "backends/nix/tests/local.nix-lock.json" as native_lock : Str
+
+# A shell, task, build and workflow on one environment both backends serve;
+# the unused build source matches the Nix lock fixture.
+planning : List(Config.Setting)
+planning = [
+	Name("planning"),
+	Systems(["x86_64-linux"]),
+	Source("assets", "path:./assets"),
+	Environment("dev", [Tools(["hello"])]),
+	Shell("default", [Use("dev")]),
+	Task("greet", [Use("dev"), Run(["hello", "-g", "hi"])]),
+	Build("app", [Use("dev"), Run(["make"]), Output("out")]),
+	Workflow("ci", [RunTask("greet", []), BuildArtifact("app")]),
+]
+
+context : Implementation.Context
+context = {
+	args: [],
+	backend: "nix",
+	host: { system: "x86_64-linux" },
+	layout: Layout.{
+		project_root: "/project",
+		workspace: "/work",
+		generated_root: "/generated",
+		lock_path: "/authority/inputs.lock",
+	},
+	lock: Absent,
+	phase: 0,
+	observed: [],
+}
+
+# The planning settings' plan for `command` on the context's backend, once
+# the implementation fits.
+planned : Str, Implementation.Context -> Try(Plan, Str)
+planned = |command, ctx| {
+	model = ConfigToModel.convert(planning)?
+	found = Std.implementations(model)
+		.find_first(|i| i.command == command and i.backend == On(ctx.backend))
+		.map_err(|_| "std has no ${command} on ${ctx.backend}")?
+	(found.fit)(ctx.args)?
+	(found.plan)(ctx)
+}
+
+named : Str -> Command.Args
+named = |name| [{ name: "name", value: Present(name) }]
+
+runs : Try(Plan, Str) -> Try(List({ what : Str, argv : List(Str) }), Str)
+runs = |result|
+	result.map_ok(
+		|plan|
+			plan.steps.keep_oks(
+				|step|
+					match step {
+						Run({ what, argv, .. }) => Ok({ what, argv })
+						_ => Err({})
+					},
+			),
+	)
+
+stages : Try(Plan, Str) -> Try(List(Str), Str)
+stages = |result|
+	result.map_ok(
+		|plan|
+			plan.steps.keep_oks(
+				|step|
+					match step {
+						Stage(name) => Ok(name)
+						_ => Err({})
+					},
+			),
+	)
+
+# The lock a phase 1 update publishes from what phase 0 observed.
+published : Implementation.Context, Str, Str -> [Absent, Present(Str)]
+published = |ctx, path, text| {
+	resumed = { ..ctx, phase: 1, observed: [{ path, contents: Text(text) }] }
+	match planned("update", resumed).map_ok(|plan| plan.steps) {
+		Ok([PublishLock({ contents, .. })]) => Present(contents)
+		_ => Absent
+	}
+}
+
+nix_lock = published(context, "/generated/nix/flake.lock", native_lock)
+
+guix = { ..context, backend: "guix" }
+
+pin = "0123456789abcdef0123456789abcdef01234567"
+
+guix_lock = published(
+	guix,
+	"/generated/guix/lock-result.json",
+	"{\"channels\":[{\"name\":\"guix\",\"commit\":\"${pin}\"}]}",
+)
+
+develop = [
+	"nix",
+	"develop",
+	"--no-update-lock-file",
+	"--no-write-lock-file",
+]
+
+time_machine = ["guix", "time-machine", "-C", "/generated/guix/channels.scm"]
+
+# Nix update resolves the generated flake, then publishes the observed lock
+# as the lock's Nix section.
+expect {
+	argv = ["nix", "flake", "update", "--flake", "path:/generated/nix"]
+	match nix_lock {
+		Present(text) =>
+			runs(planned("update", context)) == Ok([{ what: "nix flake update", argv }])
+				and Locks.decode(text).is_ok()
+		Absent => Bool.False
+	}
+}
+
+# Guix update resolves the channels with guix repl, then publishes the
+# observed pins as the lock's Guix section.
+expect {
+	dir = "/generated/guix"
+	script = ["${dir}/lock.scm", "${dir}/lock-result.json"]
+	argv = ["guix", "repl", "-q", "--"]
+		.concat(script)
+		.append("${dir}/channels-unpinned.scm")
+	runs(planned("update", guix)) == Ok([{ what: "guix lock", argv }])
+		and Std.guix_pins({ ..guix, lock: guix_lock })
+			== Ok([{ channel: GuixBackend.default_channel, commit: pin }])
+}
+
+# A Nix shell enters the locked shell; an unknown shell or a missing lock is
+# refused.
+expect {
+	shell = { ..context, args: named("default"), lock: nix_lock }
+	installable = "path:/generated/nix#devShells.x86_64-linux.default"
+	runs(planned("shell", shell))
+		== Ok([{ what: "shell default", argv: develop.append(installable) }])
+		and planned("shell", { ..shell, args: named("missing") })
+			== Err("unknown shell: missing")
+		and planned("shell", { ..shell, lock: Absent })
+			== Err("no lock file at /authority/inputs.lock; run `kai update`")
+}
+
+# A Nix task runs its command and trailing arguments in its environment.
+expect {
+	args = [
+		{ name: "task", value: Present("greet") },
+		{ name: "args", value: Many(["a b"]) },
+	]
+	installable = "path:/generated/nix#devShells.x86_64-linux.kai-env-dev"
+	argv = develop.concat([installable, "--command", "hello", "-g", "hi", "a b"])
+	runs(planned("run", { ..context, args, lock: nix_lock }))
+		== Ok([{ what: "task greet", argv }])
+}
+
+# A Nix build builds its package; an unknown build is refused.
+expect {
+	build = { ..context, args: named("app"), lock: nix_lock }
+	match runs(planned("build", build)) {
+		Ok([{ what, argv }]) =>
+			what == "build app"
+				and argv.last() == Ok("path:/generated/nix#packages.x86_64-linux.app")
+				and planned("build", { ..build, args: named("missing") }).is_err()
+		_ => Bool.False
+	}
+}
+
+# A Nix workflow stages each step in order.
+expect {
+	ci = { ..context, args: named("ci"), lock: nix_lock }
+	stages(planned("workflow", ci)) == Ok(["run greet", "build app"])
+		and planned("workflow", { ..ci, args: named("missing") }).is_err()
+}
+
+# A Guix shell runs guix shell at the locked channels; without the Guix
+# section it is refused.
+expect {
+	shell = { ..guix, args: named("default"), lock: guix_lock }
+	argv = time_machine.concat(["--", "shell", "-q", "--pure", "hello"])
+	runs(planned("shell", shell)) == Ok([{ what: "shell default", argv }])
+		and planned("shell", { ..shell, lock: nix_lock }).is_err()
+}
+
+# A Guix task runs its command and trailing arguments in guix shell.
+expect {
+	args = [
+		{ name: "task", value: Present("greet") },
+		{ name: "args", value: Many(["a b"]) },
+	]
+	command = ["--", "hello", "-g", "hi", "a b"]
+	argv = time_machine.concat(["--", "shell", "-q", "--pure", "hello"])
+		.concat(command)
+	runs(planned("run", { ..guix, args, lock: guix_lock }))
+		== Ok([{ what: "task greet", argv }])
+}
+
+# A Guix build builds its generated file at the locked channels.
+expect {
+	build = { ..guix, args: named("app"), lock: guix_lock }
+	scm = "/generated/guix/build-app.scm"
+	argv = time_machine.concat(["--", "build", "-f", scm])
+	runs(planned("build", build)) == Ok([{ what: "build app", argv }])
+}
+
+# A Guix workflow stages each step in order.
+expect {
+	ci = { ..guix, args: named("ci"), lock: guix_lock }
+	stages(planned("workflow", ci)) == Ok(["run greet", "build app"])
 }

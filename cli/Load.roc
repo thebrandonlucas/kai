@@ -15,6 +15,7 @@ import "../.roc-version" as compiler_version : Str
 import "../.roc-overlay" as roc_overlay : Str
 
 import Output
+import Variables
 
 Load := [].{
 	# The configuration file and the directory commands resolve paths against.
@@ -54,16 +55,16 @@ Load := [].{
 	compiler! : () => Try(Str, _)
 	compiler! = || {
 		bundle_variables = [
-			"KAI_PLATFORM_BUNDLE",
-			"KAI_STD_BUNDLE",
-			"KAI_ROC_PACKAGES",
+			Variables.kai_platform_bundle,
+			Variables.kai_std_bundle,
+			Variables.kai_roc_packages,
 		]
 		for variable in bundle_variables {
-			for bundle in (Env.var_str!(variable) ?? "").split_on(":") {
+			for bundle in (Variables.read!(variable) ?? "").split_on(":") {
 				_ = Load.seed!(bundle)
 			}
 		}
-		match Env.var_str!("ROC") {
+		match Variables.read!(Variables.roc) {
 			# A command such as `roc`, an absolute path, or a path relative to
 			# the directory kai was started in, such as `./bin/roc`.
 			Ok(requested_compiler_override) => {
@@ -129,9 +130,9 @@ Load := [].{
 	# XDG_CACHE_HOME, or ~/.cache.
 	cache! : () => Try(Str, _)
 	cache! = ||
-		match Env.var_str!("XDG_CACHE_HOME") {
+		match Variables.read!(Variables.xdg_cache_home) {
 			Ok(value) if !value.is_empty() => Ok(value)
-			_ => Ok("${Env.var_str!("HOME")?}/.cache")
+			_ => Ok("${Variables.read!(Variables.home)?}/.cache")
 		}
 
 	# A Nix-installed Kai's wrapper sets KAI_PLATFORM_BUNDLE and KAI_STD_BUNDLE
@@ -156,10 +157,18 @@ Load := [].{
 		staging = "${store}/${hash}.${Random.seed_u64!()?.to_str()}.tmp"
 		Load.path(staging).create_dir!()?
 		copied = Cmd.new("cp")
-			.args(["-R", "--no-preserve=mode", "--"])
+			.args(["-R", "--"])
 			.args([OsStr.from_str("${bundle}/."), OsStr.from_str(staging)])
 			.call!()
-		result = match copied {
+		# A bundle in the read-only Nix store copies read-only.
+		writable = match copied {
+			Ok(_) =>
+				Cmd.new("chmod")
+					.args(["-R", "u+w", "--", OsStr.from_str(staging)])
+					.call!()
+			Err(err) => Err(err)
+		}
+		result = match writable {
 			Ok(_) => Load.path(staging).rename!(Load.path("${store}/${hash}"))
 			Err(_) => Err(CopyFailed)
 		}
@@ -186,6 +195,7 @@ Load := [].{
 		match (host.arch(), host.os()) {
 			(X64, Linux(_)) => Ok("x86_64-linux")
 			(Arm64, Linux(_)) => Ok("aarch64-linux")
+			(Arm64, MacOS(_)) => Ok("aarch64-darwin")
 			_ => Err(UnsupportedHost)
 		}
 	}

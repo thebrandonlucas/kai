@@ -18,6 +18,7 @@
 - Sometimes I will write comments in a file and ask you to address them. You should just respond to the questions and not overwrite the comments/modify the file when I do this.
 - When asked to implement a brainstormed feature, favor terseness over verbosity. Assume I will have to read and understand the code and therefore the smallest change to implement desired behavior while following rules is preferred.
 - Use Roc's `\\` syntax for regular multiline strings. Use `Str.join_with` only when appending variables, not to assemble static multiline literals.
+- Prefer "wide and short" code: names that say plainly what a value holds, even when long (underscores welcome, no abbreviations or acronyms such as `cwd`), and fewer lines overall, so a change stays small and easy to take in. Rename unclear names in code you are already changing.
 - Don't write tests unless explicitly asked to do a specific set or finish and already started test.
 - Commits should strive to be reviewable by a human. +50/-50 average, upper bound +500/-500 if possible.
 - Do not use conventional commits.

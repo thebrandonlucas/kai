@@ -18,8 +18,10 @@ import Execute
 import Help
 import Load
 import Output
+import PluginBundle
 import Selection
 import Update
+import Variables
 import Workspace
 
 import "../VERSION" as canonical_version : Str
@@ -71,6 +73,12 @@ run! = |shown, mode| {
 	if command_word(shown) == Ok("init") and !asks_help(shown) {
 		return init!(requested_file(shown), mode)
 	}
+	if command_word(shown) == Ok("bundle-plugin") {
+		if asks_help(shown) {
+			return Stdout.line!(Help.bundle_plugin)
+		}
+		return bundle_plugin!(bundle_arguments(shown, [], Err(NoValue))?, mode)
+	}
 	located = Load.project!(requested_file(shown))
 	if command_word(shown) == Ok("check") and !asks_help(shown) {
 		project = located?
@@ -91,7 +99,7 @@ run! = |shown, mode| {
 	layout = Workspace.locate!(project.root)?
 	style = Help.text_style({
 		terminal: is_terminal!("1") and is_terminal!("2"),
-		no_color: Env.var_str!("NO_COLOR") ?? "",
+		no_color: Variables.read!(Variables.no_color) ?? "",
 		flag: requests(shown, "--no-color") or mode == Json,
 	})
 	asked = { project, layout, shown, style }
@@ -239,6 +247,53 @@ init! = |requested, mode| {
 	)
 }
 
+# `kai bundle-plugin`: bundle a plugin for this kai's release, by default
+# into the plugin's own directory.
+bundle_plugin! = |{ plugin, output }, mode| {
+	cwd = Env.cwd!()?.to_str()?
+	directory = Load.path(Load.resolve(cwd, plugin)).canonicalize!()?.to_str()?
+	target = Load.resolve(cwd, output ?? directory)
+	bundle = PluginBundle.create!(directory, target)?
+	name = directory.split_on("/").last() ?? "plugin"
+	file = bundle.split_on("/").last() ?? bundle
+	bundled = "Bundled ${bundle}."
+	summary =
+		\\${bundled}
+		\\Host it at a URL ending in its file name, and add it to the header of a
+		\\Kaifile.roc that uses this kai's platform and std:
+		\\  ${name}: "https://…/${file}",
+	Output.result!(
+		mode,
+		summary,
+		Output.event(
+			"bundle-plugin",
+			bundled,
+			[("file", Output.text(bundle)), ("name", Output.text(name))],
+		),
+	)
+}
+
+# bundle-plugin's directory and --output-dir, among kai's own options.
+bundle_arguments = |args, words, output|
+	match args {
+		[] =>
+			match words {
+				[_] => Ok({ plugin: ".", output })
+				[_, plugin] => Ok({ plugin, output })
+				_ => Err(Usage(Help.bundle_plugin))
+			}
+		["--output-dir", value, .. as rest] =>
+			bundle_arguments(rest, words, Ok(value))
+		["--json", .. as rest] | ["--no-color", .. as rest] =>
+			bundle_arguments(rest, words, output)
+		[arg, .. as rest] =>
+			if arg.starts_with("-") {
+				Err(Usage(Help.bundle_plugin))
+			} else {
+				bundle_arguments(rest, words.append(arg), output)
+			}
+	}
+
 # Help depends on the configuration, so --file is found before parsing, the
 # way the parser reads it. Arguments after -- belong to a task or command.
 requested_file : List(Str) -> Try(Str, [NoValue])
@@ -275,12 +330,15 @@ describe = |err|
 		NoKaifile(location) => "no Kaifile.roc at ${location}"
 		KaifileExists(location) =>
 			"${location} already exists; kai init never replaces a file"
+		NoPlatformReference(file) =>
+			"${file} names no platform; a plugin's header has `pf: platform \"…\"`"
+		BundleFailed(output) => "roc bundle failed:\n${output}"
 		PreviousHeader =>
 			"Kaifile.roc uses the pre-plugin header `app [config]`; start it as "
 				.concat("`kai --help` shows and wrap the settings in ")
 				.concat("`kaifile = Std.kaifile([...])`")
 		UnsupportedHost =>
-			"Kai runs only on x86_64 and aarch64 Linux hosts"
+			"Kai runs only on x86_64 and aarch64 Linux and Apple Silicon macOS hosts"
 		CompilerUnavailable(compiler, message) =>
 			"could not run the Roc compiler `${compiler}` (${message}); "
 				.concat(needs_compiler)
@@ -360,6 +418,17 @@ expect [
 	(["--", "check"], Err(NoCommand)),
 ].all(|(args, expected)| command_word(args) == expected)
 	and operand(["--json", "workflow", "ci", "--dry-run"]) == "ci"
+
+# bundle-plugin takes a directory and --output-dir among kai's own options.
+expect [
+	(["bundle-plugin"], Ok({ plugin: ".", output: Err(NoValue) })),
+	(
+		["--json", "bundle-plugin", "p", "--output-dir", "o"],
+		Ok({ plugin: "p", output: Ok("o") }),
+	),
+	(["bundle-plugin", "p", "q"], Err(Usage(Help.bundle_plugin))),
+	(["bundle-plugin", "--yes"], Err(Usage(Help.bundle_plugin))),
+].all(|(args, expected)| bundle_arguments(args, [], Err(NoValue)) == expected)
 
 # A failing child's status becomes kai's, a refusal is a usage error, and
 # every other failure is 1.

@@ -91,6 +91,7 @@ kai run hello                     # run a task
 kai run hello -- again            # arguments after -- are appended
 kai build greeting                # sandboxed build; prints the store path
 kai workflow ci                   # run steps in order, stop at a failure
+kai bundle-plugin plugins/deploy  # bundle a plugin package for hosting
 ```
 
 Tool names are the backend's own package names: Nix attributes such as
@@ -118,6 +119,23 @@ tasks, builds and workflows.
 Names and references are checked as the file compiles, so `kai check` reports
 mistakes before anything runs. [examples](examples/) has a small project for
 each setting and command, from a first shell to builds, workflows and Guix.
+
+### Tasks and builds
+
+Shells and tasks run on your machine, in the project directory, inside the
+environment's shell: they see your files, your network and anything else you
+can reach, and what they write stays in the working tree.
+
+Builds run sandboxed. A build gets a copy of the project, leaving out what
+its `.gitignore` files ignore (`Files([...])` narrows the copy to the given
+project-relative paths), plus only its environment's tools, its declared
+sources (`$KAI_INPUTS`) and the artifacts of the builds it needs
+(`$KAI_ARTIFACTS`). It has no network, and only its `Output` is kept, in the
+store.
+
+Use a task for work that touches the project or the outside world, such as
+running tests, formatting or deploying. Use a build for an artifact that should
+depend only on what it declares, not on the machine it is built on.
 
 ### Reusing configuration
 

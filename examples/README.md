@@ -25,6 +25,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [build](build) | A sandboxed build and its output | `kai build wisecow` |
 | [needs](needs) | A build reading another build's artifact | `kai build loud` |
 | [source-build](source-build) | A build reading a locked source | `kai build moofasa` |
+| [path-source](path-source) | A build reading a locked project directory | `kai build kai` |
 | [workflow](workflow) | Tasks, builds and workflows run in order | `kai workflow encore` |
 | [packages](packages) | Package sources, a pinned release and flake inputs | `kai shell` |
 | [raw](raw) | Passing Nix-specific data through with `Raw` | `kai shell` |
@@ -34,3 +35,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [plugins/deploy](plugins/deploy) | A third-party plugin adding `kai deploy` | see [plugin.md](../docs/plugin.md) |
 
 Run `kai update` first in each: it locks the packages the commands use.
+
+Shells and tasks run on your machine with your files and network; builds run
+sandboxed with only what they declare. See
+[Tasks and builds](../README.md#tasks-and-builds).
