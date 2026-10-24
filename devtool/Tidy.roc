@@ -4,6 +4,7 @@
 # Currently there are 6:
 # - Enforce each code module and expect test to have an explainer comment
 # - Require every backend planner to have executed planning expect tests
+# - Require each plugin's test root to check Conformance.missing
 # - Limit line length to 80
 # - Reject direct static literal-list Str.join_with calls
 # - Require character literals in ASCII byte comparisons
@@ -15,6 +16,7 @@ import pf.Stderr
 Tidy := [].{
 	Kind : [
 		LineTooLong(U64),
+		MissingConformance,
 		MissingExpectComment,
 		MissingImplementationTest(Str),
 		MissingModuleComment,
@@ -686,6 +688,15 @@ Tidy := [].{
 			|line| line.text.starts_with("\tplan : Model, Request"),
 		)
 
+	# A plugin package's test root, its main.roc on the Kai platform, checks
+	# that planning tests cover every implementation.
+	lacks_conformance = |path, source|
+		(path.starts_with("plugins/") or path.starts_with("examples/plugins/"))
+			and path.ends_with("/main.roc")
+			and "\n${source}".contains("\npackage")
+			and source.contains(": platform \"")
+			and !source.contains("Conformance.missing(")
+
 	relative_path = |raw_path|
 		if raw_path.starts_with("./") {
 			Str.from_utf8_lossy(raw_path.to_utf8().drop_first(2))
@@ -775,8 +786,13 @@ Tidy := [].{
 							path: display_path,
 						},
 				)
+				conformance = if Tidy.lacks_conformance(display_path, source) {
+					[Tidy.Diagnostic.{ kind: MissingConformance, line: 1, path: display_path }]
+				} else {
+					[]
+				}
 				remaining = Tidy.check_paths!(rest)?
-				Ok(diagnostics.concat(remaining))
+				Ok(diagnostics.concat(conformance).concat(remaining))
 			}
 		}
 
@@ -821,6 +837,9 @@ Tidy := [].{
 					MissingImplementationTest(_) => Bool.True
 					_ => Bool.False
 				},
+		)
+		missing_conformance = diagnostics.keep_if(
+			|diagnostic| diagnostic.kind == MissingConformance,
 		)
 
 		if !missing_comments.is_empty() {
@@ -893,12 +912,21 @@ Tidy := [].{
 				Stderr.line!("  ${diagnostic.path} -> ${test_path}")?
 			}
 		}
+		if !missing_conformance.is_empty() {
+			Stderr.line!("")?
+			header = "Plugin test roots without Conformance.missing:"
+			Stderr.line!(Tidy.colorize(Tidy.ansi_red, header))?
+			for diagnostic in missing_conformance {
+				Stderr.line!("  ${diagnostic.path}")?
+			}
+		}
 		if !diagnostics.is_empty() {
 			Stderr.line!("")?
 		}
 		Stderr.line!("Checks:")?
 		Tidy.print_check!("Module and expect comments", missing_comments.is_empty())?
 		Tidy.print_check!("Backend planner tests", missing_tests.is_empty())?
+		Tidy.print_check!("Plugin Conformance", missing_conformance.is_empty())?
 		Tidy.print_check!("80-codepoint line limit", long_lines.is_empty())?
 		Tidy.print_check!(
 			"No direct static literal-list Str.join_with calls",
