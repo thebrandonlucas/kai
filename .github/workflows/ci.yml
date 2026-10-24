@@ -15,7 +15,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
   # Nightly at 07:00 UTC, every day, against master: runs the full suite,
-  # aarch64-linux and real Guix, which pull requests skip.
+  # aarch64-linux, macOS and real Guix, which pull requests skip.
   schedule:
     - cron: "0 7 * * *"
   workflow_dispatch:
@@ -275,3 +275,65 @@ jobs:
 
       - name: Run Guix integration
         run: kai shell default -- zig build guix-integration
+
+  # Kai natively on Apple Silicon, nightly and on demand. No darwin release
+  # exists yet, so it builds kai from source, then checks a small Kaifile:
+  # update, run and shell work, and build refuses with the macOS message.
+  macos:
+    name: macos (aarch64-darwin)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build kai
+        run: |
+          set -eu
+          nix shell "$(cat .roc-overlay)#$(cat .roc-version)" nixpkgs#zig_0_16 --command sh -c \
+            '(cd platform && zig build --release) && roc build cli/main.roc --output=kai'
+
+      - name: Check a Kaifile
+        run: |
+          set -eu
+          mkdir macos-check
+          cd macos-check
+          cat > Kaifile.roc <<'KAIFILE'
+          app [kaifile] {
+              pf: platform "../platform/main.roc",
+              std: "../plugins/std/main.roc",
+          }
+
+          import std.Std
+
+          kaifile = Std.kaifile([
+              Name("macos-check"),
+              Systems(["aarch64-darwin"]),
+              Environment("cow", [Tools(["cowsay"])]),
+              Shell("default", [Use("cow")]),
+              Task("moo", [Use("cow"), Run(["cowsay", "moo"])]),
+              Build("note", [Use("cow"), Run(["sh", "-c", "echo moo > note"]), Output("note"), Files([])]),
+          ])
+          KAIFILE
+          ../kai check
+          ../kai update
+          ../kai run moo > run.log
+          cat run.log
+          grep -q moo run.log
+          ../kai shell default -- cowsay hello > shell.log
+          cat shell.log
+          grep -q hello shell.log
+          if ../kai build note > build.log 2>&1; then
+            cat build.log
+            echo "kai build should refuse on macOS"
+            exit 1
+          fi
+          cat build.log
+          grep -q macOS build.log
