@@ -660,3 +660,37 @@ expect {
 	ci = { ..guix, args: named("ci"), lock: guix_lock }
 	stages(planned("workflow", ci)) == Ok(["run greet", "build app"])
 }
+
+# The candidates cli/Selection.roc's std test assumes: shell, run, build,
+# workflow and update on each backend --backend allows, in preference
+# order; model on no backend, whatever --backend says.
+expect {
+	context_for = |backend| {
+		args: [],
+		backend,
+		host: { system: "x86_64-linux" },
+		layout: Layout.{
+			project_root: "/p",
+			workspace: "/p/.kai",
+			generated_root: "/p/.kai/generated",
+			lock_path: "/p/.kai/lock.json",
+		},
+		lock: Absent,
+		phase: 0,
+		observed: [],
+	}
+	backends = |command, choice|
+		match Std.kaifile([Name("x")]).candidates(command, choice, context_for) {
+			Candidates({ options, .. }) => options.map(|o| o.backend)
+			_ => []
+		}
+	["shell", "run", "build", "workflow", "update"].all(
+		|command|
+			backends(command, Auto) == ["nix", "guix"]
+				and backends(command, Only("nix")) == ["nix"]
+				and backends(command, Only("guix")) == ["guix"],
+	)
+		and [Auto, Only("nix"), Only("guix")].all(
+			|choice| backends("model", choice) == [""],
+		)
+}

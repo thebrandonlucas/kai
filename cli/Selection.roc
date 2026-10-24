@@ -163,6 +163,47 @@ expect {
 	)
 }
 
+# Each std command, as std answers it, over each backend availability and
+# --backend: shell, run, build, workflow and update plan on nix and guix,
+# model on no backend. A forced backend that is not installed is an error,
+# never a switch to the other.
+expect {
+	plans = |command, choice|
+		match (command, choice) {
+			("model", _) => {
+				free = candidate("", Fit)
+				[{ ..free, probes: [] }]
+			}
+			(_, Auto) => [candidate("nix", Fit), candidate("guix", Fit)]
+			(_, Only(backend)) => [candidate(backend, Fit)]
+		}
+	no_nix = Err(Unavailable("nix"))
+	no_guix = Err(Unavailable("guix"))
+	rows = [
+		(Auto, both, Ok("nix")),
+		(Auto, only_nix, Ok("nix")),
+		(Auto, only_guix, Ok("guix")),
+		(Auto, neither, Err(NoneEligible)),
+		(Only("nix"), both, Ok("nix")),
+		(Only("nix"), only_nix, Ok("nix")),
+		(Only("nix"), only_guix, no_nix),
+		(Only("nix"), neither, no_nix),
+		(Only("guix"), both, Ok("guix")),
+		(Only("guix"), only_nix, no_guix),
+		(Only("guix"), only_guix, Ok("guix")),
+		(Only("guix"), neither, no_guix),
+	]
+	["shell", "run", "build", "workflow", "update", "model"].all(
+		|command|
+			rows.all(
+				|(choice, observed, expected)| {
+					wanted = if (command == "model") Ok("") else expected
+					outcome(choice, plans(command, choice), observed) == wanted
+				},
+			),
+	)
+}
+
 # A plan that failed is still chosen when its backend runs, with no switch
 # to another backend; it is passed over only when its backend cannot run.
 expect {
