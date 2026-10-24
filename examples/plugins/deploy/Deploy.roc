@@ -123,3 +123,95 @@ Deploy := [].{
 	find = |hosts, name|
 		hosts.find_first(|h| h.name == name).map_err(|_| "unknown host: ${name}")
 }
+
+import pf.Layout
+
+# The flake.lock nix flake update writes for the project's nixpkgs.
+flake_lock =
+	\\{
+	\\  "nodes": {
+	\\    "default": {
+	\\      "locked": {
+	\\        "lastModified": 1790185690,
+	\\        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
+	\\        "owner": "NixOS",
+	\\        "repo": "nixpkgs",
+	\\        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
+	\\        "type": "github"
+	\\      },
+	\\      "original": {
+	\\        "owner": "NixOS", "ref": "nixos-unstable",
+	\\        "repo": "nixpkgs", "type": "github"
+	\\      }
+	\\    },
+	\\    "root": { "inputs": { "default": "default" } }
+	\\  },
+	\\  "root": "root",
+	\\  "version": 7
+	\\}
+
+# std settings with an environment for the tools.
+project : List(Config.Setting)
+project = [
+	Name("ops"),
+	Systems(["x86_64-linux"]),
+	Environment("ops", [Tools(["nixos-rebuild"])]),
+]
+
+context : Implementation.Context
+context = {
+	args: [],
+	backend: "nix",
+	host: { system: "x86_64-linux" },
+	layout: Layout.{
+		project_root: "/project",
+		workspace: "/work",
+		generated_root: "/generated",
+		lock_path: "/authority/inputs.lock",
+	},
+	lock: Absent,
+	phase: 0,
+	observed: [],
+}
+
+# The plan `plugin`'s Nix implementation of `command` makes for the context.
+planned : Plugin, Str, Implementation.Context -> Try(Plan, Str)
+planned = |plugin, command, ctx| {
+	found = plugin.implementations
+		.find_first(|i| i.command == command and i.backend == On("nix"))
+		.map_err(|_| "no ${command} on nix")?
+	(found.plan)(ctx)
+}
+
+# A deploy confirms, then runs nixos-rebuild switch for the host's flake
+# output in the tools environment; an unknown host is refused.
+expect {
+	observed = [{ path: "/generated/nix/flake.lock", contents: Text(flake_lock) }]
+	resumed = { ..context, phase: 1, observed }
+	update = planned(Std.plugin(project), "update", resumed)
+	lock = match update.map_ok(|plan| plan.steps) {
+		Ok([PublishLock({ contents, .. })]) => Present(contents)
+		_ => Absent
+	}
+	host = [Address("root@203.0.113.7"), Flake(".#web"), Tools("ops")]
+	plugin = Deploy.plugin(project, [Host("web", host)])
+	args = |name| [{ name: "host", value: Present(name) }]
+	deploy = |name| { ..context, args: args(name), lock }
+	rebuild = [
+		"nixos-rebuild",
+		"switch",
+		"--flake",
+		".#web",
+		"--target-host",
+		"root@203.0.113.7",
+		"--use-remote-sudo",
+	]
+	match planned(plugin, "deploy", deploy("web")).map_ok(|plan| plan.steps) {
+		Ok([Confirm(prompt), .., Run({ what, argv, .. })]) =>
+			prompt == "Deploy .#web to root@203.0.113.7 and switch it now?"
+				and what == "deploy web"
+				and argv.ends_with(rebuild)
+				and planned(plugin, "deploy", deploy("db")) == Err("unknown host: db")
+		_ => Bool.False
+	}
+}

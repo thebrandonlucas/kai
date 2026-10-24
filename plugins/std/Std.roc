@@ -482,8 +482,9 @@ context = {
 planned : Str, Implementation.Context -> Try(Plan, Str)
 planned = |command, ctx| {
 	model = ConfigToModel.convert(planning)?
+	backends = [On(ctx.backend), Independent]
 	found = Std.implementations(model)
-		.find_first(|i| i.command == command and i.backend == On(ctx.backend))
+		.find_first(|i| i.command == command and backends.contains(i.backend))
 		.map_err(|_| "std has no ${command} on ${ctx.backend}")?
 	(found.fit)(ctx.args)?
 	(found.plan)(ctx)
@@ -659,6 +660,14 @@ expect {
 expect {
 	ci = { ..guix, args: named("ci"), lock: guix_lock }
 	stages(planned("workflow", ci)) == Ok(["run greet", "build app"])
+}
+
+# The model command prints the model, whatever the backend.
+expect {
+	match planned("model", guix).map_ok(|plan| plan.steps) {
+		Ok([Print(text)]) => text.contains("(name \"planning\")")
+		_ => Bool.False
+	}
 }
 
 # The candidates cli/Selection.roc's std test assumes: shell, run, build,

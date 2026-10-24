@@ -6,3 +6,12 @@ package
 		pf: platform "../../../platform/main.roc",
 		std: "../../../plugins/std/main.roc",
 	}
+
+import Deploy
+import pf.Conformance
+
+# Deploy.roc's planning test covers its one implementation.
+expect {
+	cases = [{ command: "deploy", backend: "nix" }]
+	Conformance.missing(Deploy.plugin([], []), cases) == []
+}
