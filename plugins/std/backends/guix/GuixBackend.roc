@@ -105,21 +105,33 @@ GuixBackend :: [].{
 		"(list ${Str.join_with(rendered, "\n      ")})\n"
 	}
 
-	## Run with `guix repl -q -- lock.scm RESULT CHANNELS`: resolves each
-	## channel's branch head, authenticated by its introduction, and writes
-	## the pins as JSON.
+	## Run with `guix repl -q -- lock.scm RESULT CHANNELS [NAME PATH]...`:
+	## resolves each channel's branch head, authenticated by its introduction,
+	## hashes each source tree, and writes the pins as JSON.
 	lock_script : Str
 	lock_script =
 		\\;; kai's Guix lock script: resolve each channel's branch head,
-		\\;; authenticated by its introduction, and write the pins as JSON.
+		\\;; authenticated by its introduction, hash each source tree as
+		\\;; `guix hash -S nar` does, and write the pins as JSON.
 		\\(use-modules (guix channels)
 		\\             (guix store)
 		\\             (guix openpgp)
+		\\             (guix hash)
+		\\             (guix base32)
 		\\             (json)
 		\\             (ice-9 match))
 		\\
+		\\(define (hashes sources)
+		\\  (match sources
+		\\    ((name path . rest)
+		\\     (cons `((name . ,name)
+		\\             (hash . ,(bytevector->nix-base32-string
+		\\                       (file-hash* path #:recursive? #t))))
+		\\           (hashes rest)))
+		\\    (() '())))
+		\\
 		\\(match (command-line)
-		\\  ((_ result unpinned)
+		\\  ((_ result unpinned . sources)
 		\\   (let* ((channels (load unpinned))
 		\\          (instances (with-store store
 		\\                       (latest-channel-instances store channels)))
@@ -130,7 +142,9 @@ GuixBackend :: [].{
 		\\                     instances)))
 		\\     (call-with-output-file result
 		\\       (lambda (port)
-		\\         (scm->json `((channels . ,(list->vector pins))) port))))))
+		\\         (scm->json `((channels . ,(list->vector pins))
+		\\                      (sources . ,(list->vector (hashes sources))))
+		\\                    port))))))
 		\\
 
 	## The lock script's result: a 40-hex commit for each channel asked for.
@@ -160,9 +174,47 @@ GuixBackend :: [].{
 		text.count_utf8_bytes() == 40 and text.to_utf8().all(digit)
 	}
 
-	## The lock's guix section: the channel names (its identity) and pins.
-	section : List(Pin) -> LockJson
-	section = |pinned|
+	## A `path:` source: a project-relative tree, locked by its nar hash.
+	Tree : { name : Str, path : Str }
+	Hashed : { name : Str, path : Str, hash : Str }
+	Locked : { channels : List(Pin), sources : List(Hashed) }
+
+	## The tree of `path:` source `name`; Guix cannot fetch other sources yet.
+	source_tree : Model, Str -> Try(Tree, Str)
+	source_tree = |model, name| {
+		source = model.build_sources.find_first(|s| s.name == name)
+			.map_err(|_| "unknown build source: ${name}")?
+		if !source.ref.starts_with("path:") {
+			return Err("Guix builds take only path: sources: ${name}")
+		}
+		Ok({ name, path: source.ref.drop_prefix("path:").drop_prefix("./") })
+	}
+
+	source_trees : Model -> List(Tree)
+	source_trees = |model|
+		model.build_sources.keep_oks(|s| GuixBackend.source_tree(model, s.name))
+
+	## The lock script's hash for each tree asked for.
+	hashes : List(Tree), Str -> Try(List(Hashed), Str)
+	hashes = |wanted, text| {
+		found = LockJson.array(LockJson.field(LockJson.decode(text)?, "sources")?)?
+		wanted.map_try(
+			|{ name, path }| {
+				entry = found.find_first(
+					|e| (LockJson.field(e, "name") ?? Null) == String(name),
+				)
+					.map_err(|_| "Guix hashed no ${name} source")?
+				hash = LockJson.string(LockJson.field(entry, "hash")?)?
+				if (hash.is_empty()) Err("Guix hashed no ${name} source")
+				else Ok({ name, path, hash })
+			},
+		)
+	}
+
+	## The lock's guix section: the channel names (its identity), pins and
+	## source hashes.
+	section : List(Pin), List(Hashed) -> LockJson
+	section = |pinned, hashed|
 		Object([
 			{
 				name: "identity",
@@ -194,13 +246,43 @@ GuixBackend :: [].{
 					),
 				),
 			},
+			{
+				name: "sources",
+				value: Array(
+					hashed.map(
+						|h|
+							Object([
+								{ name: "name", value: String(h.name) },
+								{ name: "path", value: String(h.path) },
+								{ name: "hash", value: String(h.hash) },
+							]),
+					),
+				),
+			},
 		])
+
+	stale_lock = "the guix lock is missing or stale; run kai --backend guix update"
+
+	## The default channel's pin and the source hashes a guix section holds.
+	read_lock : LockJson -> Try(Locked, Str)
+	read_lock = |found| {
+		entries = match LockJson.field(found, "sources") {
+			Ok(sources) => LockJson.array(sources)?
+			Err(_) => []
+		}
+		at = |entry, name| LockJson.string(LockJson.field(entry, name)?)
+		sources = entries.map_try(
+			|e| Ok({ name: at(e, "name")?, path: at(e, "path")?, hash: at(e, "hash")? }),
+		)?
+		channels = GuixBackend.pinned([GuixBackend.default_channel], found)?
+		Ok({ channels, sources })
+	}
 
 	## The pins a guix section holds for `channels`, or why it is missing
 	## or stale.
 	pinned : List(Channel), LockJson -> Try(List(Pin), Str)
 	pinned = |channels, found| {
-		stale = "the guix lock is missing or stale; run kai --backend guix update"
+		stale = GuixBackend.stale_lock
 		entries = LockJson.array(LockJson.field(found, "channels")?)?
 		channels.map_try(
 			|channel| {
@@ -244,15 +326,12 @@ GuixBackend :: [].{
 
 	## The Guix build file for `name` and the builds it needs: each runs kai's
 	## runner on the project snapshot, as the Nix builds do.
-	build_scm : Model, Str, Str -> Try(Str, Str)
-	build_scm = |model, name, workspace| {
+	build_scm : Model, Str, Str, Str -> Try(Str, Str)
+	build_scm = |model, name, root, workspace| {
 		project = Project.validate(model)?
 		q = GuixBackend.quote
 		var $defines = []
 		for build in GuixBackend.closure(project, name)? {
-			if !build.inputs.is_empty() {
-				return Err("Guix builds cannot use build inputs yet: ${build.name}")
-			}
 			Project.check_environment(project, Guix, build.environment)?
 			environment = project.environments
 				.find_first(|e| e.name == build.environment)
@@ -268,13 +347,21 @@ GuixBackend :: [].{
 						.concat("'(${Str.join_with(paths.map(q), " ")})))")
 			}
 			needs = build.needs.map(|n| "(${q(n)} ,kai-build-${n})")
+			# Each locked tree is read where `kai update` hashed it.
+			sources = build.inputs.map_try(|n| GuixBackend.source_tree(project, n))?.map(
+				|t|
+					"(${q(t.name)} ,(local-file ${q("${root}/${t.path}")} "
+						.concat("${q("kai-source-${t.name}")} #:recursive? #t))"),
+			)
+			inputs = "(file-union ${q("kai-inputs-${build.name}")} "
+				.concat("`(${Str.join_with(sources, " ")}))")
 			artifacts = "(file-union ${q("kai-artifacts-${build.name}")} "
 				.concat("`(${Str.join_with(needs, " ")}))")
 			$defines = $defines.append(
 				"(define kai-build-${build.name}\n"
 					.concat("  (kai-build ${q(build.name)} '(${specs})\n")
 					.concat("    ${project_file} ${q(argv)} ${q(build.output)}\n")
-					.concat("    ${artifacts}))"),
+					.concat("    ${inputs} ${artifacts}))"),
 			)
 		}
 		file = |variable, path, label, recursive|
@@ -321,7 +408,7 @@ GuixBackend :: [].{
 		\\                     (string-prefix? (string-append r "/") s)))
 		\\               paths)))))
 		\\
-		\\(define (kai-build name specs project argv-json output-dir artifacts)
+		\\(define (kai-build name specs project argv-json output-dir inputs artifacts)
 		\\  (computed-file (string-append "kai-" name)
 		\\    #~(begin
 		\\        (use-modules (ice-9 textual-ports))
@@ -337,7 +424,7 @@ GuixBackend :: [].{
 		\\                ",\\"path\\":\\"" #$(tools specs) "/bin\\""
 		\\                ",\\"coreutils\\":\\""
 		\\                #$(specification->package "coreutils") "/bin\\""
-		\\                ",\\"inputs\\":\\"" #$(file-union "kai-inputs" '()) "\\""
+		\\                ",\\"inputs\\":\\"" #$inputs "\\""
 		\\                ",\\"artifacts\\":\\"" #$artifacts "\\"}")
 		\\               port))))
 		\\        (setenv "out" #$output)
@@ -347,21 +434,43 @@ GuixBackend :: [].{
 
 	## A build under time-machine: kai snapshots the project and installs
 	## its runner, then Guix builds the file above; the artifact is the store
-	## path `guix build` prints.
-	build_steps : Model, Str, Layout, List(Pin) -> Try(Steps, Str)
+	## path `guix build` prints. Each source tree it reads must still have
+	## its locked hash, and stays out of the snapshot, as on Nix.
+	build_steps : Model, Str, Layout, Locked -> Try(Steps, Str)
 	build_steps = |model, name, layout, locked| {
 		build = model.builds.find_first(|b| b.name == name)
 			.map_err(|_| "unknown build: ${name}")?
+		root = layout.project_root
 		workspace = layout.workspace
 		dir = "${layout.generated_root}/guix"
 		channels = "${dir}/channels.scm"
 		scm = "${dir}/build-${name}.scm"
-		entries = locked.map(|p| { channel: p.channel, commit: Pinned(p.commit) })
+		entries = locked.channels.map(
+			|p| { channel: p.channel, commit: Pinned(p.commit) },
+		)
+		var $checks = []
+		for needed in GuixBackend.closure(model, name)? {
+			for input in needed.inputs {
+				{ path, .. } = GuixBackend.source_tree(model, input)?
+				hashed = locked.sources.find_first(|h| h.name == input and h.path == path)
+					.map_err(|_| GuixBackend.stale_lock)?
+				full = "${root}/${path}"
+				check = VerifyPath({
+					path: full,
+					argv: ["guix", "hash", "-S", "nar", full],
+					stdout: hashed.hash,
+				})
+				if !$checks.contains(check) {
+					$checks = $checks.append(check)
+				}
+			}
+		}
 		exclude = [".git", ".hg", ".svn", ".jj"]
 			.concat([workspace, layout.generated_root, layout.lock_path])
+			.concat(GuixBackend.source_trees(model).map(|t| "${root}/${t.path}"))
 		Ok(
 			Steps.{
-				steps: [
+				steps: $checks.concat([
 					Snapshot({
 						root: layout.project_root,
 						destination: "${workspace}/snapshot",
@@ -370,7 +479,10 @@ GuixBackend :: [].{
 					InstallRunner({ destination: "${workspace}/build-runner" }),
 					Write([
 						{ path: channels, contents: GuixBackend.channels_scm(entries) },
-						{ path: scm, contents: GuixBackend.build_scm(model, name, workspace)? },
+						{
+							path: scm,
+							contents: GuixBackend.build_scm(model, name, root, workspace)?,
+						},
 					]),
 					Run({
 						what: "build ${name}",
@@ -382,7 +494,7 @@ GuixBackend :: [].{
 							output: build.output,
 						}),
 					}),
-				],
+				]),
 				next: Done,
 			},
 		)
@@ -390,7 +502,7 @@ GuixBackend :: [].{
 
 	## The steps for any request Guix serves; a workflow's steps are marked
 	## with Stages, as on Nix.
-	request_steps : Model, Request, Layout, List(Pin) -> Try(Steps, Str)
+	request_steps : Model, Request, Layout, Locked -> Try(Steps, Str)
 	request_steps = |model, request, layout, locked|
 		match request {
 			Request.Build(name) => GuixBackend.build_steps(model, name, layout, locked)
@@ -405,7 +517,7 @@ GuixBackend :: [].{
 									model,
 									Request.Run(task, args),
 									layout.generated_root,
-									locked,
+									locked.channels,
 								)?,
 							)
 						BuildArtifact(build) => {
@@ -417,7 +529,8 @@ GuixBackend :: [].{
 				}
 				Ok(Steps.{ steps: $steps, next: Done })
 			}
-			_ => GuixBackend.steps(model, request, layout.generated_root, locked)
+			_ =>
+				GuixBackend.steps(model, request, layout.generated_root, locked.channels)
 		}
 
 	## Whether Guix can serve a request: shells and tasks by their
@@ -426,7 +539,7 @@ GuixBackend :: [].{
 	fit = |model, request|
 		match request {
 			Request.Build(name) =>
-				GuixBackend.build_scm(model, name, "/fit").map_ok(|_| {})
+				GuixBackend.build_scm(model, name, "/fit", "/fit").map_ok(|_| {})
 			Request.Workflow(name) => {
 				for step in Project.workflow_steps(model, name)? {
 					match step {
@@ -565,11 +678,12 @@ expect {
 	result = "{\"channels\":[{\"name\":\"guix\",\"commit\":\"${hex}\"}]}"
 	pins = GuixBackend.pins(channels, result)
 	moved = { ..GuixBackend.default_channel, branch: "main" }
-	back = pins.map_ok(|p| GuixBackend.pinned(channels, GuixBackend.section(p)))
+	section = |p| GuixBackend.section(p, [])
+	back = pins.map_ok(|p| GuixBackend.pinned(channels, section(p)))
 	pins == Ok([{ channel: GuixBackend.default_channel, commit: hex }])
 		and back == Ok(pins)
 		and GuixBackend.pins(channels, result.replace_each(hex, "HEAD")).is_err()
-		and pins.map_ok(|p| GuixBackend.pinned([moved], GuixBackend.section(p)))
+		and pins.map_ok(|p| GuixBackend.pinned([moved], section(p)))
 			.map_ok(|r| r.is_err())
 			== Ok(Bool.True)
 }
@@ -611,7 +725,7 @@ expect {
 		requires_: ["builds"],
 		builds: [build("app", ["lib"], []), build("lib", [], [])],
 	}
-	rendered = GuixBackend.build_scm(model, "app", "/p/.kai") ?? ""
+	rendered = GuixBackend.build_scm(model, "app", "/p", "/p/.kai") ?? ""
 	lib = rendered.split_on("(define kai-build-lib").len() == 2
 	before = rendered.split_on("(define kai-build-app").first() ?? ""
 	order = before.contains("kai-build-lib")
@@ -619,5 +733,5 @@ expect {
 		and order
 		and rendered.contains("(\"lib\" ,kai-build-lib)")
 		and rendered.ends_with("kai-build-app\n")
-		and GuixBackend.build_scm(model, "data", "/p/.kai").is_err()
+		and GuixBackend.build_scm(model, "data", "/p", "/p/.kai").is_err()
 }
