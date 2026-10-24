@@ -62,6 +62,24 @@ roc_sources = List.keep_oks(
 	},
 )
 
+# The musl runtime the platform host links with, which platform/build.zig.zon
+# also fetches.
+link_inputs_tag =
+	"link-inputs-sha256-"
+		.concat("2df3df339dfb1ad4ae1fad0f382cc100c5b31b3921cdeff939f6aea51457886d")
+
+link_inputs_url =
+	"tarball+https://github.com/lukewilliamboswell/roc-platform-template-zig"
+		.concat("/releases/download/${link_inputs_tag}/link-inputs-all.tar")
+
+link_inputs = [(link_inputs_url, "link-inputs")]
+
+link_sources = List.keep_oks(
+	link_inputs,
+	|(url, name)|
+		Ok(Source(InputName.from_quote(name)?, FlakeRef.from_quote(url)?)),
+)
+
 # Seeds Roc's package cache with the Inputs.
 seed =
 	\\set -eu
@@ -89,7 +107,9 @@ bundle = |script|
 			\\zstd -dc "$name.tar.zst" | tar -x -C "$name"
 		)
 
+# zig fetch hands zig build the link_inputs dependency without a network.
 platform_script =
+	\\(cd platform && zig fetch "$KAI_INPUTS/link-inputs" >/dev/null)
 	\\(cd platform && zig build --release)
 	\\(cd platform/targets && sha256sum --quiet -c x64musl.sha256 arm64musl.sha256)
 	\\mkdir stage/targets
@@ -241,7 +261,7 @@ kaifile = Std.kaifile(
 			"kai-platform",
 			[
 				Use("build"),
-				Inputs(roc_inputs),
+				Inputs(roc_inputs.concat(inputs(link_inputs))),
 				Run(["sh", "-c", bundle(platform_script)]),
 				Files(["platform"]),
 				Output("bundle"),
@@ -262,5 +282,5 @@ kaifile = Std.kaifile(
 		binary("kai-arm64musl", "arm64musl"),
 		release("release-x86-64-linux", "kai-x64musl"),
 		release("release-aarch64-linux", "kai-arm64musl"),
-	]).concat(roc_sources),
+	]).concat(roc_sources).concat(link_sources),
 )
