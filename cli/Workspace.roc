@@ -7,6 +7,8 @@ import pf.Path
 import api.Layout
 import api.Plan
 
+import Variables
+
 Workspace := [].{
 	default_dir = ".kai"
 
@@ -70,7 +72,7 @@ Workspace := [].{
 
 	locate! : Str => Try(Layout, _)
 	locate! = |root| {
-		dir = match Env.var_str!("KAI_DIR") {
+		dir = match Variables.read!(Variables.kai_dir) {
 			Ok(value) => value
 			Err(VarNotFound(_)) => Workspace.default_dir
 			Err(err) => return Err(err)

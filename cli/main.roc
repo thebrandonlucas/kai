@@ -21,6 +21,7 @@ import Output
 import PluginBundle
 import Selection
 import Update
+import Variables
 import Workspace
 
 import "../VERSION" as canonical_version : Str
@@ -98,7 +99,7 @@ run! = |shown, mode| {
 	layout = Workspace.locate!(project.root)?
 	style = Help.text_style({
 		terminal: is_terminal!("1") and is_terminal!("2"),
-		no_color: Env.var_str!("NO_COLOR") ?? "",
+		no_color: Variables.read!(Variables.no_color) ?? "",
 		flag: requests(shown, "--no-color") or mode == Json,
 	})
 	asked = { project, layout, shown, style }

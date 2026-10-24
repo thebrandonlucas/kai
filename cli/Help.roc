@@ -5,6 +5,8 @@ import "../platform-release" as platform_release : Str
 import "../plugins/std-release" as std_release : Str
 import api.About
 
+import Variables
+
 Help := [].{
 	# The README's Getting started section, which has the full header.
 	readme = "https://github.com/thebrandonlucas/kai#getting-started"
@@ -104,6 +106,19 @@ Help := [].{
 			Err(_) => text
 		}
 
+	# One aligned line for each environment variable kai reads.
+	environment : Str
+	environment = Str.join_with(
+		Variables.all.map(
+			|{ name, description }| {
+				width = 21 - name.count_utf8_bytes()
+				padding = Str.from_utf8(List.repeat(' ', width)) ?? ""
+				"  ${name}${padding}${description}"
+			},
+		),
+		"\n",
+	)
+
 	# Shown when Kaifile.roc is missing or does not compile, since its
 	# plugins define the rest of the commands.
 	generic : Str, Str -> Str
@@ -135,6 +150,9 @@ Help := [].{
 		\\  --dry-run           Print the plan instead of running it.
 		\\  -h, --help          Show this help page.
 		\\  -V, --version       Show the version.
+		\\
+		\\Environment:
+		\\${Help.environment}
 		\\
 		\\${Help.tips}
 

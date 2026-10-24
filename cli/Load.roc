@@ -15,6 +15,7 @@ import "../.roc-version" as compiler_version : Str
 import "../.roc-overlay" as roc_overlay : Str
 
 import Output
+import Variables
 
 Load := [].{
 	# The configuration file and the directory commands resolve paths against.
@@ -54,16 +55,16 @@ Load := [].{
 	compiler! : () => Try(Str, _)
 	compiler! = || {
 		bundle_variables = [
-			"KAI_PLATFORM_BUNDLE",
-			"KAI_STD_BUNDLE",
-			"KAI_ROC_PACKAGES",
+			Variables.kai_platform_bundle,
+			Variables.kai_std_bundle,
+			Variables.kai_roc_packages,
 		]
 		for variable in bundle_variables {
-			for bundle in (Env.var_str!(variable) ?? "").split_on(":") {
+			for bundle in (Variables.read!(variable) ?? "").split_on(":") {
 				_ = Load.seed!(bundle)
 			}
 		}
-		match Env.var_str!("ROC") {
+		match Variables.read!(Variables.roc) {
 			# A command such as `roc`, an absolute path, or a path relative to
 			# the directory kai was started in, such as `./bin/roc`.
 			Ok(requested_compiler_override) => {
@@ -129,9 +130,9 @@ Load := [].{
 	# XDG_CACHE_HOME, or ~/.cache.
 	cache! : () => Try(Str, _)
 	cache! = ||
-		match Env.var_str!("XDG_CACHE_HOME") {
+		match Variables.read!(Variables.xdg_cache_home) {
 			Ok(value) if !value.is_empty() => Ok(value)
-			_ => Ok("${Env.var_str!("HOME")?}/.cache")
+			_ => Ok("${Variables.read!(Variables.home)?}/.cache")
 		}
 
 	# A Nix-installed Kai's wrapper sets KAI_PLATFORM_BUNDLE and KAI_STD_BUNDLE
