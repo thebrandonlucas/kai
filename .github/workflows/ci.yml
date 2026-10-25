@@ -279,6 +279,7 @@ jobs:
   # Kai natively on Apple Silicon, nightly and on demand. No darwin release
   # exists yet, so it builds kai from source, then checks a small Kaifile:
   # update, run and shell work, and build refuses with the macOS message.
+  # Then it runs the tests in Kai's own dev shell.
   macos:
     name: macos (aarch64-darwin)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -337,3 +338,13 @@ jobs:
           fi
           cat build.log
           grep -q macOS build.log
+
+      # Kai's own Kaifile names the last release's bundles, which may predate
+      # macOS support, so the dev shell uses this checkout's instead.
+      - name: Test in Kai's dev shell
+        run: |
+          set -eu
+          rm -rf macos-check
+          perl -pi -e 's|pf: platform "[^"]*"|pf: platform "platform/main.roc"|' Kaifile.roc
+          perl -pi -e 's|std: "[^"]*"|std: "plugins/std/main.roc"|' Kaifile.roc
+          ./kai shell default -- zig build test
