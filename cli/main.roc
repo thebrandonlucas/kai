@@ -364,6 +364,7 @@ describe = |err|
 		RenderFailed(message) => "cannot generate the Nix files: ${message}"
 		LockFailed(message) => "cannot lock the Nix inputs: ${message}"
 		LocalChanged(path) => "local source ${path} changed; run `kai update`"
+		MissingSource(path) => "local source or overlay ${path} does not exist"
 		UnsafePlan(why) => "refusing the plan: ${why}"
 		ConfirmationRequired(prompt) =>
 			"${prompt} needs confirmation; pass --yes to accept"
