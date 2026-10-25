@@ -71,6 +71,7 @@ TestData :: [].{
 				environment: "builder",
 				run: ["python3", "check.py", "configured argument"],
 				env: [],
+				secrets: [],
 			},
 		],
 		build_sources: [{ name: "assets", ref: "path:./assets" }],

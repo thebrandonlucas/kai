@@ -13,4 +13,14 @@ kaifile = Std.kaifile([
 	Environment("cow", [Tools(["cowsay", "fortune"])]),
 	Task("moo", [Use("cow"), Run(["sh", "-c", "fortune | cowsay"])]),
 	Task("say", [Use("cow"), Run(["cowsay"])]),
+	# `kai run whisper` needs COW_SECRET from a `.env` line such as
+	# `COW_SECRET=moo`, or from kai's environment; no other task sees it.
+	Task(
+		"whisper",
+		[
+			Use("cow"),
+			Secrets(["COW_SECRET"]),
+			Run(["sh", "-c", "cowsay \"$COW_SECRET\""]),
+		],
+	),
 ])

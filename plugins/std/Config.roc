@@ -55,8 +55,15 @@ Config :: [].{
 	## A shell is an alias for exactly one environment.
 	ShellSetting : [Use(EnvName)]
 
-	## Tasks require exactly one Use and one nonempty argv Run.
-	TaskSetting : [Use(EnvName), Run(List(Str)), Env(List((Str, Str)))]
+	## Tasks require exactly one Use and one nonempty argv Run. Secrets names
+	## the variables the task receives from `.env` or kai's environment when
+	## it runs; their values never enter the Kaifile, plan or store.
+	TaskSetting : [
+		Use(EnvName),
+		Run(List(Str)),
+		Env(List((Str, Str))),
+		Secrets(List(Str)),
+	]
 
 	## Builds require Use, Run and one relative Output. Optional Inputs select
 	## locked non-flake Sources; Needs selects build artifacts, not task names.

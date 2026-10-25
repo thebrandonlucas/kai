@@ -287,13 +287,13 @@ Std := [].{
 		NixBackend.plan(model, wanted, target, layout, locks).map_err(rendering)
 	}
 
-	Run : { environment : Str, argv : List(Str), what : Str }
+	Run : { environment : Str, argv : List(Str), description : Str }
 
 	## Plan `argv` inside std environment `environment` from the locked Nix
 	## inputs, as a task would run: how a plugin runs a tool the project
-	## declares. `what` names the step in progress and errors.
+	## declares. `description` names the step in progress and errors.
 	run_in : List(Config.Setting), Implementation.Context, Run -> Try(Plan, Str)
-	run_in = |settings, ctx, { environment, argv, what }| {
+	run_in = |settings, ctx, { environment, argv, description }| {
 		model = ConfigToModel.convert(settings)?
 		task = "_kai_plugin_run"
 		with_task = Model.{
@@ -305,7 +305,9 @@ Std := [].{
 			inputs: model.inputs,
 			environments: model.environments,
 			shells: model.shells,
-			tasks: model.tasks.append({ name: task, environment, run: argv, env: [] }),
+			tasks: model.tasks.append(
+				{ name: task, environment, run: argv, env: [], secrets: [] },
+			),
 			build_sources: model.build_sources,
 			builds: model.builds,
 			workflows: model.workflows,
@@ -315,7 +317,7 @@ Std := [].{
 		planned = Std.plan_nix(with_task, Request.Run(task, []), ctx)?
 		named = |step|
 			match step {
-				Run(run) => Run({ ..run, what })
+				Run(run) => Run({ ..run, description })
 				other => other
 			}
 		Ok(Plan.{ steps: planned.steps.map(named), next: planned.next })
@@ -382,7 +384,13 @@ Std := [].{
 				path = |t| "${ctx.layout.project_root}/${t.path}"
 				argv = ["guix", "repl", "-q", "--", script, result, unpinned]
 					.concat(trees.join_map(|t| [t.name, path(t)]))
-				lock = Run({ what: "guix lock", argv, output: Inherit })
+				lock = Run({
+					description: "guix lock",
+					argv,
+					output: Inherit,
+					secrets: [],
+					removed_environment_variables: [],
+				})
 				Ok(
 					Plan.{
 						steps: trees.map(|t| CheckSource(path(t))).concat([Write(files), lock]),
@@ -466,7 +474,7 @@ Std := [].{
 							)
 							.append(
 								Run({
-									what: "nix flake update",
+									description: "nix flake update",
 									argv: [
 										"nix",
 										"flake",
@@ -475,6 +483,8 @@ Std := [].{
 										"path:${layout.generated_root}",
 									].concat(names),
 									output: Quiet,
+									secrets: [],
+									removed_environment_variables: [],
 								}),
 							),
 						next: Observe([backend_lock]),
@@ -565,14 +575,14 @@ named = |name| [{ name: "name", value: Present(name) }]
 in_shell : Str -> Command.Args
 in_shell = |name| [{ name: "shell", value: Present(name) }]
 
-runs : Try(Plan, Str) -> Try(List({ what : Str, argv : List(Str) }), Str)
+runs : Try(Plan, Str) -> Try(List({ description : Str, argv : List(Str) }), Str)
 runs = |result|
 	result.map_ok(
 		|plan|
 			plan.steps.keep_oks(
 				|step|
 					match step {
-						Run({ what, argv, .. }) => Ok({ what, argv })
+						Run({ description, argv, .. }) => Ok({ description, argv })
 						_ => Err({})
 					},
 			),
@@ -631,7 +641,8 @@ expect {
 	argv = ["nix", "flake", "update", "--flake", "path:/generated/nix"]
 	match nix_lock {
 		Present(text) =>
-			runs(planned("update", context)) == Ok([{ what: "nix flake update", argv }])
+			runs(planned("update", context))
+				== Ok([{ description: "nix flake update", argv }])
 				and Locks.decode(text).is_ok()
 		Absent => Bool.False
 	}
@@ -646,7 +657,7 @@ expect {
 		.concat(script)
 		.append("${dir}/channels-unpinned.scm")
 		.concat(["assets", "/project/assets"])
-	runs(planned("update", guix)) == Ok([{ what: "guix lock", argv }])
+	runs(planned("update", guix)) == Ok([{ description: "guix lock", argv }])
 		and Std.guix_pins({ ..guix, lock: guix_lock })
 			== Ok({
 				channels: [{ channel: GuixBackend.default_channel, commit: pin }],
@@ -660,7 +671,7 @@ expect {
 	shell = { ..context, args: in_shell("default"), lock: nix_lock }
 	installable = "path:/generated/nix#devShells.x86_64-linux.default"
 	runs(planned("shell", shell))
-		== Ok([{ what: "shell default", argv: develop.append(installable) }])
+		== Ok([{ description: "shell default", argv: develop.append(installable) }])
 		and planned("shell", { ..shell, args: in_shell("missing") })
 			== Err("unknown shell: missing")
 		and planned("shell", { ..shell, lock: Absent })
@@ -676,15 +687,15 @@ expect {
 	installable = "path:/generated/nix#devShells.x86_64-linux.kai-env-dev"
 	argv = develop.concat([installable, "--command", "hello", "-g", "hi", "a b"])
 	runs(planned("run", { ..context, args, lock: nix_lock }))
-		== Ok([{ what: "task greet", argv }])
+		== Ok([{ description: "task greet", argv }])
 }
 
 # A Nix build builds its package; an unknown build is refused.
 expect {
 	build = { ..context, args: named("app"), lock: nix_lock }
 	match runs(planned("build", build)) {
-		Ok([{ what, argv }]) =>
-			what == "build app"
+		Ok([{ description, argv }]) =>
+			description == "build app"
 				and argv.last() == Ok("path:/generated/nix#packages.x86_64-linux.app")
 				and planned("build", { ..build, args: named("missing") }).is_err()
 		_ => Bool.False
@@ -705,7 +716,7 @@ expect {
 	argv = time_machine
 		.concat(["--", "shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"])
 		.concat(["hello"])
-	runs(planned("shell", shell)) == Ok([{ what: "shell default", argv }])
+	runs(planned("shell", shell)) == Ok([{ description: "shell default", argv }])
 		and planned("shell", { ..shell, lock: nix_lock }).is_err()
 }
 
@@ -721,7 +732,7 @@ expect {
 		.concat(["hello"])
 		.concat(command)
 	runs(planned("run", { ..guix, args, lock: guix_lock }))
-		== Ok([{ what: "task greet", argv }])
+		== Ok([{ description: "task greet", argv }])
 }
 
 # A Guix build builds its generated file at the locked channels.
@@ -729,7 +740,7 @@ expect {
 	build = { ..guix, args: named("app"), lock: guix_lock }
 	scm = "/generated/guix/build-app.scm"
 	argv = time_machine.concat(["--", "build", "-f", scm])
-	runs(planned("build", build)) == Ok([{ what: "build app", argv }])
+	runs(planned("build", build)) == Ok([{ description: "build app", argv }])
 }
 
 # A Guix workflow stages each step in order.

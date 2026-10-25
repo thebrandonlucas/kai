@@ -24,16 +24,16 @@ GuixBackend :: [].{
 	plan : Model, Request -> Try(Planned, Str)
 	plan = |model, request| {
 		project = Project.validate(model)?
-		(env_name, command, own_env) = match request {
+		(env_name, command, own_env, secrets) = match request {
 			Request.Shell(name, argv) => {
 				shell = project.shells.find_first(|s| s.name == name)
 					.map_err(|_| "unknown shell: ${name}")?
-				(shell.environment, argv, [])
+				(shell.environment, argv, [], [])
 			}
 			Request.Run(name, extra) => {
 				task = project.tasks.find_first(|t| t.name == name)
 					.map_err(|_| "unknown task: ${name}")?
-				(task.environment, task.run.concat(extra), task.env)
+				(task.environment, task.run.concat(extra), task.env, task.secrets)
 			}
 			_ => return Err("Guix supports only kai shell and kai run")
 		}
@@ -53,9 +53,11 @@ GuixBackend :: [].{
 		tail = if (command.is_empty()) [] else ["--"].concat(command)
 		env = Project.merge_env(environment.env, own_env)
 		# --pure would drop the operator's shell, which kai passes to children,
-		# and the variables the environment and task set.
+		# the variables the environment and task set, and the secrets the task
+		# declares.
 		preserve = ["--preserve=^KAI_OPERATOR_SHELL$"]
 			.concat(env.map(|v| "--preserve=^${v.name}$"))
+			.concat(secrets.map(|name| "--preserve=^${name}$"))
 		args = ["shell", "-q", "--pure"].concat(preserve).concat(specs).concat(tail)
 		Ok({ args, env })
 	}
@@ -501,7 +503,7 @@ GuixBackend :: [].{
 						},
 					]),
 					Run({
-						what: "build ${name}",
+						description: "build ${name}",
 						argv: ["guix", "time-machine", "-C", channels, "--"]
 							.concat(["build", "-f", scm])
 							.concat(if (shown.print_build_logs) ["--verbosity=3"] else [])
@@ -511,6 +513,8 @@ GuixBackend :: [].{
 							label: "build-${name}.scm",
 							output: build.output,
 						}),
+						secrets: [],
+						removed_environment_variables: [],
 					}),
 				]),
 				next: Done,
@@ -578,10 +582,18 @@ GuixBackend :: [].{
 		shell = GuixBackend.plan(model, request)?
 		# --pure keeps only what --preserve names, so kai sets it on guix.
 		set_env = Project.env_command(shell.env)
-		what = match request {
+		description = match request {
 			Request.Shell(name, _) => "shell ${name}"
 			Request.Run(name, _) => "task ${name}"
 			_ => "guix"
+		}
+		(secrets, removed_environment_variables) = match request {
+			Request.Run(name, _) =>
+				match model.tasks.find_first(|t| t.name == name) {
+					Ok(task) => (task.secrets, Project.other_tasks_secrets(model, task))
+					Err(_) => ([], [])
+				}
+			_ => ([], [])
 		}
 		channels = "${generated}/guix/channels.scm"
 		entries = locked.map(|p| { channel: p.channel, commit: Pinned(p.commit) })
@@ -592,7 +604,13 @@ GuixBackend :: [].{
 			Steps.{
 				steps: [
 					Write([{ path: channels, contents: GuixBackend.channels_scm(entries) }]),
-					Run({ what, argv, output: Inherit }),
+					Run({
+						description,
+						argv,
+						output: Inherit,
+						secrets,
+						removed_environment_variables,
+					}),
 				],
 				next: Done,
 			},
@@ -727,9 +745,9 @@ expect {
 	match planned {
 		Ok(plan) =>
 			match plan.steps {
-				[Write([{ path, .. }]), Run({ argv, what, .. })] =>
+				[Write([{ path, .. }]), Run({ argv, description, .. })] =>
 					path == channels
-						and what == "shell dev"
+						and description == "shell dev"
 						and argv == ["guix", "time-machine", "-C", channels, "--"]
 							.concat(["shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"])
 							.concat(["hello", "--", "hello", "a b"])

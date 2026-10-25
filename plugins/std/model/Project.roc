@@ -16,6 +16,17 @@ Project :: [].{
 	valid_task_name = |name|
 		!name.is_empty() and name.split_on(".").all(valid_name)
 
+	## An environment variable name: a letter or underscore, then letters,
+	## digits or underscores.
+	valid_variable_name : Str -> Bool
+	valid_variable_name = |name|
+		match name.to_utf8() {
+			[first, .. as rest] =>
+				(letter(first) or first == '_')
+					and rest.all(|b| letter(b) or (b >= '0' and b <= '9') or b == '_')
+			[] => Bool.False
+		}
+
 	letter : U8 -> Bool
 	letter = |b| (b >= 'a' and b <= 'z') or (b >= 'A' and b <= 'Z')
 
@@ -189,14 +200,7 @@ Project :: [].{
 		reserved = ["PATH", "HOME", "KAI_INPUTS", "KAI_ARTIFACTS", "out"]
 		var $seen = []
 		for variable in variables {
-			bytes = variable.name.to_utf8()
-			first = bytes.first() ?? '0'
-			valid = !(first >= '0' and first <= '9') and bytes.all(
-				|b|
-					(b >= 'A' and b <= 'Z') or (b >= 'a' and b <= 'z') or
-						(b >= '0' and b <= '9') or b == '_',
-			)
-			if !valid or reserved.contains(variable.name) {
+			if !valid_variable_name(variable.name) or reserved.contains(variable.name) {
 				return Err("invalid Env name in ${declaration}: ${variable.name}")
 			}
 			if variable.value.to_utf8().contains(0) {
@@ -223,6 +227,19 @@ Project :: [].{
 		} else {
 			["env"].concat(variables.map(|v| "${v.name}=${v.value}"))
 		}
+
+	## The secrets other tasks declare, which a task's process never receives.
+	other_tasks_secrets : Model, Model.Task -> List(Str)
+	other_tasks_secrets = |model, task|
+		model.tasks.join_map(|t| t.secrets).fold(
+			[],
+			|names, name|
+				if names.contains(name) or task.secrets.contains(name) {
+					names
+				} else {
+					names.append(name)
+				},
+		)
 
 	## Shared argv boundary for tasks and builds; arguments are never shell-split.
 	check_argv : List(Str), Str -> Try({}, Str)
@@ -365,6 +382,11 @@ Project :: [].{
 			}
 			check_argv(task.run, task.name)?
 			check_env(task.env, "task ${task.name}")?
+			for secret in task.secrets {
+				if !valid_variable_name(secret) {
+					return Err("invalid secret name in task ${task.name}")
+				}
+			}
 		}
 		for build in model.builds {
 			if !$environments.any(|e| e.name == build.environment) {
@@ -1291,7 +1313,15 @@ workflow_features = |workflows, features| Model.{
 		{ name: "builder", parents: [], tools: [], overlays: [], env: [] },
 	],
 	shells: [],
-	tasks: [{ name: "check.all", environment: "builder", run: ["cmd"], env: [] }],
+	tasks: [
+		{
+			name: "check.all",
+			environment: "builder",
+			run: ["cmd"],
+			env: [],
+			secrets: [],
+		},
+	],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
 	builds: [library],
 	workflows,

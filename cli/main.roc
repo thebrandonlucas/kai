@@ -371,7 +371,11 @@ describe = |err|
 			"${prompt} needs confirmation; pass --yes to accept"
 		Declined(prompt) => "not confirmed: ${prompt}"
 		SnapshotFailed(message) => message
-		ChildExited(what, code) => "${what} exited with code ${code.to_str()}"
+		ChildExited(description, code) =>
+			"${description} exited with code ${code.to_str()}"
+		MissingSecret(description, name) =>
+			"${description} needs secret ${name}; set it in .env or kai's environment"
+		InvalidDotenv(line) => ".env line ${line.to_str()} is not NAME=value"
 		UpdateLocked(guard) =>
 			"another kai update holds ${guard}; if none is running, it is "
 				.concat("safe to remove that directory")

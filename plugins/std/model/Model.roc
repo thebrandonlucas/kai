@@ -33,6 +33,7 @@ Model := {
 			environment : Str,
 			run : List(Str),
 			env : List({ name : Str, value : Str }),
+			secrets : List(Str),
 		},
 	),
 	build_sources : List({ name : Str, ref : Str }),
@@ -79,7 +80,15 @@ Model := {
 		env : List(Variable),
 	}
 	Shell : { name : Str, environment : Str }
-	Task : { name : Str, environment : Str, run : List(Str), env : List(Variable) }
+
+	## Secrets are the names of variables the task receives, never values.
+	Task : {
+		name : Str,
+		environment : Str,
+		run : List(Str),
+		env : List(Variable),
+		secrets : List(Str),
+	}
 
 	## An environment variable. A task's or build's own override its
 	## environment's, as an environment's override those of the one it extends.

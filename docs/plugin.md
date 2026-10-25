@@ -128,7 +128,7 @@ A plan is a list of steps and what comes next:
 | `Note(text)`, `Print(text)` | a note on stderr, a result on stdout (JSON events with `--json`) |
 | `Confirm(prompt)` | ask before anything runs; refused without `--yes` unless a person is at a terminal |
 | `Write(files)` | write generated files, only beneath the generated root |
-| `Run({ what, argv, output })` | run exact argv from the project root, never through a shell |
+| `Run({ description, argv, output, secrets, removed_environment_variables })` | run exact argv from the project root, never through a shell |
 | `VerifyPath`, `CheckSource`, `Snapshot`, `InstallRunner` | std's checks and build sandbox steps |
 | `PublishLock({ previous, contents })` | replace the lock, only for the lock owner |
 
@@ -137,7 +137,7 @@ A plan is a list of steps and what comes next:
 publishes). kai checks the whole plan before its first step and refuses
 anything outside these rules; `kai --dry-run` prints the plan instead.
 
-std's `Std.run_in(project, ctx, { environment, argv, what })` plans argv
+std's `Std.run_in(project, ctx, { environment, argv, description })` plans argv
 inside one of std's environments from the locked Nix inputs, as a task
 would run; the deploy example uses it for `nixos-rebuild`.
 

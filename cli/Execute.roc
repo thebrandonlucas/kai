@@ -351,7 +351,16 @@ Execute := [].{
 				} else {
 					Err("writes outside the workspace: ${destination}")
 				}
-			Run({ argv, .. }) => command(argv)
+			# Every variable name must be valid, so a name such as `A=B`
+			# cannot smuggle a value into the child process's environment.
+			Run({ argv, secrets, removed_environment_variables, .. }) => {
+				names = secrets.concat(removed_environment_variables)
+				if names.all(Execute.variable_name) {
+					command(argv)
+				} else {
+					Err("names an invalid secret")
+				}
+			}
 			PublishLock(_) =>
 				match lock {
 					OwnsLock => Ok({})
@@ -418,12 +427,16 @@ Execute := [].{
 			CheckSource(path) => Workspace.safe_source!(path)
 			Snapshot(snapshot) => Snapshot.snapshot!(snapshot)
 			InstallRunner({ destination }) => Workspace.install_runner!(destination)
-			Run({ what, argv, output: Inherit }) =>
-				Execute.child!(argv, what, root, Inherit)
-			Run({ what, argv, output: Quiet }) =>
-				Execute.child!(argv, what, root, Capture)
-			Run({ what, argv, output: Artifact(artifact) }) =>
-				Execute.build!(argv, what, artifact, root, mode)
+			Run(run) => {
+				process_command = Execute.process_command!(run, root)?
+				{ description, output, .. } = run
+				match output {
+					Inherit => Execute.child!(process_command, description, Inherit)
+					Quiet => Execute.child!(process_command, description, Capture)
+					Artifact(artifact) =>
+						Execute.build!(process_command, description, artifact, mode)
+				}
+			}
 			Confirm(prompt) =>
 				if options.yes {
 					Ok({})
@@ -451,19 +464,11 @@ Execute := [].{
 
 	# Resolve the requested artifact with the planned command: its store path
 	# on stdout, only after success.
-	build! : List(Str), Str, Plan.Artifact, Str, Output.Mode => Try({}, _)
-	build! = |argv, what, artifact, root, mode| {
+	build! : Cmd.Command, Str, Plan.Artifact, Output.Mode => Try({}, _)
+	build! = |process_command, description, artifact, mode| {
 		{ name, label, output: declared } = artifact
 		Stderr.line!("building ${name}: ${label} (output ${declared})")?
-		(program, args) = match argv {
-			[first, .. as rest] => (first, rest)
-			[] => return Err(RenderFailed("the plan has no build command"))
-		}
-		output = Cmd.new(OsStr.from_str(program))
-			.args(args.map(OsStr.from_str))
-			.cwd(Workspace.path(root))
-			.stderr(Tee)
-			.run!()?
+		output = process_command.stderr(Tee).run!()?
 		match output.status {
 			Exited(0) => {
 				path = Str.from_utf8_lossy(output.stdout_bytes).trim()
@@ -482,36 +487,131 @@ Execute := [].{
 					Json => Stdout.line!(Output.event("artifact", built, fields))
 				}
 			}
-			Exited(code) =>
-				Err(ChildExited(what, Execute.builder_code(output.stderr_bytes, code)))
-			Signaled(signal) => Err(ChildExited(what, 128 + signal))
+			Exited(code) => {
+				status = Execute.builder_code(output.stderr_bytes, code)
+				Err(ChildExited(description, status))
+			}
+			Signaled(signal) =>
+				Err(ChildExited(description, Execute.signal_status(signal)))
 		}
 	}
 
-	# Run argv from the project root with inherited stdio; a captured stderr is
-	# shown only when the child fails.
-	child! = |argv, what, root, stderr|
-		match argv {
-			[program, .. as args] => {
-				ran = Cmd.new(OsStr.from_str(program))
-					.args(args.map(OsStr.from_str))
-					.clear_envs()
-					.envs(Execute.operator_environment!())
-					.cwd(Workspace.path(root))
-					.inherit_stdio()
-					.stderr(stderr)
-					.run!()?
-				if ran.status != Exited(0) {
-					Stderr.write_bytes!(ran.stderr_bytes)?
-				}
-				match ran.status {
-					Exited(0) => Ok({})
-					Exited(code) => Err(ChildExited(what, code))
-					Signaled(signal) => Err(ChildExited(what, 128 + signal))
-				}
-			}
-			[] => Err(RenderFailed("the plan has an empty command"))
+	# Run a child process prepared by `process_command!`, which also sets its
+	# working directory to the project root, with inherited stdio; a captured
+	# stderr is shown only when the child fails.
+	child! = |process_command, description, stderr| {
+		ran = process_command.inherit_stdio().stderr(stderr).run!()?
+		if ran.status != Exited(0) {
+			Stderr.write_bytes!(ran.stderr_bytes)?
 		}
+		match ran.status {
+			Exited(0) => Ok({})
+			Exited(code) => Err(ChildExited(description, code))
+			Signaled(signal) =>
+				Err(ChildExited(description, Execute.signal_status(signal)))
+		}
+	}
+
+	# The status a shell reports for a process killed by a signal: 128 plus
+	# the signal's number, such as 130 for SIGINT (2).
+	signal_status = |signal| 128 + signal
+
+	# A Run step's command, run from the project root in kai's environment,
+	# with the shell kai was started from as KAI_OPERATOR_SHELL (unset if it
+	# had none; backends such as `nix develop` replace SHELL), its secrets set
+	# and its removed environment variables unset. Each secret's value comes
+	# from the project's `.env`, else kai's environment, and never appears in
+	# kai's output, events or errors.
+	process_command! = |run, root| {
+		{ description, argv, secrets, removed_environment_variables, .. } = run
+		(program, args) = match argv {
+			[first, .. as rest] => (first, rest)
+			[] => return Err(RenderFailed("the plan has an empty command"))
+		}
+		# Look up each secret's value: `.env` wins over kai's environment, and
+		# a secret found in neither stops the run.
+		var $secret_values = []
+		if !secrets.is_empty() {
+			dotenv = match Workspace.path("${root}/.env").read_utf8!() {
+				Ok(text) => Execute.dotenv(text)?
+				Err(PathErr(NotFound, _)) => []
+				Err(err) => return Err(err)
+			}
+			for name in secrets {
+				value = match dotenv.find_first(|(key, _)| key == name) {
+					Ok((_, found)) => OsStr.from_str(found)
+					Err(_) => {
+						missing = |_| MissingSecret(description, name)
+						Env.var!(OsStr.from_str(name)).map_err(missing)?
+					}
+				}
+				$secret_values = $secret_values.append((OsStr.from_str(name), value))
+			}
+		}
+		# The child process inherits kai's environment minus every secret
+		# and removed environment variable, then receives the operator's shell
+		# and its own secrets' values.
+		operator = OsStr.from_str("KAI_OPERATOR_SHELL")
+		removed = secrets
+			.concat(removed_environment_variables)
+			.map(OsStr.from_str)
+			.append(operator)
+		kept = Env.dict!().keep_if(|(name, _)| !removed.contains(name))
+		shell = match Env.var!(OsStr.from_str(Variables.shell.name)) {
+			Ok(value) => [(operator, value)]
+			Err(_) => []
+		}
+		Ok(
+			Cmd.new(OsStr.from_str(program))
+				.args(args.map(OsStr.from_str))
+				.cwd(Workspace.path(root))
+				.clear_envs()
+				.envs(kept)
+				.envs(shell)
+				.envs($secret_values),
+		)
+	}
+
+	# A dotenv file's `NAME=value` lines; blank lines and `#` comments are
+	# skipped, and one pair of surrounding quotes is removed. Nothing is
+	# interpolated. A malformed line is named by number, never its text.
+	dotenv : Str -> Try(List((Str, Str)), [InvalidDotenv(U64)])
+	dotenv = |text| {
+		var $pairs = []
+		var $number = 0
+		for line in text.split_on("\n") {
+			$number = $number + 1
+			trimmed = line.trim()
+			if !trimmed.is_empty() and !trimmed.starts_with("#") {
+				(name, value) = match trimmed.split_first("=") {
+					Ok({ before, after }) => (before.trim(), after.trim())
+					Err(_) => return Err(InvalidDotenv($number))
+				}
+				if !Execute.variable_name(name) {
+					return Err(InvalidDotenv($number))
+				}
+				quotes = ['"', '\'']
+				unquoted = match value.to_utf8() {
+					[first, .. as inner, last] if first == last and quotes.contains(first) =>
+						Str.from_utf8_lossy(inner)
+					_ => value
+				}
+				$pairs = $pairs.append((name, unquoted))
+			}
+		}
+		Ok($pairs)
+	}
+
+	# An environment variable name: a letter or _, then letters, digits or _.
+	variable_name : Str -> Bool
+	variable_name = |name| {
+		letter = |b| (b >= 'a' and b <= 'z') or (b >= 'A' and b <= 'Z') or b == '_'
+		match name.to_utf8() {
+			[first, .. as rest] =>
+				letter(first) and rest.all(|b| letter(b) or (b >= '0' and b <= '9'))
+			[] => Bool.False
+		}
+	}
 
 	# nix build and guix build exit 1 when a build fails; their report's
 	# "builder … failed with exit code N" names the build command's own
@@ -546,19 +646,6 @@ Execute := [].{
 		I32.from_str(Str.from_utf8_lossy($digits))
 	}
 
-	# kai's environment, with the shell kai was started from as
-	# KAI_OPERATOR_SHELL (unset if it had none): backends such as `nix develop`
-	# replace SHELL.
-	operator_environment! = || {
-		name = OsStr.from_str("KAI_OPERATOR_SHELL")
-		inherited = Env.dict!()
-			.keep_if(|(variable, _)| variable.to_bytes() != name.to_bytes())
-		match Env.var!(OsStr.from_str(Variables.shell.name)) {
-			Ok(shell) => inherited.append((name, shell))
-			Err(_) => inherited
-		}
-	}
-
 	# A child's status becomes kai's own; statuses a process cannot exit with,
 	# such as a signal report, become a generic failure.
 	exit_code : I32 -> I32
@@ -577,6 +664,16 @@ layout = Layout.{
 	lock_path: "/p/.kai/lock.json",
 }
 
+run : List(Str), List(Str), List(Str) -> Plan.Step
+run = |argv, secrets, removed_environment_variables|
+	Run({
+		description: "t",
+		argv,
+		output: Inherit,
+		secrets,
+		removed_environment_variables,
+	})
+
 validated : List(Plan.Step) -> Try({}, [UnsafePlan(Str)])
 validated = |steps|
 	Execute.validate(Plan.{ steps, next: Done }, layout, ReadsLock)
@@ -590,7 +687,7 @@ expect
 		Snapshot({ root: "/p", destination: "/p/.kai/snapshot", exclude: [] }),
 		InstallRunner({ destination: "/p/.kai/build-runner" }),
 		Write([{ path: "/p/.kai/generated/flake.nix", contents: "" }]),
-		Run({ what: "build app", argv: ["/bin/nix", "build"], output: Inherit }),
+		run(["/bin/nix", "build"], ["TOKEN"], ["OTHER"]),
 		Note("n"),
 	])
 		== Ok({})
@@ -605,10 +702,12 @@ expect [
 	VerifyPath({ path: "/p/src", argv: [], stdout: "" }),
 	Snapshot({ root: "/p", destination: "/p/src", exclude: [] }),
 	InstallRunner({ destination: "/tmp/runner" }),
-	Run({ what: "t", argv: [], output: Inherit }),
-	Run({ what: "t", argv: [""], output: Inherit }),
-	Run({ what: "t", argv: ["-c"], output: Inherit }),
-	Run({ what: "t", argv: ["bin/sh"], output: Inherit }),
+	run([], [], []),
+	run([""], [], []),
+	run(["-c"], [], []),
+	run(["bin/sh"], [], []),
+	run(["sh"], ["A=B"], []),
+	run(["sh"], [], ["1A"]),
 	PublishLock({ previous: Absent, contents: "{}" }),
 ]
 	.all(
@@ -660,3 +759,14 @@ expect {
 	[(old, 3), (new.concat(log), 5), (guix, 4), ("error: no flake\n", 1)]
 		.all(|(report, exit)| Execute.builder_code(report.to_utf8(), 1) == exit)
 }
+
+# A dotenv file gives exact values: comments and blank lines are skipped, one
+# pair of quotes is removed, and a malformed line is named by number only.
+expect [
+	(
+		"# c\n\nA=1\n B = \"two words\" \r\nC='x=$y'\nD=\n",
+		Ok([("A", "1"), ("B", "two words"), ("C", "x=$y"), ("D", "")]),
+	),
+	("A=1\nsecret value\n", Err(InvalidDotenv(2))),
+	("1A=x\n", Err(InvalidDotenv(1))),
+].all(|(text, expected)| Execute.dotenv(text) == expected)

@@ -18,7 +18,7 @@ NixBackend :: [].{
 
 	## The model features this backend renders.
 	features : List(Str)
-	features = ["raw", "sources", "builds", "workflows", "files", "env"]
+	features = ["raw", "sources", "builds", "workflows", "files", "env", "secrets"]
 
 	default_nixpkgs : Str
 	default_nixpkgs = Locks.default_nixpkgs
@@ -45,12 +45,15 @@ NixBackend :: [].{
 	}
 
 	## One atomic request: its rendered flake, the argv that runs it, how the
-	## run reports (a build's artifact), and its workflow stage.
+	## run reports (a build's artifact), its workflow stage and the secrets
+	## its process receives and is denied.
 	Prepared : {
 		inputs : List(Locks.Input),
 		argv : List(Str),
+		secrets : List(Str),
+		removed_environment_variables : List(Str),
 		contents : Str,
-		what : Str,
+		description : Str,
 		stage : Str,
 		output : Plan.Output,
 	}
@@ -131,12 +134,14 @@ NixBackend :: [].{
 					develop(name).append("--command").concat(command)
 				}
 				{
-					what: "shell ${name}",
+					description: "shell ${name}",
 					stage: "shell ${name}",
 					names: [shell.environment],
 					builds: [],
 					argv,
 					output: Inherit,
+					secrets: [],
+					removed_environment_variables: [],
 				}
 			}
 			Request.Run(name, extra) => {
@@ -145,7 +150,7 @@ NixBackend :: [].{
 				command = task.run.concat(extra)
 				Project.check_argv(command, name)?
 				{
-					what: "task ${name}",
+					description: "task ${name}",
 					stage: "run ${name}",
 					names: [task.environment],
 					builds: [],
@@ -155,6 +160,8 @@ NixBackend :: [].{
 						.concat(Project.env_command(task.env))
 						.concat(command),
 					output: Inherit,
+					secrets: task.secrets,
+					removed_environment_variables: Project.other_tasks_secrets(project, task),
 				}
 			}
 			Request.Build(name, shown) => {
@@ -178,12 +185,14 @@ NixBackend :: [].{
 					.concat(read_only)
 					.concat(["--builders", "", "--impure", label])
 				{
-					what: "build ${name}",
+					description: "build ${name}",
 					stage: "build ${name}",
 					names: builds.map(|b| b.environment),
 					builds,
 					argv,
 					output: Artifact({ name, label, output: built.output }),
+					secrets: [],
+					removed_environment_variables: [],
 				}
 			}
 			Request.Workflow(_) => return Err(
@@ -207,8 +216,10 @@ NixBackend :: [].{
 		Ok({
 			inputs,
 			argv: selected.argv,
+			secrets: selected.secrets,
+			removed_environment_variables: selected.removed_environment_variables,
 			contents,
-			what: selected.what,
+			description: selected.description,
 			stage: selected.stage,
 			output: selected.output,
 		})
@@ -240,7 +251,8 @@ NixBackend :: [].{
 	## installs Kai as its runner.
 	materialize : Prepared, Layout, Locks.Derived -> List(Plan.Step)
 	materialize = |selected, layout, derived| {
-		{ inputs, argv, contents, what, output, .. } = selected
+		{ inputs, argv, contents, description, output, secrets, .. } = selected
+		removed_environment_variables = selected.removed_environment_variables
 		sandbox = match output {
 			Artifact(_) => {
 				local = inputs.keep_if(|i| i.ref.starts_with("path:"))
@@ -272,7 +284,10 @@ NixBackend :: [].{
 				contents: derived.contents,
 			})
 		derived.checks.concat(sandbox)
-			.concat([Write(files), Run({ what, argv, output })])
+			.concat([
+				Write(files),
+				Run({ description, argv, output, secrets, removed_environment_variables }),
+			])
 	}
 
 	## Update consumers check these source roots before staging or fetching.
@@ -995,7 +1010,13 @@ full_model = {
 		{ name: "empty", environment: "empty" },
 	],
 	tasks: [
-		{ name: "greet", environment: "headless", run: ["jq", "--version"], env: [] },
+		{
+			name: "greet",
+			environment: "headless",
+			run: ["jq", "--version"],
+			env: [],
+			secrets: [],
+		},
 	],
 	raw: [
 		{
@@ -1130,7 +1151,13 @@ expect match NixBackend.render(
 		..simple,
 		shells: [],
 		tasks: [
-			{ name: "check", environment: "dev", run: ["git", "--version"], env: [] },
+			{
+				name: "check",
+				environment: "dev",
+				run: ["git", "--version"],
+				env: [],
+				secrets: [],
+			},
 		],
 	}),
 ) {
@@ -1371,7 +1398,7 @@ plan_fixture = |request| {
 Single : {
 	before : List(Plan.Step),
 	files : List(Plan.File),
-	what : Str,
+	description : Str,
 	argv : List(Str),
 	output : Plan.Output,
 }
@@ -1379,8 +1406,8 @@ Single : {
 split : List(Plan.Step) -> Try(Single, Str)
 split = |steps|
 	match steps {
-		[.. as before, Write(files), Run({ what, argv, output })] =>
-			Ok({ before, files, what, argv, output })
+		[.. as before, Write(files), Run({ description, argv, output, .. })] =>
+			Ok({ before, files, description, argv, output })
 		_ => Err("not one request's steps")
 	}
 
@@ -1390,12 +1417,12 @@ single = |request| {
 	split(planned.steps)
 }
 
-runs : Plan -> List({ what : Str, argv : List(Str) })
+runs : Plan -> List({ description : Str, argv : List(Str) })
 runs = |planned|
 	planned.steps.keep_oks(
 		|step|
 			match step {
-				Run({ what, argv, .. }) => Ok({ what, argv })
+				Run({ description, argv, .. }) => Ok({ description, argv })
 				_ => Err({})
 			},
 	)
@@ -1532,7 +1559,7 @@ expect match single(
 		["", "two words", "--flag", "a\nb"],
 	),
 ) {
-	Ok(step) => step.what == "task check" and step.argv == [
+	Ok(step) => step.description == "task check" and step.argv == [
 		"nix",
 		"develop",
 		"--no-update-lock-file",
@@ -1553,7 +1580,7 @@ expect match single(
 
 # Aliases use the caller target, never the host's implicit default output shape.
 expect match single(Request.Shell("default", [])) {
-	Ok(step) => step.what == "shell default" and step.argv == [
+	Ok(step) => step.description == "shell default" and step.argv == [
 		"nix",
 		"develop",
 		"--no-update-lock-file",
@@ -1892,7 +1919,13 @@ expect {
 				{ ..base, name: "other", overlays: ["three", "two"] },
 			],
 			tasks: [
-				{ name: "t", environment: "other", run: ["true"], env: [] },
+				{
+					name: "t",
+					environment: "other",
+					run: ["true"],
+					env: [],
+					secrets: [],
+				},
 			],
 		}),
 		"x86_64-linux",
@@ -2019,7 +2052,9 @@ expect {
 		"configured argument",
 	]
 	runs(plan)
-		== extras.map(|extra| { what: "task check", argv: prefix.concat(extra) })
+		== extras.map(
+			|extra| { description: "task check", argv: prefix.concat(extra) },
+		)
 }
 
 # Distinct requests count all rendered systems toward the 16 MiB budget.
@@ -2315,9 +2350,13 @@ expect {
 		..TestData.workflow_data,
 		sources: [{ name: "guix", provider: GuixPackages("channels") }],
 		environments: [TestData.builder, foreign],
-		tasks: TestData.data.tasks.append(
-			{ name: "foreign", environment: "foreign", run: ["python"], env: [] },
-		),
+		tasks: TestData.data.tasks.append({
+			name: "foreign",
+			environment: "foreign",
+			run: ["python"],
+			env: [],
+			secrets: [],
+		}),
 		workflows: TestData.workflow_data.workflows.concat([
 			{
 				name: "later",
@@ -2342,7 +2381,7 @@ expect {
 		TestData.layout,
 		locks,
 	)
-	runs(first).map(|run| run.what) == ["task check"]
+	runs(first).map(|run| run.description) == ["task check"]
 		and later.is_err() and later.map_ok(|plan| plan.steps) == NixBackend.plan(
 			project,
 			Request.Run("foreign", []),
@@ -2388,7 +2427,7 @@ expect {
 		TestData.layout,
 		locks,
 	)
-	runs(first).map(|run| run.what) == ["task check"]
+	runs(first).map(|run| run.description) == ["task check"]
 		and later.is_err() and later.map_ok(|plan| plan.steps) == NixBackend.plan(
 			project,
 			Request.build("app"),
@@ -2556,7 +2595,13 @@ expect {
 		{
 			..project,
 			tasks: [
-				{ name: "bad", environment: "missing", run: ["x"], env: [] },
+				{
+					name: "bad",
+					environment: "missing",
+					run: ["x"],
+					env: [],
+					secrets: [],
+				},
 			],
 		},
 	].all(

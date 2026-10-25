@@ -25,13 +25,17 @@
 					(destination "/w/runner"))) (Run (
 					(argv ("bash"))
 					(output Inherit)
-					(what "shell dev"))) (Run (
+					(secrets ("TOKEN"))
+					(description "task t")
+					(removed_environment_variables ("OTHER")))) (Run (
 					(argv ("nix" "build"))
 					(output (Artifact (
 						(label "site")
 						(name "site")
 						(output "out"))))
-					(what "build site"))) (PublishLock (
+					(secrets ())
+					(description "build site")
+					(removed_environment_variables ()))) (PublishLock (
 					(contents "{ }")
 					(previous (Present "{}")))))))))
 			(plugin "std")
