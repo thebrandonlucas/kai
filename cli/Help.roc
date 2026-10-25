@@ -55,7 +55,8 @@ Help := [].{
 		\\${Help.tips}
 
 	# The Kaifile.roc `kai init` writes for project `name`: this release's
-	# platform and std, in full, and a shell and task with cowsay and fortune.
+	# platform and std, in full, the Linux and Apple Silicon macOS systems, and
+	# a shell and task with cowsay and fortune.
 	kaifile : Str -> Str
 	kaifile = |name| {
 		quoted = name
@@ -78,6 +79,7 @@ Help := [].{
 		\\
 		\\kaifile = Std.kaifile([
 		\\	Name("${name}"),
+		\\	Systems(["x86_64-linux", "aarch64-linux", "aarch64-darwin"]),
 		\\	Environment("cow", [Tools(["cowsay", "fortune"])]),
 		\\	Shell("default", [Use("cow")]),
 		\\	Task("wisdom", [Use("cow"), Run(["sh", "-c", "fortune | cowsay"])]),
