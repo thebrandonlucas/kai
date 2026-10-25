@@ -132,7 +132,9 @@ each setting and command, from a first shell to builds, workflows and Guix.
 
 Shells and tasks run on your machine, in the project directory, inside the
 environment's shell: they see your files, your network and anything else you
-can reach, and what they write stays in the working tree.
+can reach, and what they write stays in the working tree. `KAI_OPERATOR_SHELL`
+holds the `SHELL` kai was started from, since the environment may replace
+`SHELL`.
 
 Builds run sandboxed. A build gets a copy of the project, leaving out what
 its `.gitignore` files ignore (`Files([...])` narrows the copy to the given

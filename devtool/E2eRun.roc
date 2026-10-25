@@ -191,7 +191,8 @@ E2eRun := [].{
 				other => return Err(GuixStatusLost(Str.inspect(other)))
 			}
 			argv = ["time-machine", "-C", channels, "--"]
-				.concat(["shell", "-q", "--pure", "hello", "--"])
+				.concat(["shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"])
+				.concat(["hello", "--"])
 				.concat(command)
 			expected = probes.concat(argv.map(|arg| "guix ${arg}"))
 			recorded = Path.read_utf8!(log)?.split_on("\n").drop_last(1)

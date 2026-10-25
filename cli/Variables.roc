@@ -30,6 +30,11 @@ Variables := [].{
 		description: "The home directory, for ~/.cache.",
 	}
 
+	shell = {
+		name: "SHELL",
+		description: "Your shell, for KAI_OPERATOR_SHELL in shells and tasks.",
+	}
+
 	kai_platform_bundle = {
 		name: "KAI_PLATFORM_BUNDLE",
 		description: "An unpacked platform bundle to seed Roc's cache with.",
@@ -57,6 +62,7 @@ Variables := [].{
 		Variables.no_color,
 		Variables.xdg_cache_home,
 		Variables.home,
+		Variables.shell,
 		Variables.kai_platform_bundle,
 		Variables.kai_std_bundle,
 		Variables.kai_roc_packages,

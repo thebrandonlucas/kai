@@ -4,6 +4,7 @@
 # that owns the lock may publish it.
 import pf.Cmd
 import pf.Duration
+import pf.Env
 import pf.OsStr
 import pf.Path
 import pf.Sleep
@@ -20,6 +21,7 @@ import Output
 import Selection
 import Snapshot
 import Update
+import Variables
 import Workspace
 
 Execute := [].{
@@ -493,6 +495,8 @@ Execute := [].{
 			[program, .. as args] => {
 				ran = Cmd.new(OsStr.from_str(program))
 					.args(args.map(OsStr.from_str))
+					.clear_envs()
+					.envs(Execute.operator_environment!())
 					.cwd(Workspace.path(root))
 					.inherit_stdio()
 					.stderr(stderr)
@@ -540,6 +544,19 @@ Execute := [].{
 			}
 		}
 		I32.from_str(Str.from_utf8_lossy($digits))
+	}
+
+	# kai's environment, with the shell kai was started from as
+	# KAI_OPERATOR_SHELL (unset if it had none): backends such as `nix develop`
+	# replace SHELL.
+	operator_environment! = || {
+		name = OsStr.from_str("KAI_OPERATOR_SHELL")
+		inherited = Env.dict!()
+			.keep_if(|(variable, _)| variable.to_bytes() != name.to_bytes())
+		match Env.var!(OsStr.from_str(Variables.shell.name)) {
+			Ok(shell) => inherited.append((name, shell))
+			Err(_) => inherited
+		}
 	}
 
 	# A child's status becomes kai's own; statuses a process cannot exit with,

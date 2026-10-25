@@ -702,7 +702,9 @@ expect {
 # section it is refused.
 expect {
 	shell = { ..guix, args: in_shell("default"), lock: guix_lock }
-	argv = time_machine.concat(["--", "shell", "-q", "--pure", "hello"])
+	argv = time_machine
+		.concat(["--", "shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"])
+		.concat(["hello"])
 	runs(planned("shell", shell)) == Ok([{ what: "shell default", argv }])
 		and planned("shell", { ..shell, lock: nix_lock }).is_err()
 }
@@ -714,7 +716,9 @@ expect {
 		{ name: "args", value: Many(["a b"]) },
 	]
 	command = ["--", "hello", "-g", "hi", "a b"]
-	argv = time_machine.concat(["--", "shell", "-q", "--pure", "hello"])
+	argv = time_machine
+		.concat(["--", "shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"])
+		.concat(["hello"])
 		.concat(command)
 	runs(planned("run", { ..guix, args, lock: guix_lock }))
 		== Ok([{ what: "task greet", argv }])

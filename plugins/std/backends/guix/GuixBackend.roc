@@ -48,7 +48,9 @@ GuixBackend :: [].{
 			return Err("invalid Guix tool in environment ${environment.name}")
 		}
 		tail = if (command.is_empty()) [] else ["--"].concat(command)
-		Ok(["shell", "-q", "--pure"].concat(specs).concat(tail))
+		# --pure would drop the operator's shell, which kai passes to children.
+		pure = ["shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"]
+		Ok(pure.concat(specs).concat(tail))
 	}
 
 	## A Guix channel as kai pins it: its commit is locked by `kai update`.
@@ -615,7 +617,10 @@ check = |environments, request, expected|
 expect [
 	(
 		Request.Shell("dev", []),
-		Ok(["shell", "-q", "--pure", "git", "hello@2.12:out"]),
+		Ok(
+			["shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"]
+				.concat(["git", "hello@2.12:out"]),
+		),
 	),
 	(
 		Request.Shell("dev", ["hello", "--greeting", "two words", ""]),
@@ -623,6 +628,7 @@ expect [
 			"shell",
 			"-q",
 			"--pure",
+			"--preserve=^KAI_OPERATOR_SHELL$",
 			"git",
 			"hello@2.12:out",
 			"--",
@@ -707,7 +713,8 @@ expect {
 					path == channels
 						and what == "shell dev"
 						and argv == ["guix", "time-machine", "-C", channels, "--"]
-							.concat(["shell", "-q", "--pure", "hello", "--", "hello", "a b"])
+							.concat(["shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"])
+							.concat(["hello", "--", "hello", "a b"])
 				_ => Bool.False
 			}
 		Err(_) => Bool.False
