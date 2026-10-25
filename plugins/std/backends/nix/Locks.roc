@@ -586,9 +586,13 @@ Locks := { identity : LockJson, graph : LockJson }.{
 			id = LockJson.string(LockJson.field(root, input.name)?)?
 			node = LockJson.field(nodes, id)?
 			ref = LockJson.string(LockJson.field(input.value, "ref")?)?
-			expected = original(ref)?
-			if !equivalent(expected, LockJson.field(node, "original")?) {
-				return Err("Nix original reference does not match input ${input.name}")
+			expected = decoded_url(original(ref)?)
+			recorded = decoded_url(LockJson.field(node, "original")?)
+			if !equivalent(expected, recorded) {
+				return Err(
+					"Nix original reference ${LockJson.encode(recorded)} does not match "
+						.concat("input ${input.name}: ${LockJson.encode(expected)}"),
+				)
 			}
 			flake = LockJson.field(node, "flake") ?? LockJson.Boolean(True)
 			if flake != LockJson.field(input.value, "flake")? {
@@ -614,6 +618,46 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		}
 		Ok({})
 	}
+
+	## Nix records URLs percent-encoded (`+` as `%2B`), so compare them decoded.
+	decoded_url : LockJson -> LockJson
+	decoded_url = |attrs| match LockJson.field(attrs, "url") {
+		Ok(LockJson.String(url)) =>
+			LockJson.set(attrs, "url", LockJson.String(percent_decoded(url))) ?? attrs
+		_ => attrs
+	}
+
+	percent_decoded : Str -> Str
+	percent_decoded = |text| {
+		bytes = text.to_utf8()
+		var $index = 0
+		var $out = []
+		while $index < bytes.len() {
+			byte = bytes.get($index) ?? 0
+			high = hex_digit(bytes.get($index + 1) ?? 0)
+			low = hex_digit(bytes.get($index + 2) ?? 0)
+			match (byte, high, low) {
+				('%', Ok(high_digit), Ok(low_digit)) => {
+					$out = $out.append(high_digit * 16 + low_digit)
+					$index = $index + 3
+				}
+				_ => {
+					$out = $out.append(byte)
+					$index = $index + 1
+				}
+			}
+		}
+		Str.from_utf8($out) ?? text
+	}
+
+	hex_digit : U8 -> Try(U8, {})
+	hex_digit = |byte| if byte >= '0' and byte <= '9' {
+		Ok(byte - '0')
+	} else if byte >= 'a' and byte <= 'f' {
+		Ok(byte - 'a' + 10)
+	} else if byte >= 'A' and byte <= 'F' {
+		Ok(byte - 'A' + 10)
+	} else Err({})
 
 	## SSH belongs to Git transport, not HTTP file/tarball fetching.
 	remote_url : Str, Str -> Bool
