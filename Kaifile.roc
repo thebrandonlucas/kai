@@ -203,7 +203,11 @@ release = |name, binary_name|
 	)
 
 kaifile = Std.kaifile(
-	[Name("kai")].concat(overlay).concat([
+	[
+		Name("kai"),
+		# Apple Silicon Macs get the dev shell; kai build is Linux-only there.
+		Systems(["x86_64-linux", "aarch64-linux", "aarch64-darwin"]),
+	].concat(overlay).concat([
 		Environment(
 			"dev",
 			[
