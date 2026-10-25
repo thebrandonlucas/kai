@@ -603,7 +603,7 @@ NixBackend :: [].{
 						.map_err(|_| "unknown build environment")?
 					$rendered = append_rendered(
 						$rendered,
-						render_build(build, env, system, workspace),
+						render_build(build, env, model.build_sources, system, workspace),
 					)?
 				}
 				$rendered = append_rendered(
@@ -673,8 +673,9 @@ NixBackend :: [].{
 	## Ordinary, non-fixed-output derivations keep fetching outside user Run.
 	## Runner tool paths are explicit; argv and metadata enter through JSON.
 	## PATH holds the standard-environment tools mkShell puts on a shell's PATH.
-	render_build : Model.Build, Model.Environment, Str, Str -> Str
-	render_build = |build, environment, system, workspace| {
+	render_build :
+		Model.Build, Model.Environment, List(Model.BuildSource), Str, Str -> Str
+	render_build = |build, environment, build_sources, system, workspace| {
 		snapshot = if (workspace.is_empty()) "" else "${workspace}/snapshot"
 		sources = source_names(environment)
 		primary = sources.first() ?? "default"
@@ -691,6 +692,13 @@ NixBackend :: [].{
 			|name|
 				"{ name = ${quote(name)}; path = inputs.${quote(name)}; }",
 		)
+		roc_packages = build_sources.keep_if(|s| build.inputs.contains(s.name))
+			.keep_oks(
+				|source|
+					roc_package_hash(source.ref).map_ok(
+						|hash| "{ name = ${quote(source.name)}; hash = ${quote(hash)}; }",
+					),
+			)
 		dependencies = build.needs.map(
 			|name|
 				"{ name = ${quote(name)}; path = artifacts.${quote(name)}; }",
@@ -742,6 +750,7 @@ NixBackend :: [].{
 				"              inputs = pkgs.linkFarm "
 					.concat(quote("kai-inputs-${build.name}"))
 					.concat(" [ ${Str.join_with(inputs, " ")} ];"),
+				"              roc_packages = [ ${Str.join_with(roc_packages, " ")} ];",
 				"              artifacts = pkgs.linkFarm "
 					.concat(quote("kai-artifacts-${build.name}"))
 					.concat(" [ ${Str.join_with(dependencies, " ")} ];"),
@@ -752,6 +761,23 @@ NixBackend :: [].{
 				"          '';",
 			]),
 		)
+	}
+
+	## The content hash a Roc package bundle URL ends in, `<hash>.tar.zst`,
+	## which names the bundle's directory in Roc's package cache.
+	roc_package_hash : Str -> Try(Str, [NotRocPackage])
+	roc_package_hash = |ref| {
+		url = ref.drop_prefix("tarball+")
+		base58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+			.to_utf8()
+		hash = (url.split_on("/").last() ?? "").drop_suffix(".tar.zst")
+		bytes = hash.to_utf8()
+		if url.starts_with("https://") and url.ends_with("/${hash}.tar.zst") and
+			bytes.len() >= 32 and bytes.all(|byte| base58.contains(byte)) {
+			Ok(hash)
+		} else {
+			Err(NotRocPackage)
+		}
 	}
 
 	## Keeps a selected path, what lies inside it and the directories above it.
