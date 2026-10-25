@@ -718,13 +718,20 @@ Locks := { identity : LockJson, graph : LockJson }.{
 				})
 			}
 		} else {
+			# Like Nix, a bare URL is a tarball only by its archive extension.
+			archive = ["zip", "tar", "tgz", "tar.gz", "tar.xz", "tar.bz2", "tar.zst"]
+				.any(|extension| base.ends_with(".${extension}"))
 			(kind, url) = if base.starts_with("git+") {
 				("git", base.drop_prefix("git+"))
-			} else ("tarball", base.drop_prefix("tarball+"))
+			} else if base.starts_with("tarball+") {
+				("tarball", base.drop_prefix("tarball+"))
+			} else if base.starts_with("file+") or !archive {
+				("file", base.drop_prefix("file+"))
+			} else ("tarball", base)
 			if !remote_url(kind, url) {
 				return Err(
 					"unsupported Nix reference: ${ref}; "
-						.concat("use hosted, remote Git/tarball or path inputs"),
+						.concat("use hosted, remote Git/tarball/file or path inputs"),
 				)
 			}
 			$attrs = [

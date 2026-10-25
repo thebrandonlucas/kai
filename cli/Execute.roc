@@ -100,15 +100,18 @@ Execute := [].{
 			Observe(_) if phase >= 3 =>
 				Err(UnsafePlan("a plan may continue at most 3 times"))
 			Observe(paths) => {
-				body = resume!(backend, phase + 1, Execute.observe!(paths)?)?
-				next = match body {
-					Candidates({ options: [only], .. }) => Execute.planned(only.outcome)?
-					Refused(why) => return Err(Refused(why))
-					_ => return Err(PlanFailed("the Kaifile did not continue the plan"))
+				observed = Execute.observe!(paths)?
+				next_plan = Execute.continuation!(resume!, backend, phase + 1, observed)
+				# When the Kaifile rejects the files it read back, such as a Nix
+				# lock, none of them are left behind.
+				if next_plan.is_err() {
+					for path in paths {
+						_ = Workspace.path(path).delete!()
+					}
 				}
 				Execute.follow!(
 					{ backend, lock, workflow },
-					next,
+					next_plan?,
 					phase + 1,
 					resume!,
 					layout,
@@ -116,6 +119,16 @@ Execute := [].{
 					options,
 				)
 			}
+		}
+	}
+
+	# The plan the Kaifile continues with once it has read the observed files.
+	continuation! = |resume!, backend, phase, observed| {
+		answer = resume!(backend, phase, observed)?
+		match answer {
+			Candidates({ options: [only], .. }) => Execute.planned(only.outcome)
+			Refused(why) => Err(Refused(why))
+			_ => Err(PlanFailed("the Kaifile did not continue the plan"))
 		}
 	}
 

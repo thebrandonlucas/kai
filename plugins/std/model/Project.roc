@@ -102,6 +102,7 @@ Project :: [].{
 			"https://",
 			"http://",
 			"tarball+",
+			"file+",
 		].any(
 			|prefix|
 				url.starts_with(prefix) and !url.drop_prefix(prefix).is_empty(),
@@ -137,6 +138,8 @@ Project :: [].{
 			"http://",
 			"tarball+https://",
 			"tarball+http://",
+			"file+https://",
+			"file+http://",
 		].any(
 			|prefix|
 				ref.starts_with(prefix) and !ref.drop_prefix(prefix).is_empty(),
