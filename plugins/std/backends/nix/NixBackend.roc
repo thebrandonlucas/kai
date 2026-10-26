@@ -167,23 +167,14 @@ NixBackend :: [].{
 				link = shown.out_link.map_ok(|path| ["--out-link", path]) ?? ["--no-link"]
 				# Namespace witnesses compare caller/build on the same kernel.
 				# Never dispatch this local isolation contract to a remote builder.
+				# The runner refuses an unsandboxed build, so no `--option
+				# sandbox`: Nix ignores it, with a warning, for untrusted users.
 				argv = ["nix", "build"]
 					.concat(link)
 					.append("--print-out-paths")
 					.concat(if (shown.print_build_logs) ["--print-build-logs"] else [])
 					.concat(read_only)
-					.concat([
-						"--builders",
-						"",
-						"--option",
-						"sandbox",
-						"true",
-						"--option",
-						"sandbox-fallback",
-						"false",
-						"--impure",
-						label,
-					])
+					.concat(["--builders", "", "--impure", label])
 				{
 					what: "build ${name}",
 					stage: "build ${name}",
@@ -1454,12 +1445,6 @@ expect match single(Request.build("app")) {
 		"--no-write-lock-file",
 		"--builders",
 		"",
-		"--option",
-		"sandbox",
-		"true",
-		"--option",
-		"sandbox-fallback",
-		"false",
 		"--impure",
 		"path:/generated#packages.x86_64-linux.app",
 	]
