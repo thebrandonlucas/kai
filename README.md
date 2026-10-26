@@ -94,14 +94,15 @@ kai workflow ci                   # run steps in order, stop at a failure
 kai bundle-plugin plugins/deploy  # bundle a plugin package for hosting
 ```
 
-Tool names are the backend's own package names: Nix attributes such as
-`python3`, or Guix specifications. Tasks run their argv exactly, without a
-shell, so use `Run(["sh", "-c", "...", "sh"])` for pipes: `sh -c` takes the
-argument after its script as `$0`, so the `"sh"` placeholder lets arguments
-after `--` reach the script as `$1`, `$2`, ... and `"$@"`. In Roc strings,
-multiline ones included, `${name}` is Roc interpolation, so a script writes
-`$NAME`, or `\${NAME}` where the shell needs braces. Every command has help
-with examples, e.g. `kai run --help`; inside a project, help lists its
+Tool names are the backend's own package names: Nix attribute paths such as
+`python3` or `rust-bin.stable."1.90.0".minimal` (quote a segment that is not a
+plain identifier), or Guix specifications. Tasks run their argv exactly,
+without a shell, so use `Run(["sh", "-c", "...", "sh"])` for pipes: `sh -c`
+takes the argument after its script as `$0`, so the `"sh"` placeholder lets
+arguments after `--` reach the script as `$1`, `$2`, ... and `"$@"`. In Roc
+strings, multiline ones included, `${name}` is Roc interpolation, so a script
+writes `$NAME`, or `\${NAME}` where the shell needs braces. Every command has
+help with examples, e.g. `kai run --help`; inside a project, help lists its
 shells, tasks, builds and workflows.
 
 ### Settings

@@ -36,21 +36,58 @@ Project :: [].{
 		Ok({ source, name })
 	}
 
-	## Deliberately conservative native grammars: Nix dotted identifiers;
+	## Splits a Nix attribute path on dots outside quotes. Each segment is a
+	## plain identifier or a double-quoted string without `"` or `\`.
+	nix_attribute_path : Str -> Try(List(Str), {})
+	nix_attribute_path = |name| {
+		var $segments = []
+		var $segment = []
+		var $segment_quoted = Bool.False
+		var $inside_quotes = Bool.False
+		for b in name.to_utf8() {
+			if $inside_quotes {
+				if b == '"' {
+					$inside_quotes = Bool.False
+				} else if b == '\\' {
+					return Err({})
+				} else {
+					$segment = $segment.append(b)
+				}
+			} else if b == '.' {
+				if $segment.is_empty() {
+					return Err({})
+				}
+				$segments = $segments.append(Str.from_utf8($segment) ?? "")
+				$segment = []
+				$segment_quoted = Bool.False
+			} else if b == '"' and $segment.is_empty() and !$segment_quoted {
+				$inside_quotes = Bool.True
+				$segment_quoted = Bool.True
+			} else if !$segment_quoted and nix_identifier_byte(b) {
+				$segment = $segment.append(b)
+			} else {
+				return Err({})
+			}
+		}
+		if $inside_quotes or $segment.is_empty() {
+			return Err({})
+		}
+		Ok($segments.append(Str.from_utf8($segment) ?? ""))
+	}
+
+	nix_identifier_byte : U8 -> Bool
+	nix_identifier_byte = |b|
+		letter(b) or (b >= '0' and b <= '9') or b == '_' or b == '-' or b == '\''
+
+	## Deliberately conservative native grammars: Nix dotted attribute paths;
 	## Guix package[@version][:output] specifications. No translation or probing.
 	check_tool : Backend, Str -> Try({}, Str)
 	check_tool = |backend, name| {
+		if backend == Guix and name.contains("\"") {
+			return Err("invalid Guix tool: ${name}: quoted segments are Nix-only")
+		}
 		valid = match backend {
-			Nix => name.split_on(".").all(
-				|part| {
-					bytes = part.to_utf8()
-					!bytes.is_empty() and bytes.all(
-						|b|
-							letter(b) or (b >= '0' and b <= '9') or
-								b == '_' or b == '-' or b == '\'',
-					)
-				},
-			)
+			Nix => nix_attribute_path(name).is_ok()
 			Guix => {
 				parts = name.split_on(":")
 				spec = parts.first() ?? ""

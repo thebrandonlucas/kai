@@ -851,8 +851,9 @@ NixBackend :: [].{
 		}
 	}
 
-	attr_path : List(Str) -> Str
-	attr_path = |path| Str.join_with(path.map(quote), ".")
+	attr_path : Str -> Str
+	attr_path = |name|
+		Str.join_with((Project.nix_attribute_path(name) ?? [name]).map(quote), ".")
 
 	## A tool missing from its source fails evaluation naming the tool, the
 	## source and the environment, not with Nix's bare missing attribute.
@@ -860,7 +861,7 @@ NixBackend :: [].{
 	tool_reference = |tool, environment| {
 		missing = "tool ${tool.name} not found in source ${tool.source} "
 			.concat("of environment ${environment.name}")
-		attribute = "sets.${quote(tool.source)}.${attr_path(tool.name.split_on("."))}"
+		attribute = "sets.${quote(tool.source)}.${attr_path(tool.name)}"
 		"(${attribute} or (throw ${quote(missing)}))"
 	}
 
