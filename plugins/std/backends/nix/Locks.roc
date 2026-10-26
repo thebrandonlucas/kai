@@ -202,23 +202,40 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		validate_identity(locks.identity)?
 		validate_graph(locks.graph)?
 		validate_binding(locks.identity, locks.graph)?
-		if !equivalent(locks.identity, identity_for(project)?) {
+		declared = identity_for(project)?
+		if !equivalent(locks.identity, declared) {
+			changed = Str.join_with(changed_inputs(locks.identity, declared), ", ")
+			named = if (changed.is_empty()) "" else " (${changed})"
 			return Err(
-				"lock input or ordered-overlay identity changed; "
+				"lock input or ordered-overlay identity changed${named}; "
 					.concat("run kai update"),
 			)
 		}
+		rebase(locks, layout)
+	}
+
+	## The locked graph rebased onto a layout, whatever the project now
+	## declares: where an update of some inputs starts.
+	rebase : Locks, Layout -> Try(Derived, Str)
+	rebase = |locks, layout| {
 		root = root_inputs(locks.graph)?
 		nodes = LockJson.object(LockJson.field(locks.graph, "nodes")?)?
-		declared = inputs(project)?
+		var $locals = []
+		for input in LockJson.object(LockJson.field(locks.identity, "inputs")?)? {
+			ref = LockJson.string(LockJson.field(input.value, "ref")?)?
+			if ref.starts_with("path:") {
+				local = { name: input.name, path: ref.drop_prefix("path:") }
+				$locals = $locals.append(local)
+			}
+		}
 		var $nodes = []
 		var $checks = []
 		for node in nodes {
 			var $value = node.value
-			for input in declared.keep_if(|i| i.ref.starts_with("path:")) {
-				id = LockJson.string(LockJson.field(root, input.name)?)?
+			for local in $locals {
+				id = LockJson.string(LockJson.field(root, local.name)?)?
 				if node.name == id {
-					path = "${layout.project_root}/${local_path(input)}"
+					path = "${layout.project_root}/${local.path}"
 					locked = LockJson.field($value, "locked")?
 					nar_hash = LockJson.string(LockJson.field(locked, "narHash")?)?
 					check = VerifyPath({
@@ -243,6 +260,31 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		}
 		graph = LockJson.set(locks.graph, "nodes", LockJson.Object($nodes))?
 		Ok({ contents: LockJson.encode(graph).concat("\n"), checks: $checks })
+	}
+
+	## The inputs added, removed or redeclared between two identities.
+	changed_inputs : LockJson, LockJson -> List(Str)
+	changed_inputs = |locked, declared| {
+		entries = |identity|
+			match LockJson.field(identity, "inputs") {
+				Ok(found) => LockJson.object(found) ?? []
+				Err(_) => []
+			}
+		before = entries(locked)
+		after = entries(declared)
+		value_in = |list, name|
+			list.find_first(|e| e.name == name).map_ok(|e| e.value)
+		var $changed = []
+		for entry in after.concat(before) {
+			same = match (value_in(before, entry.name), value_in(after, entry.name)) {
+				(Ok(old), Ok(new)) => equivalent(old, new)
+				_ => False
+			}
+			if !same and !$changed.contains(entry.name) {
+				$changed = $changed.append(entry.name)
+			}
+		}
+		$changed
 	}
 
 	validate_identity : LockJson -> Try({}, Str)

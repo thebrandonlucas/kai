@@ -153,7 +153,12 @@ Std := [].{
 				],
 				ReadsLock,
 			),
-			command("update", Pages.update, [], OwnsLock),
+			command(
+				"update",
+				Pages.update,
+				[Trailing({ name: "inputs", help: "Inputs to update (default: all)." })],
+				OwnsLock,
+			),
 			command("model", Pages.model, [], ReadsLock),
 		]
 	}
@@ -226,7 +231,12 @@ Std := [].{
 				Implementation.{
 					command: "update",
 					backend: On("guix"),
-					fit: |_| Std.guix_lockable(model),
+					fit: |args|
+						if Command.trailing(args, "inputs").is_empty() {
+							Std.guix_lockable(model)
+						} else {
+							Err("Guix updates all its pins together; name no inputs")
+						},
 					plan: |ctx| Std.update_guix(model, ctx),
 				},
 				Implementation.{
@@ -426,14 +436,34 @@ Std := [].{
 			0 => {
 				files = NixBackend.update_files(model, target, layout)?
 				locals = NixBackend.local_checks(model, target, layout)?
+				names = Command.trailing(ctx.args, "inputs")
+				declared = Locks.inputs(model)?.map(|input| input.name)
+				unknown = names.drop_if(|name| declared.contains(name))
+				if !unknown.is_empty() {
+					return Err(
+						"unknown input ${Str.join_with(unknown, ", ")}; "
+							.concat("the inputs are ${Str.join_with(declared, ", ")}"),
+					)
+				}
 				# Replacing a stale lock by rename, rather than letting Nix follow
-				# a hard-link alias, before resolving a fresh input graph.
+				# a hard-link alias, before resolving a fresh input graph, or the
+				# locked one when only the named inputs move.
 				empty = "{\"nodes\":{\"root\":{}},\"root\":\"root\",\"version\":7}\n"
+				starting_lock = match ctx.lock {
+					Present(text) if !names.is_empty() =>
+						match LockFile.section(text, "nix")? {
+							Present(_) => Locks.rebase(Locks.decode(text)?, layout)?.contents
+							Absent => empty
+						}
+					_ => empty
+				}
 				Ok(
 					Plan.{
 						steps: locals
 							.map(|local| CheckSource(local))
-							.append(Write(files.append({ path: backend_lock, contents: empty })))
+							.append(
+								Write(files.append({ path: backend_lock, contents: starting_lock })),
+							)
 							.append(
 								Run({
 									what: "nix flake update",
@@ -443,7 +473,7 @@ Std := [].{
 										"update",
 										"--flake",
 										"path:${layout.generated_root}",
-									],
+									].concat(names),
 									output: Inherit,
 								}),
 							),
