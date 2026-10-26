@@ -436,8 +436,9 @@ GuixBackend :: [].{
 	## its runner, then Guix builds the file above; the artifact is the store
 	## path `guix build` prints. Each source tree it reads must still have
 	## its locked hash, and stays out of the snapshot, as on Nix.
-	build_steps : Model, Str, Layout, Locked -> Try(Steps, Str)
-	build_steps = |model, name, layout, locked| {
+	build_steps :
+		Model, Str, Request.BuildOutput, Layout, Locked -> Try(Steps, Str)
+	build_steps = |model, name, shown, layout, locked| {
 		build = model.builds.find_first(|b| b.name == name)
 			.map_err(|_| "unknown build: ${name}")?
 		root = layout.project_root
@@ -487,7 +488,9 @@ GuixBackend :: [].{
 					Run({
 						what: "build ${name}",
 						argv: ["guix", "time-machine", "-C", channels, "--"]
-							.concat(["build", "-f", scm]),
+							.concat(["build", "-f", scm])
+							.concat(if (shown.print_build_logs) ["--verbosity=3"] else [])
+							.concat(shown.out_link.map_ok(|path| ["--root=${path}"]) ?? []),
 						output: Artifact({
 							name,
 							label: "build-${name}.scm",
@@ -505,7 +508,8 @@ GuixBackend :: [].{
 	request_steps : Model, Request, Layout, Locked -> Try(Steps, Str)
 	request_steps = |model, request, layout, locked|
 		match request {
-			Request.Build(name) => GuixBackend.build_steps(model, name, layout, locked)
+			Request.Build(name, shown) =>
+				GuixBackend.build_steps(model, name, shown, layout, locked)
 			Request.Workflow(name) => {
 				var $steps = []
 				for step in Project.workflow_steps(model, name)? {
@@ -521,7 +525,8 @@ GuixBackend :: [].{
 								)?,
 							)
 						BuildArtifact(build) => {
-							steps = GuixBackend.build_steps(model, build, layout, locked)?
+							quiet = Request.default_output
+							steps = GuixBackend.build_steps(model, build, quiet, layout, locked)?
 							("build ${build}", steps)
 						}
 					}
@@ -538,13 +543,13 @@ GuixBackend :: [].{
 	fit : Model, Request -> Try({}, Str)
 	fit = |model, request|
 		match request {
-			Request.Build(name) =>
+			Request.Build(name, _) =>
 				GuixBackend.build_scm(model, name, "/fit", "/fit").map_ok(|_| {})
 			Request.Workflow(name) => {
 				for step in Project.workflow_steps(model, name)? {
 					match step {
 						RunTask(task, args) => GuixBackend.fit(model, Request.Run(task, args))?
-						BuildArtifact(build) => GuixBackend.fit(model, Request.Build(build))?
+						BuildArtifact(build) => GuixBackend.fit(model, Request.build(build))?
 					}
 				}
 				Ok({})
@@ -647,7 +652,7 @@ expect [
 	([env("dev", [])], Request.Shell("dev", [])),
 	([env("dev", ["-L"])], Request.Shell("dev", [])),
 	([env("dev", ["hello"])], Request.Shell("missing", [])),
-	([env("dev", ["hello"])], Request.Build("dev")),
+	([env("dev", ["hello"])], Request.build("dev")),
 	([env("dev", ["hello"])], Request.Workflow("dev")),
 ].all(|(environments, request)| check(environments, request, Err({})))
 

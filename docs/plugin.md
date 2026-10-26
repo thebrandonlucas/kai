@@ -86,8 +86,11 @@ Arguments are data; the platform builds kai's parser and help from them.
 A command takes at most one `Name` (a project entry; each choice becomes a
 subcommand, so help and usage errors list the project's names; no choices
 means any name) and at most one `Trailing` (everything after `--`,
-exact). `Command.name(args, "host")` and `Command.trailing(args, "args")`
-read the parsed values. Only the one command that owns the lock
+exact), and any `Flag` (`--name`, or `-short`) and `Path` (`--name PATH`,
+made absolute against the directory kai runs in), given anywhere before
+`--`. `Command.name(args, "host")`, `Command.trailing(args, "args")`,
+`Command.flag(args, "name")` and `Command.path(args, "name")` read the
+parsed values. Only the one command that owns the lock
 (`OwnsLock`, std's `update`) may publish it.
 
 ## Backends and implementations

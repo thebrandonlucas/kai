@@ -14,6 +14,7 @@
 "(platform "
 "(body "
 "(argv "
+"(working_directory "
 "(style "
 "(host "
 "(system "

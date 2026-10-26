@@ -20,4 +20,5 @@
 			(contents Missing)
 			(path "/x"))))
 		(phase 1))))
-	(style Plain))
+	(style Plain)
+	(working_directory "/p"))

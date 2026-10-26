@@ -1,5 +1,6 @@
 # kai's command line, parsed inside the Kaifile with Weaver from the plugins'
 # command data, so usage errors and help list what this project defines.
+import weaver.Builder
 import weaver.Cli
 import weaver.Help as WeaverHelp
 import weaver.Opt
@@ -26,11 +27,13 @@ Argv := [].{
 	## What kai prints instead of running a command.
 	Shown : [Help(Str), Usage(Str)]
 
-	## The parsed command line, or the help or usage text kai shows.
-	parse : Command.Page, List(Command), Style, List(Str) -> Try(Parsed, Shown)
+	## The parsed command line, or the help or usage text kai shows. Relative
+	## `Path` arguments resolve against `directory`, where kai runs.
+	parse :
+		Command.Page, List(Command), Style, Str, List(Str) -> Try(Parsed, Shown)
 
-	parse = |root, commands, style, argv| {
-		parser = match Argv.cli(root, commands, style) {
+	parse = |root, commands, style, directory, argv| {
+		parser = match Argv.cli(root, commands, style, directory) {
 			Ok(p) => p
 			Err(err) => return Err(Usage("invalid commands: ${Str.inspect(err)}"))
 		}
@@ -58,7 +61,7 @@ Argv := [].{
 		}
 	}
 
-	cli = |root, commands, style|
+	cli = |root, commands, style, directory|
 		Cli.finish(
 			{
 				file: Opt.maybe_str({
@@ -91,7 +94,7 @@ Argv := [].{
 					long: "dry-run",
 					help: "Print the plan instead of running it.",
 				}),
-				command: SubCmd.required(commands.map(Argv.subcommand)),
+				command: SubCmd.required(commands.map(|c| Argv.subcommand(c, directory))),
 			}.Cli,
 			{
 				name: "kai",
@@ -162,14 +165,17 @@ Argv := [].{
 			|arg|
 				match arg {
 					Name(n) => !n.choices.is_empty()
-					Trailing(_) => Bool.False
+					_ => Bool.False
 				},
 		)
-		rows = args.map(
+		# Weaver lists flags and paths as options.
+		rows = List.keep_oks(
+			args,
 			|arg|
 				match arg {
-					Name(n) => ("<${n.name}>", n.help)
-					Trailing(t) => ("<${t.name}...>", t.help)
+					Name(n) => Ok(("<${n.name}>", n.help))
+					Trailing(t) => Ok(("<${t.name}...>", t.help))
+					_ => Err({})
 				},
 		)
 		width = rows.fold(
@@ -197,13 +203,43 @@ Argv := [].{
 			NoSubcommands => NoSubcommands
 		}
 
+	# A builder that parses nothing, for options to join.
+	nothing = |{}|
+		Builder.from_arg_parser(|args| Ok({ data: [], remaining_args: args }))
+
 	# One command: a name chosen from its choices (each a subcommand, so help
-	# lists them) or any name, then the words after `--`.
-	subcommand = |command| {
+	# lists them) or any name, then the words after `--`; flags and paths
+	# anywhere before `--`.
+	subcommand = |command, directory| {
 		description = Argv.describe(command.name, command.help)
+		given = |name, value| [{ name, value: Present(value) }]
+		options = command.args.fold(
+			Argv.nothing({}),
+			|builder, arg|
+				match arg {
+					Flag(f) =>
+						Cli.weave(
+							builder,
+							Opt.flag({ short: f.short, long: f.name, help: f.help }),
+							|found, set| if (set) found.concat(given(f.name, "")) else found,
+						)
+					Path(p) =>
+						Cli.weave(
+							builder,
+							Opt.maybe_str({ short: p.short, long: p.name, help: p.help }),
+							|found, value|
+								match value {
+									Ok(path) if path.starts_with("/") => found.concat(given(p.name, path))
+									Ok(path) => found.concat(given(p.name, "${directory}/${path}"))
+									Err(NoValue) => found
+								},
+						)
+					_ => builder
+				},
+		)
 		finish = |builder|
 			SubCmd.finish(
-				builder,
+				Cli.weave(options, builder, |found, parsed| parsed.concat(found)),
 				{ name: command.name, description, mapper: |args| (command.name, args) },
 			)
 		# List.keep_oks as a function, not a method: nightly-2026-10-21-5349569
@@ -232,8 +268,7 @@ Argv := [].{
 			)
 		picked = |n, value| { name: n.name, value: Present(value) }
 		match (named, rest) {
-			([], []) =>
-				SubCmd.empty({ name: command.name, description, value: (command.name, []) })
+			([], []) => finish(Argv.nothing({}))
 			([], [t, ..]) => finish(trailing(t))
 			([n, ..], _) if !n.choices.is_empty() => {
 				choice = |c| {
@@ -336,7 +371,7 @@ toy = [
 ]
 
 parsed = |argv|
-	Argv.parse(page, toy, Plain, argv).map_ok(|p| (p.command, p.args))
+	Argv.parse(page, toy, Plain, "/work", argv).map_ok(|p| (p.command, p.args))
 
 present = |name, value| { name, value: Present(value) }
 

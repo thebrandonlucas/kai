@@ -14,7 +14,8 @@ Command := {
 	## lines that make them work.
 	Page : { description : Str, examples : List(Str), config : List(Str) }
 
-	## At most one `Name` then at most one `Trailing`, in that order.
+	## At most one `Name` then at most one `Trailing`, in that order, and
+	## any `Flag`s and `Path`s, given anywhere before `--`.
 	Arg := [
 		## A name chosen from the project; each choice becomes a subcommand
 		## so help lists it. No choices means any name.
@@ -29,6 +30,13 @@ Command := {
 
 		## Everything after `--`, exact.
 		Trailing({ name : Str, help : Str }),
+
+		## `--name`, or `-short` unless "": given or not.
+		Flag({ name : Str, short : Str, help : Str }),
+
+		## `--name PATH`, optional. A relative PATH is resolved against the
+		## directory kai runs in, so plugins see it absolute.
+		Path({ name : Str, short : Str, help : Str }),
 	]
 
 	## One project entry, for help: `kai run test --help` shows `details`.
@@ -43,6 +51,18 @@ Command := {
 		match args.find_first(|a| a.name == wanted) {
 			Ok({ value: Present(value), .. }) => value
 			_ => ""
+		}
+
+	## Whether a `Flag` was given.
+	flag : Args, Str -> Bool
+	flag = |args, wanted| args.any(|a| a.name == wanted)
+
+	## The absolute path a `Path` argument names, if given.
+	path : Args, Str -> Try(Str, [NoValue])
+	path = |args, wanted|
+		match args.find_first(|a| a.name == wanted) {
+			Ok({ value: Present(value), .. }) => Ok(value)
+			_ => Err(NoValue)
 		}
 
 	## The words of a `Trailing` argument, or [] when absent.

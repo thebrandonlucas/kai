@@ -125,6 +125,16 @@ Std := [].{
 						),
 						default: Required,
 					}),
+					Flag({
+						name: "print-build-logs",
+						short: "L",
+						help: "Show the build's log as it runs.",
+					}),
+					Path({
+						name: "out-link",
+						short: "",
+						help: "Link PATH to the artifact, keeping it from garbage collection.",
+					}),
 				],
 				ReadsLock,
 			),
@@ -166,7 +176,13 @@ Std := [].{
 			}
 			"run" =>
 				Ok(Request.Run(Command.name(args, "task"), Command.trailing(args, "args")))
-			"build" => Ok(Request.Build(Command.name(args, "name")))
+			"build" => {
+				shown = {
+					print_build_logs: Command.flag(args, "print-build-logs"),
+					out_link: Command.path(args, "out-link"),
+				}
+				Ok(Request.Build(Command.name(args, "name"), shown))
+			}
 			"workflow" => Ok(Request.Workflow(Command.name(args, "name")))
 			_ => Err("std has no ${command} request")
 		}

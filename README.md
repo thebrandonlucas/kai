@@ -104,6 +104,9 @@ strings, multiline ones included, `${name}` is Roc interpolation, so a script
 writes `$NAME`, or `\${NAME}` where the shell needs braces. Every command has
 help with examples, e.g. `kai run --help`; inside a project, help lists its
 shells, tasks, builds and workflows.
+`kai build -L` (`--print-build-logs`) shows the build's log as it runs, and
+`kai build --out-link PATH` links PATH to the artifact and keeps it from
+garbage collection.
 
 ### Settings
 

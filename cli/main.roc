@@ -195,6 +195,7 @@ ask! = |{ project, layout, shown, style }, resume| {
 	request = Protocol.Request.{
 		protocol: Protocol.current,
 		argv: shown,
+		working_directory: Env.cwd!()?.to_str()?,
 		style,
 		host: { system },
 		layout,

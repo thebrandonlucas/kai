@@ -9,10 +9,12 @@ Protocol := [].{
 	current : Version
 	current = { major: 1, minor: 0 }
 
-	## `argv` is kai's argv without argv[0].
+	## `argv` is kai's argv without argv[0]; `working_directory` is where
+	## kai runs.
 	Request := {
 		protocol : Version,
 		argv : List(Str),
+		working_directory : Str,
 		style : [Color, Plain],
 		host : { system : Str },
 		layout : Layout,
@@ -117,6 +119,7 @@ request : Protocol.Request
 request = Protocol.Request.{
 	protocol: Protocol.current,
 	argv: [],
+	working_directory: "/p",
 	style: Plain,
 	host: { system: "x86_64-linux" },
 	layout: Layout.{

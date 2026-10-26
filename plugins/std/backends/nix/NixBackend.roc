@@ -68,7 +68,7 @@ NixBackend :: [].{
 				for step in Project.workflow_steps(project, name)? {
 					atomic = match step {
 						RunTask(task, extra) => Request.Run(task, extra)
-						BuildArtifact(build) => Request.Build(build)
+						BuildArtifact(build) => Request.build(build)
 					}
 					# Share immutable recipes, NEVER runtime artifacts or snapshots.
 					# Repeated requests still append a complete executable step.
@@ -155,7 +155,7 @@ NixBackend :: [].{
 					output: Inherit,
 				}
 			}
-			Request.Build(name) => {
+			Request.Build(name, shown) => {
 				# Build isolation relies on the Linux sandbox and namespaces.
 				if target.ends_with("-darwin") {
 					return Err("kai build does not support macOS yet (#133)")
@@ -164,9 +164,13 @@ NixBackend :: [].{
 				built = builds.find_first(|b| b.name == name)
 					.map_err(|_| "unknown build: ${name}")?
 				label = "${base_ref}#packages.${target}.${name}"
+				link = shown.out_link.map_ok(|path| ["--out-link", path]) ?? ["--no-link"]
 				# Namespace witnesses compare caller/build on the same kernel.
 				# Never dispatch this local isolation contract to a remote builder.
-				argv = ["nix", "build", "--no-link", "--print-out-paths"]
+				argv = ["nix", "build"]
+					.concat(link)
+					.append("--print-out-paths")
+					.concat(if (shown.print_build_logs) ["--print-build-logs"] else [])
 					.concat(read_only)
 					.concat([
 						"--builders",
@@ -1436,7 +1440,7 @@ expect NixBackend.preflight(
 ) == Err("unsupported Nix target riscv64-linux")
 
 # A build names its artifact and runs exact, immutable sandbox argv.
-expect match single(Request.Build("app")) {
+expect match single(Request.build("app")) {
 	Ok(step) => step.output == Artifact({
 		name: "app",
 		label: "path:/generated#packages.x86_64-linux.app",
@@ -1464,7 +1468,7 @@ expect match single(Request.Build("app")) {
 
 # Inputs are verified before each fresh snapshot, including every excluded root,
 # and Kai installs itself as the runner outside the generated flake.
-expect match single(Request.Build("app")) {
+expect match single(Request.build("app")) {
 	Ok(step) => step.before == [
 		VerifyPath({
 			path: "/project/assets",
@@ -1494,7 +1498,7 @@ expect match single(Request.Build("app")) {
 }
 
 # User argv is data; source/dependency views are immutable store farms.
-expect match single(Request.Build("app")) {
+expect match single(Request.build("app")) {
 	Ok(step) => match step.files.first() {
 		Ok(file) => file.contents.contains(
 			"\"\" \"two words\" \"line\\nbreak\" \"$HOME\"",
@@ -1574,7 +1578,7 @@ expect match single(
 
 # Request selection never shrinks root inputs or causes an implicit relock.
 expect match (
-	single(Request.Build("library")),
+	single(Request.build("library")),
 	single(Request.Shell("default", [])),
 ) {
 	(Ok(build), Ok(shell)) => {
@@ -1596,7 +1600,7 @@ expect match (
 expect [
 	Request.Shell("missing", []),
 	Request.Run("missing", []),
-	Request.Build("missing"),
+	Request.build("missing"),
 	Request.Run("check", [Str.from_utf8([0]) ?? ""]),
 	Request.Shell("default", [""]),
 ]
@@ -1616,7 +1620,7 @@ expect match plan_locks {
 		bad.all(
 			|data| NixBackend.plan(
 				TestData.project(data),
-				Request.Build("app"),
+				Request.build("app"),
 				"x86_64-linux",
 				TestData.layout,
 				locks,
@@ -1653,7 +1657,7 @@ expect {
 		).is_ok()
 			and NixBackend.plan(
 				project,
-				Request.Build("app"),
+				Request.build("app"),
 				"x86_64-linux",
 				TestData.layout,
 				locks,
@@ -1703,14 +1707,14 @@ expect {
 			})
 			NixBackend.plan(
 				reordered,
-				Request.Build("app"),
+				Request.build("app"),
 				"x86_64-linux",
 				TestData.layout,
 				locks,
 			).is_ok()
 				and NixBackend.plan(
 					reversed,
-					Request.Build("app"),
+					Request.build("app"),
 					"x86_64-linux",
 					TestData.layout,
 					locks,
@@ -1758,7 +1762,7 @@ expect match plan_locks {
 		layouts.all(
 			|layout| NixBackend.plan(
 				TestData.project(TestData.data),
-				Request.Build("app"),
+				Request.build("app"),
 				"x86_64-linux",
 				layout,
 				locks,
@@ -1783,7 +1787,7 @@ expect ["flake.nix", "flake.lock"].all(
 				project = TestData.project(TestData.data)
 				NixBackend.preflight(
 					project,
-					Request.Build("app"),
+					Request.build("app"),
 					"x86_64-linux",
 					layout,
 				).is_err()
@@ -1803,7 +1807,7 @@ expect ["flake.nix", "flake.lock"].all(
 # Containment alone is fine when the workspace does not collide with a file.
 expect NixBackend.preflight(
 	TestData.project(TestData.data),
-	Request.Build("app"),
+	Request.build("app"),
 	"x86_64-linux",
 	Layout.{
 		project_root: "/project",
@@ -2141,7 +2145,7 @@ expect {
 	)?
 	baseline = NixBackend.prepare_atomic(
 		project,
-		Request.Build("root"),
+		Request.build("root"),
 		"x86_64-linux",
 		TestData.layout,
 		Unlimited,
@@ -2244,12 +2248,12 @@ expect {
 # exactly: each returned step equals its independently requested atomic plan.
 expect {
 	sequence = workflow_plan(Request.Workflow("ci"))?
-	library = workflow_plan(Request.Build("library"))?
+	library = workflow_plan(Request.build("library"))?
 	edit = workflow_plan(
 		Request.Run("check", ["", "two words", "--literal", "a\nb", "$HOME"]),
 	)?
 	check = workflow_plan(Request.Run("check", []))?
-	bundle = workflow_plan(Request.Build("bundle"))?
+	bundle = workflow_plan(Request.build("bundle"))?
 	staged = stages(sequence)
 	staged.map(|stage| stage.steps) == [
 		library.steps,
@@ -2284,7 +2288,7 @@ expect {
 	locks = plan_locks?
 	before = Locks.encode(locks)
 	sequence = workflow_plan(Request.Workflow("ci"))?
-	atomic = workflow_plan(Request.Build("library"))?
+	atomic = workflow_plan(Request.build("library"))?
 	library = split(atomic.steps)?
 	stages(sequence).all(
 		|stage| match split(stage.steps) {
@@ -2379,7 +2383,7 @@ expect {
 	runs(first).map(|run| run.what) == ["task check"]
 		and later.is_err() and later.map_ok(|plan| plan.steps) == NixBackend.plan(
 			project,
-			Request.Build("app"),
+			Request.build("app"),
 			"x86_64-linux",
 			TestData.layout,
 			locks,
@@ -2436,7 +2440,7 @@ expect {
 	locks = plan_locks?
 	NixBackend.plan(
 		project,
-		Request.Build("app"),
+		Request.build("app"),
 		"aarch64-linux",
 		TestData.layout,
 		locks,
