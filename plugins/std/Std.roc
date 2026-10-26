@@ -474,7 +474,7 @@ Std := [].{
 										"--flake",
 										"path:${layout.generated_root}",
 									].concat(names),
-									output: Inherit,
+									output: Quiet,
 								}),
 							),
 						next: Observe([backend_lock]),
@@ -490,8 +490,17 @@ Std := [].{
 					.map_err(|message| "cannot lock the Nix inputs: ${message}")?
 				# Other backends' sections are kept as they are.
 				contents = LockFile.splice(ctx.lock, "nix", Locks.section(locks))?
+				previous = match ctx.lock {
+					Present(text) => Locks.decode(text)
+					Absent => Err("no lock")
+				}
+				changed = match Locks.changes(previous, locks) {
+					[] => ["no input changed"]
+					lines => lines
+				}
 				publish = PublishLock({ previous: ctx.lock, contents })
-				Ok(Plan.{ steps: [publish], next: Done })
+				steps = [publish].concat(changed.map(|line| Note(line)))
+				Ok(Plan.{ steps, next: Done })
 			}
 		}
 	}
@@ -587,7 +596,7 @@ published : Implementation.Context, Str, Str -> [Absent, Present(Str)]
 published = |ctx, path, text| {
 	resumed = { ..ctx, phase: 1, observed: [{ path, contents: Text(text) }] }
 	match planned("update", resumed).map_ok(|plan| plan.steps) {
-		Ok([PublishLock({ contents, .. })]) => Present(contents)
+		Ok([PublishLock({ contents, .. }), ..]) => Present(contents)
 		_ => Absent
 	}
 }

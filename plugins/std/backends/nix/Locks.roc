@@ -287,6 +287,50 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		$changed
 	}
 
+	## One line per root input an update added, moved or removed, with short
+	## revisions (or content hashes for paths).
+	changes : Try(Locks, Str), Locks -> List(Str)
+	changes = |previous, current| {
+		before = match previous {
+			Ok(locks) => pins(locks) ?? []
+			Err(_) => []
+		}
+		after = pins(current) ?? []
+		pin_in = |list, name| list.find_first(|p| p.name == name).map_ok(|p| p.pin)
+		var $lines = []
+		for entry in after.concat(before) {
+			line = match (pin_in(before, entry.name), pin_in(after, entry.name)) {
+				(Ok(old), Ok(new)) if old != new => "${entry.name} ${old} → ${new}"
+				(Err(_), Ok(new)) => "${entry.name} added at ${new}"
+				(Ok(_), Err(_)) => "${entry.name} removed"
+				_ => ""
+			}
+			if line != "" and !$lines.contains(line) {
+				$lines = $lines.append(line)
+			}
+		}
+		$lines
+	}
+
+	## Each root input's short locked revision, or content hash for paths.
+	pins : Locks -> Try(List({ name : Str, pin : Str }), Str)
+	pins = |locks| {
+		nodes = LockJson.field(locks.graph, "nodes")?
+		var $pins = []
+		for input in LockJson.object(root_inputs(locks.graph)?)? {
+			node = LockJson.field(nodes, LockJson.string(input.value)?)?
+			locked = LockJson.field(node, "locked")?
+			full = match LockJson.field(locked, "rev") {
+				Ok(rev) => LockJson.string(rev)?
+				Err(_) => LockJson.string(LockJson.field(locked, "narHash")?)?
+					.drop_prefix("sha256-")
+			}
+			pin = Str.from_utf8_lossy(full.to_utf8().take_first(8))
+			$pins = $pins.append({ name: input.name, pin })
+		}
+		Ok($pins)
+	}
+
 	validate_identity : LockJson -> Try({}, Str)
 	validate_identity = |identity| {
 		inputs_ = LockJson.object(LockJson.field(identity, "inputs")?)?

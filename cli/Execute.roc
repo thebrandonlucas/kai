@@ -416,7 +416,10 @@ Execute := [].{
 			CheckSource(path) => Workspace.safe_source!(path)
 			Snapshot(snapshot) => Snapshot.snapshot!(snapshot)
 			InstallRunner({ destination }) => Workspace.install_runner!(destination)
-			Run({ what, argv, output: Inherit }) => Execute.child!(argv, what, root)
+			Run({ what, argv, output: Inherit }) =>
+				Execute.child!(argv, what, root, Inherit)
+			Run({ what, argv, output: Quiet }) =>
+				Execute.child!(argv, what, root, Capture)
 			Run({ what, argv, output: Artifact(artifact) }) =>
 				Execute.build!(argv, what, artifact, root, mode)
 			Confirm(prompt) =>
@@ -483,15 +486,20 @@ Execute := [].{
 		}
 	}
 
-	# Run argv from the project root with inherited stdio.
-	child! = |argv, what, root|
+	# Run argv from the project root with inherited stdio; a captured stderr is
+	# shown only when the child fails.
+	child! = |argv, what, root, stderr|
 		match argv {
 			[program, .. as args] => {
 				ran = Cmd.new(OsStr.from_str(program))
 					.args(args.map(OsStr.from_str))
 					.cwd(Workspace.path(root))
 					.inherit_stdio()
+					.stderr(stderr)
 					.run!()?
+				if ran.status != Exited(0) {
+					Stderr.write_bytes!(ran.stderr_bytes)?
+				}
 				match ran.status {
 					Exited(0) => Ok({})
 					Exited(code) => Err(ChildExited(what, code))

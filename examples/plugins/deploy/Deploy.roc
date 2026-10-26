@@ -190,7 +190,7 @@ expect {
 	resumed = { ..context, phase: 1, observed }
 	update = planned(Std.plugin(project), "update", resumed)
 	lock = match update.map_ok(|plan| plan.steps) {
-		Ok([PublishLock({ contents, .. })]) => Present(contents)
+		Ok([PublishLock({ contents, .. }), ..]) => Present(contents)
 		_ => Absent
 	}
 	host = [Address("root@203.0.113.7"), Flake(".#web"), Tools("ops")]

@@ -8,7 +8,7 @@
 ";"
 "\x0a"
 "()"
-"(protocol ((major 1) (minor 0)))"
+"(protocol ((major 1) (minor 1)))"
 "(major "
 "(minor "
 "(platform "

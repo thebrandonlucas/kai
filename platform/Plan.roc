@@ -23,7 +23,7 @@ Plan := { steps : List(Step), next : Next }.{
 		CheckSource(Str),
 		Snapshot({ root : Str, destination : Str, exclude : List(Str) }),
 		InstallRunner({ destination : Str }),
-		Run({ what : Str, argv : List(Str), output : [Inherit, Artifact(Artifact)] }),
+		Run({ what : Str, argv : List(Str), output : Output }),
 		PublishLock({ previous : [Absent, Present(Str)], contents : Str }),
 	].{
 		is_eq : _
@@ -43,6 +43,9 @@ Plan := { steps : List(Step), next : Next }.{
 
 	File : { path : Str, contents : Str }
 
+	## `Quiet` shows the child's stderr only when it fails.
+	Output : [Inherit, Quiet, Artifact(Artifact)]
+
 	## `output` is the declared output name; the store path is the child's
 	## last stdout line (`nix build --print-out-paths`, `guix build`).
 	Artifact : { name : Str, label : Str, output : Str }
@@ -61,6 +64,7 @@ expect {
 			Snapshot({ root: "/p", destination: "/w/src", exclude: [".git"] }),
 			InstallRunner({ destination: "/w/runner" }),
 			Run({ what: "shell dev", argv: ["bash"], output: Inherit }),
+			Run({ what: "lock", argv: ["nix", "flake", "update"], output: Quiet }),
 			Run({
 				what: "build site",
 				argv: ["nix", "build"],

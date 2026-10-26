@@ -52,7 +52,7 @@ NixBackend :: [].{
 		contents : Str,
 		what : Str,
 		stage : Str,
-		output : [Inherit, Artifact({ name : Str, label : Str, output : Str })],
+		output : Plan.Output,
 	}
 
 	## Expand only semantic requests. Every atomic request shares this selection
@@ -262,7 +262,7 @@ NixBackend :: [].{
 					InstallRunner({ destination: runner_path(layout.workspace) }),
 				]
 			}
-			Inherit => []
+			Inherit | Quiet => []
 		}
 		files = staged_files(layout, contents)
 			.append({
@@ -1352,7 +1352,7 @@ Single : {
 	files : List(Plan.File),
 	what : Str,
 	argv : List(Str),
-	output : [Inherit, Artifact({ name : Str, label : Str, output : Str })],
+	output : Plan.Output,
 }
 
 split : List(Plan.Step) -> Try(Single, Str)

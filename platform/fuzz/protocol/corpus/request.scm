@@ -10,7 +10,7 @@
 	(lock (Present "{\n\t\"version\": 1\n}\n"))
 	(protocol (
 		(major 1)
-		(minor 0)))
+		(minor 1)))
 	(resume (Resume (
 		(backend "nix")
 		(command "update")
