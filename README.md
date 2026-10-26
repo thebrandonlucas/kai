@@ -98,8 +98,10 @@ Tool names are the backend's own package names: Nix attributes such as
 `python3`, or Guix specifications. Tasks run their argv exactly, without a
 shell, so use `Run(["sh", "-c", "...", "sh"])` for pipes: `sh -c` takes the
 argument after its script as `$0`, so the `"sh"` placeholder lets arguments
-after `--` reach the script as `$1`, `$2`, ... and `"$@"`. Every command has
-help with examples, e.g. `kai run --help`; inside a project, help lists its
+after `--` reach the script as `$1`, `$2`, ... and `"$@"`. In Roc strings,
+multiline ones included, `${name}` is Roc interpolation, so a script writes
+`$NAME`, or `\${NAME}` where the shell needs braces. Every command has help
+with examples, e.g. `kai run --help`; inside a project, help lists its
 shells, tasks, builds and workflows.
 
 ### Settings
