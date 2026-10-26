@@ -672,6 +672,7 @@ NixBackend :: [].{
 
 	## Ordinary, non-fixed-output derivations keep fetching outside user Run.
 	## Runner tool paths are explicit; argv and metadata enter through JSON.
+	## PATH holds the standard-environment tools mkShell puts on a shell's PATH.
 	render_build : Model.Build, Model.Environment, Str, Str -> Str
 	render_build = |build, environment, system, workspace| {
 		snapshot = if (workspace.is_empty()) "" else "${workspace}/snapshot"
@@ -734,7 +735,9 @@ NixBackend :: [].{
 				"              argv = [ ${argv} ];",
 				"              output = ${quote(build.output)};",
 				"              path = pkgs.lib.makeBinPath (tools ++ "
-					.concat("[ pkgs.coreutils pkgs.bash ]);"),
+					.concat("builtins.filter pkgs.lib.isDerivation ")
+					.concat("pkgs.stdenv.defaultNativeBuildInputs ++ ")
+					.concat("[ pkgs.stdenv.cc.bintools ] ++ pkgs.stdenv.initialPath);"),
 				"              coreutils = \"\${pkgs.coreutils}/bin\";",
 				"              inputs = pkgs.linkFarm "
 					.concat(quote("kai-inputs-${build.name}"))

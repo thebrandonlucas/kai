@@ -133,10 +133,11 @@ can reach, and what they write stays in the working tree.
 
 Builds run sandboxed. A build gets a copy of the project, leaving out what
 its `.gitignore` files ignore (`Files([...])` narrows the copy to the given
-project-relative paths), plus only its environment's tools, its declared
-sources (`$KAI_INPUTS`) and the artifacts of the builds it needs
+project-relative paths), plus only the tools its environment's shell has, its
+declared sources (`$KAI_INPUTS`) and the artifacts of the builds it needs
 (`$KAI_ARTIFACTS`). It has no network, and only its `Output` is kept, in the
-store.
+store. The sandbox has no `/usr/bin/env`, so run scripts as `sh script` or
+through an interpreter's path rather than relying on a `#!/usr/bin/env` line.
 
 Use a task for work that touches the project or the outside world, such as
 running tests, formatting or deploying. Use a build for an artifact that should
