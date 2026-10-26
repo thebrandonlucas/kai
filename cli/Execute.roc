@@ -457,7 +457,7 @@ Execute := [].{
 		output = Cmd.new(OsStr.from_str(program))
 			.args(args.map(OsStr.from_str))
 			.cwd(Workspace.path(root))
-			.stderr(Inherit)
+			.stderr(Tee)
 			.run!()?
 		match output.status {
 			Exited(0) => {
@@ -477,7 +477,8 @@ Execute := [].{
 					Json => Stdout.line!(Output.event("artifact", built, fields))
 				}
 			}
-			Exited(code) => Err(ChildExited(what, code))
+			Exited(code) =>
+				Err(ChildExited(what, Execute.builder_code(output.stderr_bytes, code)))
 			Signaled(signal) => Err(ChildExited(what, 128 + signal))
 		}
 	}
@@ -499,6 +500,39 @@ Execute := [].{
 			}
 			[] => Err(RenderFailed("the plan has an empty command"))
 		}
+
+	# nix build and guix build exit 1 when a build fails; their report's
+	# "builder … failed with exit code N" names the build command's own
+	# status. Echoed build log lines are indented under "> " and never match.
+	builder_code : List(U8), I32 -> I32
+	builder_code = |stderr, code| {
+		reports = ["error: builder for ", "Reason: builder failed ", "builder for "]
+		var $found = code
+		for line in Str.from_utf8_lossy(stderr).split_on("\n") {
+			if reports.any(|report| line.trim().starts_with(report)) {
+				match line.split_first("failed with exit code ") {
+					Ok(parts) => {
+						$found = Execute.leading_number(parts.after).ok_or($found)
+					}
+					Err(_) => {}
+				}
+			}
+		}
+		$found
+	}
+
+	leading_number : Str -> Try(I32, _)
+	leading_number = |text| {
+		var $digits = []
+		var $reading = Bool.True
+		for byte in text.to_utf8() {
+			$reading = $reading and byte >= '0' and byte <= '9'
+			if $reading {
+				$digits = $digits.append(byte)
+			}
+		}
+		I32.from_str(Str.from_utf8_lossy($digits))
+	}
 
 	# A child's status becomes kai's own; statuses a process cannot exit with,
 	# such as a signal report, become a generic failure.
@@ -590,4 +624,14 @@ expect {
 			Execute.confirmable(plan, { yes, dry_run: Bool.False, interactive })
 				== expected,
 	)
+}
+
+# A failed build's status is its builder's, from nix's or guix's report.
+expect {
+	old = "error: builder for '/nix/store/x.drv' failed with exit code 3;\n"
+	new = "error: Cannot build 'x'.\n  Reason: builder failed with exit code 5.\n"
+	log = "  > builder failed with exit code 9\n"
+	guix = "builder for `/gnu/store/x.drv' failed with exit code 4\n"
+	[(old, 3), (new.concat(log), 5), (guix, 4), ("error: no flake\n", 1)]
+		.all(|(report, exit)| Execute.builder_code(report.to_utf8(), 1) == exit)
 }
