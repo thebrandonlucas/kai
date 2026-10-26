@@ -80,7 +80,7 @@ Std := [].{
 				Pages.shell,
 				[
 					Name({
-						name: "name",
+						name: "shell",
 						help: "The shell to enter (default: default).",
 						choices: model.shells.map(
 							|s| choice(s.name, "Environment ${s.environment}"),
@@ -172,7 +172,7 @@ Std := [].{
 		match command {
 			"shell" => {
 				command_words = Command.trailing(args, "command")
-				Ok(Request.Shell(Command.name(args, "name"), command_words))
+				Ok(Request.Shell(Command.name(args, "shell"), command_words))
 			}
 			"run" =>
 				Ok(Request.Run(Command.name(args, "task"), Command.trailing(args, "args")))
@@ -523,6 +523,9 @@ planned = |command, ctx| {
 named : Str -> Command.Args
 named = |name| [{ name: "name", value: Present(name) }]
 
+in_shell : Str -> Command.Args
+in_shell = |name| [{ name: "shell", value: Present(name) }]
+
 runs : Try(Plan, Str) -> Try(List({ what : Str, argv : List(Str) }), Str)
 runs = |result|
 	result.map_ok(
@@ -615,11 +618,11 @@ expect {
 # A Nix shell enters the locked shell; an unknown shell or a missing lock is
 # refused.
 expect {
-	shell = { ..context, args: named("default"), lock: nix_lock }
+	shell = { ..context, args: in_shell("default"), lock: nix_lock }
 	installable = "path:/generated/nix#devShells.x86_64-linux.default"
 	runs(planned("shell", shell))
 		== Ok([{ what: "shell default", argv: develop.append(installable) }])
-		and planned("shell", { ..shell, args: named("missing") })
+		and planned("shell", { ..shell, args: in_shell("missing") })
 			== Err("unknown shell: missing")
 		and planned("shell", { ..shell, lock: Absent })
 			== Err("no lock file at /authority/inputs.lock; run `kai update`")
@@ -659,7 +662,7 @@ expect {
 # A Guix shell runs guix shell at the locked channels; without the Guix
 # section it is refused.
 expect {
-	shell = { ..guix, args: named("default"), lock: guix_lock }
+	shell = { ..guix, args: in_shell("default"), lock: guix_lock }
 	argv = time_machine.concat(["--", "shell", "-q", "--pure", "hello"])
 	runs(planned("shell", shell)) == Ok([{ what: "shell default", argv }])
 		and planned("shell", { ..shell, lock: nix_lock }).is_err()
