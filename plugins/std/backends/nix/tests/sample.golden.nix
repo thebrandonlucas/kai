@@ -17,7 +17,7 @@
           };
         in extra: sets."nixpkgs".mkShell ({
           packages = [
-            sets."nixpkgs"."git"
+            (sets."nixpkgs"."git" or (throw "tool git not found in source nixpkgs of environment base"))
           ];
         } // extra);
         "dev" = let
@@ -27,8 +27,8 @@
           };
         in extra: sets."nixpkgs".mkShell ({
           packages = [
-            sets."nixpkgs"."git"
-            sets."nixpkgs"."llvmPackages"."bintools"
+            (sets."nixpkgs"."git" or (throw "tool git not found in source nixpkgs of environment dev"))
+            (sets."nixpkgs"."llvmPackages"."bintools" or (throw "tool llvmPackages.bintools not found in source nixpkgs of environment dev"))
           ];
         } // extra);
       };

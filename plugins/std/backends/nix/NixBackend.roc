@@ -477,42 +477,9 @@ NixBackend :: [].{
 		shells = model.shells.keep_if(|s| names.contains(s.environment))
 		# Validate all Raw declarations, even aliases outside this request.
 		# Only selected aliases are emitted; flake-level data is always retained.
-		var $shell_raw = []
-		var $flake_raw = []
-		for r in model.raw.keep_if(|r| r.backend == "nix") {
-			if r.target == "flake" {
-				$flake_raw = $flake_raw.concat(raw_attrs(r)?)
-			} else if r.target.starts_with("shell:") {
-				name = r.target.drop_prefix("shell:")
-				if !model.shells.any(|s| s.name == name) {
-					return Err("raw nix target \"${r.target}\" names no shell")
-				}
-				$shell_raw = $shell_raw.concat(
-					raw_attrs(r)?.map(|a| { shell: name, attr: a }),
-				)
-			} else {
-				return Err(
-					"unknown raw nix target \"${r.target}\"; "
-						.concat("expected \"flake\" or \"shell:<name>\""),
-				)
-			}
-		}
-		check_attr_names(
-			"the raw flake outputs",
-			$flake_raw.map(|a| a.name),
-			["devShells", "packages"],
-		)?
-		for shell in model.shells {
-			if shell.name.starts_with("kai-env-") {
-				return Err("shell prefix kai-env- is reserved")
-			}
-			extra = $shell_raw.keep_if(|x| x.shell == shell.name)
-				.map(|x| x.attr)
-			check_attr_names(
-				"the raw attributes of shell \"${shell.name}\"",
-				extra.map(|a| a.name),
-				["packages"],
-			)?
+		{ flake_raw, shell_raw } = raw_values(model)?
+		if model.shells.any(|shell| shell.name.starts_with("kai-env-")) {
+			return Err("shell prefix kai-env- is reserved")
 		}
 		var $rendered = { chunks: [], budget }
 		$rendered = append_rendered(
@@ -612,7 +579,7 @@ NixBackend :: [].{
 				)?
 			}
 			for shell in shells {
-				extra = $shell_raw.keep_if(|x| x.shell == shell.name)
+				extra = shell_raw.keep_if(|x| x.shell == shell.name)
 					.map(|x| x.attr)
 				$rendered = append_rendered(
 					$rendered,
@@ -646,7 +613,7 @@ NixBackend :: [].{
 			}
 			$rendered = append_rendered($rendered, "      };\n")?
 		}
-		for attr in $flake_raw {
+		for attr in flake_raw {
 			$rendered = append_rendered(
 				$rendered,
 				"      ${quote(attr.name)} = ${value_to_nix(attr.value)};\n",
@@ -683,9 +650,7 @@ NixBackend :: [].{
 					.concat("{ inherit system overlays; };"),
 		)
 		tools = environment.tools.map(
-			|tool|
-				"            sets.${quote(tool.source)}."
-					.concat(attr_path(tool.name.split_on("."))),
+			|tool| "            ${tool_reference(tool, environment)}",
 		)
 		lines([
 			"        ${quote(environment.name)} = let",
@@ -720,10 +685,7 @@ NixBackend :: [].{
 				"            ${quote(name)} = import inputs.${quote(name)} "
 					.concat("{ inherit system overlays; };"),
 		)
-		tools = environment.tools.map(
-			|tool|
-				"sets.${quote(tool.source)}.${attr_path(tool.name.split_on("."))}",
-		)
+		tools = environment.tools.map(|tool| tool_reference(tool, environment))
 		inputs = build.inputs.map(
 			|name|
 				"{ name = ${quote(name)}; path = inputs.${quote(name)}; }",
@@ -812,6 +774,53 @@ NixBackend :: [].{
 		_ => Err("raw nix value for \"${r.target}\" must be Attrs")
 	}
 
+	## The Nix Raw attributes of the flake and of each shell, or why a Nix Raw
+	## is one this backend does not accept; std reports that at compile time.
+	raw_values : Model -> Try(
+		{
+			flake_raw : List({ name : Str, value : Value }),
+			shell_raw : List({ shell : Str, attr : { name : Str, value : Value } }),
+		},
+		Str,
+	)
+	raw_values = |model| {
+		var $shell_raw = []
+		var $flake_raw = []
+		for r in model.raw.keep_if(|r| r.backend == "nix") {
+			if r.target == "flake" {
+				$flake_raw = $flake_raw.concat(raw_attrs(r)?)
+			} else if r.target.starts_with("shell:") {
+				name = r.target.drop_prefix("shell:")
+				if !model.shells.any(|s| s.name == name) {
+					return Err("raw nix target \"${r.target}\" names no shell")
+				}
+				$shell_raw = $shell_raw.concat(
+					raw_attrs(r)?.map(|a| { shell: name, attr: a }),
+				)
+			} else {
+				return Err(
+					"unknown raw nix target \"${r.target}\"; "
+						.concat("expected \"flake\" or \"shell:<name>\""),
+				)
+			}
+		}
+		check_attr_names(
+			"the raw flake outputs",
+			$flake_raw.map(|a| a.name),
+			["devShells", "packages"],
+		)?
+		for shell in model.shells {
+			extra = $shell_raw.keep_if(|x| x.shell == shell.name)
+				.map(|x| x.attr)
+			check_attr_names(
+				"the raw attributes of shell \"${shell.name}\"",
+				extra.map(|a| a.name),
+				["packages"],
+			)?
+		}
+		Ok({ flake_raw: $flake_raw, shell_raw: $shell_raw })
+	}
+
 	check_attr_names : Str, List(Str), List(Str) -> Try({}, Str)
 	check_attr_names = |what, names, reserved| {
 		var $seen = []
@@ -844,6 +853,16 @@ NixBackend :: [].{
 
 	attr_path : List(Str) -> Str
 	attr_path = |path| Str.join_with(path.map(quote), ".")
+
+	## A tool missing from its source fails evaluation naming the tool, the
+	## source and the environment, not with Nix's bare missing attribute.
+	tool_reference : Model.Tool, Model.Environment -> Str
+	tool_reference = |tool, environment| {
+		missing = "tool ${tool.name} not found in source ${tool.source} "
+			.concat("of environment ${environment.name}")
+		attribute = "sets.${quote(tool.source)}.${attr_path(tool.name.split_on("."))}"
+		"(${attribute} or (throw ${quote(missing)}))"
+	}
 
 	lines : List(Str) -> Str
 	lines = |items| items.fold("", |acc, line| acc.concat(line).concat("\n"))

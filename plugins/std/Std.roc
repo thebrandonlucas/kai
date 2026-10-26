@@ -29,7 +29,7 @@ Std := [].{
 	## to compile.
 	plugin : List(Config.Setting) -> Plugin
 	plugin = |settings|
-		match ConfigToModel.convert(settings) {
+		match Std.checked_model(settings) {
 			Ok(model) =>
 				Plugin.new({
 					name: "std",
@@ -54,6 +54,20 @@ Std := [].{
 				})
 			Err(problem) => Plugin.invalid("std", [problem])
 		}
+
+	## The settings' model, with Raw checked too so kai check reports a Raw no
+	## backend accepts instead of kai update or kai shell failing later.
+	checked_model : List(Config.Setting) -> Try(Model, Str)
+	checked_model = |settings| {
+		model = ConfigToModel.convert(settings)?
+		for raw in model.raw {
+			if raw.backend != "nix" {
+				return Err("unknown raw backend \"${raw.backend}\"; expected \"nix\"")
+			}
+		}
+		_ = NixBackend.raw_values(model)?
+		Ok(model)
+	}
 
 	commands : Model -> List(Command)
 	commands = |model| {

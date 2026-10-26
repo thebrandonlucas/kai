@@ -20,8 +20,8 @@
           };
         in extra: sets."default".mkShell ({
           packages = [
-            sets."default"."hello"
-            sets."stable"."jq"
+            (sets."default"."hello" or (throw "tool hello not found in source default of environment dev"))
+            (sets."stable"."jq" or (throw "tool jq not found in source stable of environment dev"))
           ];
         } // extra);
         "empty" = let
@@ -40,7 +40,7 @@
           };
         in extra: sets."stable".mkShell ({
           packages = [
-            sets."stable"."jq"
+            (sets."stable"."jq" or (throw "tool jq not found in source stable of environment headless"))
           ];
         } // extra);
       };
