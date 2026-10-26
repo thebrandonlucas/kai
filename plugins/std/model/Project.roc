@@ -183,6 +183,47 @@ Project :: [].{
 		)
 	}
 
+	## Portable shell names, none that Kai or the Nix builder sets itself.
+	check_env : List(Model.Variable), Str -> Try({}, Str)
+	check_env = |variables, declaration| {
+		reserved = ["PATH", "HOME", "KAI_INPUTS", "KAI_ARTIFACTS", "out"]
+		var $seen = []
+		for variable in variables {
+			bytes = variable.name.to_utf8()
+			first = bytes.first() ?? '0'
+			valid = !(first >= '0' and first <= '9') and bytes.all(
+				|b|
+					(b >= 'A' and b <= 'Z') or (b >= 'a' and b <= 'z') or
+						(b >= '0' and b <= '9') or b == '_',
+			)
+			if !valid or reserved.contains(variable.name) {
+				return Err("invalid Env name in ${declaration}: ${variable.name}")
+			}
+			if variable.value.to_utf8().contains(0) {
+				return Err("NUL in Env ${variable.name}: ${declaration}")
+			}
+			if $seen.contains(variable.name) {
+				return Err("DuplicateEnv: ${declaration}: ${variable.name}")
+			}
+			$seen = $seen.append(variable.name)
+		}
+		Ok({})
+	}
+
+	## `base` with `overrides` replacing its variables of the same name.
+	merge_env : List(Model.Variable), List(Model.Variable) -> List(Model.Variable)
+	merge_env = |base, overrides|
+		base.keep_if(|b| !overrides.any(|o| o.name == b.name)).concat(overrides)
+
+	## The `env` argv prefix that sets `variables` for the command after it.
+	env_command : List(Model.Variable) -> List(Str)
+	env_command = |variables|
+		if variables.is_empty() {
+			[]
+		} else {
+			["env"].concat(variables.map(|v| "${v.name}=${v.value}"))
+		}
+
 	## Shared argv boundary for tasks and builds; arguments are never shell-split.
 	check_argv : List(Str), Str -> Try({}, Str)
 	check_argv = |argv, name| {
@@ -290,6 +331,7 @@ Project :: [].{
 		}
 		var $environments = []
 		for env in model.environments {
+			check_env(env.env, "environment ${env.name}")?
 			resolved = resolve(model.environments, env.name, [])?
 			for t in resolved.tools {
 				parsed = tool("${t.source}#${t.name}")?
@@ -322,12 +364,14 @@ Project :: [].{
 				return Err("unknown environment: ${task.environment}")
 			}
 			check_argv(task.run, task.name)?
+			check_env(task.env, "task ${task.name}")?
 		}
 		for build in model.builds {
 			if !$environments.any(|e| e.name == build.environment) {
 				return Err("unknown environment: ${build.environment}")
 			}
 			check_argv(build.run, build.name)?
+			check_env(build.env, "build ${build.name}")?
 			if !valid_output(build.output) {
 				return Err("invalid build output: ${build.name}: ${build.output}")
 			}
@@ -621,6 +665,7 @@ Project :: [].{
 					parents: [],
 					tools: unique(base.tools.concat(env.tools)),
 					overlays: unique(base.overlays.concat(env.overlays)),
+					env: merge_env(base.env, env.env),
 				})
 			}
 			_ => Err("environment ${name} has several parents")
@@ -733,6 +778,7 @@ base = {
 	parents: [],
 	tools: [{ source: "default", name: "git" }],
 	overlays: ["first"],
+	env: [],
 }
 
 child : Model.Environment
@@ -744,6 +790,7 @@ child = {
 		{ source: "default", name: "git" },
 	],
 	overlays: ["first", "second"],
+	env: [],
 }
 
 # Declaration order is irrelevant; inheritance order is not. First wins.
@@ -757,6 +804,7 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 				{ source: "default", name: "python3" },
 			],
 			overlays: ["first", "second"],
+			env: [],
 		},
 		base,
 	]),
@@ -766,14 +814,14 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 expect match Project.validate(
 	fixture([
 		base,
-		{ ..child, tools: [], overlays: [] },
-		{ name: "empty", parents: [], tools: [], overlays: [] },
+		{ ..child, tools: [], overlays: [], env: [] },
+		{ name: "empty", parents: [], tools: [], overlays: [], env: [] },
 	]),
 ) {
 	Ok(model) => model.environments == [
 		base,
 		{ ..base, name: "dev" },
-		{ name: "empty", parents: [], tools: [], overlays: [] },
+		{ name: "empty", parents: [], tools: [], overlays: [], env: [] },
 	]
 	Err(_) => False
 }
@@ -858,6 +906,7 @@ expect {
 			name: "plain",
 			parents: [],
 			overlays: [],
+			env: [],
 			tools: [{ source: "guix", name: "git" }],
 		},
 	])
@@ -907,7 +956,9 @@ build_fixture = |builds| Model.{
 	systems: ["x86_64-linux"],
 	sources: [],
 	inputs: [],
-	environments: [{ name: "builder", parents: [], tools: [], overlays: [] }],
+	environments: [
+		{ name: "builder", parents: [], tools: [], overlays: [], env: [] },
+	],
 	shells: [],
 	tasks: [],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
@@ -934,6 +985,7 @@ library = {
 	],
 	output: "dist/library",
 	files: All,
+	env: [],
 }
 
 application : Model.Build
@@ -1235,9 +1287,11 @@ workflow_features = |workflows, features| Model.{
 	systems: ["x86_64-linux"],
 	sources: [],
 	inputs: [],
-	environments: [{ name: "builder", parents: [], tools: [], overlays: [] }],
+	environments: [
+		{ name: "builder", parents: [], tools: [], overlays: [], env: [] },
+	],
 	shells: [],
-	tasks: [{ name: "check.all", environment: "builder", run: ["cmd"] }],
+	tasks: [{ name: "check.all", environment: "builder", run: ["cmd"], env: [] }],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
 	builds: [library],
 	workflows,

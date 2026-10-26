@@ -155,7 +155,7 @@ E2eExamples := [].{
 					[]
 				} else {
 					match trimmed.split_on(": [") {
-						[_, rest] => rest.drop_suffix("]").split_on(", ")
+						[_, rest] => E2eExamples.top_level(rest.drop_suffix("]"))
 						_ => []
 					}
 				}
@@ -167,6 +167,23 @@ E2eExamples := [].{
 			}
 		}
 		$tags
+	}
+
+	## The comma-separated elements of a one-line union, keeping a payload such
+	## as `Env(List((Str, Str)))` whole.
+	top_level : Str -> List(Str)
+	top_level = |text| {
+		var $parts = []
+		var $current = ""
+		for piece in text.split_on(", ") {
+			$current = if ($current.is_empty()) piece else "${$current}, ${piece}"
+			bytes = $current.to_utf8()
+			if bytes.count_if(|b| b == '(') == bytes.count_if(|b| b == ')') {
+				$parts = $parts.append($current)
+				$current = ""
+			}
+		}
+		$parts
 	}
 
 	## What no example shows: offered commands no commands file runs, and
@@ -236,3 +253,8 @@ expect
 		["Name(\"x\")"],
 	)
 		== ["command build", "setting Auto"]
+
+# A one-line union keeps a payload with a tuple type whole.
+expect
+	E2eExamples.top_level("Use(EnvName), Env(List((Str, Str))), Run(List(Str))")
+		== ["Use(EnvName)", "Env(List((Str, Str)))", "Run(List(Str))"]

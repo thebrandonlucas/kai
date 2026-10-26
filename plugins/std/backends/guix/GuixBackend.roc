@@ -17,20 +17,23 @@ GuixBackend :: [].{
 	check_system = |system|
 		if (system.ends_with("-linux")) Ok({}) else Err("Guix runs only on Linux")
 
-	## `guix shell` arguments for a shell or task, run under time-machine.
-	plan : Model, Request -> Try(List(Str), Str)
+	## `guix shell` arguments for a shell or task, run under time-machine, and
+	## the variables it keeps from kai's environment.
+	Planned : { args : List(Str), env : List(Model.Variable) }
+
+	plan : Model, Request -> Try(Planned, Str)
 	plan = |model, request| {
 		project = Project.validate(model)?
-		(env_name, command) = match request {
+		(env_name, command, own_env) = match request {
 			Request.Shell(name, argv) => {
 				shell = project.shells.find_first(|s| s.name == name)
 					.map_err(|_| "unknown shell: ${name}")?
-				(shell.environment, argv)
+				(shell.environment, argv, [])
 			}
 			Request.Run(name, extra) => {
 				task = project.tasks.find_first(|t| t.name == name)
 					.map_err(|_| "unknown task: ${name}")?
-				(task.environment, task.run.concat(extra))
+				(task.environment, task.run.concat(extra), task.env)
 			}
 			_ => return Err("Guix supports only kai shell and kai run")
 		}
@@ -48,9 +51,13 @@ GuixBackend :: [].{
 			return Err("invalid Guix tool in environment ${environment.name}")
 		}
 		tail = if (command.is_empty()) [] else ["--"].concat(command)
-		# --pure would drop the operator's shell, which kai passes to children.
-		pure = ["shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"]
-		Ok(pure.concat(specs).concat(tail))
+		env = Project.merge_env(environment.env, own_env)
+		# --pure would drop the operator's shell, which kai passes to children,
+		# and the variables the environment and task set.
+		preserve = ["--preserve=^KAI_OPERATOR_SHELL$"]
+			.concat(env.map(|v| "--preserve=^${v.name}$"))
+		args = ["shell", "-q", "--pure"].concat(preserve).concat(specs).concat(tail)
+		Ok({ args, env })
 	}
 
 	## A Guix channel as kai pins it: its commit is locked by `kai update`.
@@ -340,6 +347,10 @@ GuixBackend :: [].{
 				.map_err(|_| "unknown environment: ${build.environment}")?
 			specs = Str.join_with(environment.tools.map(|t| q(t.name)), " ")
 			argv = LockJson.encode(Array(build.run.map(|a| String(a))))
+			variables = Project.merge_env(environment.env, build.env)
+			env = LockJson.encode(
+				Object(variables.map(|v| { name: v.name, value: String(v.value) })),
+			)
 			project_file = match build.files {
 				All => "project"
 				Only(paths) =>
@@ -362,8 +373,8 @@ GuixBackend :: [].{
 			$defines = $defines.append(
 				"(define kai-build-${build.name}\n"
 					.concat("  (kai-build ${q(build.name)} '(${specs})\n")
-					.concat("    ${project_file} ${q(argv)} ${q(build.output)}\n")
-					.concat("    ${inputs} ${artifacts}))"),
+					.concat("    ${project_file} ${q(argv)} ${q(env)}\n")
+					.concat("    ${q(build.output)} ${inputs} ${artifacts}))"),
 			)
 		}
 		file = |variable, path, label, recursive|
@@ -410,7 +421,8 @@ GuixBackend :: [].{
 		\\                     (string-prefix? (string-append r "/") s)))
 		\\               paths)))))
 		\\
-		\\(define (kai-build name specs project argv-json output-dir inputs artifacts)
+		\\(define (kai-build name specs project argv-json env-json output-dir inputs
+		\\                   artifacts)
 		\\  (computed-file (string-append "kai-" name)
 		\\    #~(begin
 		\\        (use-modules (ice-9 textual-ports))
@@ -422,6 +434,7 @@ GuixBackend :: [].{
 		\\                "{\\"project\\":\\"" #$project "\\""
 		\\                ",\\"isolation\\":" witness
 		\\                ",\\"argv\\":" #$argv-json
+		\\                ",\\"env\\":" #$env-json
 		\\                ",\\"output\\":\\"" #$output-dir "\\""
 		\\                ",\\"path\\":\\"" #$(tools specs) "/bin\\""
 		\\                ",\\"coreutils\\":\\""
@@ -563,6 +576,8 @@ GuixBackend :: [].{
 	steps : Model, Request, Str, List(Pin) -> Try(Steps, Str)
 	steps = |model, request, generated, locked| {
 		shell = GuixBackend.plan(model, request)?
+		# --pure keeps only what --preserve names, so kai sets it on guix.
+		set_env = Project.env_command(shell.env)
 		what = match request {
 			Request.Shell(name, _) => "shell ${name}"
 			Request.Run(name, _) => "task ${name}"
@@ -570,7 +585,9 @@ GuixBackend :: [].{
 		}
 		channels = "${generated}/guix/channels.scm"
 		entries = locked.map(|p| { channel: p.channel, commit: Pinned(p.commit) })
-		argv = ["guix", "time-machine", "-C", channels, "--"].concat(shell)
+		argv = set_env
+			.concat(["guix", "time-machine", "-C", channels, "--"])
+			.concat(shell.args)
 		Ok(
 			Steps.{
 				steps: [
@@ -602,12 +619,13 @@ env = |name, tools| {
 	parents: [],
 	tools: tools.map(|text| Project.tool(text) ?? { source: "", name: text }),
 	overlays: [],
+	env: [],
 }
 
 check : List(Model.Environment), Request, Try(List(Str), {}) -> Bool
 check = |environments, request, expected|
 	match (GuixBackend.plan(fixture(environments), request), expected) {
-		(Ok(argv), Ok(want)) => argv == want
+		(Ok(planned), Ok(want)) => planned.args == want
 		(Err(_), Err({})) => Bool.True
 		_ => Bool.False
 	}
@@ -731,6 +749,7 @@ expect {
 		run: ["true"],
 		output: "out",
 		files: All,
+		env: [],
 	}
 	model = {
 		..fixture([env("dev", ["hello"])]),

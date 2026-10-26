@@ -30,6 +30,7 @@ BuildRunner := [].{
 		artifacts : Str,
 		# Inputs that are Roc package bundles, by the hash Roc caches them by.
 		roc_packages : List({ name : Str, hash : Str }),
+		env : List((OsStr, OsStr)),
 	}
 
 	remedy = "cannot verify build isolation; user Run was not executed. "
@@ -58,6 +59,11 @@ BuildRunner := [].{
 			}
 			$roc_packages = $roc_packages.append(roc_package)
 		}
+		var $env = []
+		for field in LockJson.object(LockJson.field(json, "env")?)? {
+			value = OsStr.from_str(LockJson.string(field.value)?)
+			$env = $env.append((OsStr.from_str(field.name), value))
+		}
 		Ok({
 			project: text("project")?,
 			argv: $argv,
@@ -67,6 +73,7 @@ BuildRunner := [].{
 			inputs: text("inputs")?,
 			artifacts: text("artifacts")?,
 			roc_packages: $roc_packages,
+			env: $env,
 		})
 	}
 
@@ -164,12 +171,14 @@ BuildRunner := [].{
 		result = Cmd.new(OsStr.from_str(program))
 			.args(args.map(OsStr.from_str))
 			.cwd(Path.unix(work))
-			.envs([
-				("PATH", OsStr.from_str(spec.path)),
-				("HOME", OsStr.from_str(home)),
-				("KAI_INPUTS", OsStr.from_str(spec.inputs)),
-				("KAI_ARTIFACTS", OsStr.from_str(spec.artifacts)),
-			])
+			.envs(
+				[
+					("PATH", OsStr.from_str(spec.path)),
+					("HOME", OsStr.from_str(home)),
+					("KAI_INPUTS", OsStr.from_str(spec.inputs)),
+					("KAI_ARTIFACTS", OsStr.from_str(spec.artifacts)),
+				].concat(spec.env),
+			)
 			.stdin(Inherit)
 			.stdout(Inherit)
 			.stderr(Inherit)
@@ -331,7 +340,7 @@ expect [
 expect {
 	text = "{\"project\": \"/p\", \"argv\": [\"sh\", \"\", \"a\\nb\"], "
 		.concat("\"output\": \"o\", \"path\": \"/b\", \"coreutils\": \"/c\", ")
-		.concat("\"inputs\": \"/i\", \"artifacts\": \"/a\"}")
+		.concat("\"inputs\": \"/i\", \"artifacts\": \"/a\", \"env\": {}}")
 	match LockJson.decode(text) {
 		Ok(json) => match BuildRunner.decode(json) {
 			Ok(spec) => spec.argv == ["sh", "", "a\nb"] and spec.coreutils == "/c"

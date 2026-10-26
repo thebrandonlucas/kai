@@ -18,7 +18,7 @@ NixBackend :: [].{
 
 	## The model features this backend renders.
 	features : List(Str)
-	features = ["raw", "sources", "builds", "workflows", "files"]
+	features = ["raw", "sources", "builds", "workflows", "files", "env"]
 
 	default_nixpkgs : Str
 	default_nixpkgs = Locks.default_nixpkgs
@@ -151,6 +151,8 @@ NixBackend :: [].{
 					builds: [],
 					argv: develop(environment_shell(task.environment))
 						.append("--command")
+						# Overrides the environment's Env, which kai-env-* sets.
+						.concat(Project.env_command(task.env))
 						.concat(command),
 					output: Inherit,
 				}
@@ -647,6 +649,12 @@ NixBackend :: [].{
 		tools = environment.tools.map(
 			|tool| "            ${tool_reference(tool, environment)}",
 		)
+		# mkShell exports `env` to its shells, and to tasks through kai-env-*.
+		env = if environment.env.is_empty() {
+			[]
+		} else {
+			["          env = ${env_attrs(environment.env)};"]
+		}
 		lines([
 			"        ${quote(environment.name)} = let",
 			"          overlays = [ ${Str.join_with(overlays, " ")} ];",
@@ -658,10 +666,7 @@ NixBackend :: [].{
 				"          packages = [",
 			]),
 		).concat(lines(tools)).concat(
-			lines([
-				"          ];",
-				"        } // extra);",
-			]),
+			lines(["          ];"].concat(env).concat(["        } // extra);"])),
 		)
 	}
 
@@ -720,6 +725,7 @@ NixBackend :: [].{
 				.concat("name = \"kai-build-runner\"; }")
 		}
 		argv = Str.join_with(build.run.map(quote), " ")
+		build_env = Project.merge_env(environment.env, build.env)
 		lines([
 			"          ${quote(build.name)} = let",
 			"            system = ${quote(system)};",
@@ -737,6 +743,7 @@ NixBackend :: [].{
 				"              isolation = ${isolation};",
 				"              argv = [ ${argv} ];",
 				"              output = ${quote(build.output)};",
+				"              env = ${env_attrs(build_env)};",
 				"              path = pkgs.lib.makeBinPath (tools ++ "
 					.concat("builtins.filter pkgs.lib.isDerivation ")
 					.concat("pkgs.stdenv.defaultNativeBuildInputs ++ ")
@@ -889,6 +896,12 @@ NixBackend :: [].{
 		"(${attribute} or (throw ${quote(missing)}))"
 	}
 
+	env_attrs : List(Model.Variable) -> Str
+	env_attrs = |variables| {
+		attrs = variables.map(|v| "${quote(v.name)} = ${quote(v.value)}; ")
+		"{ ${Str.join_with(attrs, "")}}"
+	}
+
 	lines : List(Str) -> Str
 	lines = |items| items.fold("", |acc, line| acc.concat(line).concat("\n"))
 
@@ -926,12 +939,14 @@ sample_model = {
 			parents: [],
 			tools: [{ source: "nixpkgs", name: "git" }],
 			overlays: [],
+			env: [],
 		},
 		{
 			name: "dev",
 			parents: ["base"],
 			tools: [{ source: "nixpkgs", name: "llvmPackages.bintools" }],
 			overlays: ["roc"],
+			env: [],
 		},
 	],
 	shells: [
@@ -964,20 +979,24 @@ full_model = {
 				{ source: "stable", name: "jq" },
 			],
 			overlays: ["roc"],
+			env: [],
 		},
-		{ name: "empty", parents: [], tools: [], overlays: [] },
+		{ name: "empty", parents: [], tools: [], overlays: [], env: [] },
 		{
 			name: "headless",
 			parents: [],
 			tools: [{ source: "stable", name: "jq" }],
 			overlays: [],
+			env: [],
 		},
 	],
 	shells: [
 		{ name: "default", environment: "dev" },
 		{ name: "empty", environment: "empty" },
 	],
-	tasks: [{ name: "greet", environment: "headless", run: ["jq", "--version"] }],
+	tasks: [
+		{ name: "greet", environment: "headless", run: ["jq", "--version"], env: [] },
+	],
 	raw: [
 		{
 			backend: "nix",
@@ -1044,7 +1063,7 @@ TestIr : {
 }
 
 base : Model.Environment
-base = { name: "dev", parents: [], tools: [], overlays: [] }
+base = { name: "dev", parents: [], tools: [], overlays: [], env: [] }
 
 simple : TestIr
 simple = {
@@ -1110,7 +1129,9 @@ expect match NixBackend.render(
 	mk({
 		..simple,
 		shells: [],
-		tasks: [{ name: "check", environment: "dev", run: ["git", "--version"] }],
+		tasks: [
+			{ name: "check", environment: "dev", run: ["git", "--version"], env: [] },
+		],
 	}),
 ) {
 	Ok(text) => text.contains("\"kai-env-dev\" = environments.\"dev\"")
@@ -1870,7 +1891,9 @@ expect {
 				{ ..base, overlays: ["two", "one"] },
 				{ ..base, name: "other", overlays: ["three", "two"] },
 			],
-			tasks: [{ name: "t", environment: "other", run: ["true"] }],
+			tasks: [
+				{ name: "t", environment: "other", run: ["true"], env: [] },
+			],
 		}),
 		"x86_64-linux",
 		TestData.layout,
@@ -2293,7 +2316,7 @@ expect {
 		sources: [{ name: "guix", provider: GuixPackages("channels") }],
 		environments: [TestData.builder, foreign],
 		tasks: TestData.data.tasks.append(
-			{ name: "foreign", environment: "foreign", run: ["python"] },
+			{ name: "foreign", environment: "foreign", run: ["python"], env: [] },
 		),
 		workflows: TestData.workflow_data.workflows.concat([
 			{
@@ -2530,7 +2553,12 @@ expect {
 			extensions: [{ kind: "service", name: "db", value: Value.Attrs([]) }],
 		},
 		{ ..project, systems: ["x86_64-linux", "riscv64-linux"] },
-		{ ..project, tasks: [{ name: "bad", environment: "missing", run: ["x"] }] },
+		{
+			..project,
+			tasks: [
+				{ name: "bad", environment: "missing", run: ["x"], env: [] },
+			],
+		},
 	].all(
 		|invalid| NixBackend.preflight(
 			invalid,

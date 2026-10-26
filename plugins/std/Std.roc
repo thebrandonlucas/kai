@@ -305,7 +305,7 @@ Std := [].{
 			inputs: model.inputs,
 			environments: model.environments,
 			shells: model.shells,
-			tasks: model.tasks.append({ name: task, environment, run: argv }),
+			tasks: model.tasks.append({ name: task, environment, run: argv, env: [] }),
 			build_sources: model.build_sources,
 			builds: model.builds,
 			workflows: model.workflows,

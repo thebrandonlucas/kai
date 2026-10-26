@@ -22,6 +22,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [task](task) | Tasks, and arguments after `--` | `kai run moo` |
 | [environment](environment) | Reusable environments shared by shells and tasks | `kai shell pokemon` |
 | [extend](extend) | One environment building on another | `kai run wisdom` |
+| [env](env) | Environment variables, and a task overriding its `Environment`'s | `kai run shout` |
 | [build](build) | A sandboxed build and its output | `kai build wisecow` |
 | [needs](needs) | A build reading another build's artifact | `kai build loud` |
 | [source-build](source-build) | A build reading a locked source | `kai build moofasa` |
