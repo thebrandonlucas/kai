@@ -96,9 +96,11 @@ kai bundle-plugin plugins/deploy  # bundle a plugin package for hosting
 
 Tool names are the backend's own package names: Nix attributes such as
 `python3`, or Guix specifications. Tasks run their argv exactly, without a
-shell, so use `Run(["sh", "-c", "..."])` for pipes. Every command has help with
-examples, e.g. `kai run --help`; inside a project, help lists its shells,
-tasks, builds and workflows.
+shell, so use `Run(["sh", "-c", "...", "sh"])` for pipes: `sh -c` takes the
+argument after its script as `$0`, so the `"sh"` placeholder lets arguments
+after `--` reach the script as `$1`, `$2`, ... and `"$@"`. Every command has
+help with examples, e.g. `kai run --help`; inside a project, help lists its
+shells, tasks, builds and workflows.
 
 ### Settings
 
