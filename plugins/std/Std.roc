@@ -55,11 +55,21 @@ Std := [].{
 			Err(problem) => Plugin.invalid("std", [problem])
 		}
 
-	## The settings' model, with Raw checked too so kai check reports a Raw no
-	## backend accepts instead of kai update or kai shell failing later.
+	## The settings' model, with Systems and Raw checked too so kai check
+	## reports what no backend accepts instead of every command failing later.
 	checked_model : List(Config.Setting) -> Try(Model, Str)
 	checked_model = |settings| {
 		model = ConfigToModel.convert(settings)?
+		nix_systems = NixBackend.supported_systems
+		for system in model.systems {
+			guix_supports = GuixBackend.check_system(system).is_ok()
+			if !nix_systems.contains(system) and !guix_supports {
+				return Err(
+					"unsupported system ${system}; Nix supports "
+						.concat("${Str.join_with(nix_systems, ", ")} and Guix any Linux"),
+				)
+			}
+		}
 		for raw in model.raw {
 			if raw.backend != "nix" {
 				return Err("unknown raw backend \"${raw.backend}\"; expected \"nix\"")

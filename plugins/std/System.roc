@@ -1,6 +1,6 @@
 ## A Nix system such as "x86_64-linux" or "aarch64-linux", checked at
 ## compile time. Only its shape (`<arch>-<os>`, lowercase letters, digits
-## and `_`) is checked, so less common systems work too.
+## and `_`) is checked here; std rejects systems none of its backends support.
 System :: { name : Str }.{
 	from_quote : Str -> Try(System, [BadQuotedBytes(Str)])
 	from_quote = |raw| {

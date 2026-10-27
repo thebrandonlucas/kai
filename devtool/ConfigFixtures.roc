@@ -279,6 +279,11 @@ ConfigFixtures := [].{
 				\\ Systems(["aarch64-linux"])]
 		},
 		{
+			name: "UnsupportedSystem",
+			expected: Rejected("unsupported system x86_64-darwin"),
+			body: "config = [Name(\"invalid\"), Systems([\"x86_64-darwin\"])]",
+		},
+		{
 			name: "NoSystems",
 			expected: Rejected("no systems"),
 			body: "config = [Name(\"invalid\"), Systems([])]",
