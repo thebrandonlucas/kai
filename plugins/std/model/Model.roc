@@ -48,6 +48,7 @@ Model := {
 	fetches : List(
 		{ name : Str, files : List({ system : Str, url : Str, hash : Str }) },
 	),
+	cargo_vendors : List({ name : Str, lock : Str }),
 	builds : List(
 		{
 			name : Str,
@@ -135,6 +136,10 @@ Model := {
 	Fetch : { name : Str, files : List(FetchFile) }
 	FetchFile : { system : Str, url : Str, hash : Str }
 
+	## The crates a Cargo.lock's text names, vendored into one directory and
+	## pinned by the lock's checksums rather than Kai's lock.
+	CargoVendor : { name : Str, lock : Str }
+
 	## Run is exact argv. Output is a relative file or directory path; dependencies
 	## expose only that artifact, separately from the writable project snapshot.
 	## A revision build receives the project's revision in its environment.
@@ -185,6 +190,7 @@ Model := {
 		tasks: [],
 		build_sources: [],
 		fetches: [],
+		cargo_vendors: [],
 		builds: [],
 		workflows: [],
 		extensions: [],

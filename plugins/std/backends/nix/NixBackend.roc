@@ -22,6 +22,7 @@ NixBackend :: [].{
 		"raw",
 		"sources",
 		"fetches",
+		"cargo",
 		"builds",
 		"workflows",
 		"files",
@@ -896,11 +897,20 @@ NixBackend :: [].{
 					.concat("{ inherit system overlays; };"),
 		)
 		tools = path_packages(environment, model.fetches)
+		# Cargo.lock's checksums pin a vendor's crates, which Nix fetches. Builds
+		# refuse symlinks in inputs, so the vendored directory is copied whole.
 		inputs = build.inputs.map(
 			|name| {
-				path = match model.fetches.find_first(|f| f.name == name) {
-					Ok(fetch) => "pkgs.fetchurl ${fetch_file(fetch)}"
-					Err(_) => "inputs.${quote(name)}"
+				fetched = model.fetches.find_first(|f| f.name == name)
+				vendored = model.cargo_vendors.find_first(|c| c.name == name)
+				path = match (fetched, vendored) {
+					(Ok(fetch), _) => "pkgs.fetchurl ${fetch_file(fetch)}"
+					(_, Ok(vendor)) =>
+						"pkgs.runCommand ${quote("kai-cargo-vendor-${name}")} { "
+							.concat("vendor = pkgs.rustPlatform.importCargoLock { ")
+							.concat("lockFile = builtins.toFile \"Cargo.lock\" ")
+							.concat("${quote(vendor.lock)}; }; } \"cp -rL $vendor $out\"")
+					_ => "inputs.${quote(name)}"
 				}
 				"{ name = ${quote(name)}; path = ${path}; }"
 			},
@@ -1367,6 +1377,7 @@ mk = |t| Model.{
 	tasks: t.tasks,
 	build_sources: [],
 	fetches: [],
+	cargo_vendors: [],
 	builds: [],
 	workflows: [],
 	requires_: t.requires_,

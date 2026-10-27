@@ -437,6 +437,22 @@ Project :: [].{
 		if !model.fetches.is_empty() and !model.requires_.contains("fetches") {
 			return Err("fetches require feature: fetches")
 		}
+		check_names(model.cargo_vendors.map(|c| c.name), "CargoVendor")?
+		for vendor in model.cargo_vendors {
+			if sources.any(|s| s.name == vendor.name) or
+				model.inputs.any(|i| i.name == vendor.name) or
+					model.build_sources.any(|s| s.name == vendor.name) or
+						model.fetches.any(|f| f.name == vendor.name) {
+				return Err("DuplicateInput: ${vendor.name}")
+			}
+			# Git checkouts have no checksum in Cargo.lock to pin them.
+			if vendor.lock.contains("source = \"git+") {
+				return Err("CargoVendor ${vendor.name}: git dependencies are not supported")
+			}
+		}
+		if !model.cargo_vendors.is_empty() and !model.requires_.contains("cargo") {
+			return Err("cargo vendors require feature: cargo")
+		}
 		if !model.build_sources.is_empty() and !model.requires_.contains("sources") {
 			return Err("build sources require feature: sources")
 		}
@@ -546,7 +562,8 @@ Project :: [].{
 			check_names(build.needs, "BuildDependency")?
 			for input in build.inputs {
 				if !model.build_sources.any(|s| s.name == input) and
-					!model.fetches.any(|f| f.name == input) {
+					!model.fetches.any(|f| f.name == input) and
+						!model.cargo_vendors.any(|c| c.name == input) {
 					return Err("unknown build source: ${input}")
 				}
 			}
@@ -585,6 +602,7 @@ Project :: [].{
 				tasks: model.tasks,
 				build_sources: model.build_sources,
 				fetches: model.fetches,
+				cargo_vendors: model.cargo_vendors,
 				builds: model.builds,
 				workflows: model.workflows,
 				extensions: model.extensions,
@@ -1019,6 +1037,7 @@ fixture = |environments| Model.{
 	tasks: [],
 	build_sources: [],
 	fetches: [],
+	cargo_vendors: [],
 	builds: [],
 	workflows: [],
 	extensions: [],
@@ -1263,6 +1282,7 @@ build_fixture = |builds| Model.{
 	tasks: [],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
 	fetches: [],
+	cargo_vendors: [],
 	builds,
 	workflows: [],
 	extensions: [],
@@ -1455,6 +1475,7 @@ build_source_fixture = |build_sources, requires_| {
 		tasks: model.tasks,
 		build_sources,
 		fetches: [],
+		cargo_vendors: [],
 		builds: model.builds,
 		workflows: model.workflows,
 		extensions: model.extensions,
@@ -1618,6 +1639,7 @@ workflow_features = |workflows, features| Model.{
 	],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
 	fetches: [],
+	cargo_vendors: [],
 	builds: [library],
 	workflows,
 	extensions: [],

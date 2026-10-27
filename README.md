@@ -128,7 +128,8 @@ garbage collection.
 | `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. Optionally `Secrets([...])`: the names of the variables it receives when it runs, `OptionalEnvironmentVariables([...])`: those it receives from kai's environment only when set there, and `Needs([...])`: builds kai builds first, in `$KAI_ARTIFACTS/<name>`. |
 | `Source(name, flakeRef)` | A locked, non-flake source that builds can read. |
 | `Fetch(name, [{ system, url, sha256 }, ...])` | A file pinned by its published sha256 (hex or SRI), one per system; the host's system picks it, and it needs no lock entry. Builds read it in `Inputs([...])`, and the tool `"name#binary"` puts it on `PATH` as the executable `binary`. |
-| `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources and fetches, in `$KAI_INPUTS/<name>`), `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`) and `Revision` (the project's revision, below). |
+| `CargoVendor(name, text)` | The crates a `Cargo.lock` names, vendored into one directory that builds can read, pinned by the lock's checksums with no lock entry. Pass the text with `import "Cargo.lock" as cargo_lock : Str`; git dependencies are not supported. |
+| `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, fetches and cargo vendors, in `$KAI_INPUTS/<name>`), `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`) and `Revision` (the project's revision, below). |
 | `Workflow(name, [...])` | Steps for `kai workflow`, which stops at the first that fails: `RunTask(task, args)`, `BuildArtifact(build)`, `RunWorkflow(workflow)`, and `MayFail(step)`, which notes the step's failure and continues. |
 | `Raw("nix", target, value)` | Extra attributes for the generated flake (`"flake"`) or one shell (`"shell:<name>"`), e.g. `Attrs([("shellHook", Str("echo hi"))])`. |
 
@@ -172,6 +173,16 @@ The sandbox has no `.git` either, so a build that stamps a version declares
 `KAI_COMMIT_DATE`, the date of its last commit (`YYYY-MM-DD`), both empty
 outside git or when git is not installed. Its inputs then change with every
 commit, which is why it is opt-in.
+
+A Rust build reads its crates from a `CargoVendor` in its inputs by pointing
+cargo at the vendored directory in place of crates.io, as
+[examples/cargo-vendor](examples/cargo-vendor) does:
+
+```sh
+cargo build --offline \
+  --config 'source.crates-io.replace-with="vendored"' \
+  --config "source.vendored.directory='$KAI_INPUTS/crates'"
+```
 
 Use a task for work that touches the project or the outside world, such as
 running tests, formatting or deploying. Use a build for an artifact that should

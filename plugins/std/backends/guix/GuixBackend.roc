@@ -224,6 +224,9 @@ GuixBackend :: [].{
 		if model.fetches.any(|f| f.name == name) {
 			return Err("Guix builds cannot read Fetch ${name}; use Nix")
 		}
+		if model.cargo_vendors.any(|c| c.name == name) {
+			return Err("Guix builds cannot read CargoVendor ${name}; use Nix")
+		}
 		source = model.build_sources.find_first(|s| s.name == name)
 			.map_err(|_| "unknown build source: ${name}")?
 		if !source.ref.starts_with("path:") {

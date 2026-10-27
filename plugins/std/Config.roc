@@ -14,6 +14,7 @@ Config :: [].{
 	## Named sources describe provider intent, not host discovery. Omitting the
 	## "default" source is equivalent to `Packages("default", Auto)`.
 	## Overlay inputs apply only where an environment selects them.
+	## CargoVendor takes the text of a Cargo.lock and vendors its crates.
 	## `Custom` and `Raw` retain consumer-specific extension data.
 	Setting : [
 		Name(Str),
@@ -26,6 +27,7 @@ Config :: [].{
 		Task(TaskName, List(TaskSetting)),
 		Source(InputName, FlakeRef),
 		Fetch(InputName, List(FetchFile)),
+		CargoVendor(InputName, Str),
 		Build(InputName, List(BuildSetting)),
 		Workflow(WorkflowName, List(WorkflowStep)),
 		Custom(Str, Str, Val),
@@ -99,7 +101,8 @@ Config :: [].{
 	]
 
 	## Builds require Use, Run and one relative Output. Optional Inputs select
-	## non-flake Sources or Fetches; Needs selects build artifacts, not tasks.
+	## non-flake Sources, Fetches or CargoVendors; Needs selects build
+	## artifacts, not tasks.
 	## Sources and artifacts remain separate read-only inputs, never merged.
 	## Files limits the project copy to the given project-relative paths.
 	## Revision sets KAI_REVISION, the project's `git describe --tags --always

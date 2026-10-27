@@ -19,6 +19,7 @@ ConfigToModel :: [].{
 		tasks : List(Model.Task),
 		build_sources : List(Model.BuildSource),
 		fetches : List(Model.Fetch),
+		cargo_vendors : List(Model.CargoVendor),
 		builds : List(Model.Build),
 		workflows : List(Model.Workflow),
 		extensions : List(Model.Extension),
@@ -50,6 +51,7 @@ ConfigToModel :: [].{
 			tasks: [],
 			build_sources: [],
 			fetches: [],
+			cargo_vendors: [],
 			builds: [],
 			workflows: [],
 			extensions: [],
@@ -71,6 +73,7 @@ ConfigToModel :: [].{
 				.concat(if (acc.raw.is_empty()) [] else ["raw"])
 				.concat(if (acc.build_sources.is_empty()) [] else ["sources"])
 				.concat(if (acc.fetches.is_empty()) [] else ["fetches"])
+				.concat(if (acc.cargo_vendors.is_empty()) [] else ["cargo"])
 				.concat(if (acc.builds.is_empty()) [] else ["builds"])
 				.concat(if (acc.workflows.is_empty()) [] else ["workflows"])
 				.concat(if (acc.builds.all(|b| b.files == All)) [] else ["files"])
@@ -101,6 +104,7 @@ ConfigToModel :: [].{
 				tasks: acc.tasks,
 				build_sources: acc.build_sources,
 				fetches: acc.fetches,
+				cargo_vendors: acc.cargo_vendors,
 				builds: acc.builds,
 				workflows: acc.workflows,
 				extensions: acc.extensions,
@@ -175,6 +179,10 @@ ConfigToModel :: [].{
 							}),
 					)?,
 				}),
+			}
+			CargoVendor(name, lock) => {
+				..acc,
+				cargo_vendors: acc.cargo_vendors.append({ name: name.to_str(), lock }),
 			}
 			Build(name, inner) => {
 				..acc,
