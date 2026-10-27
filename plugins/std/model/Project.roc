@@ -375,6 +375,11 @@ Project :: [].{
 		var $environments = []
 		for env in model.environments {
 			check_env(env.env, "environment ${env.name}")?
+			match env.rust_toolchain {
+				Toml(text) if text.is_empty() or text.to_utf8().contains(0) =>
+					return Err("invalid RustToolchain in environment ${env.name}")
+				_ => {}
+			}
 			resolved = resolve(model.environments, env.name, [])?
 			check_aliases(resolved.aliases, env.name)?
 			for t in environment_tools(resolved) {
@@ -798,6 +803,10 @@ Project :: [].{
 					env: merge_env(base.env, env.env),
 					pure: base.pure or env.pure,
 					aliases: unique(base.aliases.concat(env.aliases)),
+					rust_toolchain: match env.rust_toolchain {
+						None => base.rust_toolchain
+						own => own
+					},
 				})
 			}
 			_ => Err("environment ${name} has several parents")
@@ -816,6 +825,9 @@ Project :: [].{
 		}
 		if backend == Guix and !env.aliases.is_empty() {
 			return Err("Alias needs Nix: environment ${name}")
+		}
+		if backend == Guix and env.rust_toolchain != None {
+			return Err("RustToolchain needs Nix: environment ${name}")
 		}
 		tools = environment_tools(env)
 		# An empty environment still uses the default provider's environment builder.
@@ -917,6 +929,7 @@ base = {
 	env: [],
 	pure: Bool.False,
 	aliases: [],
+	rust_toolchain: None,
 }
 
 child : Model.Environment
@@ -931,6 +944,7 @@ child = {
 	env: [],
 	pure: Bool.False,
 	aliases: [],
+	rust_toolchain: None,
 }
 
 # Declaration order is irrelevant; inheritance order is not. First wins.
@@ -947,6 +961,7 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 			env: [],
 			pure: Bool.False,
 			aliases: [],
+			rust_toolchain: None,
 		},
 		base,
 	]),
@@ -956,7 +971,15 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 expect match Project.validate(
 	fixture([
 		base,
-		{ ..child, tools: [], overlays: [], env: [], pure: Bool.False, aliases: [] },
+		{
+			..child,
+			tools: [],
+			overlays: [],
+			env: [],
+			pure: Bool.False,
+			aliases: [],
+			rust_toolchain: None,
+		},
 		{
 			name: "empty",
 			parents: [],
@@ -965,6 +988,7 @@ expect match Project.validate(
 			env: [],
 			pure: Bool.False,
 			aliases: [],
+			rust_toolchain: None,
 		},
 	]),
 ) {
@@ -979,6 +1003,7 @@ expect match Project.validate(
 			env: [],
 			pure: Bool.False,
 			aliases: [],
+			rust_toolchain: None,
 		},
 	]
 	Err(_) => False
@@ -1067,6 +1092,7 @@ expect {
 			env: [],
 			pure: Bool.False,
 			aliases: [],
+			rust_toolchain: None,
 			tools: [{ source: "guix", name: "git" }],
 		},
 	])
@@ -1125,6 +1151,7 @@ build_fixture = |builds| Model.{
 			env: [],
 			pure: Bool.False,
 			aliases: [],
+			rust_toolchain: None,
 		},
 	],
 	shells: [],
@@ -1466,6 +1493,7 @@ workflow_features = |workflows, features| Model.{
 			env: [],
 			pure: Bool.False,
 			aliases: [],
+			rust_toolchain: None,
 		},
 	],
 	shells: [],

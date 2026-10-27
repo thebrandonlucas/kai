@@ -28,6 +28,7 @@ Model := {
 			aliases : List(
 				{ name : Str, tool : { source : Str, name : Str }, binary : Str },
 			),
+			rust_toolchain : [None, Toml(Str)],
 		},
 	),
 	shells : List({ name : Str, environment : Str, description : Str }),
@@ -91,7 +92,12 @@ Model := {
 		env : List(Variable),
 		pure : Bool,
 		aliases : List(Alias),
+		rust_toolchain : RustToolchain,
 	}
+
+	## The text of a rust-toolchain.toml, whose [toolchain] table the backend
+	## reads.
+	RustToolchain : [None, Toml(Str)]
 
 	## A command `name` on the environment's PATH that runs `binary` from
 	## `tool`'s bin directory.

@@ -59,6 +59,9 @@ Config :: [].{
 	## environment, as does Extend of a Pure environment. Alias(name, tool,
 	## binary) puts a command `name` on PATH that runs the tool's
 	## `bin/<binary>`, without the tool's other binaries; it needs Nix.
+	## RustToolchain takes a rust-toolchain.toml's text and adds the toolchain
+	## its [toolchain] table pins, overriding the parent's; it needs Nix and an
+	## Overlay providing rust-bin, such as rust-overlay.
 	EnvironmentSetting : [
 		Tools(List(Tool)),
 		Overlays(List(InputName)),
@@ -66,6 +69,7 @@ Config :: [].{
 		Env(List((Str, Str))),
 		Pure,
 		Alias(Str, Tool, Str),
+		RustToolchain(Str),
 	]
 
 	## A shell is an alias for exactly one environment. A Description, in a

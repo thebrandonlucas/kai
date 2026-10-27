@@ -775,6 +775,7 @@ env = |name, tools| {
 	env: [],
 	pure: Bool.False,
 	aliases: [],
+	rust_toolchain: None,
 }
 
 check : List(Model.Environment), Request, Try(List(Str), {}) -> Bool

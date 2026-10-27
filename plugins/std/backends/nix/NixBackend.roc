@@ -32,6 +32,7 @@ NixBackend :: [].{
 		"may_fail",
 		"pure",
 		"aliases",
+		"rust-toolchain",
 	]
 
 	default_nixpkgs : Str
@@ -810,20 +811,35 @@ NixBackend :: [].{
 	}
 
 	## What an environment puts on PATH: its tools, then each Alias as a
-	## linkFarm holding one bin/<name> link to its tool's binary.
+	## linkFarm holding one bin/<name> link to its tool's binary, then its
+	## RustToolchain, which rust-overlay builds from the file's [toolchain]
+	## table.
 	path_packages : Model.Environment -> List(Str)
 	path_packages = |environment| {
-		primary = source_names(environment).first() ?? "default"
+		primary = quote(source_names(environment).first() ?? "default")
 		aliases = environment.aliases.map(
 			|alias| {
 				tool = tool_reference(alias.tool, environment)
 				path = "\"\${${tool}}/bin/\" + ${quote(alias.binary)}"
 				link = "{ name = ${quote("bin/${alias.name}")}; path = ${path}; }"
-				"(sets.${quote(primary)}.linkFarm \"kai-alias\" [ ${link} ])"
+				"(sets.${primary}.linkFarm \"kai-alias\" [ ${link} ])"
 			},
 		)
-		environment.tools.map(|tool| tool_reference(tool, environment))
+		tools = environment.tools.map(|tool| tool_reference(tool, environment))
 			.concat(aliases)
+		match environment.rust_toolchain {
+			None => tools
+			Toml(text) => {
+				declaration = "RustToolchain in environment ${environment.name}"
+				no_overlay = "${declaration} needs an Overlay providing rust-bin, "
+					.concat("such as github:oxalica/rust-overlay")
+				no_table = "${declaration} has no [toolchain] table"
+				rust_bin = "(sets.${primary}.rust-bin or (throw ${quote(no_overlay)}))"
+				table = "((builtins.fromTOML ${quote(text)}).toolchain "
+					.concat("or (throw ${quote(no_table)}))")
+				tools.append("(${rust_bin}.fromRustupToolchain ${table})")
+			}
+		}
 	}
 
 	render_environment_definition : Model.Environment -> Str
@@ -1132,6 +1148,7 @@ sample_model = {
 			env: [],
 			pure: Bool.False,
 			aliases: [],
+			rust_toolchain: None,
 		},
 		{
 			name: "dev",
@@ -1141,6 +1158,7 @@ sample_model = {
 			env: [],
 			pure: Bool.False,
 			aliases: [],
+			rust_toolchain: None,
 		},
 	],
 	shells: [
@@ -1176,6 +1194,7 @@ full_model = {
 			env: [],
 			pure: Bool.False,
 			aliases: [],
+			rust_toolchain: None,
 		},
 		{
 			name: "empty",
@@ -1185,6 +1204,7 @@ full_model = {
 			env: [],
 			pure: Bool.False,
 			aliases: [],
+			rust_toolchain: None,
 		},
 		{
 			name: "headless",
@@ -1194,6 +1214,7 @@ full_model = {
 			env: [],
 			pure: Bool.False,
 			aliases: [],
+			rust_toolchain: None,
 		},
 	],
 	shells: [
@@ -1286,6 +1307,7 @@ base = {
 	env: [],
 	pure: Bool.False,
 	aliases: [],
+	rust_toolchain: None,
 }
 
 simple : TestIr

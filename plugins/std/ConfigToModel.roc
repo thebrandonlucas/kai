@@ -84,6 +84,7 @@ ConfigToModel :: [].{
 				.concat(if (uses_may_fail(acc)) ["may_fail"] else [])
 				.concat(if (acc.environments.any(|e| e.pure)) ["pure"] else [])
 				.concat(if (uses_aliases(acc)) ["aliases"] else [])
+				.concat(if (uses_rust_toolchain(acc)) ["rust-toolchain"] else [])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -239,6 +240,7 @@ ConfigToModel :: [].{
 				envs: [],
 				pures: 0.U64,
 				aliases: [],
+				toolchains: [],
 			},
 			|acc, setting|
 				match setting {
@@ -259,10 +261,17 @@ ConfigToModel :: [].{
 						..acc,
 						aliases: acc.aliases.append({ name: alias, tool: tool.to_ir(), binary }),
 					}
+					RustToolchain(text) => {
+						..acc,
+						toolchains: acc.toolchains.append(Toml(text)),
+					}
 				},
 		)
 		if draft.tools.len() > 1 {
 			return Err("DuplicateTools: environment ${name}")
+		}
+		if draft.toolchains.len() > 1 {
+			return Err("DuplicateRustToolchain: environment ${name}")
 		}
 		if draft.overlays.len() > 1 {
 			return Err("DuplicateOverlays: environment ${name}")
@@ -281,6 +290,7 @@ ConfigToModel :: [].{
 			env: single_env(draft.envs, "environment ${name}")?,
 			pure: draft.pures == 1,
 			aliases: draft.aliases,
+			rust_toolchain: draft.toolchains.first() ?? None,
 		})
 	}
 
@@ -485,6 +495,10 @@ ConfigToModel :: [].{
 
 	uses_aliases : Acc -> Bool
 	uses_aliases = |acc| acc.environments.any(|e| !e.aliases.is_empty())
+
+	uses_rust_toolchain : Acc -> Bool
+	uses_rust_toolchain = |acc|
+		acc.environments.any(|e| e.rust_toolchain != None)
 
 	to_value : Val -> Value
 	to_value = |val|

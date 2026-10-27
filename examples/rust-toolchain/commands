@@ -1,0 +1,3 @@
+update
+shell default -- rustc --version
+shell default -- cargo fmt --version
