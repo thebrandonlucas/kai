@@ -1,6 +1,6 @@
 # Workflows run tasks, builds and other workflows in order and stop at the
-# first failure: `kai workflow encore` runs the whole cowvolution, then moos
-# again.
+# first failure, unless the step may fail: `kai workflow encore` runs the
+# whole cowvolution, lets the grumpy cow fail, then moos again.
 app [kaifile] {
 	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",
@@ -21,6 +21,7 @@ kaifile = Std.kaifile([
 		"victoriancow",
 		[Use("cow"), Run(["cowsay", "doth mother know you weareth her drapes?"])],
 	),
+	Task("grumpycow", [Use("cow"), Run(["sh", "-c", "cowsay grumble; exit 1"])]),
 	Build(
 		"moderncow",
 		[
@@ -46,6 +47,10 @@ kaifile = Std.kaifile([
 	),
 	Workflow(
 		"encore",
-		[RunWorkflow("cowvolution"), RunTask("normalcow", ["again"])],
+		[
+			RunWorkflow("cowvolution"),
+			MayFail(RunTask("grumpycow", [])),
+			RunTask("normalcow", ["again"]),
+		],
 	),
 ])

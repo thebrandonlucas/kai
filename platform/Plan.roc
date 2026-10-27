@@ -1,8 +1,9 @@
 # What a command asks kai to do: steps kai validates as a whole, then runs.
 import Sexpr
 
-## Steps run in order and the first failure stops the plan. `next` asks kai
-## to read back files and run the Kaifile again (`Resume`).
+## Steps run in order and the first failure stops the plan, unless a MayFail
+## tolerates it. `next` asks kai to read back files and run the Kaifile again
+## (`Resume`).
 Plan := { steps : List(Step), next : Next }.{
 	is_eq : _
 
@@ -15,6 +16,10 @@ Plan := { steps : List(Step), next : Next }.{
 		Note(Str),
 		Print(Str),
 		Stage(Str),
+
+		## The next n Stages may fail as one: when a Run in them fails, kai
+		## notes it, skips the rest of them and continues the plan.
+		MayFail(U64),
 		Confirm(Str),
 		Write(List(File)),
 
@@ -88,6 +93,7 @@ expect {
 			Note("n"),
 			Print("p"),
 			Stage("run test"),
+			MayFail(1),
 			Confirm("go?"),
 			Write([{ path: "/g/flake.nix", contents: "{ }\n" }]),
 			VerifyPath({

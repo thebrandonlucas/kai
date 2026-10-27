@@ -28,7 +28,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [revision](revision) | A build stamped with the project's git revision | `kai build version` |
 | [source-build](source-build) | A build reading a locked source | `kai build moofasa` |
 | [path-source](path-source) | A build reading a locked project directory | `kai build kai` |
-| [workflow](workflow) | Tasks, builds and workflows run in order | `kai workflow encore` |
+| [workflow](workflow) | Tasks, builds and workflows run in order, and a step that may fail | `kai workflow encore` |
 | [packages](packages) | Package sources, a pinned release and flake inputs | `kai shell` |
 | [raw](raw) | Passing Nix-specific data through with `Raw` | `kai shell` |
 | [overlay](overlay) | An overlay adding a package, seen only where selected | `kai run moo` |

@@ -645,19 +645,23 @@ GuixBackend :: [].{
 			Request.Workflow(name) => {
 				var $steps = []
 				for step in Project.workflow_steps(model, name)? {
-					(label, part) = match step {
-						RunTask(task, args) =>
-							(
-								"run ${task}",
-								GuixBackend.task_steps(model, Request.Run(task, args), layout, locked)?,
-							)
+					$steps = match step {
+						RunTask(task, args) => {
+							part = GuixBackend.task_steps(
+								model,
+								Request.Run(task, args),
+								layout,
+								locked,
+							)?
+							$steps.append(Stage("run ${task}")).concat(part.steps)
+						}
 						BuildArtifact(build) => {
 							quiet = Request.default_output
-							steps = GuixBackend.build_steps(model, build, quiet, layout, locked)?
-							("build ${build}", steps)
+							part = GuixBackend.build_steps(model, build, quiet, layout, locked)?
+							$steps.append(Stage("build ${build}")).concat(part.steps)
 						}
+						MayFail(count) => $steps.append(MayFail(count))
 					}
-					$steps = $steps.append(Stage(label)).concat(part.steps)
 				}
 				Ok(Steps.{ steps: $steps, next: Done })
 			}
@@ -676,6 +680,7 @@ GuixBackend :: [].{
 					match step {
 						RunTask(task, args) => GuixBackend.fit(model, Request.Run(task, args))?
 						BuildArtifact(build) => GuixBackend.fit(model, Request.build(build))?
+						MayFail(_) => {}
 					}
 				}
 				Ok({})

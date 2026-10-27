@@ -32,7 +32,15 @@ Config :: [].{
 	]
 
 	## Workflows reference declarations; argv contains literal extra arguments.
+	## A step in MayFail that fails is noted and the workflow continues: a
+	## failing workflow there stops, but not the one running it.
 	WorkflowStep : [
+		RunTask(TaskName, List(Str)),
+		BuildArtifact(InputName),
+		RunWorkflow(WorkflowName),
+		MayFail(Step),
+	]
+	Step : [
 		RunTask(TaskName, List(Str)),
 		BuildArtifact(InputName),
 		RunWorkflow(WorkflowName),

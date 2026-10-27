@@ -198,7 +198,8 @@ Execute := [].{
 
 	# Check the whole plan, then run its steps in order; the first failure
 	# stops the plan. Each Stage opens a numbered workflow step that the next
-	# Stage or the end closes.
+	# Stage or the end closes. A Run failing within a MayFail's Stages is
+	# noted, and the plan continues after them.
 	run! : Plan, Lock, Layout, Output.Mode, Options, Str => Try({}, _)
 	run! = |plan, lock, layout, mode, options, workflow| {
 		Execute.validate(plan, layout, lock)?
@@ -302,15 +303,29 @@ Execute := [].{
 		var $index = 0
 		var $finished = ""
 		var $holding = Bool.False
+		# The last Stage of each open MayFail, innermost last; a failure there
+		# skips the steps through that Stage.
+		var $may_fail = []
+		var $skipping = Bool.False
+		var $skip_through = 0
 		for step in plan.steps {
 			match step {
 				Stage(label) => {
 					Execute.finish!(mode, $finished)?
 					$index = $index + 1
-					progress = Output.step(workflow, $index, count, label)
-					Output.note!(mode, progress.human, progress.started)?
-					$finished = progress.finished
+					$may_fail = $may_fail.keep_if(|last| last >= $index)
+					$skipping = $skipping and $index <= $skip_through
+					$finished = ""
+					if !$skipping {
+						progress = Output.step(workflow, $index, count, label)
+						Output.note!(mode, progress.human, progress.started)?
+						$finished = progress.finished
+					}
 				}
+				MayFail(stages) => {
+					$may_fail = $may_fail.append($index + stages)
+				}
+				_ if $skipping => {}
 				_ => {
 					(snapshots, builds) = match step {
 						Snapshot(_) => (Bool.True, Bool.False)
@@ -326,7 +341,16 @@ Execute := [].{
 						_ = Workspace.path(guard).delete!()
 						$holding = Bool.False
 					}
-					result?
+					match (result, $may_fail.last()) {
+						(Err(ChildExited(description, code)), Ok(last)) => {
+							message = "${description} failed with code ${code.to_str()}; continuing"
+							Output.note!(mode, "kai: ${message}", Output.event("note", message, []))?
+							$skipping = Bool.True
+							$skip_through = last
+							$finished = ""
+						}
+						_ => result?
+					}
 				}
 			}
 		}
@@ -426,7 +450,7 @@ Execute := [].{
 					OwnsLock => Ok({})
 					ReadsLock => Err("only a command that owns the lock publishes it")
 				}
-			Note(_) | Print(_) | Stage(_) | Confirm(_) => Ok({})
+			Note(_) | Print(_) | Stage(_) | MayFail(_) | Confirm(_) => Ok({})
 		}
 	}
 
@@ -465,7 +489,7 @@ Execute := [].{
 				Output.note!(mode, "kai: ${message}", Output.event("note", message, []))
 			Print(text) =>
 				Output.result!(mode, text, Output.event("result", text, []))
-			Stage(_) => Ok({})
+			Stage(_) | MayFail(_) => Ok({})
 			Write(files) => Workspace.stage!(files, layout)
 			VerifyPath({ path, argv, stdout, update }) => {
 				Workspace.safe_source!(path)?

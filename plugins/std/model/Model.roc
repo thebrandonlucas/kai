@@ -60,6 +60,7 @@ Model := {
 					RunTask(Str, List(Str)),
 					BuildArtifact(Str),
 					RunWorkflow(Str),
+					MayFail([RunTask(Str, List(Str)), BuildArtifact(Str), RunWorkflow(Str)]),
 				],
 			),
 		},
@@ -122,10 +123,18 @@ Model := {
 
 	## Ordered declarations, not command strings or executor recipes.
 	Workflow : { name : Str, steps : List(WorkflowStep) }
-	WorkflowStep : [RunTask(Str, List(Str)), BuildArtifact(Str), RunWorkflow(Str)]
+	WorkflowStep : [
+		RunTask(Str, List(Str)),
+		BuildArtifact(Str),
+		RunWorkflow(Str),
+		MayFail(Step),
+	]
+	Step : [RunTask(Str, List(Str)), BuildArtifact(Str), RunWorkflow(Str)]
 
 	## Expansion retains repetitions and extra argv without shell parsing.
-	AtomicStep : [RunTask(Str, List(Str)), BuildArtifact(Str)]
+	## MayFail(n): the next n steps may fail as one; the rest of them are
+	## skipped and the workflow continues.
+	AtomicStep : [RunTask(Str, List(Str)), BuildArtifact(Str), MayFail(U64)]
 
 	Extension : { kind : Str, name : Str, value : Value }
 	Raw : { backend : Str, target : Str, value : Value }

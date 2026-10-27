@@ -548,7 +548,7 @@ Project :: [].{
 		var $argv_bytes = 0.U64
 		var $productive = []
 		for step in workflow.steps {
-			match step {
+			match wrapped(step) {
 				RunTask(task_name, argv) => {
 					task = tasks.find_first(|t| t.name == task_name)
 						.map_err(|_| "unknown task: ${task_name}")?
@@ -589,6 +589,7 @@ Project :: [].{
 					$count = $count + entry.count
 					$argv_bytes = $argv_bytes + entry.argv_bytes
 				}
+				MayFail(_) => {}
 			}
 			# Reject while counting, before allocating any expanded output.
 			if $count > 4096 {
@@ -620,8 +621,15 @@ Project :: [].{
 		if entry.count == 0 {
 			return Ok(steps)
 		}
+		expand_steps(graph, entry.steps, steps)
+	}
+
+	## A MayFail step expands to MayFail(n) before its n atomic steps.
+	expand_steps :
+		List(WorkflowVisit), List(Model.WorkflowStep), Steps -> Try(Steps, Str)
+	expand_steps = |graph, declared, steps| {
 		var $steps = steps
-		for step in entry.steps {
+		for step in declared {
 			match step {
 				RunTask(task, argv) => {
 					$steps = $steps.append(RunTask(task, argv))
@@ -632,10 +640,30 @@ Project :: [].{
 				RunWorkflow(child) => {
 					$steps = expand_workflow(graph, child, $steps)?
 				}
+				MayFail(_) => {
+					group = expand_steps(graph, [wrapped(step)], [])?
+					count = group.count_if(
+						|s| match s {
+							MayFail(_) => Bool.False
+							_ => Bool.True
+						},
+					)
+					$steps = $steps.append(MayFail(count)).concat(group)
+				}
 			}
 		}
 		Ok($steps)
 	}
+
+	## The step a MayFail wraps, else the step itself.
+	wrapped : Model.WorkflowStep -> Model.WorkflowStep
+	wrapped = |step|
+		match step {
+			MayFail(RunTask(task, argv)) => RunTask(task, argv)
+			MayFail(BuildArtifact(build)) => BuildArtifact(build)
+			MayFail(RunWorkflow(child)) => RunWorkflow(child)
+			other => other
+		}
 
 	## Validate the whole project before returning the requested closure. Each
 	## dependency appears once, before its consumers, in Needs declaration order.

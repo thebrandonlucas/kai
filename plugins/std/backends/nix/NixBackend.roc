@@ -29,6 +29,7 @@ NixBackend :: [].{
 		"task_needs",
 		"optional_environment_variables",
 		"revision",
+		"may_fail",
 	]
 
 	default_nixpkgs : Str
@@ -73,6 +74,7 @@ NixBackend :: [].{
 		stage : Str,
 		output : Plan.Output,
 		snapshot_files : [All, Only(List(Str))],
+		may_fail : List(U64),
 	}
 
 	## Expand only semantic requests. Every atomic request shares this selection
@@ -85,30 +87,40 @@ NixBackend :: [].{
 				var $prepared = []
 				var $templates = []
 				var $bytes = 0.U64
+				var $opening = []
 				for step in Project.workflow_steps(project, name)? {
-					atomic = match step {
-						RunTask(task, extra) => Request.Run(task, extra)
-						BuildArtifact(build) => Request.build(build)
+					expanded = match step {
+						RunTask(task, extra) => Ok(Request.Run(task, extra))
+						BuildArtifact(build) => Ok(Request.build(build))
+						MayFail(count) => Err(count)
 					}
-					# Share immutable recipes, NEVER runtime artifacts or snapshots.
-					# Repeated requests still append a complete executable step.
-					selected = match $templates.find_first(|entry| entry.request == atomic) {
-						Ok(entry) => entry.selected
-						Err(_) => {
-							fresh = prepare_atomic(
-								project,
-								atomic,
-								target,
-								layout,
-								Limited(16777216 - $bytes),
-							)?
-							$bytes = $bytes + fresh.contents.to_utf8().len()
-								+ fresh.argv.fold(0, |n, arg| n + arg.to_utf8().len())
-							$templates = $templates.append({ request: atomic, selected: fresh })
-							fresh
+					match expanded {
+						Err(count) => {
+							$opening = $opening.append(count)
+						}
+						Ok(atomic) => {
+							# Share immutable recipes, NEVER runtime artifacts or snapshots.
+							# Repeated requests still append a complete executable step.
+							selected = match $templates.find_first(|entry| entry.request == atomic) {
+								Ok(entry) => entry.selected
+								Err(_) => {
+									fresh = prepare_atomic(
+										project,
+										atomic,
+										target,
+										layout,
+										Limited(16777216 - $bytes),
+									)?
+									$bytes = $bytes + fresh.contents.to_utf8().len()
+										+ fresh.argv.fold(0, |n, arg| n + arg.to_utf8().len())
+									$templates = $templates.append({ request: atomic, selected: fresh })
+									fresh
+								}
+							}
+							$prepared = $prepared.append({ ..selected, may_fail: $opening })
+							$opening = []
 						}
 					}
-					$prepared = $prepared.append(selected)
 				}
 				# Empty workflows still check global features, declarations and layout.
 				if $prepared.is_empty() {
@@ -289,6 +301,7 @@ NixBackend :: [].{
 			stage: selected.stage,
 			output: selected.output,
 			snapshot_files: Project.snapshot_files(selected.builds),
+			may_fail: [],
 		})
 	}
 
@@ -306,6 +319,7 @@ NixBackend :: [].{
 		var $steps = []
 		for selected in prepared {
 			if workflow {
+				$steps = $steps.concat(selected.may_fail.map(|count| MayFail(count)))
 				$steps = $steps.append(Stage(selected.stage))
 			}
 			$steps = $steps.concat(materialize(selected, layout, derived))

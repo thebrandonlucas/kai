@@ -189,6 +189,7 @@ Std := [].{
 			RunTask(task, _) => "run ${task}"
 			BuildArtifact(build) => "build ${build}"
 			RunWorkflow(name) => "workflow ${name}"
+			MayFail(_) => "${Std.step_text(Project.wrapped(step))} (may fail)"
 		}
 
 	## The model request a command's parsed arguments name.

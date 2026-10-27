@@ -81,6 +81,7 @@ ConfigToModel :: [].{
 				)
 				.concat(if (acc.tasks.all(|t| t.needs.is_empty())) [] else ["task_needs"])
 				.concat(if (acc.builds.any(|b| b.revision)) ["revision"] else [])
+				.concat(if (uses_may_fail(acc)) ["may_fail"] else [])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -186,6 +187,9 @@ ConfigToModel :: [].{
 			RunTask(name, argv) => RunTask(name.to_str(), argv)
 			BuildArtifact(name) => BuildArtifact(name.to_str())
 			RunWorkflow(name) => RunWorkflow(name.to_str())
+			MayFail(RunTask(name, argv)) => MayFail(RunTask(name.to_str(), argv))
+			MayFail(BuildArtifact(name)) => MayFail(BuildArtifact(name.to_str()))
+			MayFail(RunWorkflow(name)) => MayFail(RunWorkflow(name.to_str()))
 		}
 
 	provider : Config.PackageSource -> Model.Provider
@@ -394,6 +398,17 @@ ConfigToModel :: [].{
 			[one] => Ok(one)
 			_ => Err("DuplicateEnv: ${declaration}")
 		}
+
+	uses_may_fail : Acc -> Bool
+	uses_may_fail = |acc|
+		acc.workflows.any(
+			|w| w.steps.any(
+				|step| match step {
+					MayFail(_) => Bool.True
+					_ => Bool.False
+				},
+			),
+		)
 
 	uses_env : Acc -> Bool
 	uses_env = |acc|

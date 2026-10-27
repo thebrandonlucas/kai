@@ -75,6 +75,7 @@
 "(Note "
 "(Print "
 "(Stage "
+"(MayFail "
 "(Confirm "
 "(Write "
 "(VerifyPath "

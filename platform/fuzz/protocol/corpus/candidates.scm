@@ -13,7 +13,7 @@
 			(backend "nix")
 			(outcome (Planned (
 				(next (Observe ("/g/flake.lock")))
-				(steps ((Note "n") (Print "p") (Stage "run test") (Confirm "go?") (Write ((
+				(steps ((Note "n") (Print "p") (Stage "run test") (MayFail 1) (Confirm "go?") (Write ((
 					(contents "{ }\n")
 					(path "/g/flake.nix")))) (VerifyPath (
 					(argv ("nix" "hash" "path" "--sri" "/p/src"))
