@@ -499,6 +499,7 @@ GuixBackend :: [].{
 					path: full,
 					argv: ["guix", "hash", "-S", "nar", full],
 					stdout: hashed.hash,
+					update: "kai --backend guix update",
 				})
 				if !$checks.contains(check) {
 					$checks = $checks.append(check)

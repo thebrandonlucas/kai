@@ -46,9 +46,10 @@ NixBackend :: [].{
 
 	## One atomic request: its rendered flake, the argv that runs it, how the
 	## run reports (a build's artifact), its workflow stage and the secrets
-	## its process receives and is denied.
+	## its process receives and is denied. `reads` names the inputs it reads.
 	Prepared : {
 		inputs : List(Locks.Input),
+		reads : List(Str),
 		argv : List(Str),
 		secrets : List(Str),
 		removed_environment_variables : List(Str),
@@ -217,6 +218,7 @@ NixBackend :: [].{
 		check_layout(project, target, layout, !selected.builds.is_empty())?
 		Ok({
 			inputs,
+			reads: read_inputs(project, selected.names, selected.builds),
 			argv: selected.argv,
 			secrets: selected.secrets,
 			removed_environment_variables: selected.removed_environment_variables,
@@ -248,12 +250,12 @@ NixBackend :: [].{
 		Ok(Plan.{ steps: $steps, next: Done })
 	}
 
-	## Every step rechecks the local pins, including after source-editing
-	## tasks, then writes its files and runs. Every build snapshots afresh and
-	## installs Kai as its runner.
+	## Every step rechecks the local pins it reads, including after
+	## source-editing tasks, then writes its files and runs. Every build
+	## snapshots afresh and installs Kai as its runner.
 	materialize : Prepared, Layout, Locks.Derived -> List(Plan.Step)
 	materialize = |selected, layout, derived| {
-		{ inputs, argv, contents, description, output, secrets, .. } = selected
+		{ inputs, reads, argv, contents, description, output, secrets, .. } = selected
 		removed_environment_variables = selected.removed_environment_variables
 		sandbox = match output {
 			Artifact(_) => {
@@ -285,12 +287,30 @@ NixBackend :: [].{
 				path: "${layout.generated_root}/flake.lock",
 				contents: derived.contents,
 			})
-		derived.checks.concat(sandbox)
+		read_paths = inputs.keep_if(|i| reads.contains(i.name))
+			.map(|i| "${layout.project_root}/${Locks.local_path(i)}")
+		checks = derived.checks.keep_if(
+			|check|
+				match check {
+					VerifyPath({ path, .. }) => read_paths.contains(path)
+					_ => True
+				},
+		)
+		checks.concat(sandbox)
 			.concat([
 				Write(files),
 				Run({ description, argv, output, secrets, removed_environment_variables }),
 			])
 	}
+
+	## The inputs a request reads: its environments' sources and overlays, its
+	## builds' Inputs, and every flake input, which Raw may refer to.
+	read_inputs : Model, List(Str), List(Model.Build) -> List(Str)
+	read_inputs = |project, names, builds|
+		project.environments.keep_if(|e| names.contains(e.name))
+			.join_map(|e| source_names(e).concat(e.overlays))
+			.concat(builds.join_map(|b| b.inputs))
+			.concat(project.inputs.keep_if(|i| i.kind == Flake).map(|i| i.name))
 
 	## Update consumers check these source roots before staging or fetching.
 	## Keep provider/input path interpretation here, not duplicated in the CLI.
@@ -1511,6 +1531,7 @@ expect match single(Request.build("app")) {
 			path: "/project/assets",
 			argv: ["nix", "hash", "path", "--sri", "/project/assets"],
 			stdout: "sha256-mhO52EWOvxHOyTFt0V1hM6Oo6mlpNo2PFlxQtcmCJBc=",
+			update: "kai update assets",
 		}),
 		Snapshot({
 			root: "/project",
@@ -1557,6 +1578,7 @@ expect match single(Request.build("app")) {
 }
 
 # Task extras preserve empty arguments, controls and option-looking literals.
+# The task verifies no local source: only builds read them here.
 expect match single(
 	Request.Run(
 		"check",
@@ -1578,7 +1600,7 @@ expect match single(
 		"--flag",
 		"a\nb",
 	] and step.output == Inherit
-		and step.before.len() == 1 and step.files.len() == 2
+		and step.before.is_empty() and step.files.len() == 2
 	_ => False
 }
 
@@ -2329,17 +2351,20 @@ expect {
 		== [1, 0, 0, 1, 0, 1, 1]
 }
 
-# Each step reverifies local pins before staging; all derived locks are equal
-# and none of the planned writes replaces the caller's authority.
+# Each build reverifies the local pins it reads before staging, and a task
+# none; all derived locks are equal and none of the planned writes replaces
+# the caller's authority.
 expect {
 	locks = plan_locks?
 	before = Locks.encode(locks)
 	sequence = workflow_plan(Request.Workflow("ci"))?
 	atomic = workflow_plan(Request.build("library"))?
 	library = split(atomic.steps)?
+	pins = |stage|
+		if (stage.name.starts_with("run")) [] else library.before.take_first(1)
 	stages(sequence).all(
 		|stage| match split(stage.steps) {
-			Ok(step) => step.before.first() == library.before.first()
+			Ok(step) => step.before.take_first(1) == pins(stage)
 				and step.files.last() == library.files.last()
 				and !step.files.any(|file| file.path == TestData.layout.lock_path)
 			Err(_) => False

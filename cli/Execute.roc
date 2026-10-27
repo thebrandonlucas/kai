@@ -407,7 +407,7 @@ Execute := [].{
 				Output.result!(mode, text, Output.event("result", text, []))
 			Stage(_) => Ok({})
 			Write(files) => Workspace.stage!(files, layout)
-			VerifyPath({ path, argv, stdout }) => {
+			VerifyPath({ path, argv, stdout, update }) => {
 				Workspace.safe_source!(path)?
 				(program, args) = match argv {
 					[first, .. as rest] => (first, rest)
@@ -420,7 +420,7 @@ Execute := [].{
 					.require_success()?
 				Stderr.write_bytes!(observed.stderr_bytes)?
 				if Str.from_utf8_lossy(observed.stdout_bytes).trim() != stdout {
-					return Err(LocalChanged(path))
+					return Err(LocalChanged(path, update))
 				}
 				Ok({})
 			}
@@ -686,7 +686,12 @@ validated = |steps|
 expect
 	validated([
 		Stage("build app"),
-		VerifyPath({ path: "/p/vendor", argv: ["nix", "hash"], stdout: "x" }),
+		VerifyPath({
+			path: "/p/vendor",
+			argv: ["nix", "hash"],
+			stdout: "x",
+			update: "kai update vendor",
+		}),
 		Snapshot({ root: "/p", destination: "/p/.kai/snapshot", exclude: [] }),
 		InstallRunner({ destination: "/p/.kai/build-runner" }),
 		Write([{ path: "/p/.kai/generated/flake.nix", contents: "" }]),
@@ -700,9 +705,9 @@ expect [
 	Write([{ path: "/p/.kai/lock.json", contents: "" }]),
 	Write([{ path: "/p/.kai/generated/../lock.json", contents: "" }]),
 	Write([{ path: "/p/flake.nix", contents: "" }]),
-	VerifyPath({ path: "/etc", argv: ["nix"], stdout: "" }),
-	VerifyPath({ path: "/p/../etc", argv: ["nix"], stdout: "" }),
-	VerifyPath({ path: "/p/src", argv: [], stdout: "" }),
+	VerifyPath({ path: "/etc", argv: ["nix"], stdout: "", update: "" }),
+	VerifyPath({ path: "/p/../etc", argv: ["nix"], stdout: "", update: "" }),
+	VerifyPath({ path: "/p/src", argv: [], stdout: "", update: "" }),
 	Snapshot({ root: "/p", destination: "/p/src", exclude: [] }),
 	InstallRunner({ destination: "/tmp/runner" }),
 	run([], [], []),

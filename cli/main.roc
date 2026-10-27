@@ -364,7 +364,8 @@ describe = |err|
 		UnsafePath(value) => "refusing unsafe or symlinked path: ${value}"
 		RenderFailed(message) => "cannot generate the Nix files: ${message}"
 		LockFailed(message) => "cannot lock the Nix inputs: ${message}"
-		LocalChanged(path) => "local source ${path} changed; run `kai update`"
+		LocalChanged(path, update) =>
+			"local source ${path} changed; run `${update}`"
 		MissingSource(path) => "local source or overlay ${path} does not exist"
 		UnsafePlan(why) => "refusing the plan: ${why}"
 		ConfirmationRequired(prompt) =>

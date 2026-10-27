@@ -17,7 +17,11 @@ Plan := { steps : List(Step), next : Next }.{
 		Stage(Str),
 		Confirm(Str),
 		Write(List(File)),
-		VerifyPath({ path : Str, argv : List(Str), stdout : Str }),
+
+		## A locked local tree, and the command that locks it again.
+		VerifyPath(
+			{ path : Str, argv : List(Str), stdout : Str, update : Str },
+		),
 
 		## A local source a backend will read: no symlinks or special files.
 		CheckSource(Str),
@@ -72,7 +76,12 @@ expect {
 			Stage("run test"),
 			Confirm("go?"),
 			Write([{ path: "/g/flake.nix", contents: "{ }\n" }]),
-			VerifyPath({ path: "/p/src", argv: ["nix", "hash"], stdout: "sha256-x" }),
+			VerifyPath({
+				path: "/p/src",
+				argv: ["nix", "hash"],
+				stdout: "sha256-x",
+				update: "kai update src",
+			}),
 			Snapshot({ root: "/p", destination: "/w/src", exclude: [".git"] }),
 			InstallRunner({ destination: "/w/runner" }),
 			Run({

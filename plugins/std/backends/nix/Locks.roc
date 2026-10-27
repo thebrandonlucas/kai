@@ -242,6 +242,7 @@ Locks := { identity : LockJson, graph : LockJson }.{
 						path,
 						argv: ["nix", "hash", "path", "--sri", path],
 						stdout: nar_hash,
+						update: "kai update ${local.name}",
 					})
 					if !$checks.contains(check) {
 						$checks = $checks.append(check)
@@ -919,6 +920,7 @@ expect match locked_fixture {
 						path: "/moved/assets",
 						argv: ["nix", "hash", "path", "--sri", "/moved/assets"],
 						stdout: "sha256-mhO52EWOvxHOyTFt0V1hM6Oo6mlpNo2PFlxQtcmCJBc=",
+						update: "kai update assets",
 					}),
 				]
 				and Locks.decode(Locks.encode(locks)) == Ok(locks)
