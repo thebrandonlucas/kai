@@ -31,6 +31,7 @@ NixBackend :: [].{
 		"revision",
 		"may_fail",
 		"pure",
+		"aliases",
 	]
 
 	default_nixpkgs : Str
@@ -797,14 +798,32 @@ NixBackend :: [].{
 	## outside the request. Empty environments use the default source instead.
 	source_names : Model.Environment -> List(Str)
 	source_names = |environment| {
-		if environment.tools.is_empty() {
+		tools = Project.environment_tools(environment)
+		if tools.is_empty() {
 			return ["default"]
 		}
-		environment.tools.map(|t| t.source).fold(
+		tools.map(|t| t.source).fold(
 			[],
 			|seen, name|
 				if (seen.contains(name)) seen else seen.append(name),
 		)
+	}
+
+	## What an environment puts on PATH: its tools, then each Alias as a
+	## linkFarm holding one bin/<name> link to its tool's binary.
+	path_packages : Model.Environment -> List(Str)
+	path_packages = |environment| {
+		primary = source_names(environment).first() ?? "default"
+		aliases = environment.aliases.map(
+			|alias| {
+				tool = tool_reference(alias.tool, environment)
+				path = "\"\${${tool}}/bin/\" + ${quote(alias.binary)}"
+				link = "{ name = ${quote("bin/${alias.name}")}; path = ${path}; }"
+				"(sets.${quote(primary)}.linkFarm \"kai-alias\" [ ${link} ])"
+			},
+		)
+		environment.tools.map(|tool| tool_reference(tool, environment))
+			.concat(aliases)
 	}
 
 	render_environment_definition : Model.Environment -> Str
@@ -819,9 +838,7 @@ NixBackend :: [].{
 				"            ${quote(name)} = import inputs.${quote(name)} "
 					.concat("{ inherit system overlays; };"),
 		)
-		tools = environment.tools.map(
-			|tool| "            ${tool_reference(tool, environment)}",
-		)
+		tools = path_packages(environment).map(|tool| "            ${tool}")
 		# mkShell exports `env` to its shells, and to tasks through kai-env-*.
 		env = if environment.env.is_empty() {
 			[]
@@ -860,7 +877,7 @@ NixBackend :: [].{
 				"            ${quote(name)} = import inputs.${quote(name)} "
 					.concat("{ inherit system overlays; };"),
 		)
-		tools = environment.tools.map(|tool| tool_reference(tool, environment))
+		tools = path_packages(environment)
 		inputs = build.inputs.map(
 			|name|
 				"{ name = ${quote(name)}; path = inputs.${quote(name)}; }",
@@ -1114,6 +1131,7 @@ sample_model = {
 			overlays: [],
 			env: [],
 			pure: Bool.False,
+			aliases: [],
 		},
 		{
 			name: "dev",
@@ -1122,6 +1140,7 @@ sample_model = {
 			overlays: ["roc"],
 			env: [],
 			pure: Bool.False,
+			aliases: [],
 		},
 	],
 	shells: [
@@ -1156,6 +1175,7 @@ full_model = {
 			overlays: ["roc"],
 			env: [],
 			pure: Bool.False,
+			aliases: [],
 		},
 		{
 			name: "empty",
@@ -1164,6 +1184,7 @@ full_model = {
 			overlays: [],
 			env: [],
 			pure: Bool.False,
+			aliases: [],
 		},
 		{
 			name: "headless",
@@ -1172,6 +1193,7 @@ full_model = {
 			overlays: [],
 			env: [],
 			pure: Bool.False,
+			aliases: [],
 		},
 	],
 	shells: [
@@ -1263,6 +1285,7 @@ base = {
 	overlays: [],
 	env: [],
 	pure: Bool.False,
+	aliases: [],
 }
 
 simple : TestIr

@@ -51,18 +51,21 @@ Config :: [].{
 	PackageSource : [Auto, From(Provider)]
 	Provider : [NixPackages(FlakeRef), GuixPackages(Str)]
 
-	## Each setting occurs at most once. Extend inherits tools and overlays
-	## parent first; an omitted or empty list does not clear inherited values.
-	## Env sets variables in the environment's shells, tasks and builds. They
-	## override the parent's by name, and a task's or build's Env overrides them.
-	## Pure starts its shells and tasks from a clean environment, as does Extend
-	## of a Pure environment.
+	## Each setting but Alias occurs at most once. Extend inherits tools,
+	## overlays and aliases parent first; an omitted or empty list does not clear
+	## inherited values. Env sets variables in the environment's shells, tasks
+	## and builds. They override the parent's by name, and a task's or build's
+	## Env overrides them. Pure starts its shells and tasks from a clean
+	## environment, as does Extend of a Pure environment. Alias(name, tool,
+	## binary) puts a command `name` on PATH that runs the tool's
+	## `bin/<binary>`, without the tool's other binaries; it needs Nix.
 	EnvironmentSetting : [
 		Tools(List(Tool)),
 		Overlays(List(InputName)),
 		Extend(EnvName),
 		Env(List((Str, Str))),
 		Pure,
+		Alias(Str, Tool, Str),
 	]
 
 	## A shell is an alias for exactly one environment. A Description, in a

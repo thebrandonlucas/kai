@@ -219,6 +219,29 @@ Project :: [].{
 	merge_env = |base, overrides|
 		base.keep_if(|b| !overrides.any(|o| o.name == b.name)).concat(overrides)
 
+	## Alias names and binaries are single file names in a bin directory.
+	check_aliases : List(Model.Alias), Str -> Try({}, Str)
+	check_aliases = |aliases, environment| {
+		file_name = |name|
+			clean(name) and !name.contains("/") and name != "." and name != ".."
+		var $seen = []
+		for alias in aliases {
+			if !file_name(alias.name) or !file_name(alias.binary) {
+				return Err("invalid Alias in environment ${environment}: ${alias.name}")
+			}
+			if $seen.contains(alias.name) {
+				return Err("DuplicateAlias: environment ${environment}: ${alias.name}")
+			}
+			$seen = $seen.append(alias.name)
+		}
+		Ok({})
+	}
+
+	## The tools an environment's packages come from, its aliases' included.
+	environment_tools : Model.Environment -> List(Model.Tool)
+	environment_tools = |environment|
+		unique(environment.tools.concat(environment.aliases.map(|alias| alias.tool)))
+
 	## The `env` argv prefix that sets `variables` for the command after it.
 	env_command : List(Model.Variable) -> List(Str)
 	env_command = |variables|
@@ -353,7 +376,8 @@ Project :: [].{
 		for env in model.environments {
 			check_env(env.env, "environment ${env.name}")?
 			resolved = resolve(model.environments, env.name, [])?
-			for t in resolved.tools {
+			check_aliases(resolved.aliases, env.name)?
+			for t in environment_tools(resolved) {
 				parsed = tool("${t.source}#${t.name}")?
 				source = sources.find_first(|s| s.name == parsed.source)
 					.map_err(|_| "unknown source: ${t.source}")?
@@ -757,7 +781,13 @@ Project :: [].{
 		env = environments.find_first(|e| e.name == name)
 			.map_err(|_| "unknown environment: ${name}")?
 		match env.parents {
-			[] => Ok({ ..env, tools: unique(env.tools), overlays: unique(env.overlays) })
+			[] =>
+				Ok({
+					..env,
+					tools: unique(env.tools),
+					overlays: unique(env.overlays),
+					aliases: unique(env.aliases),
+				})
 			[parent] => {
 				base = resolve(environments, parent, visiting.append(name))?
 				Ok({
@@ -767,6 +797,7 @@ Project :: [].{
 					overlays: unique(base.overlays.concat(env.overlays)),
 					env: merge_env(base.env, env.env),
 					pure: base.pure or env.pure,
+					aliases: unique(base.aliases.concat(env.aliases)),
 				})
 			}
 			_ => Err("environment ${name} has several parents")
@@ -783,11 +814,15 @@ Project :: [].{
 		if backend == Guix and !env.overlays.is_empty() {
 			return Err("Guix does not support overlays in environment ${name}")
 		}
+		if backend == Guix and !env.aliases.is_empty() {
+			return Err("Alias needs Nix: environment ${name}")
+		}
+		tools = environment_tools(env)
 		# An empty environment still uses the default provider's environment builder.
-		source_names = if env.tools.is_empty() {
+		source_names = if tools.is_empty() {
 			["default"]
 		} else {
-			unique(env.tools.map(|t| t.source))
+			unique(tools.map(|t| t.source))
 		}
 		for source_name in source_names {
 			source = project.sources.find_first(|s| s.name == source_name)
@@ -800,7 +835,7 @@ Project :: [].{
 				_ => {}
 			}
 		}
-		for t in env.tools {
+		for t in tools {
 			check_tool(backend, t.name)?
 		}
 		Ok({})
@@ -881,6 +916,7 @@ base = {
 	overlays: ["first"],
 	env: [],
 	pure: Bool.False,
+	aliases: [],
 }
 
 child : Model.Environment
@@ -894,6 +930,7 @@ child = {
 	overlays: ["first", "second"],
 	env: [],
 	pure: Bool.False,
+	aliases: [],
 }
 
 # Declaration order is irrelevant; inheritance order is not. First wins.
@@ -909,6 +946,7 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 			overlays: ["first", "second"],
 			env: [],
 			pure: Bool.False,
+			aliases: [],
 		},
 		base,
 	]),
@@ -918,7 +956,7 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 expect match Project.validate(
 	fixture([
 		base,
-		{ ..child, tools: [], overlays: [], env: [], pure: Bool.False },
+		{ ..child, tools: [], overlays: [], env: [], pure: Bool.False, aliases: [] },
 		{
 			name: "empty",
 			parents: [],
@@ -926,6 +964,7 @@ expect match Project.validate(
 			overlays: [],
 			env: [],
 			pure: Bool.False,
+			aliases: [],
 		},
 	]),
 ) {
@@ -939,6 +978,7 @@ expect match Project.validate(
 			overlays: [],
 			env: [],
 			pure: Bool.False,
+			aliases: [],
 		},
 	]
 	Err(_) => False
@@ -1026,6 +1066,7 @@ expect {
 			overlays: [],
 			env: [],
 			pure: Bool.False,
+			aliases: [],
 			tools: [{ source: "guix", name: "git" }],
 		},
 	])
@@ -1083,6 +1124,7 @@ build_fixture = |builds| Model.{
 			overlays: [],
 			env: [],
 			pure: Bool.False,
+			aliases: [],
 		},
 	],
 	shells: [],
@@ -1423,6 +1465,7 @@ workflow_features = |workflows, features| Model.{
 			overlays: [],
 			env: [],
 			pure: Bool.False,
+			aliases: [],
 		},
 	],
 	shells: [],

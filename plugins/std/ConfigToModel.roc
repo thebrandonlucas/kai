@@ -83,6 +83,7 @@ ConfigToModel :: [].{
 				.concat(if (acc.builds.any(|b| b.revision)) ["revision"] else [])
 				.concat(if (uses_may_fail(acc)) ["may_fail"] else [])
 				.concat(if (acc.environments.any(|e| e.pure)) ["pure"] else [])
+				.concat(if (uses_aliases(acc)) ["aliases"] else [])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -231,7 +232,14 @@ ConfigToModel :: [].{
 		Str, List(Config.EnvironmentSetting) -> Try(Model.Environment, Str)
 	environment = |name, inner| {
 		draft = inner.fold(
-			{ tools: [], overlays: [], parents: [], envs: [], pures: 0.U64 },
+			{
+				tools: [],
+				overlays: [],
+				parents: [],
+				envs: [],
+				pures: 0.U64,
+				aliases: [],
+			},
 			|acc, setting|
 				match setting {
 					Tools(tools) => {
@@ -247,6 +255,10 @@ ConfigToModel :: [].{
 					Extend(parent) => { ..acc, parents: acc.parents.append(parent.to_str()) }
 					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
 					Pure => { ..acc, pures: acc.pures + 1 }
+					Alias(alias, tool, binary) => {
+						..acc,
+						aliases: acc.aliases.append({ name: alias, tool: tool.to_ir(), binary }),
+					}
 				},
 		)
 		if draft.tools.len() > 1 {
@@ -268,6 +280,7 @@ ConfigToModel :: [].{
 			overlays: draft.overlays.first() ?? [],
 			env: single_env(draft.envs, "environment ${name}")?,
 			pure: draft.pures == 1,
+			aliases: draft.aliases,
 		})
 	}
 
@@ -469,6 +482,9 @@ ConfigToModel :: [].{
 		acc.environments.any(|e| !e.env.is_empty())
 			or acc.tasks.any(|t| !t.env.is_empty())
 			or acc.builds.any(|b| !b.env.is_empty())
+
+	uses_aliases : Acc -> Bool
+	uses_aliases = |acc| acc.environments.any(|e| !e.aliases.is_empty())
 
 	to_value : Val -> Value
 	to_value = |val|

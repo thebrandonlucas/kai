@@ -774,6 +774,7 @@ env = |name, tools| {
 	overlays: [],
 	env: [],
 	pure: Bool.False,
+	aliases: [],
 }
 
 check : List(Model.Environment), Request, Try(List(Str), {}) -> Bool

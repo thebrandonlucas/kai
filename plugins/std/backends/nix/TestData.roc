@@ -19,6 +19,7 @@ TestData :: [].{
 		overlays: [],
 		env: [],
 		pure: Bool.False,
+		aliases: [],
 	}
 
 	library : Model.Build

@@ -25,6 +25,9 @@ Model := {
 			overlays : List(Str),
 			env : List({ name : Str, value : Str }),
 			pure : Bool,
+			aliases : List(
+				{ name : Str, tool : { source : Str, name : Str }, binary : Str },
+			),
 		},
 	),
 	shells : List({ name : Str, environment : Str, description : Str }),
@@ -87,7 +90,12 @@ Model := {
 		overlays : List(Str),
 		env : List(Variable),
 		pure : Bool,
+		aliases : List(Alias),
 	}
+
+	## A command `name` on the environment's PATH that runs `binary` from
+	## `tool`'s bin directory.
+	Alias : { name : Str, tool : Tool, binary : Str }
 
 	## A description, empty when none, summarizes a declaration in help.
 	Shell : { name : Str, environment : Str, description : Str }
