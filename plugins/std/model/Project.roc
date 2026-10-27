@@ -624,6 +624,18 @@ Project :: [].{
 		Ok(done.map(|entry| entry.build))
 	}
 
+	## What a closure's shared snapshot holds: the files each build selects.
+	snapshot_files : List(Model.Build) -> [All, Only(List(Str))]
+	snapshot_files = |builds|
+		builds.fold(
+			Only([]),
+			|selected, build|
+				match (selected, build.files) {
+					(Only(chosen), Only(paths)) => Only(chosen.concat(paths))
+					_ => All
+				},
+		)
+
 	## Memoized DAG traversal avoids exponential diamond expansion. Height is
 	## retained so memo hits cannot hide a path exceeding the 128-level bound.
 	BuildVisit : { build : Model.Build, height : U64 }

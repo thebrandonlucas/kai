@@ -25,7 +25,19 @@ Plan := { steps : List(Step), next : Next }.{
 
 		## A local source a backend will read: no symlinks or special files.
 		CheckSource(Str),
-		Snapshot({ root : Str, destination : Str, exclude : List(Str) }),
+
+		## Copies only the relative paths `files` selects, what lies inside
+		## them and the directories above them. Symlinks into `store`, such as
+		## a build's out-link, are left out rather than refused.
+		Snapshot(
+			{
+				root : Str,
+				destination : Str,
+				exclude : List(Str),
+				files : [All, Only(List(Str))],
+				store : Str,
+			},
+		),
 		InstallRunner({ destination : Str }),
 
 		## kai sets the `secrets` variables from `.env` or its own environment
@@ -82,7 +94,13 @@ expect {
 				stdout: "sha256-x",
 				update: "kai update src",
 			}),
-			Snapshot({ root: "/p", destination: "/w/src", exclude: [".git"] }),
+			Snapshot({
+				root: "/p",
+				destination: "/w/src",
+				exclude: [".git"],
+				files: Only(["src"]),
+				store: "/nix/store",
+			}),
 			InstallRunner({ destination: "/w/runner" }),
 			Run({
 				description: "shell dev",

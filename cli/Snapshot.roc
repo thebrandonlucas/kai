@@ -1,9 +1,10 @@
 # Materialize one build's project snapshot: copy the filtered project tree and
 # publish the caller's namespace witness beside it, replacing the previous
 # snapshot only once the new one is completely staged. What the project's
-# .gitignore files ignore is left out. Symbolic links and special files are
-# refused, never followed. Callers hold the workspace's build lock and must not
-# mutate the project concurrently.
+# .gitignore files ignore is left out, and so is what the build's files leave
+# out. Symbolic links into the store, such as out-links, are left out; other
+# links and special files are refused, never followed. Callers hold the
+# workspace's build lock and must not mutate the project concurrently.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -42,6 +43,23 @@ Snapshot := [].{
 	excluded = |exclusions, entry, name|
 		exclusions.names.contains(name)
 			or exclusions.paths.any(|path| Snapshot.within(path, entry))
+
+	# What the walk copies from root: the selected files, without links into
+	# the store.
+	Walk : { root : Str, files : [All, Only(List(Str))], store : Str }
+
+	# A selected path, what lies inside it and the directories above it.
+	selected : [All, Only(List(Str))], List(U8) -> Bool
+	selected = |files, relative|
+		match files {
+			All => Bool.True
+			Only(paths) =>
+				paths.any(
+					|path|
+						Snapshot.within(path.to_utf8(), relative)
+							or Snapshot.within(relative, path.to_utf8()),
+				)
+		}
 
 	# The snapshot may live in the project only beneath an excluded tree.
 	check : Str, Str, Snapshot.Exclusions -> Try({}, Str)
@@ -110,10 +128,19 @@ Snapshot := [].{
 		)
 
 	# The planned Snapshot operation.
-	Request : { root : Str, destination : Str, exclude : List(Str) }
+	Request : {
+		root : Str,
+		destination : Str,
+		exclude : List(Str),
+		files : [All, Only(List(Str))],
+		store : Str,
+	}
 
 	snapshot! : Snapshot.Request => Try({}, _)
-	snapshot! = |{ root, destination, exclude }| {
+	snapshot! = |{ root, destination, exclude, files, store }| {
+		if !store.starts_with("/") or store == "/" {
+			return Err(SnapshotFailed("snapshot store must be an absolute directory"))
+		}
 		isolation = "${destination}.isolation.json"
 		for path in [root, destination, isolation] {
 			Workspace.safe_path!(path)?
@@ -140,7 +167,7 @@ Snapshot := [].{
 		parent.create_all!()?
 		temporary = Env.create_temp_dir_in!(parent, ".snapshot-")?
 		result = Snapshot.publish!(
-			{ root, destination, isolation, witness },
+			{ root, destination, isolation, witness, files, store },
 			exclusions,
 			temporary,
 		)
@@ -189,10 +216,11 @@ Snapshot := [].{
 
 	# Remove the old witness before replacing the tree, so an interrupted
 	# publication cannot authorize the new tree with stale observations.
-	publish! = |{ root, destination, isolation, witness }, exclusions, temporary| {
+	publish! = |snapshot, exclusions, temporary| {
+		{ root, destination, isolation, witness, files, store } = snapshot
 		staged = temporary.join("project")
 		staged.create_dir!()?
-		Snapshot.copy_tree!(root, staged, exclusions)?
+		Snapshot.copy_tree!({ root, files, store }, staged, exclusions)?
 		staged_witness = temporary.join("isolation.json")
 		staged_witness.write_utf8!(witness)?
 		Workspace.safe_path!(destination)?
@@ -222,8 +250,8 @@ Snapshot := [].{
 	}
 
 	# Walk with lstat, recreating directories and collecting regular files.
-	copy_tree! : Str, Path, Snapshot.Exclusions => Try({}, _)
-	copy_tree! = |root, staged, exclusions| {
+	copy_tree! : Snapshot.Walk, Path, Snapshot.Exclusions => Try({}, _)
+	copy_tree! = |{ root, files, store }, staged, exclusions| {
 		(source_root, target_root) = (root.to_utf8(), Snapshot.bytes(staged))
 		var $pending = [[]]
 		var $files = []
@@ -236,7 +264,9 @@ Snapshot := [].{
 				full = Snapshot.bytes(entry)
 				name = full.drop_first(source.len() + 1)
 				relative = Snapshot.join(directory, name)
-				if !Snapshot.excluded(exclusions, full, name) {
+				kept = Snapshot.selected(files, relative)
+					and !Snapshot.excluded(exclusions, full, name)
+				if kept {
 					match entry.type!()? {
 						IsDir => {
 							Path.unix_bytes(Snapshot.join(target_root, relative))
@@ -248,7 +278,12 @@ Snapshot := [].{
 							$files = $files.append({ relative, executable })
 							$names = $names.append(name)
 						}
-						IsSymLink => return Err(Snapshot.refused(Symlink, entry))
+						IsSymLink => {
+							target = Snapshot.bytes(entry.read_link!()?)
+							if !Snapshot.within(store.to_utf8(), target) {
+								return Err(Snapshot.refused(Symlink, entry))
+							}
+						}
 						IsOther => return Err(Snapshot.refused(Special, entry))
 					}
 				}

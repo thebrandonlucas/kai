@@ -46,7 +46,8 @@ NixBackend :: [].{
 
 	## One atomic request: its rendered flake, the argv that runs it, how the
 	## run reports (a build's artifact), its workflow stage and the secrets
-	## its process receives and is denied. `reads` names the inputs it reads.
+	## its process receives and is denied, and the files its snapshot copies.
+	## `reads` names the inputs it reads.
 	Prepared : {
 		inputs : List(Locks.Input),
 		reads : List(Str),
@@ -57,6 +58,7 @@ NixBackend :: [].{
 		description : Str,
 		stage : Str,
 		output : Plan.Output,
+		snapshot_files : [All, Only(List(Str))],
 	}
 
 	## Expand only semantic requests. Every atomic request shares this selection
@@ -226,6 +228,7 @@ NixBackend :: [].{
 			description: selected.description,
 			stage: selected.stage,
 			output: selected.output,
+			snapshot_files: Project.snapshot_files(selected.builds),
 		})
 	}
 
@@ -276,6 +279,8 @@ NixBackend :: [].{
 						root: layout.project_root,
 						destination: "${layout.workspace}/snapshot",
 						exclude,
+						files: selected.snapshot_files,
+						store: "/nix/store",
 					}),
 					InstallRunner({ destination: runner_path(layout.workspace) }),
 				]
@@ -1546,6 +1551,8 @@ expect match single(Request.build("app")) {
 				"/authority/inputs.lock",
 				"/project/assets",
 			],
+			files: All,
+			store: "/nix/store",
 		}),
 		InstallRunner({ destination: "/work/build-runner" }),
 	] and step.files.map(|file| file.path) == [

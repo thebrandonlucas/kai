@@ -21,7 +21,9 @@
 					(stdout "sha256-x"))) (Snapshot (
 					(destination "/w/src")
 					(exclude (".git"))
-					(root "/p"))) (InstallRunner (
+					(files (Only ("src")))
+					(root "/p")
+					(store "/nix/store"))) (InstallRunner (
 					(destination "/w/runner"))) (Run (
 					(argv ("bash"))
 					(output Inherit)

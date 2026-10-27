@@ -534,6 +534,8 @@ GuixBackend :: [].{
 						root: layout.project_root,
 						destination: "${workspace}/snapshot",
 						exclude,
+						files: Project.snapshot_files(GuixBackend.closure(model, name)?),
+						store: "/gnu/store",
 					}),
 					InstallRunner({ destination: "${workspace}/build-runner" }),
 					Write([
