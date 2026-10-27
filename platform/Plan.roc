@@ -41,8 +41,9 @@ Plan := { steps : List(Step), next : Next }.{
 		InstallRunner({ destination : Str }),
 
 		## kai sets the `secrets` variables from `.env` or its own environment
-		## and removes `removed_environment_variables` from the child
-		## process's environment: names only, never values.
+		## and removes `removed_environment_variables`, except those in
+		## `kept_environment_variables`, from the child process's environment:
+		## names only, never values.
 		Run(
 			{
 				description : Str,
@@ -50,6 +51,7 @@ Plan := { steps : List(Step), next : Next }.{
 				output : Output,
 				secrets : List(Str),
 				removed_environment_variables : List(Str),
+				kept_environment_variables : List(Str),
 			},
 		),
 		PublishLock({ previous : [Absent, Present(Str)], contents : Str }),
@@ -108,6 +110,7 @@ expect {
 				output: Inherit,
 				secrets: [],
 				removed_environment_variables: [],
+				kept_environment_variables: [],
 			}),
 			Run({
 				description: "lock",
@@ -115,6 +118,7 @@ expect {
 				output: Quiet,
 				secrets: [],
 				removed_environment_variables: [],
+				kept_environment_variables: [],
 			}),
 			Run({
 				description: "task t",
@@ -122,6 +126,7 @@ expect {
 				output: Inherit,
 				secrets: ["TOKEN"],
 				removed_environment_variables: ["OTHER"],
+				kept_environment_variables: ["VERSION"],
 			}),
 			Run({
 				description: "build site",
@@ -129,6 +134,7 @@ expect {
 				output: Artifact({ name: "site", label: "site", output: "out" }),
 				secrets: [],
 				removed_environment_variables: [],
+				kept_environment_variables: [],
 			}),
 			PublishLock({ previous: Absent, contents: "{}" }),
 			PublishLock({ previous: Present("{}"), contents: "{ }" }),

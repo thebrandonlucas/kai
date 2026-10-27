@@ -34,6 +34,7 @@ Model := {
 			run : List(Str),
 			env : List({ name : Str, value : Str }),
 			secrets : List(Str),
+			optional_environment_variables : List(Str),
 			needs : List(Str),
 		},
 	),
@@ -82,7 +83,9 @@ Model := {
 	}
 	Shell : { name : Str, environment : Str }
 
-	## Secrets are the names of variables the task receives, never values.
+	## Secrets and optional_environment_variables are the names of variables the
+	## task receives, never values; it receives an optional one only when kai's
+	## environment sets it.
 	## Needs names the builds whose artifacts it reads in `$KAI_ARTIFACTS`.
 	Task : {
 		name : Str,
@@ -90,6 +93,7 @@ Model := {
 		run : List(Str),
 		env : List(Variable),
 		secrets : List(Str),
+		optional_environment_variables : List(Str),
 		needs : List(Str),
 	}
 

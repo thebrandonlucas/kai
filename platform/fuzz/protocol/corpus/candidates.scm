@@ -29,7 +29,8 @@
 					(output Inherit)
 					(secrets ("TOKEN"))
 					(description "task t")
-					(removed_environment_variables ("OTHER")))) (Run (
+					(removed_environment_variables ("OTHER"))
+					(kept_environment_variables ("VERSION")))) (Run (
 					(argv ("nix" "build"))
 					(output (Artifact (
 						(label "site")
@@ -37,7 +38,8 @@
 						(output "out"))))
 					(secrets ())
 					(description "build site")
-					(removed_environment_variables ()))) (PublishLock (
+					(removed_environment_variables ())
+					(kept_environment_variables ()))) (PublishLock (
 					(contents "{ }")
 					(previous (Present "{}")))))))))
 			(plugin "std")

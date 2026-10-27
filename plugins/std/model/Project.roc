@@ -228,18 +228,21 @@ Project :: [].{
 			["env"].concat(variables.map(|v| "${v.name}=${v.value}"))
 		}
 
-	## The secrets other tasks declare, which a task's process never receives.
+	## The secrets other tasks declare, which a task's process never receives
+	## unless it declares them too, as secrets or optional environment variables.
 	other_tasks_secrets : Model, Model.Task -> List(Str)
-	other_tasks_secrets = |model, task|
+	other_tasks_secrets = |model, task| {
+		received = task.secrets.concat(task.optional_environment_variables)
 		model.tasks.join_map(|t| t.secrets).fold(
 			[],
 			|names, name|
-				if names.contains(name) or task.secrets.contains(name) {
+				if names.contains(name) or received.contains(name) {
 					names
 				} else {
 					names.append(name)
 				},
 		)
+	}
 
 	## Shared argv boundary for tasks and builds; arguments are never shell-split.
 	check_argv : List(Str), Str -> Try({}, Str)
@@ -385,6 +388,19 @@ Project :: [].{
 			for secret in task.secrets {
 				if !valid_variable_name(secret) {
 					return Err("invalid secret name in task ${task.name}")
+				}
+			}
+			for name in task.optional_environment_variables {
+				if !valid_variable_name(name) {
+					return Err(
+						"invalid optional environment variable name in task ${task.name}",
+					)
+				}
+				if task.secrets.contains(name) {
+					return Err(
+						"task ${task.name} declares ${name} in both Secrets and "
+							.concat("OptionalEnvironmentVariables"),
+					)
 				}
 			}
 			check_names(task.needs, "BuildDependency")?
@@ -1354,6 +1370,7 @@ workflow_features = |workflows, features| Model.{
 			run: ["cmd"],
 			env: [],
 			secrets: [],
+			optional_environment_variables: [],
 			needs: [],
 		},
 	],

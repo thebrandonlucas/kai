@@ -325,9 +325,15 @@ Std := [].{
 			inputs: model.inputs,
 			environments: model.environments,
 			shells: model.shells,
-			tasks: model.tasks.append(
-				{ name: task, environment, run: argv, env: [], secrets: [], needs: [] },
-			),
+			tasks: model.tasks.append({
+				name: task,
+				environment,
+				run: argv,
+				env: [],
+				secrets: [],
+				optional_environment_variables: [],
+				needs: [],
+			}),
 			build_sources: model.build_sources,
 			builds: model.builds,
 			workflows: model.workflows,
@@ -410,6 +416,7 @@ Std := [].{
 					output: Inherit,
 					secrets: [],
 					removed_environment_variables: [],
+					kept_environment_variables: [],
 				})
 				Ok(
 					Plan.{
@@ -505,6 +512,7 @@ Std := [].{
 									output: Quiet,
 									secrets: [],
 									removed_environment_variables: [],
+									kept_environment_variables: [],
 								}),
 							),
 						next: Observe([backend_lock]),

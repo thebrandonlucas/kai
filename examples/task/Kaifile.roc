@@ -23,4 +23,14 @@ kaifile = Std.kaifile([
 			Run(["sh", "-c", "cowsay \"$COW_SECRET\""]),
 		],
 	),
+	# `COW_NAME=Daisy kai run greet` passes COW_NAME from kai's environment;
+	# unlike a secret, it may be unset, and other tasks still receive it.
+	Task(
+		"greet",
+		[
+			Use("cow"),
+			OptionalEnvironmentVariables(["COW_NAME"]),
+			Run(["sh", "-c", "cowsay \"hello $COW_NAME\""]),
+		],
+	),
 ])

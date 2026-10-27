@@ -411,12 +411,14 @@ Execute := [].{
 				}
 			# Every variable name must be valid, so a name such as `A=B`
 			# cannot smuggle a value into the child process's environment.
-			Run({ argv, secrets, removed_environment_variables, .. }) => {
-				names = secrets.concat(removed_environment_variables)
+			Run(run_step) => {
+				names = run_step.secrets
+					.concat(run_step.removed_environment_variables)
+					.concat(run_step.kept_environment_variables)
 				if names.all(Execute.variable_name) {
-					command(argv)
+					command(run_step.argv)
 				} else {
-					Err("names an invalid secret")
+					Err("names an invalid environment variable")
 				}
 			}
 			PublishLock(_) =>
@@ -580,11 +582,12 @@ Execute := [].{
 	# A Run step's command, run from the project root in kai's environment,
 	# with the shell kai was started from as KAI_OPERATOR_SHELL (unset if it
 	# had none; backends such as `nix develop` replace SHELL), its secrets set
-	# and its removed environment variables unset. Each secret's value comes
-	# from the project's `.env`, else kai's environment, and never appears in
-	# kai's output, events or errors.
+	# and its removed environment variables, except those kept, unset. Each
+	# secret's value comes from the project's `.env`, else kai's environment,
+	# and never appears in kai's output, events or errors.
 	process_command! = |run, root| {
-		{ description, argv, secrets, removed_environment_variables, .. } = run
+		{ description, argv, secrets, kept_environment_variables, .. } = run
+		removed_environment_variables = run.removed_environment_variables
 		(program, args) = match argv {
 			[first, .. as rest] => (first, rest)
 			[] => return Err(RenderFailed("the plan has an empty command"))
@@ -610,11 +613,12 @@ Execute := [].{
 			}
 		}
 		# The child process inherits kai's environment minus every secret
-		# and removed environment variable, then receives the operator's shell
-		# and its own secrets' values.
+		# and removed environment variable it does not keep, then receives the
+		# operator's shell and its own secrets' values.
 		operator = OsStr.from_str("KAI_OPERATOR_SHELL")
 		removed = secrets
 			.concat(removed_environment_variables)
+			.keep_if(|name| !kept_environment_variables.contains(name))
 			.map(OsStr.from_str)
 			.append(operator)
 		kept = Env.dict!().keep_if(|(name, _)| !removed.contains(name))
@@ -725,14 +729,15 @@ layout = Layout.{
 	lock_path: "/p/.kai/lock.json",
 }
 
-run : List(Str), List(Str), List(Str) -> Plan.Step
-run = |argv, secrets, removed_environment_variables|
+run : List(Str), List(Str), List(Str), List(Str) -> Plan.Step
+run = |argv, secrets, removed_environment_variables, kept_environment_variables|
 	Run({
 		description: "t",
 		argv,
 		output: Inherit,
 		secrets,
 		removed_environment_variables,
+		kept_environment_variables,
 	})
 
 validated : List(Plan.Step) -> Try({}, [UnsafePlan(Str)])
@@ -759,7 +764,7 @@ expect
 		}),
 		InstallRunner({ destination: "/p/.kai/build-runner" }),
 		Write([{ path: "/p/.kai/generated/flake.nix", contents: "" }]),
-		run(["/bin/nix", "build"], ["TOKEN"], ["OTHER"]),
+		run(["/bin/nix", "build"], ["TOKEN"], ["OTHER"], ["VERSION"]),
 		Note("n"),
 	])
 		== Ok({})
@@ -780,12 +785,13 @@ expect [
 		store: "/nix/store",
 	}),
 	InstallRunner({ destination: "/tmp/runner" }),
-	run([], [], []),
-	run([""], [], []),
-	run(["-c"], [], []),
-	run(["bin/sh"], [], []),
-	run(["sh"], ["A=B"], []),
-	run(["sh"], [], ["1A"]),
+	run([], [], [], []),
+	run([""], [], [], []),
+	run(["-c"], [], [], []),
+	run(["bin/sh"], [], [], []),
+	run(["sh"], ["A=B"], [], []),
+	run(["sh"], [], ["1A"], []),
+	run(["sh"], [], [], ["A=B"]),
 	PublishLock({ previous: Absent, contents: "{}" }),
 ]
 	.all(

@@ -24,7 +24,7 @@ GuixBackend :: [].{
 	plan : Model, Request, Str -> Try(Planned, Str)
 	plan = |model, request, workspace| {
 		project = Project.validate(model)?
-		(env_name, command, own_env, secrets) = match request {
+		(env_name, command, own_env, received) = match request {
 			Request.Shell(name, argv) => {
 				shell = project.shells.find_first(|s| s.name == name)
 					.map_err(|_| "unknown shell: ${name}")?
@@ -37,7 +37,7 @@ GuixBackend :: [].{
 					task.environment,
 					task.run.concat(extra),
 					task.env.concat(Project.artifacts_variable(task, workspace)),
-					task.secrets,
+					task.secrets.concat(task.optional_environment_variables),
 				)
 			}
 			_ => return Err("Guix supports only kai shell and kai run")
@@ -58,11 +58,11 @@ GuixBackend :: [].{
 		tail = if (command.is_empty()) [] else ["--"].concat(command)
 		env = Project.merge_env(environment.env, own_env)
 		# --pure would drop the operator's shell, which kai passes to children,
-		# the variables the environment and task set, and the secrets the task
-		# declares.
+		# the variables the environment and task set, and the secrets and optional
+		# variables the task declares.
 		preserve = ["--preserve=^KAI_OPERATOR_SHELL$"]
 			.concat(env.map(|v| "--preserve=^${v.name}$"))
-			.concat(secrets.map(|name| "--preserve=^${name}$"))
+			.concat(received.map(|name| "--preserve=^${name}$"))
 		args = ["shell", "-q", "--pure"].concat(preserve).concat(specs).concat(tail)
 		Ok({ args, env })
 	}
@@ -482,6 +482,7 @@ GuixBackend :: [].{
 						output: Quiet,
 						secrets: [],
 						removed_environment_variables: [],
+						kept_environment_variables: [],
 					}),
 				]
 			}
@@ -505,6 +506,7 @@ GuixBackend :: [].{
 					),
 					secrets: [],
 					removed_environment_variables: [],
+					kept_environment_variables: [],
 				}),
 		)
 	}
@@ -598,6 +600,7 @@ GuixBackend :: [].{
 									output: Quiet,
 									secrets: [],
 									removed_environment_variables: [],
+									kept_environment_variables: [],
 								})
 								built = GuixBackend.sandboxed_steps(
 									model,
@@ -617,6 +620,7 @@ GuixBackend :: [].{
 											}),
 											secrets: [],
 											removed_environment_variables: [],
+											kept_environment_variables: [],
 										}),
 								)?
 								Ok([unlink].concat(built.steps))
@@ -698,13 +702,20 @@ GuixBackend :: [].{
 			Request.Run(name, _) => "task ${name}"
 			_ => "guix"
 		}
-		(secrets, removed_environment_variables) = match request {
+		(
+			secrets,
+			removed_environment_variables,
+			kept_environment_variables,
+		) = match request {
 			Request.Run(name, _) =>
 				match model.tasks.find_first(|t| t.name == name) {
-					Ok(task) => (task.secrets, Project.other_tasks_secrets(model, task))
-					Err(_) => ([], [])
+					Ok(task) => {
+						removed = Project.other_tasks_secrets(model, task)
+						(task.secrets, removed, task.optional_environment_variables)
+					}
+					Err(_) => ([], [], [])
 				}
-			_ => ([], [])
+			_ => ([], [], [])
 		}
 		channels = "${layout.generated_root}/guix/channels.scm"
 		entries = locked.map(|p| { channel: p.channel, commit: Pinned(p.commit) })
@@ -721,6 +732,7 @@ GuixBackend :: [].{
 						output: Inherit,
 						secrets,
 						removed_environment_variables,
+						kept_environment_variables,
 					}),
 				],
 				next: Done,

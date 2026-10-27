@@ -57,14 +57,17 @@ Config :: [].{
 
 	## Tasks require exactly one Use and one nonempty argv Run. Secrets names
 	## the variables the task receives from `.env` or kai's environment when
-	## it runs; their values never enter the Kaifile, plan or store. Needs
-	## names builds kai builds first, for the task in `$KAI_ARTIFACTS/<name>`.
+	## it runs; their values never enter the Kaifile, plan or store.
+	## OptionalEnvironmentVariables names those it receives from kai's
+	## environment only when set there. Needs names builds kai builds first,
+	## for the task in `$KAI_ARTIFACTS/<name>`.
 	TaskSetting : [
 		Use(EnvName),
 		Run(List(Str)),
 		Env(List((Str, Str))),
 		Secrets(List(Str)),
 		Needs(List(InputName)),
+		OptionalEnvironmentVariables(List(Str)),
 	]
 
 	## Builds require Use, Run and one relative Output. Optional Inputs select

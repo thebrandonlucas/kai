@@ -27,6 +27,7 @@ NixBackend :: [].{
 		"env",
 		"secrets",
 		"task_needs",
+		"optional_environment_variables",
 	]
 
 	default_nixpkgs : Str
@@ -54,10 +55,10 @@ NixBackend :: [].{
 	}
 
 	## One atomic request: its rendered flake, the argv that runs it, how the
-	## run reports (a build's artifact), its workflow stage and the secrets
-	## its process receives and is denied, and the files its snapshot copies.
-	## `reads` names the inputs it reads. `needs_build` builds a task's Needs
-	## before it runs.
+	## run reports (a build's artifact), its workflow stage and the variables
+	## its process receives, is denied and keeps, and the files its
+	## snapshot copies. `reads` names the inputs it reads. `needs_build`
+	## builds a task's Needs before it runs.
 	Prepared : {
 		inputs : List(Locks.Input),
 		reads : List(Str),
@@ -65,6 +66,7 @@ NixBackend :: [].{
 		argv : List(Str),
 		secrets : List(Str),
 		removed_environment_variables : List(Str),
+		kept_environment_variables : List(Str),
 		contents : Str,
 		description : Str,
 		stage : Str,
@@ -172,6 +174,7 @@ NixBackend :: [].{
 					output: Inherit,
 					secrets: [],
 					removed_environment_variables: [],
+					kept_environment_variables: [],
 				}
 			}
 			Request.Run(name, extra) => {
@@ -195,6 +198,7 @@ NixBackend :: [].{
 							output: Quiet,
 							secrets: [],
 							removed_environment_variables: [],
+							kept_environment_variables: [],
 						}),
 						Run({
 							description: "build needs of task ${name}",
@@ -206,6 +210,7 @@ NixBackend :: [].{
 							}),
 							secrets: [],
 							removed_environment_variables: [],
+							kept_environment_variables: [],
 						}),
 					],
 				)
@@ -224,6 +229,7 @@ NixBackend :: [].{
 					output: Inherit,
 					secrets: task.secrets,
 					removed_environment_variables: Project.other_tasks_secrets(project, task),
+					kept_environment_variables: task.optional_environment_variables,
 				}
 			}
 			Request.Build(name, shown) => {
@@ -247,6 +253,7 @@ NixBackend :: [].{
 					output: Artifact({ name, label, output: built.output }),
 					secrets: [],
 					removed_environment_variables: [],
+					kept_environment_variables: [],
 				}
 			}
 			Request.Workflow(_) => return Err(
@@ -275,6 +282,7 @@ NixBackend :: [].{
 			argv: selected.argv,
 			secrets: selected.secrets,
 			removed_environment_variables: selected.removed_environment_variables,
+			kept_environment_variables: selected.kept_environment_variables,
 			contents,
 			description: selected.description,
 			stage: selected.stage,
@@ -309,8 +317,8 @@ NixBackend :: [].{
 	## every task with Needs, snapshots afresh and installs Kai as its runner.
 	materialize : Prepared, Layout, Locks.Derived -> List(Plan.Step)
 	materialize = |selected, layout, derived| {
-		{ inputs, reads, argv, contents, description, output, secrets, .. } = selected
-		needs_build = selected.needs_build
+		{ inputs, reads, argv, contents, description, output, .. } = selected
+		{ secrets, kept_environment_variables, needs_build, .. } = selected
 		removed_environment_variables = selected.removed_environment_variables
 		builds = match output {
 			Artifact(_) => Bool.True
@@ -360,7 +368,14 @@ NixBackend :: [].{
 			.append(Write(files))
 			.concat(needs_build)
 			.append(
-				Run({ description, argv, output, secrets, removed_environment_variables }),
+				Run({
+					description,
+					argv,
+					output,
+					secrets,
+					removed_environment_variables,
+					kept_environment_variables,
+				}),
 			)
 	}
 
@@ -1123,6 +1138,7 @@ full_model = {
 			run: ["jq", "--version"],
 			env: [],
 			secrets: [],
+			optional_environment_variables: [],
 			needs: [],
 		},
 	],
@@ -1265,6 +1281,7 @@ expect match NixBackend.render(
 				run: ["git", "--version"],
 				env: [],
 				secrets: [],
+				optional_environment_variables: [],
 				needs: [],
 			},
 		],
@@ -2040,6 +2057,7 @@ expect {
 					run: ["true"],
 					env: [],
 					secrets: [],
+					optional_environment_variables: [],
 					needs: [],
 				},
 			],
@@ -2475,6 +2493,7 @@ expect {
 			run: ["python"],
 			env: [],
 			secrets: [],
+			optional_environment_variables: [],
 			needs: [],
 		}),
 		workflows: TestData.workflow_data.workflows.concat([
@@ -2721,6 +2740,7 @@ expect {
 					run: ["x"],
 					env: [],
 					secrets: [],
+					optional_environment_variables: [],
 					needs: [],
 				},
 			],

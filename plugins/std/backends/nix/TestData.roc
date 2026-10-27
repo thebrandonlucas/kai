@@ -72,6 +72,7 @@ TestData :: [].{
 				run: ["python3", "check.py", "configured argument"],
 				env: [],
 				secrets: [],
+				optional_environment_variables: [],
 				needs: [],
 			},
 		],
