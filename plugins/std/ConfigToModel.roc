@@ -13,6 +13,7 @@ ConfigToModel :: [].{
 		names : List(Str),
 		systems : List(List(Str)),
 		sources : List(Model.Source),
+		guix_channels : List(Model.GuixChannel),
 		inputs : List(Model.Input),
 		follows : List(Model.Follows),
 		environments : List(Model.Environment),
@@ -46,6 +47,7 @@ ConfigToModel :: [].{
 			names: [],
 			systems: [],
 			sources: [],
+			guix_channels: [],
 			inputs: [],
 			follows: [],
 			environments: [],
@@ -101,6 +103,7 @@ ConfigToModel :: [].{
 				requires_,
 				systems,
 				sources: acc.sources,
+				guix_channels: acc.guix_channels,
 				inputs: acc.inputs,
 				follows: acc.follows,
 				environments: acc.environments,
@@ -154,6 +157,15 @@ ConfigToModel :: [].{
 					overlay: overlay.to_str(),
 					input,
 					source: source.to_str(),
+				}),
+			}
+			GuixChannel(name, url, branch, Introduction(commit, signer)) => {
+				..acc,
+				guix_channels: acc.guix_channels.append({
+					name: name.to_str(),
+					url,
+					branch,
+					introduction: { commit, signer },
 				}),
 			}
 			Environment(name, inner) => {

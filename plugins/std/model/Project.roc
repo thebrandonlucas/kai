@@ -33,6 +33,16 @@ Project :: [].{
 	clean : Str -> Bool
 	clean = |text| !text.is_empty() and text.to_utf8().all(|b| b > 32 and b != 127)
 
+	## A commit id or OpenPGP fingerprint: 40 hexadecimal digits, either case.
+	forty_hex_digits : Str -> Bool
+	forty_hex_digits = |text|
+		text.count_utf8_bytes() == 40 and text.to_utf8().all(
+			|b|
+				(b >= '0' and b <= '9')
+					or (b >= 'a' and b <= 'f')
+					or (b >= 'A' and b <= 'F'),
+		)
+
 	## Generic syntax only. Provider grammar is checked once intent is known.
 	tool : Str -> Try(Model.Tool, Str)
 	tool = |text| {
@@ -367,6 +377,16 @@ Project :: [].{
 		check_names(model.builds.map(|b| b.name), "Build")?
 		check_names(model.sources.map(|s| s.name), "Source")?
 		check_names(model.inputs.map(|i| i.name), "Input")?
+		# Guix's own channel is always present, so no other may take its name.
+		channel_names = model.guix_channels.map(|c| c.name)
+		check_names(["guix"].concat(channel_names), "GuixChannel")?
+		for channel in model.guix_channels {
+			{ commit, signer } = channel.introduction
+			if !clean(channel.url) or !clean(channel.branch) or !forty_hex_digits(commit)
+				or !forty_hex_digits(signer.replace_each(" ", "")) {
+				return Err("invalid Guix channel: ${channel.name}")
+			}
+		}
 		check_names(model.environments.map(|e| e.name), "Environment")?
 		check_names(model.shells.map(|s| s.name), "Shell")?
 		check_names(model.tasks.map(|t| t.name), "Task")?
@@ -615,6 +635,7 @@ Project :: [].{
 				requires_: model.requires_,
 				systems: unique(model.systems),
 				sources,
+				guix_channels: model.guix_channels,
 				inputs: model.inputs,
 				follows: model.follows,
 				environments: $environments,
@@ -1047,6 +1068,7 @@ fixture = |environments| Model.{
 			provider: GuixPackages("https://git.savannah.gnu.org/git/guix.git"),
 		},
 	],
+	guix_channels: [],
 	inputs: [
 		{ name: "first", url: "github:example/first", kind: Overlay },
 		{ name: "second", url: "github:example/second", kind: Overlay },
@@ -1286,6 +1308,7 @@ build_fixture = |builds| Model.{
 	requires_: ["sources", "builds"],
 	systems: ["x86_64-linux"],
 	sources: [],
+	guix_channels: [],
 	inputs: [],
 	follows: [],
 	environments: [
@@ -1491,6 +1514,7 @@ build_source_fixture = |build_sources, requires_| {
 		requires_,
 		systems: model.systems,
 		sources: model.sources,
+		guix_channels: model.guix_channels,
 		inputs: model.inputs,
 		follows: model.follows,
 		environments: model.environments,
@@ -1634,6 +1658,7 @@ workflow_features = |workflows, features| Model.{
 	requires_: ["sources", "builds"].concat(features),
 	systems: ["x86_64-linux"],
 	sources: [],
+	guix_channels: [],
 	inputs: [],
 	follows: [],
 	environments: [

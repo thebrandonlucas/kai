@@ -18,6 +18,8 @@ Config :: [].{
 	## `Follows(overlay, input, source)` makes the overlay's own flake input
 	## `input` the project's Nix package source `source`, so it is not locked
 	## separately.
+	## GuixChannel adds a channel beside Guix's own: its name, git URL, branch
+	## and introduction (first signed commit, signer's OpenPGP fingerprint).
 	## `Custom` and `Raw` retain consumer-specific extension data.
 	Setting : [
 		Name(Str),
@@ -26,6 +28,7 @@ Config :: [].{
 		Input(InputName, FlakeRef),
 		Overlay(InputName, FlakeRef),
 		Follows(InputName, Str, InputName),
+		GuixChannel(InputName, Str, Str, [Introduction(Str, Str)]),
 		Environment(EnvName, List(EnvironmentSetting)),
 		Shell(EnvName, List(ShellSetting)),
 		Task(TaskName, List(TaskSetting)),

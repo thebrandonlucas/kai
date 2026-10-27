@@ -253,7 +253,7 @@ Std := [].{
 					plan: |ctx| {
 						GuixBackend.check_system(ctx.host.system)?
 						wanted = Std.request(command, ctx.args)?
-						locked = Std.guix_pins(ctx)?
+						locked = Std.guix_pins(model, ctx)?
 						revised = Std.revised(model, ctx)
 						GuixBackend.request_steps(revised, wanted, ctx.layout, locked)
 							.map_err(|message| "cannot plan the Guix ${command}: ${message}")
@@ -344,6 +344,7 @@ Std := [].{
 			requires_: model.requires_,
 			systems: model.systems,
 			sources: model.sources,
+			guix_channels: model.guix_channels,
 			inputs: model.inputs,
 			follows: model.follows,
 			environments: model.environments,
@@ -395,6 +396,7 @@ Std := [].{
 			requires_: model.requires_,
 			systems: model.systems,
 			sources: model.sources,
+			guix_channels: model.guix_channels,
 			inputs: model.inputs,
 			follows: model.follows,
 			environments: model.environments,
@@ -422,8 +424,8 @@ Std := [].{
 		}
 
 	## The Guix pins in the lock, or why they are missing or stale.
-	guix_pins : Implementation.Context -> Try(GuixBackend.Locked, Str)
-	guix_pins = |ctx| {
+	guix_pins : Model, Implementation.Context -> Try(GuixBackend.Locked, Str)
+	guix_pins = |model, ctx| {
 		missing = "the guix lock is missing or stale; run kai --backend guix update"
 		section = match ctx.lock {
 			Present(text) =>
@@ -433,7 +435,7 @@ Std := [].{
 				}
 			Absent => return Err(missing)
 		}
-		GuixBackend.read_lock(section)
+		GuixBackend.read_lock(GuixBackend.project_channels(model), section)
 	}
 
 	## Guix has something to lock when any environment can run on it.
@@ -455,7 +457,7 @@ Std := [].{
 		GuixBackend.check_system(ctx.host.system)?
 		dir = "${ctx.layout.generated_root}/guix"
 		result = "${dir}/lock-result.json"
-		channels = [GuixBackend.default_channel]
+		channels = GuixBackend.project_channels(model)
 		trees = GuixBackend.source_trees(model)
 		match ctx.phase {
 			0 => {
@@ -748,7 +750,7 @@ expect {
 		.append("${dir}/channels-unpinned.scm")
 		.concat(["assets", "/project/assets"])
 	runs(planned("update", guix)) == Ok([{ description: "guix lock", argv }])
-		and Std.guix_pins({ ..guix, lock: guix_lock })
+		and Std.guix_pins(Model.empty("x"), { ..guix, lock: guix_lock })
 			== Ok({
 				channels: [{ channel: GuixBackend.default_channel, commit: pin }],
 				sources: [{ name: "assets", path: "assets", hash: assets_hash }],

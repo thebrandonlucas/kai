@@ -69,14 +69,14 @@ GuixBackend :: [].{
 	}
 
 	## A Guix channel as kai pins it: its commit is locked by `kai update`.
-	Channel : {
-		name : Str,
-		url : Str,
-		branch : Str,
-		introduction : { commit : Str, signer : Str },
-	}
+	Channel : Model.GuixChannel
 
 	Pin : { channel : Channel, commit : Str }
+
+	## Guix's own channel, then those the project declares.
+	project_channels : Model -> List(Channel)
+	project_channels = |model|
+		[GuixBackend.default_channel].concat(model.guix_channels)
 
 	## The channel `%default-guix-channel` reports (Guix 1.5), which every
 	## project on Guix uses.
@@ -282,10 +282,7 @@ GuixBackend :: [].{
 								{ name: "commit", value: String(p.commit) },
 								{
 									name: "introduction",
-									value: Object([
-										{ name: "commit", value: String(p.channel.introduction.commit) },
-										{ name: "signer", value: String(p.channel.introduction.signer) },
-									]),
+									value: GuixBackend.introduction_json(p.channel),
 								},
 							]),
 					),
@@ -306,11 +303,18 @@ GuixBackend :: [].{
 			},
 		])
 
+	introduction_json : Channel -> LockJson
+	introduction_json = |{ introduction, .. }|
+		Object([
+			{ name: "commit", value: String(introduction.commit) },
+			{ name: "signer", value: String(introduction.signer) },
+		])
+
 	stale_lock = "the guix lock is missing or stale; run kai --backend guix update"
 
-	## The default channel's pin and the source hashes a guix section holds.
-	read_lock : LockJson -> Try(Locked, Str)
-	read_lock = |found| {
+	## The pins of `channels` and the source hashes a guix section holds.
+	read_lock : List(Channel), LockJson -> Try(Locked, Str)
+	read_lock = |channels, found| {
 		entries = match LockJson.field(found, "sources") {
 			Ok(sources) => LockJson.array(sources)?
 			Err(_) => []
@@ -319,8 +323,8 @@ GuixBackend :: [].{
 		sources = entries.map_try(
 			|e| Ok({ name: at(e, "name")?, path: at(e, "path")?, hash: at(e, "hash")? }),
 		)?
-		channels = GuixBackend.pinned([GuixBackend.default_channel], found)?
-		Ok({ channels, sources })
+		pinned = GuixBackend.pinned(channels, found)?
+		Ok({ channels: pinned, sources })
 	}
 
 	## The pins a guix section holds for `channels`, or why it is missing
@@ -329,6 +333,10 @@ GuixBackend :: [].{
 	pinned = |channels, found| {
 		stale = GuixBackend.stale_lock
 		entries = LockJson.array(LockJson.field(found, "channels")?)?
+		# A channel no longer declared would otherwise stay in the lock.
+		if entries.len() != channels.len() {
+			return Err(stale)
+		}
 		channels.map_try(
 			|channel| {
 				entry = entries.find_first(
@@ -336,7 +344,9 @@ GuixBackend :: [].{
 				)
 					.map_err(|_| stale)?
 				same = |name, value| LockJson.field(entry, name) == Ok(String(value))
-				if !same("url", channel.url) or !same("branch", channel.branch) {
+				introduction = LockJson.field(entry, "introduction")
+				if !same("url", channel.url) or !same("branch", channel.branch)
+					or introduction != Ok(GuixBackend.introduction_json(channel)) {
 					return Err(stale)
 				}
 				commit = LockJson.string(LockJson.field(entry, "commit")?)?
