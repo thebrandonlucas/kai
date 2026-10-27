@@ -1085,6 +1085,7 @@ library = {
 	],
 	output: "dist/library",
 	files: All,
+	description: "",
 	env: [],
 	revision: Bool.False,
 }
@@ -1401,6 +1402,7 @@ workflow_features = |workflows, features| Model.{
 			secrets: [],
 			optional_environment_variables: [],
 			needs: [],
+			description: "",
 		},
 	],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
@@ -1413,10 +1415,11 @@ workflow_features = |workflows, features| Model.{
 # Flat steps keep literal extras separate from configured task argv.
 expect {
 	argv = ["", "two words", "\"quoted\"", "$HOME", "line\nbreak", "--flag"]
-	leaf = { name: "leaf", steps: [RunTask("check.all", argv)] }
+	leaf = { name: "leaf", description: "", steps: [RunTask("check.all", argv)] }
 	model = workflow_fixture([
 		{
 			name: "ci",
+			description: "",
 			steps: [
 				RunWorkflow("leaf"),
 				BuildArtifact("library"),
@@ -1437,10 +1440,22 @@ expect {
 # Forward references and shared diamonds retain declaration order/repetitions.
 expect {
 	model = workflow_fixture([
-		{ name: "root", steps: [RunWorkflow("left"), RunWorkflow("right")] },
-		{ name: "right", steps: [BuildArtifact("library"), RunWorkflow("leaf")] },
-		{ name: "left", steps: [RunWorkflow("leaf"), RunTask("check.all", ["L"])] },
-		{ name: "leaf", steps: [RunTask("check.all", ["shared"])] },
+		{
+			name: "root",
+			description: "",
+			steps: [RunWorkflow("left"), RunWorkflow("right")],
+		},
+		{
+			name: "right",
+			description: "",
+			steps: [BuildArtifact("library"), RunWorkflow("leaf")],
+		},
+		{
+			name: "left",
+			description: "",
+			steps: [RunWorkflow("leaf"), RunTask("check.all", ["L"])],
+		},
+		{ name: "leaf", description: "", steps: [RunTask("check.all", ["shared"])] },
 	])
 	Project.workflow_steps(model, "root") == Ok([
 		RunTask("check.all", ["shared"]),
@@ -1453,8 +1468,16 @@ expect {
 # All workflow tags and unusual argument bytes survive semantic normalization.
 expect {
 	model = workflow_fixture([
-		{ name: "ci", steps: [RunWorkflow("leaf"), BuildArtifact("library")] },
-		{ name: "leaf", steps: [RunTask("check.all", ["", "\n", "é"])] },
+		{
+			name: "ci",
+			description: "",
+			steps: [RunWorkflow("leaf"), BuildArtifact("library")],
+		},
+		{
+			name: "leaf",
+			description: "",
+			steps: [RunTask("check.all", ["", "\n", "é"])],
+		},
 	])
 	match Project.validate(model) {
 		Ok(project) => Project.validate(project) == Ok(project)
@@ -1465,7 +1488,7 @@ expect {
 # Empty workflows are valid no-ops, not missing requests.
 expect Project.workflow_steps(
 	workflow_fixture([
-		{ name: "empty", steps: [] },
+		{ name: "empty", description: "", steps: [] },
 	]),
 	"empty",
 ) == Ok([])
@@ -1477,15 +1500,15 @@ expect Project.workflow_steps(workflow_fixture([]), "missing") ==
 # Runtime model receives the same workflow-name checks as typed quotes.
 expect Project.validate(
 	workflow_fixture([
-		{ name: "bad/name", steps: [] },
+		{ name: "bad/name", description: "", steps: [] },
 	]),
 ) == Err("invalid name for Workflow: bad/name")
 
 # Duplicate workflow identities cannot silently choose the first declaration.
 expect Project.validate(
 	workflow_fixture([
-		{ name: "ci", steps: [] },
-		{ name: "ci", steps: [] },
+		{ name: "ci", description: "", steps: [] },
+		{ name: "ci", description: "", steps: [] },
 	]),
 ) == Err("DuplicateWorkflow: ci")
 
@@ -1493,7 +1516,7 @@ expect Project.validate(
 expect Project.validate(
 	workflow_features(
 		[
-			{ name: "ci", steps: [] },
+			{ name: "ci", description: "", steps: [] },
 		],
 		[],
 	),
@@ -1504,22 +1527,32 @@ expect [
 	RunTask("library", []),
 	BuildArtifact("check.all"),
 	RunWorkflow("check.all"),
-].all(|step|
-	Project.validate(workflow_fixture([{ name: "ci", steps: [step] }])).is_err())
+].all(
+	|step|
+		Project.validate(
+			workflow_fixture([
+				{
+					name: "ci",
+					description: "",
+					steps: [step],
+				},
+			]),
+		).is_err(),
+)
 
 # Direct cycles fail at the shared boundary before any expansion.
 expect Project.validate(
 	workflow_fixture([
-		{ name: "ci", steps: [RunWorkflow("ci")] },
+		{ name: "ci", description: "", steps: [RunWorkflow("ci")] },
 	]),
 ) == Err("workflow cycle: ci -> ci")
 
 # Even an unused indirect cycle invalidates a requested valid workflow.
 expect Project.workflow_steps(
 	workflow_fixture([
-		{ name: "safe", steps: [RunTask("check.all", [])] },
-		{ name: "a", steps: [RunWorkflow("b")] },
-		{ name: "b", steps: [RunWorkflow("a")] },
+		{ name: "safe", description: "", steps: [RunTask("check.all", [])] },
+		{ name: "a", description: "", steps: [RunWorkflow("b")] },
+		{ name: "b", description: "", steps: [RunWorkflow("a")] },
 	]),
 	"safe",
 ) == Err("workflow cycle: a -> b -> a")
@@ -1527,8 +1560,8 @@ expect Project.workflow_steps(
 # Unused unknown references also invalidate an otherwise valid request.
 expect Project.workflow_steps(
 	workflow_fixture([
-		{ name: "safe", steps: [] },
-		{ name: "broken", steps: [RunTask("absent", [])] },
+		{ name: "safe", description: "", steps: [] },
+		{ name: "broken", description: "", steps: [RunTask("absent", [])] },
 	]),
 	"safe",
 ) == Err("unknown task: absent")
@@ -1536,7 +1569,11 @@ expect Project.workflow_steps(
 # Workflow extras may be empty strings, but never contain a NUL byte.
 expect Project.validate(
 	workflow_fixture([
-		{ name: "ci", steps: [RunTask("check.all", [Str.from_utf8([0]) ?? ""])] },
+		{
+			name: "ci",
+			description: "",
+			steps: [RunTask("check.all", [Str.from_utf8([0]) ?? ""])],
+		},
 	]),
 ) == Err("NUL in argv: check.all")
 
@@ -1548,7 +1585,7 @@ expect {
 	}
 	Project.validate(
 		workflow_fixture([
-			{ name: "ci", steps: [RunTask("check.all", $argv)] },
+			{ name: "ci", description: "", steps: [RunTask("check.all", $argv)] },
 		]),
 	).is_err()
 }
@@ -1563,7 +1600,11 @@ workflow_chain = |count, double, leaf| {
 			step = RunWorkflow(($index - 1).to_str())
 			if (double) [step, step] else [step]
 		}
-		$workflows = $workflows.append({ name: $index.to_str(), steps })
+		$workflows = $workflows.append({
+			name: $index.to_str(),
+			description: "",
+			steps,
+		})
 		$index = $index + 1
 	}
 	$workflows
@@ -1579,6 +1620,7 @@ expect Project.workflow_steps(
 expect {
 	workflows = workflow_chain(120, True, []).append({
 		name: "mixed",
+		description: "",
 		steps: [
 			RunWorkflow("119"),
 			RunTask("check.all", []),
@@ -1638,8 +1680,8 @@ expect {
 	}
 	Project.validate(
 		workflow_fixture([
-			{ name: "empty", steps: [] },
-			{ name: "wide", steps: $steps },
+			{ name: "empty", description: "", steps: [] },
+			{ name: "wide", description: "", steps: $steps },
 		]),
 	) == Err("workflow graph exceeds 8192 steps")
 }
@@ -1652,8 +1694,12 @@ expect {
 	}
 	Project.validate(
 		workflow_fixture([
-			{ name: "leaf", steps: [RunTask("check.all", [$arg])] },
-			{ name: "twice", steps: [RunWorkflow("leaf"), RunWorkflow("leaf")] },
+			{ name: "leaf", description: "", steps: [RunTask("check.all", [$arg])] },
+			{
+				name: "twice",
+				description: "",
+				steps: [RunWorkflow("leaf"), RunWorkflow("leaf")],
+			},
 		]),
 	) == Err("workflow expansion exceeds 1 MiB argv bytes")
 }

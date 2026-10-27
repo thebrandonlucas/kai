@@ -756,7 +756,13 @@ fixture = |environments| {
 	],
 	inputs: [{ name: "patch", url: "github:example/patch", kind: Overlay }],
 	environments,
-	shells: environments.map(|e| { name: e.name, environment: e.name }),
+	shells: environments.map(
+		|e| {
+			name: e.name,
+			environment: e.name,
+			description: "",
+		},
+	),
 }
 
 env : Str, List(Str) -> Model.Environment
@@ -901,6 +907,7 @@ expect {
 		run: ["true"],
 		output: "out",
 		files: All,
+		description: "",
 		env: [],
 		revision: Bool.False,
 	}

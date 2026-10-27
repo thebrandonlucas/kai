@@ -26,7 +26,7 @@ Model := {
 			env : List({ name : Str, value : Str }),
 		},
 	),
-	shells : List({ name : Str, environment : Str }),
+	shells : List({ name : Str, environment : Str, description : Str }),
 	tasks : List(
 		{
 			name : Str,
@@ -36,6 +36,7 @@ Model := {
 			secrets : List(Str),
 			optional_environment_variables : List(Str),
 			needs : List(Str),
+			description : Str,
 		},
 	),
 	build_sources : List({ name : Str, ref : Str }),
@@ -50,11 +51,13 @@ Model := {
 			files : [All, Only(List(Str))],
 			env : List({ name : Str, value : Str }),
 			revision : Bool,
+			description : Str,
 		},
 	),
 	workflows : List(
 		{
 			name : Str,
+			description : Str,
 			steps : List(
 				[
 					RunTask(Str, List(Str)),
@@ -83,7 +86,9 @@ Model := {
 		overlays : List(Str),
 		env : List(Variable),
 	}
-	Shell : { name : Str, environment : Str }
+
+	## A description, empty when none, summarizes a declaration in help.
+	Shell : { name : Str, environment : Str, description : Str }
 
 	## Secrets and optional_environment_variables are the names of variables the
 	## task receives, never values; it receives an optional one only when kai's
@@ -97,6 +102,7 @@ Model := {
 		secrets : List(Str),
 		optional_environment_variables : List(Str),
 		needs : List(Str),
+		description : Str,
 	}
 
 	## An environment variable. A task's or build's own override its
@@ -119,10 +125,11 @@ Model := {
 		files : [All, Only(List(Str))],
 		env : List(Variable),
 		revision : Bool,
+		description : Str,
 	}
 
 	## Ordered declarations, not command strings or executor recipes.
-	Workflow : { name : Str, steps : List(WorkflowStep) }
+	Workflow : { name : Str, description : Str, steps : List(WorkflowStep) }
 	WorkflowStep : [
 		RunTask(Str, List(Str)),
 		BuildArtifact(Str),

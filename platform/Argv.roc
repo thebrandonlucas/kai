@@ -52,14 +52,16 @@ Argv := [].{
 				})
 			}
 			# kai's own help lists each command's summary; a command's page
-			# teaches it.
+			# teaches it and lists each of its choices' summaries, whose own
+			# page shows its details too.
 			Err(Help(message)) =>
 				if message == top(parser.config) {
 					config = parser.config
 					shown = top({ ..config, subcommands: Argv.summarized(config) })
 					Err(Help(Argv.indented(root, commands, shown)))
 				} else {
-					Err(Help(Argv.indented(root, commands, Argv.usage(commands, message))))
+					shown = Argv.listed(parser.config, commands, style, message)
+					Err(Help(Argv.indented(root, commands, Argv.usage(commands, shown))))
 				}
 			Err(Version(message)) => Err(Help(message))
 			Err(InvalidUsage(message)) => Err(Usage(Argv.usage(commands, message)))
@@ -324,6 +326,27 @@ Argv := [].{
 			NoSubcommands => NoSubcommands
 		}
 
+	## A command's page, if `message` is one, listing its choices' summaries.
+	listed = |config, commands, style, message| {
+		page = |shown, name| WeaverHelp.help_text(shown, ["kai", name], style)
+		shown = commands.find_first(|c| message == page(config, c.name))
+		match (shown, config.subcommands) {
+			(Ok(command), HasSubcommands({ commands: pages, required })) => {
+				summarized_pages = pages.map(
+					|(name, sub)|
+						if name == command.name {
+							(name, { ..sub, subcommands: Argv.summarized(sub) })
+						} else {
+							(name, sub)
+						},
+				)
+				subcommands = HasSubcommands({ commands: summarized_pages, required })
+				page({ ..config, subcommands }, command.name)
+			}
+			_ => message
+		}
+	}
+
 	# A builder that parses nothing, for options to join.
 	nothing = |{}|
 		Builder.from_arg_parser(|args| Ok({ data: [], remaining_args: args }))
@@ -393,7 +416,8 @@ Argv := [].{
 			([], [t, ..]) => finish(trailing(t))
 			([n, ..], _) if !n.choices.is_empty() => {
 				choice = |c| {
-					about = Str.join_with([c.summary].concat(c.details), "\n")
+					# Help lists the summary, the paragraph before the details.
+					about = Str.join_with([c.summary].concat(c.details), "\n\n")
 					match rest {
 						[t, ..] =>
 							SubCmd.finish(
@@ -643,4 +667,36 @@ expect {
 		and usage_of(toy, ["shell", "--help"]).contains(
 			"kai shell [-h/--help] [-V/--version] [<shell>] [-- <command>...]\n",
 		)
+}
+
+# A command's page lists each choice's summary; the choice's own page shows
+# its details after it.
+expect {
+	run = Command.{
+		name: "run",
+		summary: "",
+		help: page,
+		args: [
+			Name({
+				name: "task",
+				help: "",
+				choices: [
+					{ value: "moo", summary: "Says moo", details: ["cowsay moo [cow]"] },
+				],
+				default: Required,
+			}),
+			Trailing({ name: "args", help: "", choices: [] }),
+		],
+		lock: ReadsLock,
+	}
+	help_of = |argv|
+		match Argv.parse(page, [run], Plain, "/work", argv) {
+			Err(Help(text)) => text
+			_ => ""
+		}
+	listing = help_of(["run", "--help"])
+	own = help_of(["run", "moo", "--help"])
+	listing.contains("  moo  Says moo\n")
+		and !listing.contains("cowsay moo")
+		and own.contains("Says moo\n\ncowsay moo [cow]")
 }

@@ -29,6 +29,7 @@ TestData :: [].{
 		run: ["python3", "build.py"],
 		output: "dist/library",
 		files: All,
+		description: "",
 		env: [],
 		revision: Bool.False,
 	}
@@ -40,6 +41,7 @@ TestData :: [].{
 		needs: ["library"],
 		output: "dist/app",
 		files: All,
+		description: "",
 		env: [],
 		revision: Bool.False,
 		run: ["python3", "build.py", "", "two words", "line\nbreak", "$HOME"],
@@ -66,7 +68,7 @@ TestData :: [].{
 		sources: [],
 		inputs: [],
 		environments: [builder],
-		shells: [{ name: "default", environment: "builder" }],
+		shells: [{ name: "default", environment: "builder", description: "" }],
 		tasks: [
 			{
 				name: "check",
@@ -76,6 +78,7 @@ TestData :: [].{
 				secrets: [],
 				optional_environment_variables: [],
 				needs: [],
+				description: "",
 			},
 		],
 		build_sources: [{ name: "assets", ref: "path:./assets" }],
@@ -100,6 +103,7 @@ TestData :: [].{
 		workflows: [
 			{
 				name: "ci",
+				description: "",
 				steps: [
 					BuildArtifact("library"),
 					RunTask("check", ["", "two words", "--literal", "a\nb", "$HOME"]),
@@ -110,11 +114,12 @@ TestData :: [].{
 			},
 			{
 				name: "verify",
+				description: "",
 				steps: [RunTask("check", []), BuildArtifact("bundle")],
 			},
-			{ name: "empty", steps: [] },
-			{ name: "nothing", steps: [RunWorkflow("empty")] },
-			{ name: "one", steps: [RunTask("check", [])] },
+			{ name: "empty", description: "", steps: [] },
+			{ name: "nothing", description: "", steps: [RunWorkflow("empty")] },
+			{ name: "one", description: "", steps: [RunTask("check", [])] },
 		],
 	}
 

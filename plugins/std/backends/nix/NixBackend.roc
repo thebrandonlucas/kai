@@ -1102,8 +1102,8 @@ sample_model = {
 		},
 	],
 	shells: [
-		{ name: "default", environment: "dev" },
-		{ name: "ci", environment: "base" },
+		{ name: "default", environment: "dev", description: "" },
+		{ name: "ci", environment: "base", description: "" },
 	],
 }
 
@@ -1143,8 +1143,8 @@ full_model = {
 		},
 	],
 	shells: [
-		{ name: "default", environment: "dev" },
-		{ name: "empty", environment: "empty" },
+		{ name: "default", environment: "dev", description: "" },
+		{ name: "empty", environment: "empty", description: "" },
 	],
 	tasks: [
 		{
@@ -1155,6 +1155,7 @@ full_model = {
 			secrets: [],
 			optional_environment_variables: [],
 			needs: [],
+			description: "",
 		},
 	],
 	raw: [
@@ -1231,7 +1232,7 @@ simple = {
 	sources: [],
 	inputs: [],
 	environments: [base],
-	shells: [{ name: "default", environment: "dev" }],
+	shells: [{ name: "default", environment: "dev", description: "" }],
 	tasks: [],
 	requires_: [],
 	raw: [],
@@ -1298,6 +1299,7 @@ expect match NixBackend.render(
 				secrets: [],
 				optional_environment_variables: [],
 				needs: [],
+				description: "",
 			},
 		],
 	}),
@@ -1316,7 +1318,11 @@ expect NixBackend.render_environment(mk(mixed), "foreign").is_err()
 expect {
 	project = mk({
 		..mixed,
-		shells: simple.shells.append({ name: "foreign", environment: "foreign" }),
+		shells: simple.shells.append({
+			name: "foreign",
+			environment: "foreign",
+			description: "",
+		}),
 	})
 	NixBackend.render(project).is_err()
 		and NixBackend.render_environment(project, "dev").is_ok()
@@ -1326,7 +1332,11 @@ expect {
 expect {
 	project = mk({
 		..mixed,
-		shells: simple.shells.append({ name: "foreign", environment: "foreign" }),
+		shells: simple.shells.append({
+			name: "foreign",
+			environment: "foreign",
+			description: "",
+		}),
 	})
 	match NixBackend.update_files(project, "x86_64-linux", TestData.layout) {
 		Ok([flake]) => !flake.contents.contains("foreign")
@@ -1509,7 +1519,7 @@ expect {
 expect NixBackend.render(
 	mk({
 		..simple,
-		shells: [{ name: "kai-env-dev", environment: "dev" }],
+		shells: [{ name: "kai-env-dev", environment: "dev", description: "" }],
 	}),
 ).is_err()
 
@@ -1595,7 +1605,11 @@ stages = |planned|
 expect {
 	project = mk({
 		..mixed,
-		shells: simple.shells.append({ name: "foreign", environment: "foreign" }),
+		shells: simple.shells.append({
+			name: "foreign",
+			environment: "foreign",
+			description: "",
+		}),
 	})
 	NixBackend.preflight(
 		project,
@@ -2074,6 +2088,7 @@ expect {
 					secrets: [],
 					optional_environment_variables: [],
 					needs: [],
+					description: "",
 				},
 			],
 		}),
@@ -2140,7 +2155,7 @@ expect {
 	project = TestData.project({
 		..TestData.workflow_data,
 		builds: [{ ..TestData.library, run: ["true", $payload] }],
-		workflows: [{ name: "large", steps: $steps }],
+		workflows: [{ name: "large", description: "", steps: $steps }],
 	})
 	plan = NixBackend.plan(
 		project,
@@ -2176,6 +2191,7 @@ expect {
 		workflows: [
 			{
 				name: "argv",
+				description: "",
 				steps: extras.map(
 					|extra| RunTask("check", extra),
 				),
@@ -2228,9 +2244,14 @@ expect {
 		workflows: [
 			{
 				name: "below",
+				description: "",
 				steps: names.drop_last(1).map(|name| BuildArtifact(name)),
 			},
-			{ name: "over", steps: names.map(|name| BuildArtifact(name)) },
+			{
+				name: "over",
+				description: "",
+				steps: names.map(|name| BuildArtifact(name)),
+			},
 		],
 	})
 	locks = plan_locks?
@@ -2281,7 +2302,13 @@ expect {
 			name: "root",
 			needs: $dependencies.map(|build| build.name),
 		}),
-		workflows: [{ name: "large", steps: [BuildArtifact("root")] }],
+		workflows: [
+			{
+				name: "large",
+				description: "",
+				steps: [BuildArtifact("root")],
+			},
+		],
 	})
 	diagnostic = "workflow plan exceeds 16 MiB of distinct rendered requests"
 	Project.validate(project).is_ok()
@@ -2330,6 +2357,7 @@ expect {
 			workflows: [
 				{
 					name: "limit",
+					description: "",
 					steps: [BuildArtifact("root"), BuildArtifact("root")],
 				},
 			],
@@ -2510,13 +2538,15 @@ expect {
 			secrets: [],
 			optional_environment_variables: [],
 			needs: [],
+			description: "",
 		}),
 		workflows: TestData.workflow_data.workflows.concat([
 			{
 				name: "later",
+				description: "",
 				steps: [RunWorkflow("one"), RunWorkflow("foreign")],
 			},
-			{ name: "foreign", steps: [RunTask("foreign", [])] },
+			{ name: "foreign", description: "", steps: [RunTask("foreign", [])] },
 		]),
 	}
 	project = TestData.project(data)
@@ -2563,7 +2593,11 @@ expect {
 			{ ..TestData.library, environment: "foreign" },
 		],
 		workflows: [
-			{ name: "ci", steps: [RunTask("check", []), BuildArtifact("app")] },
+			{
+				name: "ci",
+				description: "",
+				steps: [RunTask("check", []), BuildArtifact("app")],
+			},
 		],
 	})
 	locks = Locks.from_nix(project, TestData.layout, native_lock)?
@@ -2603,7 +2637,11 @@ expect {
 	project = TestData.project({
 		..TestData.workflow_data,
 		workflows: [
-			{ name: "ci", steps: [RunTask("check", []), BuildArtifact("app")] },
+			{
+				name: "ci",
+				description: "",
+				steps: [RunTask("check", []), BuildArtifact("app")],
+			},
 		],
 	})
 	layout = { ..TestData.layout, generated_root: "/work/build-runner" }
@@ -2664,6 +2702,7 @@ expect {
 				workflows: [
 					{
 						name: "ci",
+						description: "",
 						steps: [RunTask("check", []), BuildArtifact("app")],
 					},
 				],
@@ -2757,6 +2796,7 @@ expect {
 					secrets: [],
 					optional_environment_variables: [],
 					needs: [],
+					description: "",
 				},
 			],
 		},
@@ -2849,7 +2889,16 @@ expect {
 		[RunTask("check", [Str.from_utf8([0]) ?? ""])],
 	].all(
 		|steps| {
-			project = { ..workflow_project, workflows: [{ name: "ci", steps }] }
+			project = {
+				..workflow_project,
+				workflows: [
+					{
+						name: "ci",
+						description: "",
+						steps,
+					},
+				],
+			}
 			NixBackend.preflight(
 				project,
 				Request.Workflow("ci"),

@@ -160,10 +160,7 @@ ConfigToModel :: [].{
 			}
 			Workflow(name, steps) => {
 				..acc,
-				workflows: acc.workflows.append({
-					name: name.to_str(),
-					steps: steps.map(workflow_step),
-				}),
+				workflows: acc.workflows.append(workflow(name.to_str(), steps)?),
 			}
 			Custom(kind, name, value) => {
 				..acc,
@@ -181,15 +178,44 @@ ConfigToModel :: [].{
 		Ok(next)
 	}
 
-	workflow_step : Config.WorkflowStep -> Model.WorkflowStep
-	workflow_step = |step|
+	workflow : Str, List(Config.WorkflowStep) -> Try(Model.Workflow, Str)
+	workflow = |name, steps| {
+		draft = steps.fold(
+			{ steps: [], descriptions: [] },
+			|acc, step|
+				match step {
+					RunTask(task, argv) => {
+						..acc,
+						steps: acc.steps.append(RunTask(task.to_str(), argv)),
+					}
+					BuildArtifact(build) => {
+						..acc,
+						steps: acc.steps.append(BuildArtifact(build.to_str())),
+					}
+					RunWorkflow(child) => {
+						..acc,
+						steps: acc.steps.append(RunWorkflow(child.to_str())),
+					}
+					MayFail(inner) => {
+						..acc,
+						steps: acc.steps.append(MayFail(may_fail_step(inner))),
+					}
+					Description(text) => { ..acc, descriptions: acc.descriptions.append(text) }
+				},
+		)
+		Ok({
+			name,
+			description: single_description(draft.descriptions, "workflow ${name}")?,
+			steps: draft.steps,
+		})
+	}
+
+	may_fail_step : Config.Step -> Model.Step
+	may_fail_step = |step|
 		match step {
 			RunTask(name, argv) => RunTask(name.to_str(), argv)
 			BuildArtifact(name) => BuildArtifact(name.to_str())
 			RunWorkflow(name) => RunWorkflow(name.to_str())
-			MayFail(RunTask(name, argv)) => MayFail(RunTask(name.to_str(), argv))
-			MayFail(BuildArtifact(name)) => MayFail(BuildArtifact(name.to_str()))
-			MayFail(RunWorkflow(name)) => MayFail(RunWorkflow(name.to_str()))
 		}
 
 	provider : Config.PackageSource -> Model.Provider
@@ -241,16 +267,24 @@ ConfigToModel :: [].{
 
 	shell : Str, List(Config.ShellSetting) -> Try(Model.Shell, Str)
 	shell = |name, inner| {
-		environments = inner.map(
-			|setting| match setting {
-				Use(env) => env.to_str()
-			},
+		draft = inner.fold(
+			{ environments: [], descriptions: [] },
+			|acc, setting|
+				match setting {
+					Use(env) => { ..acc, environments: acc.environments.append(env.to_str()) }
+					Description(text) => { ..acc, descriptions: acc.descriptions.append(text) }
+				},
 		)
-		match environments {
-			[environment_name] => Ok({ name, environment: environment_name })
-			[] => Err("MissingUse: shell ${name}")
-			_ => Err("DuplicateUse: shell ${name}")
+		environment_name = match draft.environments {
+			[one] => one
+			[] => return Err("MissingUse: shell ${name}")
+			_ => return Err("DuplicateUse: shell ${name}")
 		}
+		Ok({
+			name,
+			environment: environment_name,
+			description: single_description(draft.descriptions, "shell ${name}")?,
+		})
 	}
 
 	task : Str, List(Config.TaskSetting) -> Try(Model.Task, Str)
@@ -263,6 +297,7 @@ ConfigToModel :: [].{
 				secrets: [],
 				optional_environment_variables: [],
 				needs: [],
+				descriptions: [],
 			},
 			|acc, setting|
 				match setting {
@@ -279,6 +314,7 @@ ConfigToModel :: [].{
 						..acc,
 						needs: acc.needs.append(needs.map(|need| need.to_str())),
 					}
+					Description(text) => { ..acc, descriptions: acc.descriptions.append(text) }
 				},
 		)
 		environment_name = match draft.environments {
@@ -312,6 +348,7 @@ ConfigToModel :: [].{
 			secrets,
 			optional_environment_variables,
 			needs: draft.needs.first() ?? [],
+			description: single_description(draft.descriptions, "task ${name}")?,
 		})
 	}
 
@@ -327,6 +364,7 @@ ConfigToModel :: [].{
 				files: [],
 				envs: [],
 				revisions: 0.U64,
+				descriptions: [],
 			},
 			|acc, setting|
 				match setting {
@@ -344,6 +382,7 @@ ConfigToModel :: [].{
 					Files(paths) => { ..acc, files: acc.files.append(paths) }
 					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
 					Revision => { ..acc, revisions: acc.revisions + 1 }
+					Description(text) => { ..acc, descriptions: acc.descriptions.append(text) }
 				},
 		)
 		environment_name = match draft.environments {
@@ -385,6 +424,7 @@ ConfigToModel :: [].{
 			files,
 			env: single_env(draft.envs, "build ${name}")?,
 			revision: draft.revisions == 1,
+			description: single_description(draft.descriptions, "build ${name}")?,
 		})
 	}
 
@@ -409,6 +449,14 @@ ConfigToModel :: [].{
 				},
 			),
 		)
+
+	single_description : List(Str), Str -> Try(Str, Str)
+	single_description = |descriptions, declaration|
+		match descriptions {
+			[] => Ok("")
+			[one] => Ok(one)
+			_ => Err("DuplicateDescription: ${declaration}")
+		}
 
 	uses_env : Acc -> Bool
 	uses_env = |acc|

@@ -33,12 +33,14 @@ Config :: [].{
 
 	## Workflows reference declarations; argv contains literal extra arguments.
 	## A step in MayFail that fails is noted and the workflow continues: a
-	## failing workflow there stops, but not the one running it.
+	## failing workflow there stops, but not the one running it. Description
+	## is no step: it is the workflow's summary in help.
 	WorkflowStep : [
 		RunTask(TaskName, List(Str)),
 		BuildArtifact(InputName),
 		RunWorkflow(WorkflowName),
 		MayFail(Step),
+		Description(Str),
 	]
 	Step : [
 		RunTask(TaskName, List(Str)),
@@ -60,8 +62,9 @@ Config :: [].{
 		Env(List((Str, Str))),
 	]
 
-	## A shell is an alias for exactly one environment.
-	ShellSetting : [Use(EnvName)]
+	## A shell is an alias for exactly one environment. A Description, in a
+	## shell, task or build, is its summary in help instead of its command.
+	ShellSetting : [Use(EnvName), Description(Str)]
 
 	## Tasks require exactly one Use and one nonempty argv Run. Secrets names
 	## the variables the task receives from `.env` or kai's environment when
@@ -76,6 +79,7 @@ Config :: [].{
 		Secrets(List(Str)),
 		Needs(List(InputName)),
 		OptionalEnvironmentVariables(List(Str)),
+		Description(Str),
 	]
 
 	## Builds require Use, Run and one relative Output. Optional Inputs select
@@ -94,5 +98,6 @@ Config :: [].{
 		Files(List(Str)),
 		Env(List((Str, Str))),
 		Revision,
+		Description(Str),
 	]
 }

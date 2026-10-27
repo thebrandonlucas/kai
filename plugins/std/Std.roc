@@ -81,7 +81,14 @@ Std := [].{
 
 	commands : Model -> List(Command)
 	commands = |model| {
-		choice = |value, summary| { value, summary, details: [] }
+		# A declaration's Description, if any, replaces its summary in lists;
+		# its own page, such as `kai run test --help`, shows both.
+		choice = |value, description, summary|
+			if description.is_empty() {
+				{ value, summary, details: [] }
+			} else {
+				{ value, summary: description, details: [summary] }
+			}
 		command = |name, page, args, lock|
 			Command.{ name, summary: page.description, help: page, args, lock }
 		[
@@ -93,7 +100,7 @@ Std := [].{
 						name: "shell",
 						help: "The shell to enter (default: default).",
 						choices: model.shells.map(
-							|s| choice(s.name, "Environment ${s.environment}"),
+							|s| choice(s.name, s.description, "Environment ${s.environment}"),
 						),
 						default: Default("default"),
 					}),
@@ -113,7 +120,11 @@ Std := [].{
 						name: "task",
 						help: "The task to run.",
 						choices: model.tasks.map(
-							|t| choice(t.name, "${Str.join_with(t.run, " ")} [${t.environment}]"),
+							|t| choice(
+								t.name,
+								t.description,
+								"${Str.join_with(t.run, " ")} [${t.environment}]",
+							),
 						),
 						default: Required,
 					}),
@@ -133,7 +144,11 @@ Std := [].{
 						name: "build",
 						help: "The build to run.",
 						choices: model.builds.map(
-							|b| choice(b.name, "Output ${b.output} [${b.environment}]"),
+							|b| choice(
+								b.name,
+								b.description,
+								"Output ${b.output} [${b.environment}]",
+							),
 						),
 						default: Required,
 					}),
@@ -158,7 +173,11 @@ Std := [].{
 						name: "workflow",
 						help: "The workflow to run.",
 						choices: model.workflows.map(
-							|w| choice(w.name, Str.join_with(w.steps.map(Std.step_text), ", ")),
+							|w| choice(
+								w.name,
+								w.description,
+								Str.join_with(w.steps.map(Std.step_text), ", "),
+							),
 						),
 						default: Required,
 					}),
@@ -173,7 +192,7 @@ Std := [].{
 						name: "inputs",
 						help: "Inputs to update (default: all).",
 						choices: (Locks.inputs(model) ?? []).map(
-							|input| choice(input.name, input.ref),
+							|input| choice(input.name, "", input.ref),
 						),
 					}),
 				],
@@ -336,6 +355,7 @@ Std := [].{
 				secrets: [],
 				optional_environment_variables: [],
 				needs: [],
+				description: "",
 			}),
 			build_sources: model.build_sources,
 			builds: model.builds,
@@ -727,6 +747,30 @@ expect {
 				channels: [{ channel: GuixBackend.default_channel, commit: pin }],
 				sources: [{ name: "assets", path: "assets", hash: assets_hash }],
 			})
+}
+
+# Help lists a task's Description, else its command, and the task's own page
+# shows its command after the Description.
+expect {
+	described = Task("hush", [Use("dev"), Description("Quiet"), Run(["true"])])
+	tasks = |model|
+		Std.commands(model).find_first(|c| c.name == "run").map_ok(
+			|run|
+				run.args.join_map(
+					|arg|
+						match arg {
+							Name(n) => n.choices
+							_ => []
+						},
+				),
+		)
+	match ConfigToModel.convert(planning.append(described)) {
+		Ok(model) => tasks(model) == Ok([
+			{ value: "greet", summary: "hello -g hi [dev]", details: [] },
+			{ value: "hush", summary: "Quiet", details: ["true [dev]"] },
+		])
+		Err(_) => Bool.False
+	}
 }
 
 # A Nix shell enters the locked shell; an unknown shell or a missing lock is
