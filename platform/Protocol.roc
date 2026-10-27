@@ -7,12 +7,14 @@ Protocol := [].{
 	Version : { major : U64, minor : U64 }
 
 	current : Version
-	current = { major: 1, minor: 0 }
+	current = { major: 1, minor: 1 }
 
-	## `argv` is kai's argv without argv[0].
+	## `argv` is kai's argv without argv[0]; `working_directory` is where
+	## kai runs.
 	Request := {
 		protocol : Version,
 		argv : List(Str),
+		working_directory : Str,
 		style : [Color, Plain],
 		host : { system : Str },
 		layout : Layout,
@@ -117,6 +119,7 @@ request : Protocol.Request
 request = Protocol.Request.{
 	protocol: Protocol.current,
 	argv: [],
+	working_directory: "/p",
 	style: Plain,
 	host: { system: "x86_64-linux" },
 	layout: Layout.{
@@ -197,7 +200,7 @@ expect {
 	text = Sexpr.to_str(response(candidates))
 	text.contains("(platform \"0.0.8\")") and [
 		(text.replace_each("(Note ", "(Delete "), Bool.False),
-		(text.replace_each("(minor 0)", "(minor 1)"), Bool.True),
+		(text.replace_each("(minor 1)", "(minor 2)"), Bool.True),
 		(text.replace_each("(major 1)", "(major 2)"), Bool.True),
 		(text.replace_each("(major 1)", "(major 0)"), Bool.True),
 	]

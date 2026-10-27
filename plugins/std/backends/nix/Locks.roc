@@ -202,23 +202,40 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		validate_identity(locks.identity)?
 		validate_graph(locks.graph)?
 		validate_binding(locks.identity, locks.graph)?
-		if !equivalent(locks.identity, identity_for(project)?) {
+		declared = identity_for(project)?
+		if !equivalent(locks.identity, declared) {
+			changed = Str.join_with(changed_inputs(locks.identity, declared), ", ")
+			named = if (changed.is_empty()) "" else " (${changed})"
 			return Err(
-				"lock input or ordered-overlay identity changed; "
+				"lock input or ordered-overlay identity changed${named}; "
 					.concat("run kai update"),
 			)
 		}
+		rebase(locks, layout)
+	}
+
+	## The locked graph rebased onto a layout, whatever the project now
+	## declares: where an update of some inputs starts.
+	rebase : Locks, Layout -> Try(Derived, Str)
+	rebase = |locks, layout| {
 		root = root_inputs(locks.graph)?
 		nodes = LockJson.object(LockJson.field(locks.graph, "nodes")?)?
-		declared = inputs(project)?
+		var $locals = []
+		for input in LockJson.object(LockJson.field(locks.identity, "inputs")?)? {
+			ref = LockJson.string(LockJson.field(input.value, "ref")?)?
+			if ref.starts_with("path:") {
+				local = { name: input.name, path: ref.drop_prefix("path:") }
+				$locals = $locals.append(local)
+			}
+		}
 		var $nodes = []
 		var $checks = []
 		for node in nodes {
 			var $value = node.value
-			for input in declared.keep_if(|i| i.ref.starts_with("path:")) {
-				id = LockJson.string(LockJson.field(root, input.name)?)?
+			for local in $locals {
+				id = LockJson.string(LockJson.field(root, local.name)?)?
 				if node.name == id {
-					path = "${layout.project_root}/${local_path(input)}"
+					path = "${layout.project_root}/${local.path}"
 					locked = LockJson.field($value, "locked")?
 					nar_hash = LockJson.string(LockJson.field(locked, "narHash")?)?
 					check = VerifyPath({
@@ -243,6 +260,75 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		}
 		graph = LockJson.set(locks.graph, "nodes", LockJson.Object($nodes))?
 		Ok({ contents: LockJson.encode(graph).concat("\n"), checks: $checks })
+	}
+
+	## The inputs added, removed or redeclared between two identities.
+	changed_inputs : LockJson, LockJson -> List(Str)
+	changed_inputs = |locked, declared| {
+		entries = |identity|
+			match LockJson.field(identity, "inputs") {
+				Ok(found) => LockJson.object(found) ?? []
+				Err(_) => []
+			}
+		before = entries(locked)
+		after = entries(declared)
+		value_in = |list, name|
+			list.find_first(|e| e.name == name).map_ok(|e| e.value)
+		var $changed = []
+		for entry in after.concat(before) {
+			same = match (value_in(before, entry.name), value_in(after, entry.name)) {
+				(Ok(old), Ok(new)) => equivalent(old, new)
+				_ => False
+			}
+			if !same and !$changed.contains(entry.name) {
+				$changed = $changed.append(entry.name)
+			}
+		}
+		$changed
+	}
+
+	## One line per root input an update added, moved or removed, with short
+	## revisions (or content hashes for paths).
+	changes : Try(Locks, Str), Locks -> List(Str)
+	changes = |previous, current| {
+		before = match previous {
+			Ok(locks) => pins(locks) ?? []
+			Err(_) => []
+		}
+		after = pins(current) ?? []
+		pin_in = |list, name| list.find_first(|p| p.name == name).map_ok(|p| p.pin)
+		var $lines = []
+		for entry in after.concat(before) {
+			line = match (pin_in(before, entry.name), pin_in(after, entry.name)) {
+				(Ok(old), Ok(new)) if old != new => "${entry.name} ${old} → ${new}"
+				(Err(_), Ok(new)) => "${entry.name} added at ${new}"
+				(Ok(_), Err(_)) => "${entry.name} removed"
+				_ => ""
+			}
+			if line != "" and !$lines.contains(line) {
+				$lines = $lines.append(line)
+			}
+		}
+		$lines
+	}
+
+	## Each root input's short locked revision, or content hash for paths.
+	pins : Locks -> Try(List({ name : Str, pin : Str }), Str)
+	pins = |locks| {
+		nodes = LockJson.field(locks.graph, "nodes")?
+		var $pins = []
+		for input in LockJson.object(root_inputs(locks.graph)?)? {
+			node = LockJson.field(nodes, LockJson.string(input.value)?)?
+			locked = LockJson.field(node, "locked")?
+			full = match LockJson.field(locked, "rev") {
+				Ok(rev) => LockJson.string(rev)?
+				Err(_) => LockJson.string(LockJson.field(locked, "narHash")?)?
+					.drop_prefix("sha256-")
+			}
+			pin = Str.from_utf8_lossy(full.to_utf8().take_first(8))
+			$pins = $pins.append({ name: input.name, pin })
+		}
+		Ok($pins)
 	}
 
 	validate_identity : LockJson -> Try({}, Str)
@@ -586,9 +672,13 @@ Locks := { identity : LockJson, graph : LockJson }.{
 			id = LockJson.string(LockJson.field(root, input.name)?)?
 			node = LockJson.field(nodes, id)?
 			ref = LockJson.string(LockJson.field(input.value, "ref")?)?
-			expected = original(ref)?
-			if !equivalent(expected, LockJson.field(node, "original")?) {
-				return Err("Nix original reference does not match input ${input.name}")
+			expected = decoded_url(original(ref)?)
+			recorded = decoded_url(LockJson.field(node, "original")?)
+			if !equivalent(expected, recorded) {
+				return Err(
+					"Nix original reference ${LockJson.encode(recorded)} does not match "
+						.concat("input ${input.name}: ${LockJson.encode(expected)}"),
+				)
 			}
 			flake = LockJson.field(node, "flake") ?? LockJson.Boolean(True)
 			if flake != LockJson.field(input.value, "flake")? {
@@ -614,6 +704,46 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		}
 		Ok({})
 	}
+
+	## Nix records URLs percent-encoded (`+` as `%2B`), so compare them decoded.
+	decoded_url : LockJson -> LockJson
+	decoded_url = |attrs| match LockJson.field(attrs, "url") {
+		Ok(LockJson.String(url)) =>
+			LockJson.set(attrs, "url", LockJson.String(percent_decoded(url))) ?? attrs
+		_ => attrs
+	}
+
+	percent_decoded : Str -> Str
+	percent_decoded = |text| {
+		bytes = text.to_utf8()
+		var $index = 0
+		var $out = []
+		while $index < bytes.len() {
+			byte = bytes.get($index) ?? 0
+			high = hex_digit(bytes.get($index + 1) ?? 0)
+			low = hex_digit(bytes.get($index + 2) ?? 0)
+			match (byte, high, low) {
+				('%', Ok(high_digit), Ok(low_digit)) => {
+					$out = $out.append(high_digit * 16 + low_digit)
+					$index = $index + 3
+				}
+				_ => {
+					$out = $out.append(byte)
+					$index = $index + 1
+				}
+			}
+		}
+		Str.from_utf8($out) ?? text
+	}
+
+	hex_digit : U8 -> Try(U8, {})
+	hex_digit = |byte| if byte >= '0' and byte <= '9' {
+		Ok(byte - '0')
+	} else if byte >= 'a' and byte <= 'f' {
+		Ok(byte - 'a' + 10)
+	} else if byte >= 'A' and byte <= 'F' {
+		Ok(byte - 'A' + 10)
+	} else Err({})
 
 	## SSH belongs to Git transport, not HTTP file/tarball fetching.
 	remote_url : Str, Str -> Bool
@@ -674,13 +804,20 @@ Locks := { identity : LockJson, graph : LockJson }.{
 				})
 			}
 		} else {
+			# Like Nix, a bare URL is a tarball only by its archive extension.
+			archive = ["zip", "tar", "tgz", "tar.gz", "tar.xz", "tar.bz2", "tar.zst"]
+				.any(|extension| base.ends_with(".${extension}"))
 			(kind, url) = if base.starts_with("git+") {
 				("git", base.drop_prefix("git+"))
-			} else ("tarball", base.drop_prefix("tarball+"))
+			} else if base.starts_with("tarball+") {
+				("tarball", base.drop_prefix("tarball+"))
+			} else if base.starts_with("file+") or !archive {
+				("file", base.drop_prefix("file+"))
+			} else ("tarball", base)
 			if !remote_url(kind, url) {
 				return Err(
 					"unsupported Nix reference: ${ref}; "
-						.concat("use hosted, remote Git/tarball or path inputs"),
+						.concat("use hosted, remote Git/tarball/file or path inputs"),
 				)
 			}
 			$attrs = [

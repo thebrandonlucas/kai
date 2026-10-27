@@ -157,7 +157,11 @@ Workspace := [].{
 	safe_source! : Str => Try({}, _)
 	safe_source! = |value| {
 		Workspace.safe_path!(value)?
-		match Workspace.path(value).type!()? {
+		kind = match Workspace.path(value).type!() {
+			Err(PathErr(NotFound, _)) => return Err(MissingSource(value))
+			other => other?
+		}
+		match kind {
 			IsDir => {
 				for child in Workspace.path(value).list!()? {
 					Workspace.safe_source!(child.to_str()?)?

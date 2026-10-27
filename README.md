@@ -94,11 +94,19 @@ kai workflow ci                   # run steps in order, stop at a failure
 kai bundle-plugin plugins/deploy  # bundle a plugin package for hosting
 ```
 
-Tool names are the backend's own package names: Nix attributes such as
-`python3`, or Guix specifications. Tasks run their argv exactly, without a
-shell, so use `Run(["sh", "-c", "..."])` for pipes. Every command has help with
-examples, e.g. `kai run --help`; inside a project, help lists its shells,
-tasks, builds and workflows.
+Tool names are the backend's own package names: Nix attribute paths such as
+`python3` or `rust-bin.stable."1.90.0".minimal` (quote a segment that is not a
+plain identifier), or Guix specifications. Tasks run their argv exactly,
+without a shell, so use `Run(["sh", "-c", "...", "sh"])` for pipes: `sh -c`
+takes the argument after its script as `$0`, so the `"sh"` placeholder lets
+arguments after `--` reach the script as `$1`, `$2`, ... and `"$@"`. In Roc
+strings, multiline ones included, `${name}` is Roc interpolation, so a script
+writes `$NAME`, or `\${NAME}` where the shell needs braces. Every command has
+help with examples, e.g. `kai run --help`; inside a project, help lists its
+shells, tasks, builds and workflows.
+`kai build -L` (`--print-build-logs`) shows the build's log as it runs, and
+`kai build --out-link PATH` links PATH to the artifact and keeps it from
+garbage collection.
 
 ### Settings
 
@@ -109,8 +117,9 @@ tasks, builds and workflows.
 | `Packages(name, source)` | A package source: `Auto`, `From(NixPackages(flakeRef))` or `From(GuixPackages(...))`. Tools use the `default` source (`Auto`: nixpkgs unstable on Nix, the installed channels on Guix) unless written `"source#tool"`. |
 | `Overlay(name, flakeRef)` | A Nix overlay, applied only where an environment selects it. |
 | `Environment(name, [...])` | A set of tools: `Tools([...])`, `Overlays([...])` in order, and `Extend(parent)` to inherit the parent's tools and overlays first. |
+| `Env([(name, value), ...])` | Environment variables, in an `Environment` for its shells, tasks and builds (overriding its parent's by name), or in a `Task` or `Build` overriding its environment's. |
 | `Shell(name, [Use(environment)])` | A shell for `kai shell`. |
-| `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. |
+| `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. Optionally `Secrets([...])`: the names of the variables it receives when it runs. |
 | `Source(name, flakeRef)` | A locked, non-flake source that builds can read. |
 | `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, in `$KAI_INPUTS/<name>`) and `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`). |
 | `Workflow(name, [...])` | Steps for `kai workflow`: `RunTask(task, args)`, `BuildArtifact(build)`, `RunWorkflow(workflow)`. |
@@ -124,14 +133,25 @@ each setting and command, from a first shell to builds, workflows and Guix.
 
 Shells and tasks run on your machine, in the project directory, inside the
 environment's shell: they see your files, your network and anything else you
-can reach, and what they write stays in the working tree.
+can reach, and what they write stays in the working tree. `KAI_OPERATOR_SHELL`
+holds the `SHELL` kai was started from, since the environment may replace
+`SHELL`.
+
+A task gets the secrets it declares with `Secrets([...])` from a `.env` file
+at the project root (`NAME=value` lines; `#` comments; no interpolation),
+else from kai's environment, and never those only other tasks declare. Only
+the names are in the Kaifile and plans; add `.env` to your `.gitignore`.
 
 Builds run sandboxed. A build gets a copy of the project, leaving out what
 its `.gitignore` files ignore (`Files([...])` narrows the copy to the given
-project-relative paths), plus only its environment's tools, its declared
-sources (`$KAI_INPUTS`) and the artifacts of the builds it needs
+project-relative paths), plus only the tools its environment's shell has, its
+declared sources (`$KAI_INPUTS`) and the artifacts of the builds it needs
 (`$KAI_ARTIFACTS`). It has no network, and only its `Output` is kept, in the
-store.
+store. A Nix build's sources that are Roc package bundles, such as
+`tarball+https://…/<hash>.tar.zst`, are in its Roc package cache, so Roc
+resolves those package URLs offline. The sandbox has no `/usr/bin/env`, so
+run scripts as `sh script` or through an interpreter's path rather than
+relying on a `#!/usr/bin/env` line.
 
 Use a task for work that touches the project or the outside world, such as
 running tests, formatting or deploying. Use a build for an artifact that should

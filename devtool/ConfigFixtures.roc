@@ -908,7 +908,7 @@ ConfigFixtures := [].{
 		{
 			name: "Builds",
 			texts: [
-				"(minor 3)",
+				"(minor 4)",
 				"(requires (\"sources\" \"builds\"))",
 				"(build_sources ",
 				"(builds ",
@@ -917,7 +917,7 @@ ConfigFixtures := [].{
 		{
 			name: "Workflows",
 			texts: [
-				"(minor 3)",
+				"(minor 4)",
 				"(requires (\"builds\" \"workflows\"))",
 				"(workflows ",
 				"(RunTask \"check.all\" ${ConfigFixtures.workflow_argv_ir})",

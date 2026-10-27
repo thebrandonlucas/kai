@@ -28,6 +28,9 @@ BuildRunner := [].{
 		coreutils : Str,
 		inputs : Str,
 		artifacts : Str,
+		# Inputs that are Roc package bundles, by the hash Roc caches them by.
+		roc_packages : List({ name : Str, hash : Str }),
+		env : List((OsStr, OsStr)),
 	}
 
 	remedy = "cannot verify build isolation; user Run was not executed. "
@@ -44,6 +47,23 @@ BuildRunner := [].{
 		for item in LockJson.array(LockJson.field(json, "argv")?)? {
 			$argv = $argv.append(LockJson.string(item)?)
 		}
+		# Absent from Guix specs and from older std's.
+		var $roc_packages = []
+		listed = LockJson.field(json, "roc_packages") ?? LockJson.Array([])
+		for item in LockJson.array(listed)? {
+			field = |name| LockJson.string(LockJson.field(item, name)?)
+			roc_package = { name: field("name")?, hash: field("hash")? }
+			unsafe = |part| ["", ".", ".."].contains(part) or part.contains("/")
+			if unsafe(roc_package.name) or unsafe(roc_package.hash) {
+				return Err("invalid Roc package input: ${roc_package.name}")
+			}
+			$roc_packages = $roc_packages.append(roc_package)
+		}
+		var $env = []
+		for field in LockJson.object(LockJson.field(json, "env")?)? {
+			value = OsStr.from_str(LockJson.string(field.value)?)
+			$env = $env.append((OsStr.from_str(field.name), value))
+		}
 		Ok({
 			project: text("project")?,
 			argv: $argv,
@@ -52,6 +72,8 @@ BuildRunner := [].{
 			coreutils: text("coreutils")?,
 			inputs: text("inputs")?,
 			artifacts: text("artifacts")?,
+			roc_packages: $roc_packages,
+			env: $env,
 		})
 	}
 
@@ -133,6 +155,15 @@ BuildRunner := [].{
 		_ = tool!("cp", copy.concat([spec.project, work]))?
 		_ = tool!("chmod", ["-R", "u+w", "--", work])?
 		Path.unix(home).create_dir!()?
+		# Roc finds a URL package in its cache by the URL's hash, so the
+		# build's headers resolve offline, unchanged.
+		for roc_package in spec.roc_packages {
+			cache = "${home}/.cache/roc/packages/${roc_package.hash}"
+			_ = tool!("mkdir", ["-p", "--", cache])?
+			unpacked = "${spec.inputs}/${roc_package.name}/."
+			_ = tool!("cp", copy.concat([unpacked, cache]))?
+			_ = tool!("chmod", ["-R", "u+w", "--", cache])?
+		}
 		(program, args) = match spec.argv {
 			[first, .. as rest] => (first, rest)
 			[] => return Err(Refused("empty build argv"))
@@ -140,12 +171,14 @@ BuildRunner := [].{
 		result = Cmd.new(OsStr.from_str(program))
 			.args(args.map(OsStr.from_str))
 			.cwd(Path.unix(work))
-			.envs([
-				("PATH", OsStr.from_str(spec.path)),
-				("HOME", OsStr.from_str(home)),
-				("KAI_INPUTS", OsStr.from_str(spec.inputs)),
-				("KAI_ARTIFACTS", OsStr.from_str(spec.artifacts)),
-			])
+			.envs(
+				[
+					("PATH", OsStr.from_str(spec.path)),
+					("HOME", OsStr.from_str(home)),
+					("KAI_INPUTS", OsStr.from_str(spec.inputs)),
+					("KAI_ARTIFACTS", OsStr.from_str(spec.artifacts)),
+				].concat(spec.env),
+			)
 			.stdin(Inherit)
 			.stdout(Inherit)
 			.stderr(Inherit)
@@ -307,7 +340,7 @@ expect [
 expect {
 	text = "{\"project\": \"/p\", \"argv\": [\"sh\", \"\", \"a\\nb\"], "
 		.concat("\"output\": \"o\", \"path\": \"/b\", \"coreutils\": \"/c\", ")
-		.concat("\"inputs\": \"/i\", \"artifacts\": \"/a\"}")
+		.concat("\"inputs\": \"/i\", \"artifacts\": \"/a\", \"env\": {}}")
 	match LockJson.decode(text) {
 		Ok(json) => match BuildRunner.decode(json) {
 			Ok(spec) => spec.argv == ["sh", "", "a\nb"] and spec.coreutils == "/c"

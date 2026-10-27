@@ -27,8 +27,9 @@ Pages := [].{
 	update : Command.Page
 	update = {
 		description: "Pin the package sources Kaifile.roc uses in the lock file, "
-			.concat("so shells and tasks keep the same tools until the next update."),
-		examples: ["kai update"],
+			.concat("so shells and tasks keep the same tools until the next update. ")
+			.concat("Name inputs to update only those."),
+		examples: ["kai update", "kai update default"],
 		config: [Pages.environment],
 	}
 

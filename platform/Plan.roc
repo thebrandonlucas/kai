@@ -23,7 +23,19 @@ Plan := { steps : List(Step), next : Next }.{
 		CheckSource(Str),
 		Snapshot({ root : Str, destination : Str, exclude : List(Str) }),
 		InstallRunner({ destination : Str }),
-		Run({ what : Str, argv : List(Str), output : [Inherit, Artifact(Artifact)] }),
+
+		## kai sets the `secrets` variables from `.env` or its own environment
+		## and removes `removed_environment_variables` from the child
+		## process's environment: names only, never values.
+		Run(
+			{
+				description : Str,
+				argv : List(Str),
+				output : Output,
+				secrets : List(Str),
+				removed_environment_variables : List(Str),
+			},
+		),
 		PublishLock({ previous : [Absent, Present(Str)], contents : Str }),
 	].{
 		is_eq : _
@@ -43,6 +55,9 @@ Plan := { steps : List(Step), next : Next }.{
 
 	File : { path : Str, contents : Str }
 
+	## `Quiet` shows the child's stderr only when it fails.
+	Output : [Inherit, Quiet, Artifact(Artifact)]
+
 	## `output` is the declared output name; the store path is the child's
 	## last stdout line (`nix build --print-out-paths`, `guix build`).
 	Artifact : { name : Str, label : Str, output : Str }
@@ -60,11 +75,33 @@ expect {
 			VerifyPath({ path: "/p/src", argv: ["nix", "hash"], stdout: "sha256-x" }),
 			Snapshot({ root: "/p", destination: "/w/src", exclude: [".git"] }),
 			InstallRunner({ destination: "/w/runner" }),
-			Run({ what: "shell dev", argv: ["bash"], output: Inherit }),
 			Run({
-				what: "build site",
+				description: "shell dev",
+				argv: ["bash"],
+				output: Inherit,
+				secrets: [],
+				removed_environment_variables: [],
+			}),
+			Run({
+				description: "lock",
+				argv: ["nix", "flake", "update"],
+				output: Quiet,
+				secrets: [],
+				removed_environment_variables: [],
+			}),
+			Run({
+				description: "task t",
+				argv: ["bash"],
+				output: Inherit,
+				secrets: ["TOKEN"],
+				removed_environment_variables: ["OTHER"],
+			}),
+			Run({
+				description: "build site",
 				argv: ["nix", "build"],
 				output: Artifact({ name: "site", label: "site", output: "out" }),
+				secrets: [],
+				removed_environment_variables: [],
 			}),
 			PublishLock({ previous: Absent, contents: "{}" }),
 			PublishLock({ previous: Present("{}"), contents: "{ }" }),

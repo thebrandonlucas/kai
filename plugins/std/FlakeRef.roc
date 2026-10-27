@@ -14,6 +14,7 @@ FlakeRef :: { url : Str }.{
 			"https://",
 			"http://",
 			"tarball+",
+			"file+",
 		]
 		match schemes.find_first(|s| raw.starts_with(s)) {
 			Err(_) =>

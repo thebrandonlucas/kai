@@ -77,7 +77,13 @@ Answer := [].{
 	body = |kaifile, request| {
 		commands = [Answer.init, Answer.check, Answer.describe]
 			.concat(kaifile.plugins.join_map(|p| p.commands))
-		match Argv.parse(Answer.kai, commands, request.style, request.argv) {
+		match Argv.parse(
+			Answer.kai,
+			commands,
+			request.style,
+			request.working_directory,
+			request.argv,
+		) {
 			Err(Help(text)) => Help(text)
 			Err(Usage(text)) => Usage(text)
 			Ok({ command: "init", .. }) => Refused("kai creates Kaifile.roc itself")

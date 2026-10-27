@@ -43,17 +43,27 @@ Config :: [].{
 
 	## Each setting occurs at most once. Extend inherits tools and overlays
 	## parent first; an omitted or empty list does not clear inherited values.
+	## Env sets variables in the environment's shells, tasks and builds. They
+	## override the parent's by name, and a task's or build's Env overrides them.
 	EnvironmentSetting : [
 		Tools(List(Tool)),
 		Overlays(List(InputName)),
 		Extend(EnvName),
+		Env(List((Str, Str))),
 	]
 
 	## A shell is an alias for exactly one environment.
 	ShellSetting : [Use(EnvName)]
 
-	## Tasks require exactly one Use and one nonempty argv Run.
-	TaskSetting : [Use(EnvName), Run(List(Str))]
+	## Tasks require exactly one Use and one nonempty argv Run. Secrets names
+	## the variables the task receives from `.env` or kai's environment when
+	## it runs; their values never enter the Kaifile, plan or store.
+	TaskSetting : [
+		Use(EnvName),
+		Run(List(Str)),
+		Env(List((Str, Str))),
+		Secrets(List(Str)),
+	]
 
 	## Builds require Use, Run and one relative Output. Optional Inputs select
 	## locked non-flake Sources; Needs selects build artifacts, not task names.
@@ -66,5 +76,6 @@ Config :: [].{
 		Run(List(Str)),
 		Output(Str),
 		Files(List(Str)),
+		Env(List((Str, Str))),
 	]
 }

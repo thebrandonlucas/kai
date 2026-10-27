@@ -1,5 +1,6 @@
 # kai's command line, parsed inside the Kaifile with Weaver from the plugins'
 # command data, so usage errors and help list what this project defines.
+import weaver.Builder
 import weaver.Cli
 import weaver.Help as WeaverHelp
 import weaver.Opt
@@ -26,11 +27,13 @@ Argv := [].{
 	## What kai prints instead of running a command.
 	Shown : [Help(Str), Usage(Str)]
 
-	## The parsed command line, or the help or usage text kai shows.
-	parse : Command.Page, List(Command), Style, List(Str) -> Try(Parsed, Shown)
+	## The parsed command line, or the help or usage text kai shows. Relative
+	## `Path` arguments resolve against `directory`, where kai runs.
+	parse :
+		Command.Page, List(Command), Style, Str, List(Str) -> Try(Parsed, Shown)
 
-	parse = |root, commands, style, argv| {
-		parser = match Argv.cli(root, commands, style) {
+	parse = |root, commands, style, directory, argv| {
+		parser = match Argv.cli(root, commands, style, directory) {
 			Ok(p) => p
 			Err(err) => return Err(Usage("invalid commands: ${Str.inspect(err)}"))
 		}
@@ -51,14 +54,14 @@ Argv := [].{
 					shown = top({ ..config, subcommands: Argv.summarized(config) })
 					Err(Help(Argv.indented(root, commands, shown)))
 				} else {
-					Err(Help(Argv.indented(root, commands, message)))
+					Err(Help(Argv.indented(root, commands, Argv.usage(commands, message))))
 				}
 			Err(Version(message)) => Err(Help(message))
-			Err(InvalidUsage(message)) => Err(Usage(message))
+			Err(InvalidUsage(message)) => Err(Usage(Argv.usage(commands, message)))
 		}
 	}
 
-	cli = |root, commands, style|
+	cli = |root, commands, style, directory|
 		Cli.finish(
 			{
 				file: Opt.maybe_str({
@@ -91,7 +94,7 @@ Argv := [].{
 					long: "dry-run",
 					help: "Print the plan instead of running it.",
 				}),
-				command: SubCmd.required(commands.map(Argv.subcommand)),
+				command: SubCmd.required(commands.map(|c| Argv.subcommand(c, directory))),
 			}.Cli,
 			{
 				name: "kai",
@@ -130,9 +133,12 @@ Argv := [].{
 						parts = shown
 							.replace_each(Argv.marker(name), Argv.sections(page))
 							.split_on("\n\n")
+						# These list every argument, so they replace Weaver's.
+						ours = Argv.arguments(args)
 						Str.join_with(
 							parts.drop_last(1)
-								.concat(Argv.arguments(args))
+								.drop_if(|part| !ours.is_empty() and part.contains("Arguments:"))
+								.concat(ours)
 								.concat(parts.take_last(1)),
 							"\n\n",
 						)
@@ -140,6 +146,58 @@ Argv := [].{
 						shown
 					},
 			)
+
+	## Weaver's usage line calls a name's choices COMMAND and lists the words
+	## after `--` before them; it names the argument and `--` instead, keeping
+	## the options Weaver lists, even when it wraps COMMAND onto a new line.
+	usage : List(Command), Str -> Str
+	usage = |commands, text|
+		commands.fold(
+			text,
+			|shown, command| {
+				start = "kai ${command.name} ["
+				{ name, listed, trailing } = command.args.fold(
+					{ name: "", listed: "", trailing: "" },
+					|found, arg|
+						match arg {
+							Name(n) if !n.choices.is_empty() =>
+								match n.default {
+									Required => { ..found, name: " <${n.name}>" }
+									Default(_) => { ..found, name: " [<${n.name}>]" }
+								}
+							Name(_) => found
+							Trailing(t) =>
+								{
+									..found,
+									listed: " [<${t.name}>...]",
+									trailing: " [-- <${t.name}>...]",
+								}
+							_ => found
+						},
+				)
+				if name.is_empty() {
+					shown
+				} else {
+					match shown.split_first(start) {
+						Ok({ before, after }) =>
+							match after.split_first("COMMAND") {
+								Ok(line) => {
+									options = line.before
+										.drop_suffix("[")
+										.drop_suffix("<")
+										.drop_suffix("\n  ")
+										.drop_suffix(" ")
+										.drop_suffix(listed)
+									rest = line.after.drop_prefix("]").drop_prefix(">")
+									"${before}${start}${options}${name}${trailing}${rest}"
+								}
+								Err(_) => shown
+							}
+						Err(_) => shown
+					}
+				}
+			},
+		)
 
 	sections : Command.Page -> Str
 	sections = |page| {
@@ -162,14 +220,17 @@ Argv := [].{
 			|arg|
 				match arg {
 					Name(n) => !n.choices.is_empty()
-					Trailing(_) => Bool.False
+					_ => Bool.False
 				},
 		)
-		rows = args.map(
+		# Weaver lists flags and paths as options.
+		rows = List.keep_oks(
+			args,
 			|arg|
 				match arg {
-					Name(n) => ("<${n.name}>", n.help)
-					Trailing(t) => ("<${t.name}...>", t.help)
+					Name(n) => Ok(("<${n.name}>", n.help))
+					Trailing(t) => Ok(("<${t.name}...>", t.help))
+					_ => Err({})
 				},
 		)
 		width = rows.fold(
@@ -197,13 +258,43 @@ Argv := [].{
 			NoSubcommands => NoSubcommands
 		}
 
+	# A builder that parses nothing, for options to join.
+	nothing = |{}|
+		Builder.from_arg_parser(|args| Ok({ data: [], remaining_args: args }))
+
 	# One command: a name chosen from its choices (each a subcommand, so help
-	# lists them) or any name, then the words after `--`.
-	subcommand = |command| {
+	# lists them) or any name, then the words after `--`; flags and paths
+	# anywhere before `--`.
+	subcommand = |command, directory| {
 		description = Argv.describe(command.name, command.help)
+		given = |name, value| [{ name, value: Present(value) }]
+		options = command.args.fold(
+			Argv.nothing({}),
+			|builder, arg|
+				match arg {
+					Flag(f) =>
+						Cli.weave(
+							builder,
+							Opt.flag({ short: f.short, long: f.name, help: f.help }),
+							|found, set| if (set) found.concat(given(f.name, "")) else found,
+						)
+					Path(p) =>
+						Cli.weave(
+							builder,
+							Opt.maybe_str({ short: p.short, long: p.name, help: p.help }),
+							|found, value|
+								match value {
+									Ok(path) if path.starts_with("/") => found.concat(given(p.name, path))
+									Ok(path) => found.concat(given(p.name, "${directory}/${path}"))
+									Err(NoValue) => found
+								},
+						)
+					_ => builder
+				},
+		)
 		finish = |builder|
 			SubCmd.finish(
-				builder,
+				Cli.weave(options, builder, |found, parsed| parsed.concat(found)),
 				{ name: command.name, description, mapper: |args| (command.name, args) },
 			)
 		# List.keep_oks as a function, not a method: nightly-2026-10-21-5349569
@@ -232,8 +323,7 @@ Argv := [].{
 			)
 		picked = |n, value| { name: n.name, value: Present(value) }
 		match (named, rest) {
-			([], []) =>
-				SubCmd.empty({ name: command.name, description, value: (command.name, []) })
+			([], []) => finish(Argv.nothing({}))
 			([], [t, ..]) => finish(trailing(t))
 			([n, ..], _) if !n.choices.is_empty() => {
 				choice = |c| {
@@ -259,10 +349,31 @@ Argv := [].{
 				choices = n.choices.map(choice)
 				match n.default {
 					Required => finish(SubCmd.required(choices))
+					# Without a name, the default's words follow `--` directly; a
+					# word before `--` names no choice.
 					Default(value) =>
-						finish(
-							Cli.map(SubCmd.optional(choices), |p| p ?? [picked(n, value)]),
-						)
+						match rest {
+							[t, ..] => {
+								unknown = Builder.from_arg_parser(
+									|args|
+										match args {
+											[Parameter(word), ..] => Err(UnrecognizedSubcommand(word))
+											_ => Ok({ data: {}, remaining_args: args })
+										},
+								)
+								finish(
+									Cli.weave(
+										Cli.weave(SubCmd.optional(choices), unknown, |chosen, _| chosen),
+										trailing(t),
+										|chosen, words| chosen ?? [picked(n, value)].concat(words),
+									),
+								)
+							}
+							[] =>
+								finish(
+									Cli.map(SubCmd.optional(choices), |p| p ?? [picked(n, value)]),
+								)
+						}
 				}
 			}
 			([n, ..], _) => {
@@ -336,7 +447,7 @@ toy = [
 ]
 
 parsed = |argv|
-	Argv.parse(page, toy, Plain, argv).map_ok(|p| (p.command, p.args))
+	Argv.parse(page, toy, Plain, "/work", argv).map_ok(|p| (p.command, p.args))
 
 present = |name, value| { name, value: Present(value) }
 
@@ -359,7 +470,14 @@ expect [
 			],
 		),
 	),
-	(["shell"], ("shell", [present("name", "default")])),
+	(["shell"], ("shell", [present("name", "default"), many("command", [])])),
+	(
+		["shell", "--", "git", "--version"],
+		(
+			"shell",
+			[present("name", "default"), many("command", ["git", "--version"])],
+		),
+	),
 	(
 		["shell", "ci", "--", "git", "--version"],
 		("shell", [present("name", "ci"), many("command", ["git", "--version"])]),
@@ -385,3 +503,33 @@ expect
 			Err(Help(text)) => text.contains("shell") and text.contains("About.")
 			_ => Bool.False
 		}
+
+# Usage lines name the argument and the words after `--`, keeping the options
+# Weaver lists even when it wraps the line.
+expect {
+	build = Command.{
+		name: "build",
+		summary: "",
+		help: page,
+		args: [
+			Name(
+				{ name: "build", help: "", choices: choices(["a"]), default: Required },
+			),
+			Flag({ name: "print-build-logs", short: "L", help: "" }),
+			Path({ name: "out-link", short: "", help: "" }),
+		],
+		lock: ReadsLock,
+	}
+	usage_of = |commands, argv|
+		match Argv.parse(page, commands, Plain, "/work", argv) {
+			Err(Help(text)) => text
+			_ => ""
+		}
+	usage_of([build], ["build", "--help"]).contains(
+		"kai build [-L/--print-build-logs] [--out-link STR] [-h/--help] "
+			.concat("[-V/--version] <build>\n"),
+	)
+		and usage_of(toy, ["shell", "--help"]).contains(
+			"kai shell [-h/--help] [-V/--version] [<name>] [-- <command>...]\n",
+		)
+}

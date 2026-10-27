@@ -1,0 +1,4 @@
+update
+run moo
+run shout
+shell default -- printenv GREETING

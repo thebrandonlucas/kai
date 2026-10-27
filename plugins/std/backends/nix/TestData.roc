@@ -17,6 +17,7 @@ TestData :: [].{
 		parents: [],
 		tools: [{ source: "default", name: "python3" }],
 		overlays: [],
+		env: [],
 	}
 
 	library : Model.Build
@@ -28,6 +29,7 @@ TestData :: [].{
 		run: ["python3", "build.py"],
 		output: "dist/library",
 		files: All,
+		env: [],
 	}
 
 	application : Model.Build
@@ -37,6 +39,7 @@ TestData :: [].{
 		needs: ["library"],
 		output: "dist/app",
 		files: All,
+		env: [],
 		run: ["python3", "build.py", "", "two words", "line\nbreak", "$HOME"],
 	}
 
@@ -67,6 +70,8 @@ TestData :: [].{
 				name: "check",
 				environment: "builder",
 				run: ["python3", "check.py", "configured argument"],
+				env: [],
+				secrets: [],
 			},
 		],
 		build_sources: [{ name: "assets", ref: "path:./assets" }],

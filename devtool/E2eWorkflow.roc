@@ -115,7 +115,12 @@ E2eWorkflow := [].{
 			if ($actual != expected) Err(WrongArtifacts($actual)) else Ok({})
 		}
 		_ = json!(["check"], 0, ["check"])?
-		_ = json!(["--backend", "nix", "update"], 0, ["backend", "update"])?
+		# One note per input the update added: nixpkgs and the assets source.
+		_ = json!(
+			["--backend", "nix", "update"],
+			0,
+			["backend", "update", "note", "note"],
+		)?
 		lock = file(".kai/lock.json")
 		published = Path.read_bytes!(lock)?
 		modified = Path.time_modified!(lock)?

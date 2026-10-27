@@ -86,8 +86,11 @@ Arguments are data; the platform builds kai's parser and help from them.
 A command takes at most one `Name` (a project entry; each choice becomes a
 subcommand, so help and usage errors list the project's names; no choices
 means any name) and at most one `Trailing` (everything after `--`,
-exact). `Command.name(args, "host")` and `Command.trailing(args, "args")`
-read the parsed values. Only the one command that owns the lock
+exact), and any `Flag` (`--name`, or `-short`) and `Path` (`--name PATH`,
+made absolute against the directory kai runs in), given anywhere before
+`--`. `Command.name(args, "host")`, `Command.trailing(args, "args")`,
+`Command.flag(args, "name")` and `Command.path(args, "name")` read the
+parsed values. Only the one command that owns the lock
 (`OwnsLock`, std's `update`) may publish it.
 
 ## Backends and implementations
@@ -125,7 +128,7 @@ A plan is a list of steps and what comes next:
 | `Note(text)`, `Print(text)` | a note on stderr, a result on stdout (JSON events with `--json`) |
 | `Confirm(prompt)` | ask before anything runs; refused without `--yes` unless a person is at a terminal |
 | `Write(files)` | write generated files, only beneath the generated root |
-| `Run({ what, argv, output })` | run exact argv from the project root, never through a shell |
+| `Run({ description, argv, output, secrets, removed_environment_variables })` | run exact argv from the project root, never through a shell |
 | `VerifyPath`, `CheckSource`, `Snapshot`, `InstallRunner` | std's checks and build sandbox steps |
 | `PublishLock({ previous, contents })` | replace the lock, only for the lock owner |
 
@@ -134,7 +137,7 @@ A plan is a list of steps and what comes next:
 publishes). kai checks the whole plan before its first step and refuses
 anything outside these rules; `kai --dry-run` prints the plan instead.
 
-std's `Std.run_in(project, ctx, { environment, argv, what })` plans argv
+std's `Std.run_in(project, ctx, { environment, argv, description })` plans argv
 inside one of std's environments from the locked Nix inputs, as a task
 would run; the deploy example uses it for `nixos-rebuild`.
 

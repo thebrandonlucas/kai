@@ -71,6 +71,8 @@ ConfigToModel :: [].{
 				.concat(if (acc.builds.is_empty()) [] else ["builds"])
 				.concat(if (acc.workflows.is_empty()) [] else ["workflows"])
 				.concat(if (acc.builds.all(|b| b.files == All)) [] else ["files"])
+				.concat(if (uses_env(acc)) ["env"] else [])
+				.concat(if (acc.tasks.all(|t| t.secrets.is_empty())) [] else ["secrets"])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -190,7 +192,7 @@ ConfigToModel :: [].{
 		Str, List(Config.EnvironmentSetting) -> Try(Model.Environment, Str)
 	environment = |name, inner| {
 		draft = inner.fold(
-			{ tools: [], overlays: [], parents: [] },
+			{ tools: [], overlays: [], parents: [], envs: [] },
 			|acc, setting|
 				match setting {
 					Tools(tools) => {
@@ -204,6 +206,7 @@ ConfigToModel :: [].{
 						),
 					}
 					Extend(parent) => { ..acc, parents: acc.parents.append(parent.to_str()) }
+					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
 				},
 		)
 		if draft.tools.len() > 1 {
@@ -220,6 +223,7 @@ ConfigToModel :: [].{
 			parents: draft.parents,
 			tools: draft.tools.first() ?? [],
 			overlays: draft.overlays.first() ?? [],
+			env: single_env(draft.envs, "environment ${name}")?,
 		})
 	}
 
@@ -240,11 +244,13 @@ ConfigToModel :: [].{
 	task : Str, List(Config.TaskSetting) -> Try(Model.Task, Str)
 	task = |name, inner| {
 		draft = inner.fold(
-			{ environments: [], runs: [] },
+			{ environments: [], runs: [], envs: [], secrets: [] },
 			|acc, setting|
 				match setting {
 					Use(env) => { ..acc, environments: acc.environments.append(env.to_str()) }
 					Run(argv) => { ..acc, runs: acc.runs.append(argv) }
+					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
+					Secrets(names) => { ..acc, secrets: acc.secrets.append(names) }
 				},
 		)
 		environment_name = match draft.environments {
@@ -257,7 +263,18 @@ ConfigToModel :: [].{
 			[] => return Err("MissingRun: task ${name}")
 			_ => return Err("DuplicateRun: task ${name}")
 		}
-		Ok({ name, environment: environment_name, run })
+		secrets = match draft.secrets {
+			[] => []
+			[one] => one
+			_ => return Err("DuplicateSecrets: task ${name}")
+		}
+		Ok({
+			name,
+			environment: environment_name,
+			run,
+			env: single_env(draft.envs, "task ${name}")?,
+			secrets,
+		})
 	}
 
 	build : Str, List(Config.BuildSetting) -> Try(Model.Build, Str)
@@ -270,6 +287,7 @@ ConfigToModel :: [].{
 				runs: [],
 				outputs: [],
 				files: [],
+				envs: [],
 			},
 			|acc, setting|
 				match setting {
@@ -285,6 +303,7 @@ ConfigToModel :: [].{
 					Run(argv) => { ..acc, runs: acc.runs.append(argv) }
 					Output(path) => { ..acc, outputs: acc.outputs.append(path) }
 					Files(paths) => { ..acc, files: acc.files.append(paths) }
+					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
 				},
 		)
 		environment_name = match draft.environments {
@@ -321,8 +340,26 @@ ConfigToModel :: [].{
 			run,
 			output,
 			files,
+			env: single_env(draft.envs, "build ${name}")?,
 		})
 	}
+
+	variables : List((Str, Str)) -> List(Model.Variable)
+	variables = |pairs| pairs.map(|(name, value)| { name, value })
+
+	single_env : List(List(Model.Variable)), Str -> Try(List(Model.Variable), Str)
+	single_env = |envs, declaration|
+		match envs {
+			[] => Ok([])
+			[one] => Ok(one)
+			_ => Err("DuplicateEnv: ${declaration}")
+		}
+
+	uses_env : Acc -> Bool
+	uses_env = |acc|
+		acc.environments.any(|e| !e.env.is_empty())
+			or acc.tasks.any(|t| !t.env.is_empty())
+			or acc.builds.any(|b| !b.env.is_empty())
 
 	to_value : Val -> Value
 	to_value = |val|

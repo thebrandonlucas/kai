@@ -77,7 +77,7 @@ Deploy := [].{
 									h.address,
 									"--use-remote-sudo",
 								],
-								what: "deploy ${h.name}",
+								description: "deploy ${h.name}",
 							},
 						)?
 						prompt = "Deploy ${h.flake} to ${h.address} and switch it now?"
@@ -190,7 +190,7 @@ expect {
 	resumed = { ..context, phase: 1, observed }
 	update = planned(Std.plugin(project), "update", resumed)
 	lock = match update.map_ok(|plan| plan.steps) {
-		Ok([PublishLock({ contents, .. })]) => Present(contents)
+		Ok([PublishLock({ contents, .. }), ..]) => Present(contents)
 		_ => Absent
 	}
 	host = [Address("root@203.0.113.7"), Flake(".#web"), Tools("ops")]
@@ -207,9 +207,9 @@ expect {
 		"--use-remote-sudo",
 	]
 	match planned(plugin, "deploy", deploy("web")).map_ok(|plan| plan.steps) {
-		Ok([Confirm(prompt), .., Run({ what, argv, .. })]) =>
+		Ok([Confirm(prompt), .., Run({ description, argv, .. })]) =>
 			prompt == "Deploy .#web to root@203.0.113.7 and switch it now?"
-				and what == "deploy web"
+				and description == "deploy web"
 				and argv.ends_with(rebuild)
 				and planned(plugin, "deploy", deploy("db")) == Err("unknown host: db")
 		_ => Bool.False

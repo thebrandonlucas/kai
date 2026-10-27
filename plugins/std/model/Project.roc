@@ -16,6 +16,17 @@ Project :: [].{
 	valid_task_name = |name|
 		!name.is_empty() and name.split_on(".").all(valid_name)
 
+	## An environment variable name: a letter or underscore, then letters,
+	## digits or underscores.
+	valid_variable_name : Str -> Bool
+	valid_variable_name = |name|
+		match name.to_utf8() {
+			[first, .. as rest] =>
+				(letter(first) or first == '_')
+					and rest.all(|b| letter(b) or (b >= '0' and b <= '9') or b == '_')
+			[] => Bool.False
+		}
+
 	letter : U8 -> Bool
 	letter = |b| (b >= 'a' and b <= 'z') or (b >= 'A' and b <= 'Z')
 
@@ -36,21 +47,58 @@ Project :: [].{
 		Ok({ source, name })
 	}
 
-	## Deliberately conservative native grammars: Nix dotted identifiers;
+	## Splits a Nix attribute path on dots outside quotes. Each segment is a
+	## plain identifier or a double-quoted string without `"` or `\`.
+	nix_attribute_path : Str -> Try(List(Str), {})
+	nix_attribute_path = |name| {
+		var $segments = []
+		var $segment = []
+		var $segment_quoted = Bool.False
+		var $inside_quotes = Bool.False
+		for b in name.to_utf8() {
+			if $inside_quotes {
+				if b == '"' {
+					$inside_quotes = Bool.False
+				} else if b == '\\' {
+					return Err({})
+				} else {
+					$segment = $segment.append(b)
+				}
+			} else if b == '.' {
+				if $segment.is_empty() {
+					return Err({})
+				}
+				$segments = $segments.append(Str.from_utf8($segment) ?? "")
+				$segment = []
+				$segment_quoted = Bool.False
+			} else if b == '"' and $segment.is_empty() and !$segment_quoted {
+				$inside_quotes = Bool.True
+				$segment_quoted = Bool.True
+			} else if !$segment_quoted and nix_identifier_byte(b) {
+				$segment = $segment.append(b)
+			} else {
+				return Err({})
+			}
+		}
+		if $inside_quotes or $segment.is_empty() {
+			return Err({})
+		}
+		Ok($segments.append(Str.from_utf8($segment) ?? ""))
+	}
+
+	nix_identifier_byte : U8 -> Bool
+	nix_identifier_byte = |b|
+		letter(b) or (b >= '0' and b <= '9') or b == '_' or b == '-' or b == '\''
+
+	## Deliberately conservative native grammars: Nix dotted attribute paths;
 	## Guix package[@version][:output] specifications. No translation or probing.
 	check_tool : Backend, Str -> Try({}, Str)
 	check_tool = |backend, name| {
+		if backend == Guix and name.contains("\"") {
+			return Err("invalid Guix tool: ${name}: quoted segments are Nix-only")
+		}
 		valid = match backend {
-			Nix => name.split_on(".").all(
-				|part| {
-					bytes = part.to_utf8()
-					!bytes.is_empty() and bytes.all(
-						|b|
-							letter(b) or (b >= '0' and b <= '9') or
-								b == '_' or b == '-' or b == '\'',
-					)
-				},
-			)
+			Nix => nix_attribute_path(name).is_ok()
 			Guix => {
 				parts = name.split_on(":")
 				spec = parts.first() ?? ""
@@ -102,6 +150,7 @@ Project :: [].{
 			"https://",
 			"http://",
 			"tarball+",
+			"file+",
 		].any(
 			|prefix|
 				url.starts_with(prefix) and !url.drop_prefix(prefix).is_empty(),
@@ -137,11 +186,60 @@ Project :: [].{
 			"http://",
 			"tarball+https://",
 			"tarball+http://",
+			"file+https://",
+			"file+http://",
 		].any(
 			|prefix|
 				ref.starts_with(prefix) and !ref.drop_prefix(prefix).is_empty(),
 		)
 	}
+
+	## Portable shell names, none that Kai or the Nix builder sets itself.
+	check_env : List(Model.Variable), Str -> Try({}, Str)
+	check_env = |variables, declaration| {
+		reserved = ["PATH", "HOME", "KAI_INPUTS", "KAI_ARTIFACTS", "out"]
+		var $seen = []
+		for variable in variables {
+			if !valid_variable_name(variable.name) or reserved.contains(variable.name) {
+				return Err("invalid Env name in ${declaration}: ${variable.name}")
+			}
+			if variable.value.to_utf8().contains(0) {
+				return Err("NUL in Env ${variable.name}: ${declaration}")
+			}
+			if $seen.contains(variable.name) {
+				return Err("DuplicateEnv: ${declaration}: ${variable.name}")
+			}
+			$seen = $seen.append(variable.name)
+		}
+		Ok({})
+	}
+
+	## `base` with `overrides` replacing its variables of the same name.
+	merge_env : List(Model.Variable), List(Model.Variable) -> List(Model.Variable)
+	merge_env = |base, overrides|
+		base.keep_if(|b| !overrides.any(|o| o.name == b.name)).concat(overrides)
+
+	## The `env` argv prefix that sets `variables` for the command after it.
+	env_command : List(Model.Variable) -> List(Str)
+	env_command = |variables|
+		if variables.is_empty() {
+			[]
+		} else {
+			["env"].concat(variables.map(|v| "${v.name}=${v.value}"))
+		}
+
+	## The secrets other tasks declare, which a task's process never receives.
+	other_tasks_secrets : Model, Model.Task -> List(Str)
+	other_tasks_secrets = |model, task|
+		model.tasks.join_map(|t| t.secrets).fold(
+			[],
+			|names, name|
+				if names.contains(name) or task.secrets.contains(name) {
+					names
+				} else {
+					names.append(name)
+				},
+		)
 
 	## Shared argv boundary for tasks and builds; arguments are never shell-split.
 	check_argv : List(Str), Str -> Try({}, Str)
@@ -250,6 +348,7 @@ Project :: [].{
 		}
 		var $environments = []
 		for env in model.environments {
+			check_env(env.env, "environment ${env.name}")?
 			resolved = resolve(model.environments, env.name, [])?
 			for t in resolved.tools {
 				parsed = tool("${t.source}#${t.name}")?
@@ -282,12 +381,19 @@ Project :: [].{
 				return Err("unknown environment: ${task.environment}")
 			}
 			check_argv(task.run, task.name)?
+			check_env(task.env, "task ${task.name}")?
+			for secret in task.secrets {
+				if !valid_variable_name(secret) {
+					return Err("invalid secret name in task ${task.name}")
+				}
+			}
 		}
 		for build in model.builds {
 			if !$environments.any(|e| e.name == build.environment) {
 				return Err("unknown environment: ${build.environment}")
 			}
 			check_argv(build.run, build.name)?
+			check_env(build.env, "build ${build.name}")?
 			if !valid_output(build.output) {
 				return Err("invalid build output: ${build.name}: ${build.output}")
 			}
@@ -581,6 +687,7 @@ Project :: [].{
 					parents: [],
 					tools: unique(base.tools.concat(env.tools)),
 					overlays: unique(base.overlays.concat(env.overlays)),
+					env: merge_env(base.env, env.env),
 				})
 			}
 			_ => Err("environment ${name} has several parents")
@@ -693,6 +800,7 @@ base = {
 	parents: [],
 	tools: [{ source: "default", name: "git" }],
 	overlays: ["first"],
+	env: [],
 }
 
 child : Model.Environment
@@ -704,6 +812,7 @@ child = {
 		{ source: "default", name: "git" },
 	],
 	overlays: ["first", "second"],
+	env: [],
 }
 
 # Declaration order is irrelevant; inheritance order is not. First wins.
@@ -717,6 +826,7 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 				{ source: "default", name: "python3" },
 			],
 			overlays: ["first", "second"],
+			env: [],
 		},
 		base,
 	]),
@@ -726,14 +836,14 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 expect match Project.validate(
 	fixture([
 		base,
-		{ ..child, tools: [], overlays: [] },
-		{ name: "empty", parents: [], tools: [], overlays: [] },
+		{ ..child, tools: [], overlays: [], env: [] },
+		{ name: "empty", parents: [], tools: [], overlays: [], env: [] },
 	]),
 ) {
 	Ok(model) => model.environments == [
 		base,
 		{ ..base, name: "dev" },
-		{ name: "empty", parents: [], tools: [], overlays: [] },
+		{ name: "empty", parents: [], tools: [], overlays: [], env: [] },
 	]
 	Err(_) => False
 }
@@ -818,6 +928,7 @@ expect {
 			name: "plain",
 			parents: [],
 			overlays: [],
+			env: [],
 			tools: [{ source: "guix", name: "git" }],
 		},
 	])
@@ -867,7 +978,9 @@ build_fixture = |builds| Model.{
 	systems: ["x86_64-linux"],
 	sources: [],
 	inputs: [],
-	environments: [{ name: "builder", parents: [], tools: [], overlays: [] }],
+	environments: [
+		{ name: "builder", parents: [], tools: [], overlays: [], env: [] },
+	],
 	shells: [],
 	tasks: [],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
@@ -894,6 +1007,7 @@ library = {
 	],
 	output: "dist/library",
 	files: All,
+	env: [],
 }
 
 application : Model.Build
@@ -1195,9 +1309,19 @@ workflow_features = |workflows, features| Model.{
 	systems: ["x86_64-linux"],
 	sources: [],
 	inputs: [],
-	environments: [{ name: "builder", parents: [], tools: [], overlays: [] }],
+	environments: [
+		{ name: "builder", parents: [], tools: [], overlays: [], env: [] },
+	],
 	shells: [],
-	tasks: [{ name: "check.all", environment: "builder", run: ["cmd"] }],
+	tasks: [
+		{
+			name: "check.all",
+			environment: "builder",
+			run: ["cmd"],
+			env: [],
+			secrets: [],
+		},
+	],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
 	builds: [library],
 	workflows,

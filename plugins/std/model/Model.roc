@@ -23,10 +23,19 @@ Model := {
 			parents : List(Str),
 			tools : List({ source : Str, name : Str }),
 			overlays : List(Str),
+			env : List({ name : Str, value : Str }),
 		},
 	),
 	shells : List({ name : Str, environment : Str }),
-	tasks : List({ name : Str, environment : Str, run : List(Str) }),
+	tasks : List(
+		{
+			name : Str,
+			environment : Str,
+			run : List(Str),
+			env : List({ name : Str, value : Str }),
+			secrets : List(Str),
+		},
+	),
 	build_sources : List({ name : Str, ref : Str }),
 	builds : List(
 		{
@@ -37,6 +46,7 @@ Model := {
 			run : List(Str),
 			output : Str,
 			files : [All, Only(List(Str))],
+			env : List({ name : Str, value : Str }),
 		},
 	),
 	workflows : List(
@@ -67,9 +77,22 @@ Model := {
 		parents : List(Str),
 		tools : List(Tool),
 		overlays : List(Str),
+		env : List(Variable),
 	}
 	Shell : { name : Str, environment : Str }
-	Task : { name : Str, environment : Str, run : List(Str) }
+
+	## Secrets are the names of variables the task receives, never values.
+	Task : {
+		name : Str,
+		environment : Str,
+		run : List(Str),
+		env : List(Variable),
+		secrets : List(Str),
+	}
+
+	## An environment variable. A task's or build's own override its
+	## environment's, as an environment's override those of the one it extends.
+	Variable : { name : Str, value : Str }
 
 	## Non-flake locked inputs, distinct from package-provider sources.
 	BuildSource : { name : Str, ref : Str }
@@ -84,6 +107,7 @@ Model := {
 		run : List(Str),
 		output : Str,
 		files : [All, Only(List(Str))],
+		env : List(Variable),
 	}
 
 	## Ordered declarations, not command strings or executor recipes.
@@ -97,7 +121,7 @@ Model := {
 	Raw : { backend : Str, target : Str, value : Value }
 
 	current_format : Format
-	current_format = { major: 2, minor: 3 }
+	current_format = { major: 2, minor: 4 }
 
 	empty : Str -> Model
 	empty = |name| Model.{

@@ -17,20 +17,23 @@ GuixBackend :: [].{
 	check_system = |system|
 		if (system.ends_with("-linux")) Ok({}) else Err("Guix runs only on Linux")
 
-	## `guix shell` arguments for a shell or task, run under time-machine.
-	plan : Model, Request -> Try(List(Str), Str)
+	## `guix shell` arguments for a shell or task, run under time-machine, and
+	## the variables it keeps from kai's environment.
+	Planned : { args : List(Str), env : List(Model.Variable) }
+
+	plan : Model, Request -> Try(Planned, Str)
 	plan = |model, request| {
 		project = Project.validate(model)?
-		(env_name, command) = match request {
+		(env_name, command, own_env, secrets) = match request {
 			Request.Shell(name, argv) => {
 				shell = project.shells.find_first(|s| s.name == name)
 					.map_err(|_| "unknown shell: ${name}")?
-				(shell.environment, argv)
+				(shell.environment, argv, [], [])
 			}
 			Request.Run(name, extra) => {
 				task = project.tasks.find_first(|t| t.name == name)
 					.map_err(|_| "unknown task: ${name}")?
-				(task.environment, task.run.concat(extra))
+				(task.environment, task.run.concat(extra), task.env, task.secrets)
 			}
 			_ => return Err("Guix supports only kai shell and kai run")
 		}
@@ -48,7 +51,15 @@ GuixBackend :: [].{
 			return Err("invalid Guix tool in environment ${environment.name}")
 		}
 		tail = if (command.is_empty()) [] else ["--"].concat(command)
-		Ok(["shell", "-q", "--pure"].concat(specs).concat(tail))
+		env = Project.merge_env(environment.env, own_env)
+		# --pure would drop the operator's shell, which kai passes to children,
+		# the variables the environment and task set, and the secrets the task
+		# declares.
+		preserve = ["--preserve=^KAI_OPERATOR_SHELL$"]
+			.concat(env.map(|v| "--preserve=^${v.name}$"))
+			.concat(secrets.map(|name| "--preserve=^${name}$"))
+		args = ["shell", "-q", "--pure"].concat(preserve).concat(specs).concat(tail)
+		Ok({ args, env })
 	}
 
 	## A Guix channel as kai pins it: its commit is locked by `kai update`.
@@ -338,6 +349,10 @@ GuixBackend :: [].{
 				.map_err(|_| "unknown environment: ${build.environment}")?
 			specs = Str.join_with(environment.tools.map(|t| q(t.name)), " ")
 			argv = LockJson.encode(Array(build.run.map(|a| String(a))))
+			variables = Project.merge_env(environment.env, build.env)
+			env = LockJson.encode(
+				Object(variables.map(|v| { name: v.name, value: String(v.value) })),
+			)
 			project_file = match build.files {
 				All => "project"
 				Only(paths) =>
@@ -360,8 +375,8 @@ GuixBackend :: [].{
 			$defines = $defines.append(
 				"(define kai-build-${build.name}\n"
 					.concat("  (kai-build ${q(build.name)} '(${specs})\n")
-					.concat("    ${project_file} ${q(argv)} ${q(build.output)}\n")
-					.concat("    ${inputs} ${artifacts}))"),
+					.concat("    ${project_file} ${q(argv)} ${q(env)}\n")
+					.concat("    ${q(build.output)} ${inputs} ${artifacts}))"),
 			)
 		}
 		file = |variable, path, label, recursive|
@@ -408,7 +423,8 @@ GuixBackend :: [].{
 		\\                     (string-prefix? (string-append r "/") s)))
 		\\               paths)))))
 		\\
-		\\(define (kai-build name specs project argv-json output-dir inputs artifacts)
+		\\(define (kai-build name specs project argv-json env-json output-dir inputs
+		\\                   artifacts)
 		\\  (computed-file (string-append "kai-" name)
 		\\    #~(begin
 		\\        (use-modules (ice-9 textual-ports))
@@ -420,6 +436,7 @@ GuixBackend :: [].{
 		\\                "{\\"project\\":\\"" #$project "\\""
 		\\                ",\\"isolation\\":" witness
 		\\                ",\\"argv\\":" #$argv-json
+		\\                ",\\"env\\":" #$env-json
 		\\                ",\\"output\\":\\"" #$output-dir "\\""
 		\\                ",\\"path\\":\\"" #$(tools specs) "/bin\\""
 		\\                ",\\"coreutils\\":\\""
@@ -436,8 +453,9 @@ GuixBackend :: [].{
 	## its runner, then Guix builds the file above; the artifact is the store
 	## path `guix build` prints. Each source tree it reads must still have
 	## its locked hash, and stays out of the snapshot, as on Nix.
-	build_steps : Model, Str, Layout, Locked -> Try(Steps, Str)
-	build_steps = |model, name, layout, locked| {
+	build_steps :
+		Model, Str, Request.BuildOutput, Layout, Locked -> Try(Steps, Str)
+	build_steps = |model, name, shown, layout, locked| {
 		build = model.builds.find_first(|b| b.name == name)
 			.map_err(|_| "unknown build: ${name}")?
 		root = layout.project_root
@@ -485,14 +503,18 @@ GuixBackend :: [].{
 						},
 					]),
 					Run({
-						what: "build ${name}",
+						description: "build ${name}",
 						argv: ["guix", "time-machine", "-C", channels, "--"]
-							.concat(["build", "-f", scm]),
+							.concat(["build", "-f", scm])
+							.concat(if (shown.print_build_logs) ["--verbosity=3"] else [])
+							.concat(shown.out_link.map_ok(|path| ["--root=${path}"]) ?? []),
 						output: Artifact({
 							name,
 							label: "build-${name}.scm",
 							output: build.output,
 						}),
+						secrets: [],
+						removed_environment_variables: [],
 					}),
 				]),
 				next: Done,
@@ -505,7 +527,8 @@ GuixBackend :: [].{
 	request_steps : Model, Request, Layout, Locked -> Try(Steps, Str)
 	request_steps = |model, request, layout, locked|
 		match request {
-			Request.Build(name) => GuixBackend.build_steps(model, name, layout, locked)
+			Request.Build(name, shown) =>
+				GuixBackend.build_steps(model, name, shown, layout, locked)
 			Request.Workflow(name) => {
 				var $steps = []
 				for step in Project.workflow_steps(model, name)? {
@@ -521,7 +544,8 @@ GuixBackend :: [].{
 								)?,
 							)
 						BuildArtifact(build) => {
-							steps = GuixBackend.build_steps(model, build, layout, locked)?
+							quiet = Request.default_output
+							steps = GuixBackend.build_steps(model, build, quiet, layout, locked)?
 							("build ${build}", steps)
 						}
 					}
@@ -538,13 +562,13 @@ GuixBackend :: [].{
 	fit : Model, Request -> Try({}, Str)
 	fit = |model, request|
 		match request {
-			Request.Build(name) =>
+			Request.Build(name, _) =>
 				GuixBackend.build_scm(model, name, "/fit", "/fit").map_ok(|_| {})
 			Request.Workflow(name) => {
 				for step in Project.workflow_steps(model, name)? {
 					match step {
 						RunTask(task, args) => GuixBackend.fit(model, Request.Run(task, args))?
-						BuildArtifact(build) => GuixBackend.fit(model, Request.Build(build))?
+						BuildArtifact(build) => GuixBackend.fit(model, Request.build(build))?
 					}
 				}
 				Ok({})
@@ -556,19 +580,37 @@ GuixBackend :: [].{
 	steps : Model, Request, Str, List(Pin) -> Try(Steps, Str)
 	steps = |model, request, generated, locked| {
 		shell = GuixBackend.plan(model, request)?
-		what = match request {
+		# --pure keeps only what --preserve names, so kai sets it on guix.
+		set_env = Project.env_command(shell.env)
+		description = match request {
 			Request.Shell(name, _) => "shell ${name}"
 			Request.Run(name, _) => "task ${name}"
 			_ => "guix"
 		}
+		(secrets, removed_environment_variables) = match request {
+			Request.Run(name, _) =>
+				match model.tasks.find_first(|t| t.name == name) {
+					Ok(task) => (task.secrets, Project.other_tasks_secrets(model, task))
+					Err(_) => ([], [])
+				}
+			_ => ([], [])
+		}
 		channels = "${generated}/guix/channels.scm"
 		entries = locked.map(|p| { channel: p.channel, commit: Pinned(p.commit) })
-		argv = ["guix", "time-machine", "-C", channels, "--"].concat(shell)
+		argv = set_env
+			.concat(["guix", "time-machine", "-C", channels, "--"])
+			.concat(shell.args)
 		Ok(
 			Steps.{
 				steps: [
 					Write([{ path: channels, contents: GuixBackend.channels_scm(entries) }]),
-					Run({ what, argv, output: Inherit }),
+					Run({
+						description,
+						argv,
+						output: Inherit,
+						secrets,
+						removed_environment_variables,
+					}),
 				],
 				next: Done,
 			},
@@ -595,12 +637,13 @@ env = |name, tools| {
 	parents: [],
 	tools: tools.map(|text| Project.tool(text) ?? { source: "", name: text }),
 	overlays: [],
+	env: [],
 }
 
 check : List(Model.Environment), Request, Try(List(Str), {}) -> Bool
 check = |environments, request, expected|
 	match (GuixBackend.plan(fixture(environments), request), expected) {
-		(Ok(argv), Ok(want)) => argv == want
+		(Ok(planned), Ok(want)) => planned.args == want
 		(Err(_), Err({})) => Bool.True
 		_ => Bool.False
 	}
@@ -610,7 +653,10 @@ check = |environments, request, expected|
 expect [
 	(
 		Request.Shell("dev", []),
-		Ok(["shell", "-q", "--pure", "git", "hello@2.12:out"]),
+		Ok(
+			["shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"]
+				.concat(["git", "hello@2.12:out"]),
+		),
 	),
 	(
 		Request.Shell("dev", ["hello", "--greeting", "two words", ""]),
@@ -618,6 +664,7 @@ expect [
 			"shell",
 			"-q",
 			"--pure",
+			"--preserve=^KAI_OPERATOR_SHELL$",
 			"git",
 			"hello@2.12:out",
 			"--",
@@ -647,7 +694,7 @@ expect [
 	([env("dev", [])], Request.Shell("dev", [])),
 	([env("dev", ["-L"])], Request.Shell("dev", [])),
 	([env("dev", ["hello"])], Request.Shell("missing", [])),
-	([env("dev", ["hello"])], Request.Build("dev")),
+	([env("dev", ["hello"])], Request.build("dev")),
 	([env("dev", ["hello"])], Request.Workflow("dev")),
 ].all(|(environments, request)| check(environments, request, Err({})))
 
@@ -698,11 +745,12 @@ expect {
 	match planned {
 		Ok(plan) =>
 			match plan.steps {
-				[Write([{ path, .. }]), Run({ argv, what, .. })] =>
+				[Write([{ path, .. }]), Run({ argv, description, .. })] =>
 					path == channels
-						and what == "shell dev"
+						and description == "shell dev"
 						and argv == ["guix", "time-machine", "-C", channels, "--"]
-							.concat(["shell", "-q", "--pure", "hello", "--", "hello", "a b"])
+							.concat(["shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"])
+							.concat(["hello", "--", "hello", "a b"])
 				_ => Bool.False
 			}
 		Err(_) => Bool.False
@@ -719,6 +767,7 @@ expect {
 		run: ["true"],
 		output: "out",
 		files: All,
+		env: [],
 	}
 	model = {
 		..fixture([env("dev", ["hello"])]),

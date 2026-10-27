@@ -195,6 +195,7 @@ ask! = |{ project, layout, shown, style }, resume| {
 	request = Protocol.Request.{
 		protocol: Protocol.current,
 		argv: shown,
+		working_directory: Env.cwd!()?.to_str()?,
 		style,
 		host: { system },
 		layout,
@@ -364,12 +365,17 @@ describe = |err|
 		RenderFailed(message) => "cannot generate the Nix files: ${message}"
 		LockFailed(message) => "cannot lock the Nix inputs: ${message}"
 		LocalChanged(path) => "local source ${path} changed; run `kai update`"
+		MissingSource(path) => "local source or overlay ${path} does not exist"
 		UnsafePlan(why) => "refusing the plan: ${why}"
 		ConfirmationRequired(prompt) =>
 			"${prompt} needs confirmation; pass --yes to accept"
 		Declined(prompt) => "not confirmed: ${prompt}"
 		SnapshotFailed(message) => message
-		ChildExited(what, code) => "${what} exited with code ${code.to_str()}"
+		ChildExited(description, code) =>
+			"${description} exited with code ${code.to_str()}"
+		MissingSecret(description, name) =>
+			"${description} needs secret ${name}; set it in .env or kai's environment"
+		InvalidDotenv(line) => ".env line ${line.to_str()} is not NAME=value"
 		UpdateLocked(guard) =>
 			"another kai update holds ${guard}; if none is running, it is "
 				.concat("safe to remove that directory")

@@ -25,13 +25,13 @@
 					(destination "/w/runner"))) (Run (
 					(argv ("bash"))
 					(output Inherit)
-					(what "shell dev"))) (Run (
+					(description "shell dev"))) (Run (
 					(argv ("nix" "build"))
 					(output (Artifact (
 						(label "site")
 						(name "site")
 						(output "out"))))
-					(what "build site"))) (PublishLock (
+					(description "build site"))) (PublishLock (
 					(contents "{ }")
 					(previous (Present "{}")))))))))
 			(plugin "std")
@@ -46,4 +46,4 @@
 	(platform "0.0.8")
 	(protocol (
 		(major 1)
-		(minor 0))))
+		(minor 1))))
