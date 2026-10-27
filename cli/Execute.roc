@@ -211,24 +211,12 @@ Execute := [].{
 		if plan.steps.any(Execute.uses_workspace) {
 			Workspace.prepare!(layout)?
 		}
-		snapshots = plan.steps.any(
-			|step| match step {
-				Snapshot(_) => Bool.True
-				_ => Bool.False
-			},
-		)
-		if !snapshots {
-			return Execute.steps!(plan, layout, mode, workflow, options)
-		}
-		guard = "${layout.workspace}/build.lock"
-		Execute.hold!(guard, mode)?
-		result = Execute.steps!(plan, layout, mode, workflow, options)
-		_ = Workspace.path(guard).delete_empty!()
-		result
+		Execute.steps!(plan, layout, mode, workflow, options)
 	}
 
-	# A directory in the workspace is the build lock: a plan that snapshots
-	# holds it from its first step to its last, so builds take turns.
+	# A directory in the workspace is the build lock. Each build holds it
+	# from its snapshot through its build command, so builds take turns while
+	# the tasks around them, which may run kai build themselves, do not wait.
 	hold! : Str, Output.Mode => Try({}, _)
 	hold! = |guard, mode| {
 		var $noted = Bool.False
@@ -261,8 +249,10 @@ Execute := [].{
 				_ => Bool.False
 			},
 		)
+		guard = "${layout.workspace}/build.lock"
 		var $index = 0
 		var $finished = ""
+		var $holding = Bool.False
 		for step in plan.steps {
 			match step {
 				Stage(label) => {
@@ -272,7 +262,23 @@ Execute := [].{
 					Output.note!(mode, progress.human, progress.started)?
 					$finished = progress.finished
 				}
-				_ => Execute.step!(step, layout, mode, options)?
+				_ => {
+					(snapshots, builds) = match step {
+						Snapshot(_) => (Bool.True, Bool.False)
+						Run({ output: Artifact(_), .. }) => (Bool.False, Bool.True)
+						_ => (Bool.False, Bool.False)
+					}
+					if snapshots and !$holding {
+						Execute.hold!(guard, mode)?
+						$holding = Bool.True
+					}
+					result = Execute.step!(step, layout, mode, options)
+					if $holding and (builds or result.is_err()) {
+						_ = Workspace.path(guard).delete_empty!()
+						$holding = Bool.False
+					}
+					result?
+				}
 			}
 		}
 		Execute.finish!(mode, $finished)
