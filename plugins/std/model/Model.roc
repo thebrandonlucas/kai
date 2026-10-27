@@ -34,6 +34,7 @@ Model := {
 			run : List(Str),
 			env : List({ name : Str, value : Str }),
 			secrets : List(Str),
+			needs : List(Str),
 		},
 	),
 	build_sources : List({ name : Str, ref : Str }),
@@ -82,12 +83,14 @@ Model := {
 	Shell : { name : Str, environment : Str }
 
 	## Secrets are the names of variables the task receives, never values.
+	## Needs names the builds whose artifacts it reads in `$KAI_ARTIFACTS`.
 	Task : {
 		name : Str,
 		environment : Str,
 		run : List(Str),
 		env : List(Variable),
 		secrets : List(Str),
+		needs : List(Str),
 	}
 
 	## An environment variable. A task's or build's own override its

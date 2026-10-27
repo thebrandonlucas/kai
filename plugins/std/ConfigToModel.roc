@@ -73,6 +73,7 @@ ConfigToModel :: [].{
 				.concat(if (acc.builds.all(|b| b.files == All)) [] else ["files"])
 				.concat(if (uses_env(acc)) ["env"] else [])
 				.concat(if (acc.tasks.all(|t| t.secrets.is_empty())) [] else ["secrets"])
+				.concat(if (acc.tasks.all(|t| t.needs.is_empty())) [] else ["task_needs"])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -244,13 +245,17 @@ ConfigToModel :: [].{
 	task : Str, List(Config.TaskSetting) -> Try(Model.Task, Str)
 	task = |name, inner| {
 		draft = inner.fold(
-			{ environments: [], runs: [], envs: [], secrets: [] },
+			{ environments: [], runs: [], envs: [], secrets: [], needs: [] },
 			|acc, setting|
 				match setting {
 					Use(env) => { ..acc, environments: acc.environments.append(env.to_str()) }
 					Run(argv) => { ..acc, runs: acc.runs.append(argv) }
 					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
 					Secrets(names) => { ..acc, secrets: acc.secrets.append(names) }
+					Needs(needs) => {
+						..acc,
+						needs: acc.needs.append(needs.map(|need| need.to_str())),
+					}
 				},
 		)
 		environment_name = match draft.environments {
@@ -268,12 +273,16 @@ ConfigToModel :: [].{
 			[one] => one
 			_ => return Err("DuplicateSecrets: task ${name}")
 		}
+		if draft.needs.len() > 1 {
+			return Err("DuplicateNeeds: task ${name}")
+		}
 		Ok({
 			name,
 			environment: environment_name,
 			run,
 			env: single_env(draft.envs, "task ${name}")?,
 			secrets,
+			needs: draft.needs.first() ?? [],
 		})
 	}
 

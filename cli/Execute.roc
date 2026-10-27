@@ -330,6 +330,9 @@ Execute := [].{
 				}
 			}
 		}
+		if $holding {
+			_ = Workspace.path(guard).delete!()
+		}
 		Execute.finish!(mode, $finished)
 	}
 

@@ -591,6 +591,13 @@ ConfigFixtures := [].{
 				\\  Run(["true"]), Output("out")])]
 		},
 		{
+			name: "UnknownTaskNeed",
+			expected: Rejected("unknown build"),
+			body: \\config = [Name("bad"), Environment("builder", []),
+				\\ Task("check", [Use("builder"), Needs(["missing"]),
+				\\  Run(["true"])])]
+		},
+		{
 			name: "BuildSelfCycle",
 			expected: Rejected("build cycle"),
 			body: \\config = [Name("bad"), Environment("builder", []),

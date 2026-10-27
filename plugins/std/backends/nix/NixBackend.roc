@@ -18,7 +18,16 @@ NixBackend :: [].{
 
 	## The model features this backend renders.
 	features : List(Str)
-	features = ["raw", "sources", "builds", "workflows", "files", "env", "secrets"]
+	features = [
+		"raw",
+		"sources",
+		"builds",
+		"workflows",
+		"files",
+		"env",
+		"secrets",
+		"task_needs",
+	]
 
 	default_nixpkgs : Str
 	default_nixpkgs = Locks.default_nixpkgs
@@ -47,10 +56,12 @@ NixBackend :: [].{
 	## One atomic request: its rendered flake, the argv that runs it, how the
 	## run reports (a build's artifact), its workflow stage and the secrets
 	## its process receives and is denied, and the files its snapshot copies.
-	## `reads` names the inputs it reads.
+	## `reads` names the inputs it reads. `needs_build` builds a task's Needs
+	## before it runs.
 	Prepared : {
 		inputs : List(Locks.Input),
 		reads : List(Str),
+		needs_build : List(Plan.Step),
 		argv : List(Str),
 		secrets : List(Str),
 		removed_environment_variables : List(Str),
@@ -103,6 +114,7 @@ NixBackend :: [].{
 						project,
 						[],
 						[],
+						[],
 						"",
 						Some({ inputs, layout }),
 						Limited(16777216),
@@ -125,6 +137,19 @@ NixBackend :: [].{
 		develop = |entry|
 			["nix", "develop"].concat(read_only)
 				.append("${base_ref}#devShells.${target}.${entry}")
+		# Namespace witnesses compare caller/build on the same kernel.
+		# Never dispatch this local isolation contract to a remote builder.
+		# The runner refuses an unsandboxed build, so no `--option
+		# sandbox`: Nix ignores it, with a warning, for untrusted users.
+		# `--impure` reads the snapshot and runner paths; an empty search
+		# path keeps NIX_PATH out, and Nix's warnings about its entries.
+		build = |link, print_build_logs, label|
+			["nix", "build"]
+				.concat(link)
+				.append("--print-out-paths")
+				.concat(if (print_build_logs) ["--print-build-logs"] else [])
+				.concat(read_only)
+				.concat(["--builders", "", "--nix-path", "", "--impure", label])
 		selected = match request {
 			Request.Shell(name, command) => {
 				shell = project.shells.find_first(|s| s.name == name)
@@ -141,6 +166,8 @@ NixBackend :: [].{
 					stage: "shell ${name}",
 					names: [shell.environment],
 					builds: [],
+					needs: [],
+					needs_build: [],
 					argv,
 					output: Inherit,
 					secrets: [],
@@ -152,15 +179,47 @@ NixBackend :: [].{
 					.map_err(|_| "unknown task: ${name}")?
 				command = task.run.concat(extra)
 				Project.check_argv(command, name)?
+				if !task.needs.is_empty() and target.ends_with("-darwin") {
+					return Err("kai build does not support macOS yet (#133)")
+				}
+				builds = Project.builds_closure(project, task.needs)?
+				artifacts = Project.artifacts_variable(task, layout.workspace)
+				label = "${base_ref}#kaiArtifacts.${target}"
+				# Nix replaces only a link into its own store, so not one that
+				# a Guix run left.
+				needs_build = artifacts.join_map(
+					|variable| [
+						Run({
+							description: "remove ${variable.value}",
+							argv: ["rm", "-f", variable.value],
+							output: Quiet,
+							secrets: [],
+							removed_environment_variables: [],
+						}),
+						Run({
+							description: "build needs of task ${name}",
+							argv: build(["--out-link", variable.value], Bool.False, label),
+							output: Artifact({
+								name: "artifacts-${name}",
+								label,
+								output: Str.join_with(task.needs, ", "),
+							}),
+							secrets: [],
+							removed_environment_variables: [],
+						}),
+					],
+				)
 				{
 					description: "task ${name}",
 					stage: "run ${name}",
-					names: [task.environment],
-					builds: [],
+					names: [task.environment].concat(builds.map(|b| b.environment)),
+					builds,
+					needs: task.needs,
+					needs_build,
 					argv: develop(environment_shell(task.environment))
 						.append("--command")
 						# Overrides the environment's Env, which kai-env-* sets.
-						.concat(Project.env_command(task.env))
+						.concat(Project.env_command(task.env.concat(artifacts)))
 						.concat(command),
 					output: Inherit,
 					secrets: task.secrets,
@@ -177,24 +236,14 @@ NixBackend :: [].{
 					.map_err(|_| "unknown build: ${name}")?
 				label = "${base_ref}#packages.${target}.${name}"
 				link = shown.out_link.map_ok(|path| ["--out-link", path]) ?? ["--no-link"]
-				# Namespace witnesses compare caller/build on the same kernel.
-				# Never dispatch this local isolation contract to a remote builder.
-				# The runner refuses an unsandboxed build, so no `--option
-				# sandbox`: Nix ignores it, with a warning, for untrusted users.
-				# `--impure` reads the snapshot and runner paths; an empty search
-				# path keeps NIX_PATH out, and Nix's warnings about its entries.
-				argv = ["nix", "build"]
-					.concat(link)
-					.append("--print-out-paths")
-					.concat(if (shown.print_build_logs) ["--print-build-logs"] else [])
-					.concat(read_only)
-					.concat(["--builders", "", "--nix-path", "", "--impure", label])
 				{
 					description: "build ${name}",
 					stage: "build ${name}",
 					names: builds.map(|b| b.environment),
 					builds,
-					argv,
+					needs: [],
+					needs_build: [],
+					argv: build(link, shown.print_build_logs, label),
 					output: Artifact({ name, label, output: built.output }),
 					secrets: [],
 					removed_environment_variables: [],
@@ -213,6 +262,7 @@ NixBackend :: [].{
 			project,
 			selected.names,
 			selected.builds,
+			selected.needs,
 			layout.workspace,
 			Some({ inputs, layout }),
 			remaining,
@@ -221,6 +271,7 @@ NixBackend :: [].{
 		Ok({
 			inputs,
 			reads: read_inputs(project, selected.names, selected.builds),
+			needs_build: selected.needs_build,
 			argv: selected.argv,
 			secrets: selected.secrets,
 			removed_environment_variables: selected.removed_environment_variables,
@@ -254,38 +305,42 @@ NixBackend :: [].{
 	}
 
 	## Every step rechecks the local pins it reads, including after
-	## source-editing tasks, then writes its files and runs. Every build
-	## snapshots afresh and installs Kai as its runner.
+	## source-editing tasks, then writes its files and runs. Every build, and
+	## every task with Needs, snapshots afresh and installs Kai as its runner.
 	materialize : Prepared, Layout, Locks.Derived -> List(Plan.Step)
 	materialize = |selected, layout, derived| {
 		{ inputs, reads, argv, contents, description, output, secrets, .. } = selected
+		needs_build = selected.needs_build
 		removed_environment_variables = selected.removed_environment_variables
-		sandbox = match output {
-			Artifact(_) => {
-				local = inputs.keep_if(|i| i.ref.starts_with("path:"))
-					.map(|i| "${layout.project_root}/${Locks.local_path(i)}")
-				exclude = [
-					".git",
-					".hg",
-					".svn",
-					".jj",
-					layout.workspace,
-					layout.generated_root,
-					layout.lock_path,
-				]
-					.concat(local)
-				[
-					Snapshot({
-						root: layout.project_root,
-						destination: "${layout.workspace}/snapshot",
-						exclude,
-						files: selected.snapshot_files,
-						store: "/nix/store",
-					}),
-					InstallRunner({ destination: runner_path(layout.workspace) }),
-				]
-			}
-			Inherit | Quiet => []
+		builds = match output {
+			Artifact(_) => Bool.True
+			Inherit | Quiet => !needs_build.is_empty()
+		}
+		sandbox = if builds {
+			local = inputs.keep_if(|i| i.ref.starts_with("path:"))
+				.map(|i| "${layout.project_root}/${Locks.local_path(i)}")
+			exclude = [
+				".git",
+				".hg",
+				".svn",
+				".jj",
+				layout.workspace,
+				layout.generated_root,
+				layout.lock_path,
+			]
+				.concat(local)
+			[
+				Snapshot({
+					root: layout.project_root,
+					destination: "${layout.workspace}/snapshot",
+					exclude,
+					files: selected.snapshot_files,
+					store: "/nix/store",
+				}),
+				InstallRunner({ destination: runner_path(layout.workspace) }),
+			]
+		} else {
+			[]
 		}
 		files = staged_files(layout, contents)
 			.append({
@@ -302,10 +357,11 @@ NixBackend :: [].{
 				},
 		)
 		checks.concat(sandbox)
-			.concat([
-				Write(files),
+			.append(Write(files))
+			.concat(needs_build)
+			.append(
 				Run({ description, argv, output, secrets, removed_environment_variables }),
-			])
+			)
 	}
 
 	## The inputs a request reads: its environments' sources and overlays, its
@@ -358,6 +414,7 @@ NixBackend :: [].{
 			project,
 			names,
 			project.builds,
+			[],
 			layout.workspace,
 			Some({ inputs, layout }),
 			Unlimited,
@@ -439,7 +496,7 @@ NixBackend :: [].{
 		names = project.shells.map(|s| s.environment)
 			.concat(project.tasks.map(|t| t.environment))
 			.concat(project.builds.map(|b| b.environment))
-		render_selected(project, names, project.builds, "", None, Unlimited)
+		render_selected(project, names, project.builds, [], "", None, Unlimited)
 	}
 
 	## A Shell/Run consumer selects one environment before staging any effects.
@@ -453,7 +510,7 @@ NixBackend :: [].{
 
 	render_closure : Model, List(Str) -> Try(Str, Str)
 	render_closure = |model, names|
-		render_selected(model, names, [], "", None, Unlimited)
+		render_selected(model, names, [], [], "", None, Unlimited)
 
 	## Charge exact emitted UTF-8 bytes before retaining a renderer chunk.
 	## Unlimited keeps standalone/inspection rendering on this same code path.
@@ -479,16 +536,18 @@ NixBackend :: [].{
 
 	## Inspection and executable plans share one renderer. Plans supply the full
 	## stable input set and explicit workspace; inspection never guesses one.
+	## A task's `needs` render as kaiArtifacts, a farm of those builds.
 	render_selected : Model,
 	List(Str),
 	List(Model.Build),
+	List(Str),
 	Str,
 	[
 		None,
 		Some({ inputs : List(Locks.Input), layout : Layout }),
 	],
 	RenderBudget -> Try(Str, Str)
-	render_selected = |model, names, builds, workspace, staging, budget| {
+	render_selected = |model, names, builds, needs, workspace, staging, budget| {
 		missing = model.unsupported_features(features)
 		if !missing.is_empty() {
 			return Err("unsupported features: ${Str.join_with(missing, ", ")}")
@@ -648,6 +707,27 @@ NixBackend :: [].{
 				$rendered = append_rendered(
 					$rendered,
 					"        }; in artifacts;\n",
+				)?
+			}
+			$rendered = append_rendered($rendered, "      };\n")?
+		}
+		if !needs.is_empty() {
+			build = builds.first().map_err(|_| "unknown build")?
+			env = environments.find_first(|e| e.name == build.environment)
+				.map_err(|_| "unknown build environment")?
+			source = quote(source_names(env).first() ?? "default")
+			$rendered = append_rendered($rendered, "      kaiArtifacts = {\n")?
+			for system in model.systems {
+				entries = needs.map(
+					|name|
+						"{ name = ${quote(name)}; "
+							.concat("path = self.packages.${quote(system)}.${quote(name)}; }"),
+				)
+				$rendered = append_rendered(
+					$rendered,
+					"        ${quote(system)} = (import inputs.${source} "
+						.concat("{ system = ${quote(system)}; }).linkFarm \"kai-artifacts\" ")
+						.concat("[ ${Str.join_with(entries, " ")} ];\n"),
 				)?
 			}
 			$rendered = append_rendered($rendered, "      };\n")?
@@ -880,7 +960,7 @@ NixBackend :: [].{
 		check_attr_names(
 			"the raw flake outputs",
 			$flake_raw.map(|a| a.name),
-			["devShells", "packages"],
+			["devShells", "packages", "kaiArtifacts"],
 		)?
 		for shell in model.shells {
 			extra = $shell_raw.keep_if(|x| x.shell == shell.name)
@@ -1043,6 +1123,7 @@ full_model = {
 			run: ["jq", "--version"],
 			env: [],
 			secrets: [],
+			needs: [],
 		},
 	],
 	raw: [
@@ -1184,6 +1265,7 @@ expect match NixBackend.render(
 				run: ["git", "--version"],
 				env: [],
 				secrets: [],
+				needs: [],
 			},
 		],
 	}),
@@ -1958,6 +2040,7 @@ expect {
 					run: ["true"],
 					env: [],
 					secrets: [],
+					needs: [],
 				},
 			],
 		}),
@@ -2392,6 +2475,7 @@ expect {
 			run: ["python"],
 			env: [],
 			secrets: [],
+			needs: [],
 		}),
 		workflows: TestData.workflow_data.workflows.concat([
 			{
@@ -2637,6 +2721,7 @@ expect {
 					run: ["x"],
 					env: [],
 					secrets: [],
+					needs: [],
 				},
 			],
 		},

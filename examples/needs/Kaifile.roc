@@ -1,5 +1,6 @@
 # A build can read other builds' artifacts: loud Needs moo, so kai builds moo
-# first and loud reads it from $KAI_ARTIFACTS. `kai build loud`.
+# first and loud reads it from $KAI_ARTIFACTS. `kai build loud`. A task can
+# too: `kai run shout` builds loud, then prints it.
 app [kaifile] {
 	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",
@@ -22,6 +23,14 @@ kaifile = Std.kaifile([
 			Needs(["moo"]),
 			Run(["sh", "-c", "tr a-z A-Z < \"$KAI_ARTIFACTS/moo\" > loud.txt"]),
 			Output("loud.txt"),
+		],
+	),
+	Task(
+		"shout",
+		[
+			Use("cow"),
+			Needs(["loud"]),
+			Run(["sh", "-c", "cat \"$KAI_ARTIFACTS/loud\""]),
 		],
 	),
 ])

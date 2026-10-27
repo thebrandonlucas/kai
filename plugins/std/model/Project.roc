@@ -387,6 +387,12 @@ Project :: [].{
 					return Err("invalid secret name in task ${task.name}")
 				}
 			}
+			check_names(task.needs, "BuildDependency")?
+			for need in task.needs {
+				if !model.builds.any(|b| b.name == need) {
+					return Err("unknown build: ${need}")
+				}
+			}
 		}
 		for build in model.builds {
 			if !$environments.any(|e| e.name == build.environment) {
@@ -618,10 +624,16 @@ Project :: [].{
 	## Validate the whole project before returning the requested closure. Each
 	## dependency appears once, before its consumers, in Needs declaration order.
 	build_closure : Model, Str -> Try(List(Model.Build), Str)
-	build_closure = |model, name| {
+	build_closure = |model, name| builds_closure(model, [name])
+
+	builds_closure : Model, List(Str) -> Try(List(Model.Build), Str)
+	builds_closure = |model, names| {
 		project = validate(model)?
-		done = visit_build(project.builds, name, [], [])?
-		Ok(done.map(|entry| entry.build))
+		var $done = []
+		for name in names {
+			$done = visit_build(project.builds, name, [], $done)?
+		}
+		Ok($done.map(|entry| entry.build))
 	}
 
 	## What a closure's shared snapshot holds: the files each build selects.
@@ -635,6 +647,16 @@ Project :: [].{
 					_ => All
 				},
 		)
+
+	## The variable that gives a task with Needs its artifacts directory, one
+	## entry per needed build, under the workspace.
+	artifacts_variable : Model.Task, Str -> List(Model.Variable)
+	artifacts_variable = |task, workspace|
+		if task.needs.is_empty() {
+			[]
+		} else {
+			[{ name: "KAI_ARTIFACTS", value: "${workspace}/artifacts-${task.name}" }]
+		}
 
 	## Memoized DAG traversal avoids exponential diamond expansion. Height is
 	## retained so memo hits cannot hide a path exceeding the 128-level bound.
@@ -1332,6 +1354,7 @@ workflow_features = |workflows, features| Model.{
 			run: ["cmd"],
 			env: [],
 			secrets: [],
+			needs: [],
 		},
 	],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
