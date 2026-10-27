@@ -158,6 +158,28 @@ GuixBackend :: [].{
 		\\                    port))))))
 		\\
 
+	## Run with `guix repl -q -- out-link.scm PATH` before `guix build
+	## --root=PATH`, which never replaces a link: removes PATH if it is a link
+	## into the store, as an earlier build leaves it, and refuses anything else.
+	out_link_script : Str
+	out_link_script =
+		\\(use-modules (guix store) (ice-9 match))
+		\\
+		\\(match (command-line)
+		\\  ((_ path)
+		\\   (let ((status (false-if-exception (lstat path))))
+		\\     (when status
+		\\       (if (and (eq? (stat:type status) 'symlink)
+		\\                (string-prefix? (string-append (%store-prefix) "/")
+		\\                                (readlink path)))
+		\\           (delete-file path)
+		\\           (begin
+		\\             (format (current-error-port)
+		\\                     "~a is not a link into ~a; not replacing it~%"
+		\\                     path (%store-prefix))
+		\\             (exit 1)))))))
+		\\
+
 	## The lock script's result: a 40-hex commit for each channel asked for.
 	pins : List(Channel), Str -> Try(List(Pin), Str)
 	pins = |channels, text| {
@@ -486,9 +508,27 @@ GuixBackend :: [].{
 		exclude = [".git", ".hg", ".svn", ".jj"]
 			.concat([workspace, layout.generated_root, layout.lock_path])
 			.concat(GuixBackend.source_trees(model).map(|t| "${root}/${t.path}"))
+		# `guix build --root` never replaces a link, so the link an earlier
+		# build left is removed first; anything else at the path is refused.
+		replace_out_link = match shown.out_link {
+			Ok(path) => {
+				script = "${dir}/out-link.scm"
+				[
+					Write([{ path: script, contents: GuixBackend.out_link_script }]),
+					Run({
+						description: "replace out-link ${path}",
+						argv: ["guix", "repl", "-q", "--", script, path],
+						output: Quiet,
+						secrets: [],
+						removed_environment_variables: [],
+					}),
+				]
+			}
+			Err(_) => []
+		}
 		Ok(
 			Steps.{
-				steps: $checks.concat([
+				steps: $checks.concat(replace_out_link).concat([
 					Snapshot({
 						root: layout.project_root,
 						destination: "${workspace}/snapshot",
