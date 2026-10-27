@@ -130,7 +130,7 @@ Std := [].{
 				Pages.build,
 				[
 					Name({
-						name: "name",
+						name: "build",
 						help: "The build to run.",
 						choices: model.builds.map(
 							|b| choice(b.name, "Output ${b.output} [${b.environment}]"),
@@ -155,7 +155,7 @@ Std := [].{
 				Pages.workflow,
 				[
 					Name({
-						name: "name",
+						name: "workflow",
 						help: "The workflow to run.",
 						choices: model.workflows.map(
 							|w| choice(w.name, Str.join_with(w.steps.map(Std.step_text), ", ")),
@@ -206,9 +206,9 @@ Std := [].{
 					print_build_logs: Command.flag(args, "print-build-logs"),
 					out_link: Command.path(args, "out-link"),
 				}
-				Ok(Request.Build(Command.name(args, "name"), shown))
+				Ok(Request.Build(Command.name(args, "build"), shown))
 			}
-			"workflow" => Ok(Request.Workflow(Command.name(args, "name")))
+			"workflow" => Ok(Request.Workflow(Command.name(args, "workflow")))
 			_ => Err("std has no ${command} request")
 		}
 
@@ -597,8 +597,8 @@ planned = |command, ctx| {
 	(found.plan)(ctx)
 }
 
-named : Str -> Command.Args
-named = |name| [{ name: "name", value: Present(name) }]
+named : Str, Str -> Command.Args
+named = |argument, name| [{ name: argument, value: Present(name) }]
 
 in_shell : Str -> Command.Args
 in_shell = |name| [{ name: "shell", value: Present(name) }]
@@ -720,21 +720,21 @@ expect {
 
 # A Nix build builds its package; an unknown build is refused.
 expect {
-	build = { ..context, args: named("app"), lock: nix_lock }
+	build = { ..context, args: named("build", "app"), lock: nix_lock }
 	match runs(planned("build", build)) {
 		Ok([{ description, argv }]) =>
 			description == "build app"
 				and argv.last() == Ok("path:/generated/nix#packages.x86_64-linux.app")
-				and planned("build", { ..build, args: named("missing") }).is_err()
+				and planned("build", { ..build, args: named("build", "missing") }).is_err()
 		_ => Bool.False
 	}
 }
 
 # A Nix workflow stages each step in order.
 expect {
-	ci = { ..context, args: named("ci"), lock: nix_lock }
+	ci = { ..context, args: named("workflow", "ci"), lock: nix_lock }
 	stages(planned("workflow", ci)) == Ok(["run greet", "build app"])
-		and planned("workflow", { ..ci, args: named("missing") }).is_err()
+		and planned("workflow", { ..ci, args: named("workflow", "missing") }).is_err()
 }
 
 # A Guix shell runs guix shell at the locked channels; without the Guix
@@ -765,7 +765,7 @@ expect {
 
 # A Guix build builds its generated file at the locked channels.
 expect {
-	build = { ..guix, args: named("app"), lock: guix_lock }
+	build = { ..guix, args: named("build", "app"), lock: guix_lock }
 	scm = "/generated/guix/build-app.scm"
 	argv = time_machine.concat(["--", "build", "-f", scm])
 	runs(planned("build", build)) == Ok([{ description: "build app", argv }])
@@ -773,7 +773,7 @@ expect {
 
 # A Guix workflow stages each step in order.
 expect {
-	ci = { ..guix, args: named("ci"), lock: guix_lock }
+	ci = { ..guix, args: named("workflow", "ci"), lock: guix_lock }
 	stages(planned("workflow", ci)) == Ok(["run greet", "build app"])
 }
 
