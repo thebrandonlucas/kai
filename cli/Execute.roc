@@ -214,24 +214,44 @@ Execute := [].{
 		Execute.steps!(plan, layout, mode, workflow, options)
 	}
 
-	# A directory in the workspace is the build lock. Each build holds it
-	# from its snapshot through its build command, so builds take turns while
-	# the tasks around them, which may run kai build themselves, do not wait.
+	# A symbolic link in the workspace naming its holder's process ID is the
+	# build lock, created atomically with its holder. Each build holds it from
+	# its snapshot through its build command, so builds take turns while the
+	# tasks around them, which may run kai build themselves, do not wait. A
+	# lock whose holder is no longer running is taken over.
 	hold! : Str, Output.Mode => Try({}, _)
 	hold! = |guard, mode| {
-		var $noted = Bool.False
+		process = Execute.shell!("echo $PPID", [])?.stdout
+		var $noted = ""
 		var $held = Bool.False
 		while !$held {
-			match Workspace.path(guard).create_dir!() {
+			match Path.symlink!(Workspace.path(process), Workspace.path(guard), File) {
 				Ok({}) => {
 					$held = Bool.True
 				}
 				Err(PathErr(AlreadyExists, _)) => {
-					if !$noted {
-						message = "waiting for another kai build to release ${guard}; "
-							.concat("if none is running, it is safe to remove that directory")
+					holder = match Workspace.path(guard).read_link!() {
+						Ok(target) => target.to_str() ?? ""
+						Err(PathErr(NotFound, _)) => "released"
+						Err(_) => ""
+					}
+					numeric = holder.to_utf8().all(|byte| byte >= '0' and byte <= '9')
+					message =
+						if holder == "released" {
+							""
+						} else if holder.is_empty() or !numeric {
+							"waiting for another kai build to release ${guard}; "
+								.concat("if none is running, it is safe to remove it")
+						} else if Execute.shell!("kill -0 \"$1\"", [holder])?.succeeded {
+							"waiting for kai process ${holder} to release ${guard}"
+						} else if Execute.take_over!(guard, holder)? {
+							"took over a build lock left by a process that is no longer running"
+						} else {
+							""
+						}
+					if !message.is_empty() and message != $noted {
 						Output.note!(mode, "kai: ${message}", Output.event("note", message, []))?
-						$noted = Bool.True
+						$noted = message
 					}
 					Sleep.millis!(200)?
 				}
@@ -239,6 +259,35 @@ Execute := [].{
 			}
 		}
 		Ok({})
+	}
+
+	# Remove the lock a stopped process left, unless another kai took it over
+	# first: the directory named after that process lets one kai do so.
+	take_over! : Str, Str => Try(Bool, _)
+	take_over! = |guard, holder| {
+		marker = Workspace.path("${guard}.${holder}")
+		match marker.create_dir!() {
+			Ok({}) => {
+				current = Workspace.path(guard).read_link!()
+				stale = current.map_ok(|target| target.to_str() ?? "") == Ok(holder)
+				if stale {
+					_ = Workspace.path(guard).delete!()
+				}
+				_ = marker.delete_empty!()
+				Ok(stale)
+			}
+			Err(PathErr(AlreadyExists, _)) => Ok(Bool.False)
+			Err(err) => Err(err)
+		}
+	}
+
+	# A shell script's trimmed stdout and whether it succeeded.
+	shell! = |script, args| {
+		ran = Cmd.new(OsStr.from_str("sh"))
+			.args(["-c", script, "sh"].concat(args).map(OsStr.from_str))
+			.run!()?
+		stdout = Str.from_utf8_lossy(ran.stdout_bytes).trim()
+		Ok({ stdout, succeeded: ran.status == Exited(0) })
 	}
 
 	steps! : Plan, Layout, Output.Mode, Str, Options => Try({}, _)
@@ -274,7 +323,7 @@ Execute := [].{
 					}
 					result = Execute.step!(step, layout, mode, options)
 					if $holding and (builds or result.is_err()) {
-						_ = Workspace.path(guard).delete_empty!()
+						_ = Workspace.path(guard).delete!()
 						$holding = Bool.False
 					}
 					result?
