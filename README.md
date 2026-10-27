@@ -100,8 +100,12 @@ plain identifier), or Guix specifications. Tasks run their argv exactly,
 without a shell, so use `Run(["sh", "-c", "...", "sh"])` for pipes: `sh -c`
 takes the argument after its script as `$0`, so the `"sh"` placeholder lets
 arguments after `--` reach the script as `$1`, `$2`, ... and `"$@"`. In Roc
-strings, multiline ones included, `${name}` is Roc interpolation, so a script
-writes `$NAME`, or `\${NAME}` where the shell needs braces. Every command has
+strings, multiline ones included, `${name}` is Roc interpolation, as is any
+`${...}` such as `${name%.txt}`, so a script writes `$NAME`, or `\${NAME}`
+where the shell needs braces. A backslash starts a Roc escape (`\\`, `\"`,
+`\'`, `\$`, `\n`, `\r`, `\t`, `\u(41)`), so others, such as sed's `\(x\)` and
+`\1`, are an "invalid escape sequence": write `\\(x\\)`, `\\1`, and `\\` for a
+trailing line continuation. Every command has
 help with examples, e.g. `kai run --help`; inside a project, help lists its
 shells, tasks, builds and workflows.
 `kai build -L` (`--print-build-logs`) shows the build's log as it runs, and
@@ -151,7 +155,11 @@ store. A Nix build's sources that are Roc package bundles, such as
 `tarball+https://…/<hash>.tar.zst`, are in its Roc package cache, so Roc
 resolves those package URLs offline. The sandbox has no `/usr/bin/env`, so
 run scripts as `sh script` or through an interpreter's path rather than
-relying on a `#!/usr/bin/env` line.
+relying on a `#!/usr/bin/env` line. An artifact that embeds paths to its
+inputs, such as Rust panic locations in `$KAI_INPUTS/<name>`, keeps those
+inputs alive in its closure; remap them, e.g. with Rust's
+`--remap-path-prefix=$KAI_INPUTS/<name>=/<name>`, and check the closure with
+`nix path-info -rS <path>`.
 
 Use a task for work that touches the project or the outside world, such as
 running tests, formatting or deploying. Use a build for an artifact that should
