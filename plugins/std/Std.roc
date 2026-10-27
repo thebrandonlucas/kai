@@ -234,7 +234,8 @@ Std := [].{
 						GuixBackend.check_system(ctx.host.system)?
 						wanted = Std.request(command, ctx.args)?
 						locked = Std.guix_pins(ctx)?
-						GuixBackend.request_steps(model, wanted, ctx.layout, locked)
+						revised = Std.revised(model, ctx)
+						GuixBackend.request_steps(revised, wanted, ctx.layout, locked)
 							.map_err(|message| "cannot plan the Guix ${command}: ${message}")
 					},
 				},
@@ -246,7 +247,7 @@ Std := [].{
 					command: "update",
 					backend: On("nix"),
 					fit: |_| Std.lockable(model),
-					plan: |ctx| Std.update_nix(model, ctx),
+					plan: |ctx| Std.update_nix(Std.revised(model, ctx), ctx),
 				},
 				Implementation.{
 					command: "update",
@@ -291,7 +292,8 @@ Std := [].{
 
 	## Nix plans read the lock authority; its absence is a planning failure.
 	plan_nix : Model, Request, Implementation.Context -> Try(Plan, Str)
-	plan_nix = |model, wanted, ctx| {
+	plan_nix = |declared, wanted, ctx| {
+		model = Std.revised(declared, ctx)
 		layout = Std.nix_layout(ctx.layout)
 		path = ctx.layout.lock_path
 		unreadable = |why|
@@ -347,6 +349,38 @@ Std := [].{
 				other => other
 			}
 		Ok(Plan.{ steps: planned.steps.map(named), next: planned.next })
+	}
+
+	## A build declaring Revision receives the project's revision in its
+	## environment, over its own Env.
+	revised : Model, Implementation.Context -> Model
+	revised = |model, ctx| {
+		revision = [
+			{ name: "KAI_REVISION", value: ctx.revision.describe },
+			{ name: "KAI_COMMIT_DATE", value: ctx.revision.commit_date },
+		]
+		stamp = |build|
+			if build.revision {
+				{ ..build, env: Project.merge_env(build.env, revision) }
+			} else {
+				build
+			}
+		Model.{
+			format: model.format,
+			name: model.name,
+			requires_: model.requires_,
+			systems: model.systems,
+			sources: model.sources,
+			inputs: model.inputs,
+			environments: model.environments,
+			shells: model.shells,
+			tasks: model.tasks,
+			build_sources: model.build_sources,
+			builds: model.builds.map(stamp),
+			workflows: model.workflows,
+			extensions: model.extensions,
+			raw: model.raw,
+		}
 	}
 
 	## Nix's generated files live in their own directory beneath kai's
@@ -579,6 +613,7 @@ context = {
 		generated_root: "/generated",
 		lock_path: "/authority/inputs.lock",
 	},
+	revision: { describe: "", commit_date: "" },
 	lock: Absent,
 	phase: 0,
 	observed: [],
@@ -799,6 +834,7 @@ expect {
 			generated_root: "/p/.kai/generated",
 			lock_path: "/p/.kai/lock.json",
 		},
+		revision: { describe: "", commit_date: "" },
 		lock: Absent,
 		phase: 0,
 		observed: [],

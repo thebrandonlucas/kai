@@ -19,6 +19,7 @@ Implementation := {
 		backend : Str,
 		host : { system : Str },
 		layout : Layout,
+		revision : { describe : Str, commit_date : Str },
 		lock : [Absent, Present(Str)],
 		phase : U64,
 		observed : List({ path : Str, contents : [Missing, Text(Str)] }),

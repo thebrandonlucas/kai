@@ -897,6 +897,7 @@ expect {
 		output: "out",
 		files: All,
 		env: [],
+		revision: Bool.False,
 	}
 	model = {
 		..fixture([env("dev", ["hello"])]),

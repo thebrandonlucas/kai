@@ -125,7 +125,7 @@ garbage collection.
 | `Shell(name, [Use(environment)])` | A shell for `kai shell`. |
 | `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. Optionally `Secrets([...])`: the names of the variables it receives when it runs, `OptionalEnvironmentVariables([...])`: those it receives from kai's environment only when set there, and `Needs([...])`: builds kai builds first, in `$KAI_ARTIFACTS/<name>`. |
 | `Source(name, flakeRef)` | A locked, non-flake source that builds can read. |
-| `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, in `$KAI_INPUTS/<name>`) and `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`). |
+| `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, in `$KAI_INPUTS/<name>`), `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`) and `Revision` (the project's revision, below). |
 | `Workflow(name, [...])` | Steps for `kai workflow`: `RunTask(task, args)`, `BuildArtifact(build)`, `RunWorkflow(workflow)`. |
 | `Raw("nix", target, value)` | Extra attributes for the generated flake (`"flake"`) or one shell (`"shell:<name>"`), e.g. `Attrs([("shellHook", Str("echo hi"))])`. |
 
@@ -162,6 +162,13 @@ inputs, such as Rust panic locations in `$KAI_INPUTS/<name>`, keeps those
 inputs alive in its closure; remap them, e.g. with Rust's
 `--remap-path-prefix=$KAI_INPUTS/<name>=/<name>`, and check the closure with
 `nix path-info -rS <path>`.
+
+The sandbox has no `.git` either, so a build that stamps a version declares
+`Revision`: it gets `KAI_REVISION`, the project's
+`git describe --tags --always --dirty` (such as `v0.2.0-3-gabc1234`), and
+`KAI_COMMIT_DATE`, the date of its last commit (`YYYY-MM-DD`), both empty
+outside git or when git is not installed. Its inputs then change with every
+commit, which is why it is opt-in.
 
 Use a task for work that touches the project or the outside world, such as
 running tests, formatting or deploying. Use a build for an artifact that should

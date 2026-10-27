@@ -30,6 +30,7 @@ TestData :: [].{
 		output: "dist/library",
 		files: All,
 		env: [],
+		revision: Bool.False,
 	}
 
 	application : Model.Build
@@ -40,6 +41,7 @@ TestData :: [].{
 		output: "dist/app",
 		files: All,
 		env: [],
+		revision: Bool.False,
 		run: ["python3", "build.py", "", "two words", "line\nbreak", "$HOME"],
 	}
 

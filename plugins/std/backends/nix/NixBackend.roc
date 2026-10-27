@@ -28,6 +28,7 @@ NixBackend :: [].{
 		"secrets",
 		"task_needs",
 		"optional_environment_variables",
+		"revision",
 	]
 
 	default_nixpkgs : Str

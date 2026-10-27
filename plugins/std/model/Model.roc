@@ -49,6 +49,7 @@ Model := {
 			output : Str,
 			files : [All, Only(List(Str))],
 			env : List({ name : Str, value : Str }),
+			revision : Bool,
 		},
 	),
 	workflows : List(
@@ -106,6 +107,7 @@ Model := {
 
 	## Run is exact argv. Output is a relative file or directory path; dependencies
 	## expose only that artifact, separately from the writable project snapshot.
+	## A revision build receives the project's revision in its environment.
 	Build : {
 		name : Str,
 		environment : Str,
@@ -115,6 +117,7 @@ Model := {
 		output : Str,
 		files : [All, Only(List(Str))],
 		env : List(Variable),
+		revision : Bool,
 	}
 
 	## Ordered declarations, not command strings or executor recipes.

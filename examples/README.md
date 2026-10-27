@@ -25,6 +25,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [env](env) | Environment variables, and a task overriding its `Environment`'s | `kai run shout` |
 | [build](build) | A sandboxed build and its output | `kai build wisecow` |
 | [needs](needs) | A build, and a task, reading another build's artifact | `kai build loud` |
+| [revision](revision) | A build stamped with the project's git revision | `kai build version` |
 | [source-build](source-build) | A build reading a locked source | `kai build moofasa` |
 | [path-source](path-source) | A build reading a locked project directory | `kai build kai` |
 | [workflow](workflow) | Tasks, builds and workflows run in order | `kai workflow encore` |

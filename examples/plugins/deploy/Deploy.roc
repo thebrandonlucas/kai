@@ -169,6 +169,7 @@ context = {
 		generated_root: "/generated",
 		lock_path: "/authority/inputs.lock",
 	},
+	revision: { describe: "", commit_date: "" },
 	lock: Absent,
 	phase: 0,
 	observed: [],

@@ -74,6 +74,9 @@ Config :: [].{
 	## locked non-flake Sources; Needs selects build artifacts, not task names.
 	## Sources and artifacts remain separate read-only inputs, never merged.
 	## Files limits the project copy to the given project-relative paths.
+	## Revision sets KAI_REVISION, the project's `git describe --tags --always
+	## --dirty`, and KAI_COMMIT_DATE, its last commit's date, both empty outside
+	## git. It is opt-in, since the build then changes with every commit.
 	BuildSetting : [
 		Use(EnvName),
 		Inputs(List(InputName)),
@@ -82,5 +85,6 @@ Config :: [].{
 		Output(Str),
 		Files(List(Str)),
 		Env(List((Str, Str))),
+		Revision,
 	]
 }

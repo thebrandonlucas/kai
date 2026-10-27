@@ -295,6 +295,7 @@ context = |backend| {
 		generated_root: "/p/.kai/generated",
 		lock_path: "/p/.kai/lock.json",
 	},
+	revision: { describe: "", commit_date: "" },
 	lock: Absent,
 	phase: 0,
 	observed: [],

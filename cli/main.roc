@@ -199,10 +199,25 @@ ask! = |{ project, layout, shown, style }, resume| {
 		style,
 		host: { system },
 		layout,
+		revision: revision!(layout.project_root),
 		lock,
 		resume,
 	}
 	Load.ask!(project, request)
+}
+
+# The project's revision, for builds that stamp it; empty outside git or
+# when git is not installed.
+revision! : Str => { describe : Str, commit_date : Str }
+revision! = |root| {
+	git! = |args|
+		Cmd.new("git").args(args).cwd(Workspace.path(root)).stderr(Null).capture!()
+			.map_ok(Str.trim)
+			?? ""
+	{
+		describe: git!(["describe", "--tags", "--always", "--dirty"]),
+		commit_date: git!(["log", "-1", "--format=%cs"]),
+	}
 }
 
 # Help without a Kaifile to ask is kai's generic help.

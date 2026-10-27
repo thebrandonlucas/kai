@@ -80,6 +80,7 @@ ConfigToModel :: [].{
 						["optional_environment_variables"],
 				)
 				.concat(if (acc.tasks.all(|t| t.needs.is_empty())) [] else ["task_needs"])
+				.concat(if (acc.builds.any(|b| b.revision)) ["revision"] else [])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -321,6 +322,7 @@ ConfigToModel :: [].{
 				outputs: [],
 				files: [],
 				envs: [],
+				revisions: 0.U64,
 			},
 			|acc, setting|
 				match setting {
@@ -337,6 +339,7 @@ ConfigToModel :: [].{
 					Output(path) => { ..acc, outputs: acc.outputs.append(path) }
 					Files(paths) => { ..acc, files: acc.files.append(paths) }
 					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
+					Revision => { ..acc, revisions: acc.revisions + 1 }
 				},
 		)
 		environment_name = match draft.environments {
@@ -360,6 +363,9 @@ ConfigToModel :: [].{
 		if draft.needs.len() > 1 {
 			return Err("DuplicateNeeds: build ${name}")
 		}
+		if draft.revisions > 1 {
+			return Err("DuplicateRevision: build ${name}")
+		}
 		files = match draft.files {
 			[] => All
 			[one] => Only(one)
@@ -374,6 +380,7 @@ ConfigToModel :: [].{
 			output,
 			files,
 			env: single_env(draft.envs, "build ${name}")?,
+			revision: draft.revisions == 1,
 		})
 	}
 

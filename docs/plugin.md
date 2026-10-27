@@ -116,8 +116,9 @@ whose backend program works. A plan that fails is reported; kai never
 falls back to another backend after choosing one.
 
 `ctx` holds the parsed `args`, the chosen `backend`, the `host` system,
-the `layout` of the project and its `.kai` workspace, the `lock` text,
-and, for continued plans, `phase` and the `observed` files.
+the `layout` of the project and its `.kai` workspace, the project's git
+`revision` (`describe` and `commit_date`, empty outside git), the `lock`
+text, and, for continued plans, `phase` and the `observed` files.
 
 ## Plans
 

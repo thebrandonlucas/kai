@@ -1058,6 +1058,7 @@ library = {
 	output: "dist/library",
 	files: All,
 	env: [],
+	revision: Bool.False,
 }
 
 application : Model.Build
