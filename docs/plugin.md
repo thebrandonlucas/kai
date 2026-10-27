@@ -86,7 +86,7 @@ Arguments are data; the platform builds kai's parser and help from them.
 A command takes at most one `Name` (a project entry; each choice becomes a
 subcommand, so help and usage errors list the project's names; no choices
 means any name) and at most one `Trailing` (everything after `--`,
-exact), and any `Flag` (`--name`, or `-short`) and `Path` (`--name PATH`,
+exact; with choices, only the project's names), and any `Flag` (`--name`, or `-short`) and `Path` (`--name PATH`,
 made absolute against the directory kai runs in), given anywhere before
 `--`. `Command.name(args, "host")`, `Command.trailing(args, "args")`,
 `Command.flag(args, "name")` and `Command.path(args, "name")` read the

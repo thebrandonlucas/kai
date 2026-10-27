@@ -41,11 +41,15 @@ Argv := [].{
 		top = |config| WeaverHelp.help_text(config, ["kai"], style)
 		match parsed {
 			Ok({ file, no_color, json, backend, yes, dry_run, command: (name, args) }) =>
-				Ok({
-					globals: { file, no_color, json, backend, yes, dry_run },
-					command: name,
-					args,
-				})
+				Argv.check_choices(commands, name, args)
+					.map_err(|why| Usage(why))
+					.map_ok(
+						|{}| {
+							globals: { file, no_color, json, backend, yes, dry_run },
+							command: name,
+							args,
+						},
+					)
 			# kai's own help lists each command's summary; a command's page
 			# teaches it.
 			Err(Help(message)) =>
@@ -59,6 +63,30 @@ Argv := [].{
 			Err(Version(message)) => Err(Help(message))
 			Err(InvalidUsage(message)) => Err(Usage(Argv.usage(commands, message)))
 		}
+	}
+
+	## Words outside a `Trailing`'s choices, like a name outside a `Name`'s.
+	check_choices : List(Command), Str, Command.Args -> Try({}, Str)
+	check_choices = |commands, name, args| {
+		for command in commands.keep_if(|c| c.name == name) {
+			for arg in command.args {
+				match arg {
+					Trailing(t) if !t.choices.is_empty() => {
+						values = t.choices.map(|c| c.value)
+						words = Command.trailing(args, t.name)
+						unknown = words.drop_if(|word| values.contains(word))
+						if !unknown.is_empty() {
+							return Err(
+								"kai ${name}: unknown ${Str.join_with(unknown, ", ")}; "
+									.concat("the ${t.name} are ${Str.join_with(values, ", ")}"),
+							)
+						}
+					}
+					_ => {}
+				}
+			}
+		}
+		Ok({})
 	}
 
 	cli = |root, commands, style, directory|
@@ -417,7 +445,7 @@ toy = [
 				choices: choices(["default", "ci"]),
 				default: Default("default"),
 			}),
-			Trailing({ name: "command", help: "" }),
+			Trailing({ name: "command", help: "", choices: [] }),
 		],
 		lock: ReadsLock,
 	},
@@ -432,7 +460,7 @@ toy = [
 				choices: choices(["args"]),
 				default: Required,
 			}),
-			Trailing({ name: "args", help: "" }),
+			Trailing({ name: "args", help: "", choices: [] }),
 		],
 		lock: ReadsLock,
 	},

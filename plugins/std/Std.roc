@@ -100,6 +100,7 @@ Std := [].{
 					Trailing({
 						name: "command",
 						help: "A command to run inside the shell; put it after --.",
+						choices: [],
 					}),
 				],
 				ReadsLock,
@@ -119,6 +120,7 @@ Std := [].{
 					Trailing({
 						name: "args",
 						help: "Arguments appended to the task's command; put them after --.",
+						choices: [],
 					}),
 				],
 				ReadsLock,
@@ -166,7 +168,15 @@ Std := [].{
 			command(
 				"update",
 				Pages.update,
-				[Trailing({ name: "inputs", help: "Inputs to update (default: all)." })],
+				[
+					Trailing({
+						name: "inputs",
+						help: "Inputs to update (default: all).",
+						choices: (Locks.inputs(model) ?? []).map(
+							|input| choice(input.name, input.ref),
+						),
+					}),
+				],
 				OwnsLock,
 			),
 			command("model", Pages.model, [], ReadsLock),

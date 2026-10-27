@@ -178,12 +178,14 @@ NixBackend :: [].{
 				# Never dispatch this local isolation contract to a remote builder.
 				# The runner refuses an unsandboxed build, so no `--option
 				# sandbox`: Nix ignores it, with a warning, for untrusted users.
+				# `--impure` reads the snapshot and runner paths; an empty search
+				# path keeps NIX_PATH out, and Nix's warnings about its entries.
 				argv = ["nix", "build"]
 					.concat(link)
 					.append("--print-out-paths")
 					.concat(if (shown.print_build_logs) ["--print-build-logs"] else [])
 					.concat(read_only)
-					.concat(["--builders", "", "--impure", label])
+					.concat(["--builders", "", "--nix-path", "", "--impure", label])
 				{
 					description: "build ${name}",
 					stage: "build ${name}",
@@ -1492,6 +1494,8 @@ expect match single(Request.build("app")) {
 		"--no-update-lock-file",
 		"--no-write-lock-file",
 		"--builders",
+		"",
+		"--nix-path",
 		"",
 		"--impure",
 		"path:/generated#packages.x86_64-linux.app",

@@ -455,6 +455,9 @@ Execute := [].{
 					Absent => Absent
 				}
 				Update.publish!(layout.lock_path, prior, contents)?
+				if previous == Present(contents) {
+					return Ok({})
+				}
 				updated = "updated ${layout.lock_path}"
 				fields = [("lock", Output.text(layout.lock_path))]
 				Output.result!(mode, updated, Output.event("update", updated, fields))
