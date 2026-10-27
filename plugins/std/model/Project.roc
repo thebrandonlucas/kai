@@ -467,6 +467,25 @@ Project :: [].{
 				return Err("invalid input reference: ${input.name}")
 			}
 		}
+		if !model.follows.is_empty() and !model.requires_.contains("follows") {
+			return Err("Follows require feature: follows")
+		}
+		var $followed = []
+		for follows in model.follows {
+			{ overlay, input, source } = follows
+			if !model.inputs.any(|i| i.name == overlay and i.kind == Overlay) {
+				return Err("unknown overlay: ${overlay}")
+			}
+			if !valid_name(input) or $followed.contains((overlay, input)) {
+				return Err("invalid or duplicate Follows input of ${overlay}: ${input}")
+			}
+			$followed = $followed.append((overlay, input))
+			match sources.find_first(|s| s.name == source) {
+				Ok({ provider: GuixPackages(_), .. }) | Err(_) =>
+					return Err("Follows needs a Nix package source: ${source}")
+				Ok(_) => {}
+			}
+		}
 		var $environments = []
 		for env in model.environments {
 			check_env(env.env, "environment ${env.name}")?
@@ -597,6 +616,7 @@ Project :: [].{
 				systems: unique(model.systems),
 				sources,
 				inputs: model.inputs,
+				follows: model.follows,
 				environments: $environments,
 				shells: model.shells,
 				tasks: model.tasks,
@@ -1032,6 +1052,7 @@ fixture = |environments| Model.{
 		{ name: "second", url: "github:example/second", kind: Overlay },
 		{ name: "data", url: "github:example/data", kind: Flake },
 	],
+	follows: [],
 	environments,
 	shells: [],
 	tasks: [],
@@ -1266,6 +1287,7 @@ build_fixture = |builds| Model.{
 	systems: ["x86_64-linux"],
 	sources: [],
 	inputs: [],
+	follows: [],
 	environments: [
 		{
 			name: "builder",
@@ -1470,6 +1492,7 @@ build_source_fixture = |build_sources, requires_| {
 		systems: model.systems,
 		sources: model.sources,
 		inputs: model.inputs,
+		follows: model.follows,
 		environments: model.environments,
 		shells: model.shells,
 		tasks: model.tasks,
@@ -1612,6 +1635,7 @@ workflow_features = |workflows, features| Model.{
 	systems: ["x86_64-linux"],
 	sources: [],
 	inputs: [],
+	follows: [],
 	environments: [
 		{
 			name: "builder",

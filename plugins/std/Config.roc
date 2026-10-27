@@ -15,6 +15,9 @@ Config :: [].{
 	## "default" source is equivalent to `Packages("default", Auto)`.
 	## Overlay inputs apply only where an environment selects them.
 	## CargoVendor takes the text of a Cargo.lock and vendors its crates.
+	## `Follows(overlay, input, source)` makes the overlay's own flake input
+	## `input` the project's Nix package source `source`, so it is not locked
+	## separately.
 	## `Custom` and `Raw` retain consumer-specific extension data.
 	Setting : [
 		Name(Str),
@@ -22,6 +25,7 @@ Config :: [].{
 		Packages(InputName, PackageSource),
 		Input(InputName, FlakeRef),
 		Overlay(InputName, FlakeRef),
+		Follows(InputName, Str, InputName),
 		Environment(EnvName, List(EnvironmentSetting)),
 		Shell(EnvName, List(ShellSetting)),
 		Task(TaskName, List(TaskSetting)),

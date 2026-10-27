@@ -90,6 +90,21 @@ Locks := { identity : LockJson, graph : LockJson }.{
 	identity_for : Model -> Try(LockJson, Str)
 	identity_for = |model| {
 		declared = inputs(model)?
+		# An overlay's Follows are part of what its lock means; without any,
+		# the field is absent and the identity is unchanged.
+		follows_of = |name| {
+			pairs = model.follows.keep_if(|followed| followed.overlay == name).map(
+				|followed| {
+					name: followed.input,
+					value: LockJson.String(followed.source),
+				},
+			)
+			if pairs.is_empty() {
+				[]
+			} else {
+				[{ name: "follows", value: LockJson.Object(pairs) }]
+			}
+		}
 		Ok(
 			LockJson.Object([
 				{
@@ -98,11 +113,13 @@ Locks := { identity : LockJson, graph : LockJson }.{
 						declared.map(
 							|input| {
 								name: input.name,
-								value: LockJson.Object([
-									{ name: "ref", value: LockJson.String(input.ref) },
-									{ name: "kind", value: LockJson.String(input.kind) },
-									{ name: "flake", value: LockJson.Boolean(input.flake) },
-								]),
+								value: LockJson.Object(
+									[
+										{ name: "ref", value: LockJson.String(input.ref) },
+										{ name: "kind", value: LockJson.String(input.kind) },
+										{ name: "flake", value: LockJson.Boolean(input.flake) },
+									].concat(follows_of(input.name)),
+								),
 							},
 						),
 					),
@@ -353,6 +370,17 @@ Locks := { identity : LockJson, graph : LockJson }.{
 				"flake",
 			)? != LockJson.Boolean(kind != "source") {
 				return Err("lock input flake intent mismatch")
+			}
+			# Follows map an overlay's own inputs to Nix package sources.
+			follows = LockJson.field(input.value, "follows") ?? LockJson.Object([])
+			for followed in LockJson.object(follows)? {
+				source_name = LockJson.string(followed.value)?
+				source = LockJson.field(LockJson.field(identity, "inputs")?, source_name)?
+				source_kind = LockJson.string(LockJson.field(source, "kind")?)?
+				if kind != "overlay" or !Project.valid_name(followed.name)
+					or !["auto", "packages"].contains(source_kind) {
+					return Err("invalid lock follows")
+				}
 			}
 		}
 		overlays = LockJson.object(LockJson.field(identity, "overlays")?)?

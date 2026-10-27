@@ -35,6 +35,7 @@ NixBackend :: [].{
 		"pure",
 		"aliases",
 		"rust-toolchain",
+		"follows",
 	]
 
 	default_nixpkgs : Str
@@ -646,12 +647,18 @@ NixBackend :: [].{
 			]),
 		)?
 		# Inspection retains scoped inputs; plans emit stable full declarations.
+		# A rendered overlay's Follows need their package source declared too.
+		follows = match staging {
+			None => model.follows.keep_if(
+				|followed| environments.any(|e| e.overlays.contains(followed.overlay)),
+			)
+			Some(_) => model.follows
+		}
 		match staging {
 			None => {
 				for source in model.sources.keep_if(
-					|s| environments.any(
-						|e| source_names(e, model.fetches).contains(s.name),
-					),
+					|s| environments.any(|e| source_names(e, model.fetches).contains(s.name))
+						or follows.any(|followed| followed.source == s.name),
 				) {
 					url = match source.provider {
 						Auto => default_nixpkgs
@@ -691,6 +698,13 @@ NixBackend :: [].{
 					)?
 				}
 			}
+		}
+		for followed in follows {
+			$rendered = append_rendered(
+				$rendered,
+				"    ${quote(followed.overlay)}.inputs.${quote(followed.input)}.follows = "
+					.concat("${quote(followed.source)};\n"),
+			)?
 		}
 		$rendered = append_rendered(
 			$rendered,
@@ -1372,6 +1386,7 @@ mk = |t| Model.{
 	systems: t.systems,
 	sources: t.sources,
 	inputs: t.inputs,
+	follows: [],
 	environments: t.environments,
 	shells: t.shells,
 	tasks: t.tasks,

@@ -133,6 +133,7 @@ TestData :: [].{
 		systems: t.systems,
 		sources: t.sources,
 		inputs: t.inputs,
+		follows: [],
 		environments: t.environments,
 		shells: t.shells,
 		tasks: t.tasks,

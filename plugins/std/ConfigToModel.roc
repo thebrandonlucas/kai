@@ -14,6 +14,7 @@ ConfigToModel :: [].{
 		systems : List(List(Str)),
 		sources : List(Model.Source),
 		inputs : List(Model.Input),
+		follows : List(Model.Follows),
 		environments : List(Model.Environment),
 		shells : List(Model.Shell),
 		tasks : List(Model.Task),
@@ -46,6 +47,7 @@ ConfigToModel :: [].{
 			systems: [],
 			sources: [],
 			inputs: [],
+			follows: [],
 			environments: [],
 			shells: [],
 			tasks: [],
@@ -91,6 +93,7 @@ ConfigToModel :: [].{
 				.concat(if (acc.environments.any(|e| e.pure)) ["pure"] else [])
 				.concat(if (uses_aliases(acc)) ["aliases"] else [])
 				.concat(if (uses_rust_toolchain(acc)) ["rust-toolchain"] else [])
+				.concat(if (acc.follows.is_empty()) [] else ["follows"])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -99,6 +102,7 @@ ConfigToModel :: [].{
 				systems,
 				sources: acc.sources,
 				inputs: acc.inputs,
+				follows: acc.follows,
 				environments: acc.environments,
 				shells: acc.shells,
 				tasks: acc.tasks,
@@ -142,6 +146,14 @@ ConfigToModel :: [].{
 					name: name.to_str(),
 					url: ref.to_str(),
 					kind: Overlay,
+				}),
+			}
+			Follows(overlay, input, source) => {
+				..acc,
+				follows: acc.follows.append({
+					overlay: overlay.to_str(),
+					input,
+					source: source.to_str(),
 				}),
 			}
 			Environment(name, inner) => {

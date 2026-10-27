@@ -17,6 +17,7 @@ Model := {
 		{ name : Str, provider : [Auto, NixPackages(Str), GuixPackages(Str)] },
 	),
 	inputs : List({ name : Str, url : Str, kind : [Overlay, Flake] }),
+	follows : List({ overlay : Str, input : Str, source : Str }),
 	environments : List(
 		{
 			name : Str,
@@ -87,6 +88,9 @@ Model := {
 	Provider : [Auto, NixPackages(Str), GuixPackages(Str)]
 	Source : { name : Str, provider : Provider }
 	Input : { name : Str, url : Str, kind : [Overlay, Flake] }
+
+	## Overlay `overlay`'s own flake input `input` is package source `source`.
+	Follows : { overlay : Str, input : Str, source : Str }
 	Tool : { source : Str, name : Str }
 	Environment : {
 		name : Str,
@@ -185,6 +189,7 @@ Model := {
 		systems: [],
 		sources: [],
 		inputs: [],
+		follows: [],
 		environments: [],
 		shells: [],
 		tasks: [],

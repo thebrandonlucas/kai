@@ -345,6 +345,7 @@ Std := [].{
 			systems: model.systems,
 			sources: model.sources,
 			inputs: model.inputs,
+			follows: model.follows,
 			environments: model.environments,
 			shells: model.shells,
 			tasks: model.tasks.append({
@@ -395,6 +396,7 @@ Std := [].{
 			systems: model.systems,
 			sources: model.sources,
 			inputs: model.inputs,
+			follows: model.follows,
 			environments: model.environments,
 			shells: model.shells,
 			tasks: model.tasks,
