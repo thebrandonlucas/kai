@@ -18,6 +18,7 @@ ConfigToModel :: [].{
 		shells : List(Model.Shell),
 		tasks : List(Model.Task),
 		build_sources : List(Model.BuildSource),
+		fetches : List(Model.Fetch),
 		builds : List(Model.Build),
 		workflows : List(Model.Workflow),
 		extensions : List(Model.Extension),
@@ -48,6 +49,7 @@ ConfigToModel :: [].{
 			shells: [],
 			tasks: [],
 			build_sources: [],
+			fetches: [],
 			builds: [],
 			workflows: [],
 			extensions: [],
@@ -68,6 +70,7 @@ ConfigToModel :: [].{
 			(if (acc.extensions.is_empty()) [] else ["extensions"])
 				.concat(if (acc.raw.is_empty()) [] else ["raw"])
 				.concat(if (acc.build_sources.is_empty()) [] else ["sources"])
+				.concat(if (acc.fetches.is_empty()) [] else ["fetches"])
 				.concat(if (acc.builds.is_empty()) [] else ["builds"])
 				.concat(if (acc.workflows.is_empty()) [] else ["workflows"])
 				.concat(if (acc.builds.all(|b| b.files == All)) [] else ["files"])
@@ -97,6 +100,7 @@ ConfigToModel :: [].{
 				shells: acc.shells,
 				tasks: acc.tasks,
 				build_sources: acc.build_sources,
+				fetches: acc.fetches,
 				builds: acc.builds,
 				workflows: acc.workflows,
 				extensions: acc.extensions,
@@ -155,6 +159,21 @@ ConfigToModel :: [].{
 				build_sources: acc.build_sources.append({
 					name: name.to_str(),
 					ref: ref.to_str(),
+				}),
+			}
+			Fetch(name, files) => {
+				..acc,
+				fetches: acc.fetches.append({
+					name: name.to_str(),
+					files: files.map_try(
+						|f|
+							Ok({
+								system: f.system.to_str(),
+								url: f.url,
+								hash: Project.sri_sha256(f.sha256)
+									.map_err(|_| "invalid sha256 in Fetch ${name.to_str()}")?,
+							}),
+					)?,
 				}),
 			}
 			Build(name, inner) => {

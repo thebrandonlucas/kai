@@ -583,6 +583,23 @@ ConfigFixtures := [].{
 				\\  Run(["true"]), Output("out")])]
 		},
 		{
+			name: "FetchMissingSystem",
+			expected: Rejected("has no file for system aarch64-linux"),
+			body: \\config = [Name("bad"), Fetch("tool", [{ system: "x86_64-linux",
+				\\  url: "https://example.com/tool",
+				\\  sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" }])]
+		},
+		{
+			name: "FetchUndeclaredSystem",
+			expected: Rejected("has a file for undeclared system aarch64-linux"),
+			body: \\config = [Name("bad"), Systems(["x86_64-linux"]),
+				\\ Fetch("tool", [{ system: "x86_64-linux",
+				\\  url: "https://example.com/tool",
+				\\  sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" },
+				\\ { system: "aarch64-linux", url: "https://example.com/tool",
+				\\  sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" }])]
+		},
+		{
 			name: "TaskIsNotBuildDependency",
 			expected: Rejected("unknown build"),
 			body: \\config = [Name("bad"), Environment("builder", []),
@@ -966,7 +983,11 @@ ConfigFixtures := [].{
 			RejectedName(message) => (1, ["invalid string", message])
 		}
 		match status {
-			Exited(actual) => actual == code and texts.all(|text| log.contains(text))
+			Exited(actual) => {
+				# Roc wraps a long crash message across indented lines.
+				joined = Str.join_with(log.split_on("\n").map(|line| line.trim()), " ")
+				actual == code and texts.all(|text| joined.contains(text))
+			}
 			Signaled(_) => Bool.False
 		}
 	}
@@ -1122,3 +1143,12 @@ ConfigFixtures := [].{
 		}
 	}
 }
+
+# A rejection matches even when Roc wraps its message across lines.
+expect
+	ConfigFixtures.accepts(
+		Rejected("has a file for undeclared system aarch64-linux"),
+		Exited(1),
+		"compile time crash\nInvalid Kaifile.roc: std: Fetch tool has a file"
+			.concat(" for undeclared system\n    aarch64-linux\n"),
+	)

@@ -21,6 +21,7 @@ NixBackend :: [].{
 	features = [
 		"raw",
 		"sources",
+		"fetches",
 		"builds",
 		"workflows",
 		"files",
@@ -422,7 +423,7 @@ NixBackend :: [].{
 	read_inputs : Model, List(Str), List(Model.Build) -> List(Str)
 	read_inputs = |project, names, builds|
 		project.environments.keep_if(|e| names.contains(e.name))
-			.join_map(|e| source_names(e).concat(e.overlays))
+			.join_map(|e| source_names(e, project.fetches).concat(e.overlays))
 			.concat(builds.join_map(|b| b.inputs))
 			.concat(project.inputs.keep_if(|i| i.kind == Flake).map(|i| i.name))
 
@@ -647,7 +648,9 @@ NixBackend :: [].{
 		match staging {
 			None => {
 				for source in model.sources.keep_if(
-					|s| environments.any(|e| source_names(e).contains(s.name)),
+					|s| environments.any(
+						|e| source_names(e, model.fetches).contains(s.name),
+					),
 				) {
 					url = match source.provider {
 						Auto => default_nixpkgs
@@ -701,7 +704,7 @@ NixBackend :: [].{
 		for environment in environments {
 			$rendered = append_rendered(
 				$rendered,
-				render_environment_definition(environment),
+				render_environment_definition(environment, model.fetches),
 			)?
 		}
 		$rendered = append_rendered(
@@ -754,7 +757,7 @@ NixBackend :: [].{
 						.map_err(|_| "unknown build environment")?
 					$rendered = append_rendered(
 						$rendered,
-						render_build(build, env, model.build_sources, system, workspace),
+						render_build(build, env, model, system, workspace),
 					)?
 				}
 				$rendered = append_rendered(
@@ -768,7 +771,7 @@ NixBackend :: [].{
 			build = builds.first().map_err(|_| "unknown build")?
 			env = environments.find_first(|e| e.name == build.environment)
 				.map_err(|_| "unknown build environment")?
-			source = quote(source_names(env).first() ?? "default")
+			source = quote(source_names(env, model.fetches).first() ?? "default")
 			$rendered = append_rendered($rendered, "      kaiArtifacts = {\n")?
 			for system in model.systems {
 				entries = needs.map(
@@ -797,9 +800,9 @@ NixBackend :: [].{
 
 	## mkShell comes from the first tool's source, keeping unrelated providers
 	## outside the request. Empty environments use the default source instead.
-	source_names : Model.Environment -> List(Str)
-	source_names = |environment| {
-		tools = Project.environment_tools(environment)
+	source_names : Model.Environment, List(Model.Fetch) -> List(Str)
+	source_names = |environment, fetches| {
+		tools = Project.package_tools(Project.environment_tools(environment), fetches)
 		if tools.is_empty() {
 			return ["default"]
 		}
@@ -814,19 +817,19 @@ NixBackend :: [].{
 	## linkFarm holding one bin/<name> link to its tool's binary, then its
 	## RustToolchain, which rust-overlay builds from the file's [toolchain]
 	## table.
-	path_packages : Model.Environment -> List(Str)
-	path_packages = |environment| {
-		primary = quote(source_names(environment).first() ?? "default")
+	path_packages : Model.Environment, List(Model.Fetch) -> List(Str)
+	path_packages = |environment, fetches| {
+		source = source_names(environment, fetches).first() ?? "default"
+		primary = quote(source)
+		reference = |tool| tool_reference(tool, environment, fetches, source)
 		aliases = environment.aliases.map(
 			|alias| {
-				tool = tool_reference(alias.tool, environment)
-				path = "\"\${${tool}}/bin/\" + ${quote(alias.binary)}"
+				path = "\"\${${reference(alias.tool)}}/bin/\" + ${quote(alias.binary)}"
 				link = "{ name = ${quote("bin/${alias.name}")}; path = ${path}; }"
 				"(sets.${primary}.linkFarm \"kai-alias\" [ ${link} ])"
 			},
 		)
-		tools = environment.tools.map(|tool| tool_reference(tool, environment))
-			.concat(aliases)
+		tools = environment.tools.map(reference).concat(aliases)
 		match environment.rust_toolchain {
 			None => tools
 			Toml(text) => {
@@ -842,9 +845,9 @@ NixBackend :: [].{
 		}
 	}
 
-	render_environment_definition : Model.Environment -> Str
-	render_environment_definition = |environment| {
-		sources = source_names(environment)
+	render_environment_definition : Model.Environment, List(Model.Fetch) -> Str
+	render_environment_definition = |environment, fetches| {
+		sources = source_names(environment, fetches)
 		primary = sources.first() ?? "default"
 		overlays = environment.overlays.map(
 			|name| "inputs.${quote(name)}.overlays.default",
@@ -854,7 +857,7 @@ NixBackend :: [].{
 				"            ${quote(name)} = import inputs.${quote(name)} "
 					.concat("{ inherit system overlays; };"),
 		)
-		tools = path_packages(environment).map(|tool| "            ${tool}")
+		tools = path_packages(environment, fetches).map(|tool| "            ${tool}")
 		# mkShell exports `env` to its shells, and to tasks through kai-env-*.
 		env = if environment.env.is_empty() {
 			[]
@@ -879,11 +882,10 @@ NixBackend :: [].{
 	## Ordinary, non-fixed-output derivations keep fetching outside user Run.
 	## Runner tool paths are explicit; argv and metadata enter through JSON.
 	## PATH holds the standard-environment tools mkShell puts on a shell's PATH.
-	render_build :
-		Model.Build, Model.Environment, List(Model.BuildSource), Str, Str -> Str
-	render_build = |build, environment, build_sources, system, workspace| {
+	render_build : Model.Build, Model.Environment, Model, Str, Str -> Str
+	render_build = |build, environment, model, system, workspace| {
 		snapshot = if (workspace.is_empty()) "" else "${workspace}/snapshot"
-		sources = source_names(environment)
+		sources = source_names(environment, model.fetches)
 		primary = sources.first() ?? "default"
 		overlays = environment.overlays.map(
 			|name| "inputs.${quote(name)}.overlays.default",
@@ -893,12 +895,17 @@ NixBackend :: [].{
 				"            ${quote(name)} = import inputs.${quote(name)} "
 					.concat("{ inherit system overlays; };"),
 		)
-		tools = path_packages(environment)
+		tools = path_packages(environment, model.fetches)
 		inputs = build.inputs.map(
-			|name|
-				"{ name = ${quote(name)}; path = inputs.${quote(name)}; }",
+			|name| {
+				path = match model.fetches.find_first(|f| f.name == name) {
+					Ok(fetch) => "pkgs.fetchurl ${fetch_file(fetch)}"
+					Err(_) => "inputs.${quote(name)}"
+				}
+				"{ name = ${quote(name)}; path = ${path}; }"
+			},
 		)
-		roc_packages = build_sources.keep_if(|s| build.inputs.contains(s.name))
+		roc_packages = model.build_sources.keep_if(|s| build.inputs.contains(s.name))
 			.keep_oks(
 				|source|
 					roc_package_hash(source.ref).map_ok(
@@ -1094,12 +1101,37 @@ NixBackend :: [].{
 
 	## A tool missing from its source fails evaluation naming the tool, the
 	## source and the environment, not with Nix's bare missing attribute.
-	tool_reference : Model.Tool, Model.Environment -> Str
-	tool_reference = |tool, environment| {
-		missing = "tool ${tool.name} not found in source ${tool.source} "
-			.concat("of environment ${environment.name}")
-		attribute = "sets.${quote(tool.source)}.${attr_path(tool.name)}"
-		"(${attribute} or (throw ${quote(missing)}))"
+	## A Fetch tool is its file installed as the executable bin/<name>, made
+	## with the environment's primary package set.
+	tool_reference : Model.Tool, Model.Environment, List(Model.Fetch), Str -> Str
+	tool_reference = |tool, environment, fetches, primary| {
+		match fetches.find_first(|f| f.name == tool.source) {
+			Ok(fetch) => {
+				pkgs = "sets.${quote(primary)}"
+				install = quote("install -Dm755 $src $out/bin/${tool.name}")
+				"(${pkgs}.runCommand ${quote(tool.name)} "
+					.concat("{ src = ${pkgs}.fetchurl ${fetch_file(fetch)}; } ${install})")
+			}
+			Err(_) => {
+				missing = "tool ${tool.name} not found in source ${tool.source} "
+					.concat("of environment ${environment.name}")
+				attribute = "sets.${quote(tool.source)}.${attr_path(tool.name)}"
+				"(${attribute} or (throw ${quote(missing)}))"
+			}
+		}
+	}
+
+	## fetchurl's arguments for the file of the evaluating `system`, which
+	## fails naming the Fetch when it has none.
+	fetch_file : Model.Fetch -> Str
+	fetch_file = |fetch| {
+		files = fetch.files.map(
+			|f|
+				"${quote(f.system)} = { url = ${quote(f.url)}; "
+					.concat("hash = ${quote(f.hash)}; }; "),
+		)
+		missing = quote("Fetch ${fetch.name} has no file for system ")
+		"({ ${Str.join_with(files, "")}}.\${system} or (throw (${missing} + system)))"
 	}
 
 	env_attrs : List(Model.Variable) -> Str
@@ -1334,6 +1366,7 @@ mk = |t| Model.{
 	shells: t.shells,
 	tasks: t.tasks,
 	build_sources: [],
+	fetches: [],
 	builds: [],
 	workflows: [],
 	requires_: t.requires_,

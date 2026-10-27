@@ -221,6 +221,9 @@ GuixBackend :: [].{
 	## The tree of `path:` source `name`; Guix cannot fetch other sources yet.
 	source_tree : Model, Str -> Try(Tree, Str)
 	source_tree = |model, name| {
+		if model.fetches.any(|f| f.name == name) {
+			return Err("Guix builds cannot read Fetch ${name}; use Nix")
+		}
 		source = model.build_sources.find_first(|s| s.name == name)
 			.map_err(|_| "unknown build source: ${name}")?
 		if !source.ref.starts_with("path:") {

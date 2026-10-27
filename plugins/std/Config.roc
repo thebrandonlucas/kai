@@ -25,6 +25,7 @@ Config :: [].{
 		Shell(EnvName, List(ShellSetting)),
 		Task(TaskName, List(TaskSetting)),
 		Source(InputName, FlakeRef),
+		Fetch(InputName, List(FetchFile)),
 		Build(InputName, List(BuildSetting)),
 		Workflow(WorkflowName, List(WorkflowStep)),
 		Custom(Str, Str, Val),
@@ -47,6 +48,11 @@ Config :: [].{
 		BuildArtifact(InputName),
 		RunWorkflow(WorkflowName),
 	]
+
+	## A file pinned by its published sha256 (hex or SRI) for each system it
+	## exists for; the host's system picks one. A build lists it in Inputs, and
+	## a tool "<name>#<binary>" puts it on PATH as the executable <binary>.
+	FetchFile : { system : System, url : Str, sha256 : Str }
 
 	PackageSource : [Auto, From(Provider)]
 	Provider : [NixPackages(FlakeRef), GuixPackages(Str)]
@@ -93,7 +99,7 @@ Config :: [].{
 	]
 
 	## Builds require Use, Run and one relative Output. Optional Inputs select
-	## locked non-flake Sources; Needs selects build artifacts, not task names.
+	## non-flake Sources or Fetches; Needs selects build artifacts, not tasks.
 	## Sources and artifacts remain separate read-only inputs, never merged.
 	## Files limits the project copy to the given project-relative paths.
 	## Revision sets KAI_REVISION, the project's `git describe --tags --always

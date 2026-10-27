@@ -721,8 +721,8 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		var $out = []
 		while $index < bytes.len() {
 			byte = bytes.get($index) ?? 0
-			high = hex_digit(bytes.get($index + 1) ?? 0)
-			low = hex_digit(bytes.get($index + 2) ?? 0)
+			high = Project.hex_digit(bytes.get($index + 1) ?? 0)
+			low = Project.hex_digit(bytes.get($index + 2) ?? 0)
 			match (byte, high, low) {
 				('%', Ok(high_digit), Ok(low_digit)) => {
 					$out = $out.append(high_digit * 16 + low_digit)
@@ -736,15 +736,6 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		}
 		Str.from_utf8($out) ?? text
 	}
-
-	hex_digit : U8 -> Try(U8, {})
-	hex_digit = |byte| if byte >= '0' and byte <= '9' {
-		Ok(byte - '0')
-	} else if byte >= 'a' and byte <= 'f' {
-		Ok(byte - 'a' + 10)
-	} else if byte >= 'A' and byte <= 'F' {
-		Ok(byte - 'A' + 10)
-	} else Err({})
 
 	## SSH belongs to Git transport, not HTTP file/tarball fetching.
 	remote_url : Str, Str -> Bool

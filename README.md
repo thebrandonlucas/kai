@@ -127,7 +127,8 @@ garbage collection.
 | `Shell(name, [Use(environment)])` | A shell for `kai shell`. |
 | `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. Optionally `Secrets([...])`: the names of the variables it receives when it runs, `OptionalEnvironmentVariables([...])`: those it receives from kai's environment only when set there, and `Needs([...])`: builds kai builds first, in `$KAI_ARTIFACTS/<name>`. |
 | `Source(name, flakeRef)` | A locked, non-flake source that builds can read. |
-| `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, in `$KAI_INPUTS/<name>`), `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`) and `Revision` (the project's revision, below). |
+| `Fetch(name, [{ system, url, sha256 }, ...])` | A file pinned by its published sha256 (hex or SRI), one per system; the host's system picks it, and it needs no lock entry. Builds read it in `Inputs([...])`, and the tool `"name#binary"` puts it on `PATH` as the executable `binary`. |
+| `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources and fetches, in `$KAI_INPUTS/<name>`), `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`) and `Revision` (the project's revision, below). |
 | `Workflow(name, [...])` | Steps for `kai workflow`, which stops at the first that fails: `RunTask(task, args)`, `BuildArtifact(build)`, `RunWorkflow(workflow)`, and `MayFail(step)`, which notes the step's failure and continues. |
 | `Raw("nix", target, value)` | Extra attributes for the generated flake (`"flake"`) or one shell (`"shell:<name>"`), e.g. `Attrs([("shellHook", Str("echo hi"))])`. |
 
@@ -229,8 +230,8 @@ runs tasks and builds in order. `kai update` pins every installed backend that
 fits, each in its own section of `.kai/lock.json` (`kai --backend guix update`
 pins only Guix), and Guix commands refuse to run without a Guix pin. The first
 Guix command at a new commit downloads, or builds, that Guix, which can take a
-long time. Overlays and build inputs (`Inputs([...])`) other than `path:`
-sources need Nix. See
+long time. Overlays, `Fetch` and build inputs (`Inputs([...])`) other than
+`path:` sources need Nix. See
 [examples/guix](examples/guix).
 
 ## The `.kai` directory

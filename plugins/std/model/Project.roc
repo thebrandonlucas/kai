@@ -156,6 +156,46 @@ Project :: [].{
 				url.starts_with(prefix) and !url.drop_prefix(prefix).is_empty(),
 		)
 
+	hex_digit : U8 -> Try(U8, {})
+	hex_digit = |byte| if byte >= '0' and byte <= '9' {
+		Ok(byte - '0')
+	} else if byte >= 'a' and byte <= 'f' {
+		Ok(byte - 'a' + 10)
+	} else if byte >= 'A' and byte <= 'F' {
+		Ok(byte - 'A' + 10)
+	} else Err({})
+
+	## A sha256 hash as SRI, `sha256-<base64>`, given as SRI or 64 hex digits.
+	sri_sha256 : Str -> Try(Str, {})
+	sri_sha256 = |text| {
+		alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+			.to_utf8()
+		if text.starts_with("sha256-") {
+			encoded = text.drop_prefix("sha256-").drop_suffix("=").to_utf8()
+			valid = text.ends_with("=") and encoded.len() == 43
+				and encoded.all(|b| alphabet.contains(b))
+			return if (valid) Ok(text) else Err({})
+		}
+		digits = text.to_utf8().map_try(hex_digit)?.map(|digit| digit.to_u64())
+		if digits.len() != 64 {
+			return Err({})
+		}
+		# Three hex digits are two base64 digits; the last hex digit pads to one.
+		var $encoded = []
+		var $index = 0
+		while $index < 63 {
+			value = (digits.get($index) ?? 0) * 256
+				+ (digits.get($index + 1) ?? 0) * 16
+				+ (digits.get($index + 2) ?? 0)
+			$encoded = $encoded
+				.append(alphabet.get(value // 64) ?? 'A')
+				.append(alphabet.get(value % 64) ?? 'A')
+			$index = $index + 3
+		}
+		last = alphabet.get((digits.get(63) ?? 0) * 4) ?? 'A'
+		Ok("sha256-".concat(Str.from_utf8($encoded.append(last)) ?? "").concat("="))
+	}
+
 	## Lexical containment only; the executor must also reject escaping symlinks.
 	## Spaces are valid path bytes. Empty, dot and parent segments are not.
 	valid_output : Str -> Bool
@@ -358,6 +398,45 @@ Project :: [].{
 				return Err("invalid build source reference: ${source.name}")
 			}
 		}
+		check_names(model.fetches.map(|f| f.name), "Fetch")?
+		for fetch in model.fetches {
+			if sources.any(|s| s.name == fetch.name) or
+				model.inputs.any(|i| i.name == fetch.name) or
+					model.build_sources.any(|s| s.name == fetch.name) {
+				return Err("DuplicateInput: ${fetch.name}")
+			}
+			if fetch.files.is_empty() {
+				return Err("Fetch ${fetch.name} has no files")
+			}
+			var $systems = []
+			for file in fetch.files {
+				if $systems.contains(file.system) or !clean(file.system) {
+					return Err("DuplicateFetchSystem: ${fetch.name}: ${file.system}")
+				}
+				$systems = $systems.append(file.system)
+				if !model.systems.contains(file.system) {
+					return Err(
+						"Fetch ${fetch.name} has a file for undeclared system "
+							.concat(file.system),
+					)
+				}
+				if !clean(file.url) or
+					!(file.url.starts_with("https://") or file.url.starts_with("http://")) {
+					return Err("invalid Fetch URL: ${fetch.name}: ${file.url}")
+				}
+				if sri_sha256(file.hash) != Ok(file.hash) {
+					return Err("invalid Fetch hash: ${fetch.name}")
+				}
+			}
+			for system in model.systems {
+				if !$systems.contains(system) {
+					return Err("Fetch ${fetch.name} has no file for system ${system}")
+				}
+			}
+		}
+		if !model.fetches.is_empty() and !model.requires_.contains("fetches") {
+			return Err("fetches require feature: fetches")
+		}
 		if !model.build_sources.is_empty() and !model.requires_.contains("sources") {
 			return Err("build sources require feature: sources")
 		}
@@ -384,15 +463,21 @@ Project :: [].{
 			check_aliases(resolved.aliases, env.name)?
 			for t in environment_tools(resolved) {
 				parsed = tool("${t.source}#${t.name}")?
-				source = sources.find_first(|s| s.name == parsed.source)
-					.map_err(|_| "unknown source: ${t.source}")?
-				match source.provider {
-					Auto => {}
-					NixPackages(_) => {
-						check_tool(Nix, t.name)?
+				if model.fetches.any(|f| f.name == parsed.source) {
+					if !valid_name(t.name) {
+						return Err("invalid executable name for Fetch ${t.source}: ${t.name}")
 					}
-					GuixPackages(_) => {
-						check_tool(Guix, t.name)?
+				} else {
+					source = sources.find_first(|s| s.name == parsed.source)
+						.map_err(|_| "unknown source: ${t.source}")?
+					match source.provider {
+						Auto => {}
+						NixPackages(_) => {
+							check_tool(Nix, t.name)?
+						}
+						GuixPackages(_) => {
+							check_tool(Guix, t.name)?
+						}
 					}
 				}
 			}
@@ -460,7 +545,8 @@ Project :: [].{
 			check_names(build.inputs, "BuildInput")?
 			check_names(build.needs, "BuildDependency")?
 			for input in build.inputs {
-				if !model.build_sources.any(|s| s.name == input) {
+				if !model.build_sources.any(|s| s.name == input) and
+					!model.fetches.any(|f| f.name == input) {
 					return Err("unknown build source: ${input}")
 				}
 			}
@@ -498,6 +584,7 @@ Project :: [].{
 				shells: model.shells,
 				tasks: model.tasks,
 				build_sources: model.build_sources,
+				fetches: model.fetches,
 				builds: model.builds,
 				workflows: model.workflows,
 				extensions: model.extensions,
@@ -829,7 +916,11 @@ Project :: [].{
 		if backend == Guix and env.rust_toolchain != None {
 			return Err("RustToolchain needs Nix: environment ${name}")
 		}
-		tools = environment_tools(env)
+		every_tool = environment_tools(env)
+		tools = package_tools(every_tool, project.fetches)
+		if backend == Guix and tools.len() != every_tool.len() {
+			return Err("Guix cannot use Fetch tools, in environment ${name}")
+		}
 		# An empty environment still uses the default provider's environment builder.
 		source_names = if tools.is_empty() {
 			["default"]
@@ -853,9 +944,22 @@ Project :: [].{
 		Ok({})
 	}
 
+	## The tools that come from package sources, not from Fetches.
+	package_tools : List(Model.Tool), List(Model.Fetch) -> List(Model.Tool)
+	package_tools = |tools, fetches|
+		tools.keep_if(|t| !fetches.any(|f| f.name == t.source))
+
 	unique : List(a) -> List(a) where [a.is_eq : a, a -> Bool]
 	unique = |items|
 		items.fold([], |acc, item| if (acc.contains(item)) acc else acc.append(item))
+}
+
+# A sha256 in hex or SRI normalizes to SRI; other text is not a sha256.
+expect {
+	sri = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+	hex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	Project.sri_sha256(hex) == Ok(sri) and Project.sri_sha256(sri) == Ok(sri)
+		and Project.sri_sha256("e3b0").is_err()
 }
 
 # A bare tool name resolves against the implicit "default" source.
@@ -914,6 +1018,7 @@ fixture = |environments| Model.{
 	shells: [],
 	tasks: [],
 	build_sources: [],
+	fetches: [],
 	builds: [],
 	workflows: [],
 	extensions: [],
@@ -1157,6 +1262,7 @@ build_fixture = |builds| Model.{
 	shells: [],
 	tasks: [],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
+	fetches: [],
 	builds,
 	workflows: [],
 	extensions: [],
@@ -1348,6 +1454,7 @@ build_source_fixture = |build_sources, requires_| {
 		shells: model.shells,
 		tasks: model.tasks,
 		build_sources,
+		fetches: [],
 		builds: model.builds,
 		workflows: model.workflows,
 		extensions: model.extensions,
@@ -1510,6 +1617,7 @@ workflow_features = |workflows, features| Model.{
 		},
 	],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
+	fetches: [],
 	builds: [library],
 	workflows,
 	extensions: [],

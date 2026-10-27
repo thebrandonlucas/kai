@@ -45,6 +45,9 @@ Model := {
 		},
 	),
 	build_sources : List({ name : Str, ref : Str }),
+	fetches : List(
+		{ name : Str, files : List({ system : Str, url : Str, hash : Str }) },
+	),
 	builds : List(
 		{
 			name : Str,
@@ -128,6 +131,10 @@ Model := {
 	## Non-flake locked inputs, distinct from package-provider sources.
 	BuildSource : { name : Str, ref : Str }
 
+	## A file per system, pinned by its SRI sha256 hash rather than the lock.
+	Fetch : { name : Str, files : List(FetchFile) }
+	FetchFile : { system : Str, url : Str, hash : Str }
+
 	## Run is exact argv. Output is a relative file or directory path; dependencies
 	## expose only that artifact, separately from the writable project snapshot.
 	## A revision build receives the project's revision in its environment.
@@ -177,6 +184,7 @@ Model := {
 		shells: [],
 		tasks: [],
 		build_sources: [],
+		fetches: [],
 		builds: [],
 		workflows: [],
 		extensions: [],
