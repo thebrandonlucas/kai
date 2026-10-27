@@ -18,6 +18,7 @@ TestData :: [].{
 		tools: [{ source: "default", name: "python3" }],
 		overlays: [],
 		env: [],
+		pure: Bool.False,
 	}
 
 	library : Model.Build

@@ -30,6 +30,7 @@ NixBackend :: [].{
 		"optional_environment_variables",
 		"revision",
 		"may_fail",
+		"pure",
 	]
 
 	default_nixpkgs : Str
@@ -149,8 +150,8 @@ NixBackend :: [].{
 	prepare_atomic = |project, request, target, layout, budget| {
 		base_ref = "path:${layout.generated_root}"
 		read_only = ["--no-update-lock-file", "--no-write-lock-file"]
-		develop = |entry|
-			["nix", "develop"].concat(read_only)
+		develop = |entry, isolation|
+			["nix", "develop"].concat(read_only).concat(isolation)
 				.append("${base_ref}#devShells.${target}.${entry}")
 		# Namespace witnesses compare caller/build on the same kernel.
 		# Never dispatch this local isolation contract to a remote builder.
@@ -169,12 +170,13 @@ NixBackend :: [].{
 			Request.Shell(name, command) => {
 				shell = project.shells.find_first(|s| s.name == name)
 					.map_err(|_| "unknown shell: ${name}")?
+				isolation = pure_flags(project, shell.environment, [])
 				# A command runs noninteractively inside the shell.
 				argv = if command.is_empty() {
-					develop(name)
+					develop(name, isolation)
 				} else {
 					Project.check_argv(command, name)?
-					develop(name).append("--command").concat(command)
+					develop(name, isolation).append("--command").concat(command)
 				}
 				{
 					description: "shell ${name}",
@@ -227,6 +229,8 @@ NixBackend :: [].{
 						}),
 					],
 				)
+				received = task.secrets.concat(task.optional_environment_variables)
+				isolation = pure_flags(project, task.environment, received)
 				{
 					description: "task ${name}",
 					stage: "run ${name}",
@@ -234,7 +238,7 @@ NixBackend :: [].{
 					builds,
 					needs: task.needs,
 					needs_build,
-					argv: develop(environment_shell(task.environment))
+					argv: develop(environment_shell(task.environment), isolation)
 						.append("--command")
 						# Overrides the environment's Env, which kai-env-* sets.
 						.concat(Project.env_command(task.env.concat(artifacts)))
@@ -304,6 +308,23 @@ NixBackend :: [].{
 			may_fail: [],
 		})
 	}
+
+	## A Pure environment's shells and tasks start from a clean environment,
+	## keeping only HOME, USER and TERM (as Guix's --pure does), the
+	## operator's shell and the task's secrets and optional environment
+	## variables.
+	pure_flags : Model, Str, List(Str) -> List(Str)
+	pure_flags = |project, environment, secrets|
+		if project.environments.any(|e| e.name == environment and e.pure) {
+			["HOME", "USER", "TERM", "KAI_OPERATOR_SHELL"]
+				.concat(secrets)
+				.fold(
+					["--ignore-environment"],
+					|flags, name| flags.concat(["--keep", name]),
+				)
+		} else {
+			[]
+		}
 
 	## Derive executable steps only after complete structure, selected
 	## capability, target, caller layout and authoritative lock checks. No
@@ -1092,6 +1113,7 @@ sample_model = {
 			tools: [{ source: "nixpkgs", name: "git" }],
 			overlays: [],
 			env: [],
+			pure: Bool.False,
 		},
 		{
 			name: "dev",
@@ -1099,6 +1121,7 @@ sample_model = {
 			tools: [{ source: "nixpkgs", name: "llvmPackages.bintools" }],
 			overlays: ["roc"],
 			env: [],
+			pure: Bool.False,
 		},
 	],
 	shells: [
@@ -1132,14 +1155,23 @@ full_model = {
 			],
 			overlays: ["roc"],
 			env: [],
+			pure: Bool.False,
 		},
-		{ name: "empty", parents: [], tools: [], overlays: [], env: [] },
+		{
+			name: "empty",
+			parents: [],
+			tools: [],
+			overlays: [],
+			env: [],
+			pure: Bool.False,
+		},
 		{
 			name: "headless",
 			parents: [],
 			tools: [{ source: "stable", name: "jq" }],
 			overlays: [],
 			env: [],
+			pure: Bool.False,
 		},
 	],
 	shells: [
@@ -1224,7 +1256,14 @@ TestIr : {
 }
 
 base : Model.Environment
-base = { name: "dev", parents: [], tools: [], overlays: [], env: [] }
+base = {
+	name: "dev",
+	parents: [],
+	tools: [],
+	overlays: [],
+	env: [],
+	pure: Bool.False,
+}
 
 simple : TestIr
 simple = {

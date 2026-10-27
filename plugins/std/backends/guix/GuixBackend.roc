@@ -59,7 +59,8 @@ GuixBackend :: [].{
 		env = Project.merge_env(environment.env, own_env)
 		# --pure would drop the operator's shell, which kai passes to children,
 		# the variables the environment and task set, and the secrets and optional
-		# variables the task declares.
+		# variables the task declares. Every Guix shell is pure, so Pure
+		# environments are no different.
 		preserve = ["--preserve=^KAI_OPERATOR_SHELL$"]
 			.concat(env.map(|v| "--preserve=^${v.name}$"))
 			.concat(received.map(|name| "--preserve=^${name}$"))
@@ -772,6 +773,7 @@ env = |name, tools| {
 	tools: tools.map(|text| Project.tool(text) ?? { source: "", name: text }),
 	overlays: [],
 	env: [],
+	pure: Bool.False,
 }
 
 check : List(Model.Environment), Request, Try(List(Str), {}) -> Bool

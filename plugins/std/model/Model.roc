@@ -24,6 +24,7 @@ Model := {
 			tools : List({ source : Str, name : Str }),
 			overlays : List(Str),
 			env : List({ name : Str, value : Str }),
+			pure : Bool,
 		},
 	),
 	shells : List({ name : Str, environment : Str, description : Str }),
@@ -85,6 +86,7 @@ Model := {
 		tools : List(Tool),
 		overlays : List(Str),
 		env : List(Variable),
+		pure : Bool,
 	}
 
 	## A description, empty when none, summarizes a declaration in help.

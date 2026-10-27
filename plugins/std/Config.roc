@@ -55,11 +55,14 @@ Config :: [].{
 	## parent first; an omitted or empty list does not clear inherited values.
 	## Env sets variables in the environment's shells, tasks and builds. They
 	## override the parent's by name, and a task's or build's Env overrides them.
+	## Pure starts its shells and tasks from a clean environment, as does Extend
+	## of a Pure environment.
 	EnvironmentSetting : [
 		Tools(List(Tool)),
 		Overlays(List(InputName)),
 		Extend(EnvName),
 		Env(List((Str, Str))),
+		Pure,
 	]
 
 	## A shell is an alias for exactly one environment. A Description, in a

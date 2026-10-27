@@ -82,6 +82,7 @@ ConfigToModel :: [].{
 				.concat(if (acc.tasks.all(|t| t.needs.is_empty())) [] else ["task_needs"])
 				.concat(if (acc.builds.any(|b| b.revision)) ["revision"] else [])
 				.concat(if (uses_may_fail(acc)) ["may_fail"] else [])
+				.concat(if (acc.environments.any(|e| e.pure)) ["pure"] else [])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -230,7 +231,7 @@ ConfigToModel :: [].{
 		Str, List(Config.EnvironmentSetting) -> Try(Model.Environment, Str)
 	environment = |name, inner| {
 		draft = inner.fold(
-			{ tools: [], overlays: [], parents: [], envs: [] },
+			{ tools: [], overlays: [], parents: [], envs: [], pures: 0.U64 },
 			|acc, setting|
 				match setting {
 					Tools(tools) => {
@@ -245,6 +246,7 @@ ConfigToModel :: [].{
 					}
 					Extend(parent) => { ..acc, parents: acc.parents.append(parent.to_str()) }
 					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
+					Pure => { ..acc, pures: acc.pures + 1 }
 				},
 		)
 		if draft.tools.len() > 1 {
@@ -256,12 +258,16 @@ ConfigToModel :: [].{
 		if draft.parents.len() > 1 {
 			return Err("DuplicateExtend: environment ${name}")
 		}
+		if draft.pures > 1 {
+			return Err("DuplicatePure: environment ${name}")
+		}
 		Ok({
 			name,
 			parents: draft.parents,
 			tools: draft.tools.first() ?? [],
 			overlays: draft.overlays.first() ?? [],
 			env: single_env(draft.envs, "environment ${name}")?,
+			pure: draft.pures == 1,
 		})
 	}
 

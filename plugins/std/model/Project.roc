@@ -766,6 +766,7 @@ Project :: [].{
 					tools: unique(base.tools.concat(env.tools)),
 					overlays: unique(base.overlays.concat(env.overlays)),
 					env: merge_env(base.env, env.env),
+					pure: base.pure or env.pure,
 				})
 			}
 			_ => Err("environment ${name} has several parents")
@@ -879,6 +880,7 @@ base = {
 	tools: [{ source: "default", name: "git" }],
 	overlays: ["first"],
 	env: [],
+	pure: Bool.False,
 }
 
 child : Model.Environment
@@ -891,6 +893,7 @@ child = {
 	],
 	overlays: ["first", "second"],
 	env: [],
+	pure: Bool.False,
 }
 
 # Declaration order is irrelevant; inheritance order is not. First wins.
@@ -905,6 +908,7 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 			],
 			overlays: ["first", "second"],
 			env: [],
+			pure: Bool.False,
 		},
 		base,
 	]),
@@ -914,14 +918,28 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 expect match Project.validate(
 	fixture([
 		base,
-		{ ..child, tools: [], overlays: [], env: [] },
-		{ name: "empty", parents: [], tools: [], overlays: [], env: [] },
+		{ ..child, tools: [], overlays: [], env: [], pure: Bool.False },
+		{
+			name: "empty",
+			parents: [],
+			tools: [],
+			overlays: [],
+			env: [],
+			pure: Bool.False,
+		},
 	]),
 ) {
 	Ok(model) => model.environments == [
 		base,
 		{ ..base, name: "dev" },
-		{ name: "empty", parents: [], tools: [], overlays: [], env: [] },
+		{
+			name: "empty",
+			parents: [],
+			tools: [],
+			overlays: [],
+			env: [],
+			pure: Bool.False,
+		},
 	]
 	Err(_) => False
 }
@@ -1007,6 +1025,7 @@ expect {
 			parents: [],
 			overlays: [],
 			env: [],
+			pure: Bool.False,
 			tools: [{ source: "guix", name: "git" }],
 		},
 	])
@@ -1057,7 +1076,14 @@ build_fixture = |builds| Model.{
 	sources: [],
 	inputs: [],
 	environments: [
-		{ name: "builder", parents: [], tools: [], overlays: [], env: [] },
+		{
+			name: "builder",
+			parents: [],
+			tools: [],
+			overlays: [],
+			env: [],
+			pure: Bool.False,
+		},
 	],
 	shells: [],
 	tasks: [],
@@ -1390,7 +1416,14 @@ workflow_features = |workflows, features| Model.{
 	sources: [],
 	inputs: [],
 	environments: [
-		{ name: "builder", parents: [], tools: [], overlays: [], env: [] },
+		{
+			name: "builder",
+			parents: [],
+			tools: [],
+			overlays: [],
+			env: [],
+			pure: Bool.False,
+		},
 	],
 	shells: [],
 	tasks: [

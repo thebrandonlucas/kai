@@ -122,6 +122,7 @@ garbage collection.
 | `Overlay(name, flakeRef)` | A Nix overlay, applied only where an environment selects it. |
 | `Environment(name, [...])` | A set of tools: `Tools([...])`, `Overlays([...])` in order, and `Extend(parent)` to inherit the parent's tools and overlays first. |
 | `Env([(name, value), ...])` | Environment variables, in an `Environment` for its shells, tasks and builds (overriding its parent's by name), or in a `Task` or `Build` overriding its environment's. |
+| `Pure` | In an `Environment`, and those extending it, starts its shells and tasks from a clean environment, so a task can check it needs nothing undeclared. Only HOME, USER, TERM, Kai's own variables and the `Env`, `Secrets` and `OptionalEnvironmentVariables` declared reach them. On Nix this is `nix develop --ignore-environment`; Guix shells are always pure, so it changes nothing there. |
 | `Description(text)` | In a `Shell`, `Task`, `Build` or `Workflow`, its summary in help, in place of its environment, command, output or steps, which its own page (e.g. `kai run test --help`) still shows after it. |
 | `Shell(name, [Use(environment)])` | A shell for `kai shell`. |
 | `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. Optionally `Secrets([...])`: the names of the variables it receives when it runs, `OptionalEnvironmentVariables([...])`: those it receives from kai's environment only when set there, and `Needs([...])`: builds kai builds first, in `$KAI_ARTIFACTS/<name>`. |
