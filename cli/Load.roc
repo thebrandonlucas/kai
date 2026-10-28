@@ -208,10 +208,18 @@ Load := [].{
 		Path.read_utf8!(Load.path("${project.root}/${project.file}")) ?? ""
 
 	# A Kaifile.roc from before plugins provided `config` on the platform
-	# alone; roc would only report a type mismatch.
-	current : Str -> Try({}, [PreviousHeader])
-	current = |text|
-		if (text.contains("app [config]")) Err(PreviousHeader) else Ok({})
+	# alone; roc would only report a type mismatch. A file with no app header,
+	# such as the platform's own Kaifile module, is no Kaifile at all; roc
+	# would only say it has no main! function.
+	current : Str, Str -> Try({}, [PreviousHeader, NotAnApp(Str)])
+	current = |file, text|
+		if text.contains("app [config]") {
+			Err(PreviousHeader)
+		} else if !text.is_empty() and !text.contains("app [") {
+			Err(NotAnApp(file))
+		} else {
+			Ok({})
+		}
 
 	# The releases of the bundles Kaifile.roc names from its platform's
 	# repository, unless they are all this kai's. Roc reports a mix only as a
@@ -244,7 +252,7 @@ Load := [].{
 	check! = |project, mode| {
 		_ = Load.system!()?
 		text = Load.text!(project)
-		Load.current(text)?
+		Load.current(project.file, text)?
 		invalid = KaifileInvalid(project.file, Load.releases(text))
 		command = Cmd.new(OsStr.from_str(Load.compiler!()?))
 			.args(["check", OsStr.from_str(project.file)])
@@ -275,7 +283,7 @@ Load := [].{
 	ask! = |project, request| {
 		_ = Load.system!()?
 		text = Load.text!(project)
-		Load.current(text)?
+		Load.current(project.file, text)?
 		header_releases = Load.releases(text)
 		output = Cmd.new(OsStr.from_str(Load.compiler!()?))
 			.arg(OsStr.from_str(project.file))
@@ -370,7 +378,10 @@ expect {
 	Load.answer($text) == Err(AnswerTooLarge($text.count_utf8_bytes()))
 }
 
-# The pre-plugin header is recognized before roc runs.
-expect Load.current("app [config] { pf: platform \"p\" }")
+# The pre-plugin header and a module that is not an app are recognized
+# before roc runs.
+expect Load.current("K", "app [config] { pf: platform \"p\" }")
 	== Err(PreviousHeader)
-	and Load.current("app [kaifile] {\n\tpf: platform \"p\",\n}\n") == Ok({})
+	and Load.current("K", "Kaifile := [].{}\n") == Err(NotAnApp("K"))
+	and Load.current("K", "") == Ok({})
+	and Load.current("K", "app [kaifile] {\n\tpf: platform \"p\",\n}\n") == Ok({})
