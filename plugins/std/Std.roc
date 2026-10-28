@@ -55,11 +55,21 @@ Std := [].{
 			Err(problem) => Plugin.invalid("std", [problem])
 		}
 
-	## The settings' model, with Raw checked too so kai check reports a Raw no
-	## backend accepts instead of kai update or kai shell failing later.
+	## The settings' model, with Systems and Raw checked too so kai check
+	## reports what no backend accepts instead of every command failing later.
 	checked_model : List(Config.Setting) -> Try(Model, Str)
 	checked_model = |settings| {
 		model = ConfigToModel.convert(settings)?
+		nix_systems = NixBackend.supported_systems
+		for system in model.systems {
+			guix_supports = GuixBackend.check_system(system).is_ok()
+			if !nix_systems.contains(system) and !guix_supports {
+				return Err(
+					"unsupported system ${system}; Nix supports "
+						.concat("${Str.join_with(nix_systems, ", ")} and Guix any Linux"),
+				)
+			}
+		}
 		for raw in model.raw {
 			if raw.backend != "nix" {
 				return Err("unknown raw backend \"${raw.backend}\"; expected \"nix\"")
@@ -71,7 +81,14 @@ Std := [].{
 
 	commands : Model -> List(Command)
 	commands = |model| {
-		choice = |value, summary| { value, summary, details: [] }
+		# A declaration's Description, if any, replaces its summary in lists;
+		# its own page, such as `kai run test --help`, shows both.
+		choice = |value, description, summary|
+			if description.is_empty() {
+				{ value, summary, details: [] }
+			} else {
+				{ value, summary: description, details: [summary] }
+			}
 		command = |name, page, args, lock|
 			Command.{ name, summary: page.description, help: page, args, lock }
 		[
@@ -83,13 +100,14 @@ Std := [].{
 						name: "shell",
 						help: "The shell to enter (default: default).",
 						choices: model.shells.map(
-							|s| choice(s.name, "Environment ${s.environment}"),
+							|s| choice(s.name, s.description, "Environment ${s.environment}"),
 						),
 						default: Default("default"),
 					}),
 					Trailing({
 						name: "command",
 						help: "A command to run inside the shell; put it after --.",
+						choices: [],
 					}),
 				],
 				ReadsLock,
@@ -102,13 +120,18 @@ Std := [].{
 						name: "task",
 						help: "The task to run.",
 						choices: model.tasks.map(
-							|t| choice(t.name, "${Str.join_with(t.run, " ")} [${t.environment}]"),
+							|t| choice(
+								t.name,
+								t.description,
+								"${Str.join_with(t.run, " ")} [${t.environment}]",
+							),
 						),
 						default: Required,
 					}),
 					Trailing({
 						name: "args",
 						help: "Arguments appended to the task's command; put them after --.",
+						choices: [],
 					}),
 				],
 				ReadsLock,
@@ -118,10 +141,14 @@ Std := [].{
 				Pages.build,
 				[
 					Name({
-						name: "name",
+						name: "build",
 						help: "The build to run.",
 						choices: model.builds.map(
-							|b| choice(b.name, "Output ${b.output} [${b.environment}]"),
+							|b| choice(
+								b.name,
+								b.description,
+								"Output ${b.output} [${b.environment}]",
+							),
 						),
 						default: Required,
 					}),
@@ -143,10 +170,14 @@ Std := [].{
 				Pages.workflow,
 				[
 					Name({
-						name: "name",
+						name: "workflow",
 						help: "The workflow to run.",
 						choices: model.workflows.map(
-							|w| choice(w.name, Str.join_with(w.steps.map(Std.step_text), ", ")),
+							|w| choice(
+								w.name,
+								w.description,
+								Str.join_with(w.steps.map(Std.step_text), ", "),
+							),
 						),
 						default: Required,
 					}),
@@ -156,7 +187,15 @@ Std := [].{
 			command(
 				"update",
 				Pages.update,
-				[Trailing({ name: "inputs", help: "Inputs to update (default: all)." })],
+				[
+					Trailing({
+						name: "inputs",
+						help: "Inputs to update (default: all).",
+						choices: (Locks.inputs(model) ?? []).map(
+							|input| choice(input.name, "", input.ref),
+						),
+					}),
+				],
 				OwnsLock,
 			),
 			command("model", Pages.model, [], ReadsLock),
@@ -169,6 +208,7 @@ Std := [].{
 			RunTask(task, _) => "run ${task}"
 			BuildArtifact(build) => "build ${build}"
 			RunWorkflow(name) => "workflow ${name}"
+			MayFail(_) => "${Std.step_text(Project.wrapped(step))} (may fail)"
 		}
 
 	## The model request a command's parsed arguments name.
@@ -186,9 +226,9 @@ Std := [].{
 					print_build_logs: Command.flag(args, "print-build-logs"),
 					out_link: Command.path(args, "out-link"),
 				}
-				Ok(Request.Build(Command.name(args, "name"), shown))
+				Ok(Request.Build(Command.name(args, "build"), shown))
 			}
-			"workflow" => Ok(Request.Workflow(Command.name(args, "name")))
+			"workflow" => Ok(Request.Workflow(Command.name(args, "workflow")))
 			_ => Err("std has no ${command} request")
 		}
 
@@ -213,8 +253,9 @@ Std := [].{
 					plan: |ctx| {
 						GuixBackend.check_system(ctx.host.system)?
 						wanted = Std.request(command, ctx.args)?
-						locked = Std.guix_pins(ctx)?
-						GuixBackend.request_steps(model, wanted, ctx.layout, locked)
+						locked = Std.guix_pins(model, ctx)?
+						revised = Std.revised(model, ctx)
+						GuixBackend.request_steps(revised, wanted, ctx.layout, locked)
 							.map_err(|message| "cannot plan the Guix ${command}: ${message}")
 					},
 				},
@@ -226,7 +267,7 @@ Std := [].{
 					command: "update",
 					backend: On("nix"),
 					fit: |_| Std.lockable(model),
-					plan: |ctx| Std.update_nix(model, ctx),
+					plan: |ctx| Std.update_nix(Std.revised(model, ctx), ctx),
 				},
 				Implementation.{
 					command: "update",
@@ -271,7 +312,8 @@ Std := [].{
 
 	## Nix plans read the lock authority; its absence is a planning failure.
 	plan_nix : Model, Request, Implementation.Context -> Try(Plan, Str)
-	plan_nix = |model, wanted, ctx| {
+	plan_nix = |declared, wanted, ctx| {
+		model = Std.revised(declared, ctx)
 		layout = Std.nix_layout(ctx.layout)
 		path = ctx.layout.lock_path
 		unreadable = |why|
@@ -302,13 +344,24 @@ Std := [].{
 			requires_: model.requires_,
 			systems: model.systems,
 			sources: model.sources,
+			guix_channels: model.guix_channels,
 			inputs: model.inputs,
+			follows: model.follows,
 			environments: model.environments,
 			shells: model.shells,
-			tasks: model.tasks.append(
-				{ name: task, environment, run: argv, env: [], secrets: [] },
-			),
+			tasks: model.tasks.append({
+				name: task,
+				environment,
+				run: argv,
+				env: [],
+				secrets: [],
+				optional_environment_variables: [],
+				needs: [],
+				description: "",
+			}),
 			build_sources: model.build_sources,
+			fetches: model.fetches,
+			cargo_vendors: model.cargo_vendors,
 			builds: model.builds,
 			workflows: model.workflows,
 			extensions: model.extensions,
@@ -323,6 +376,42 @@ Std := [].{
 		Ok(Plan.{ steps: planned.steps.map(named), next: planned.next })
 	}
 
+	## A build declaring Revision receives the project's revision in its
+	## environment, over its own Env.
+	revised : Model, Implementation.Context -> Model
+	revised = |model, ctx| {
+		revision = [
+			{ name: "KAI_REVISION", value: ctx.revision.describe },
+			{ name: "KAI_COMMIT_DATE", value: ctx.revision.commit_date },
+		]
+		stamp = |build|
+			if build.revision {
+				{ ..build, env: Project.merge_env(build.env, revision) }
+			} else {
+				build
+			}
+		Model.{
+			format: model.format,
+			name: model.name,
+			requires_: model.requires_,
+			systems: model.systems,
+			sources: model.sources,
+			guix_channels: model.guix_channels,
+			inputs: model.inputs,
+			follows: model.follows,
+			environments: model.environments,
+			shells: model.shells,
+			tasks: model.tasks,
+			build_sources: model.build_sources,
+			fetches: model.fetches,
+			cargo_vendors: model.cargo_vendors,
+			builds: model.builds.map(stamp),
+			workflows: model.workflows,
+			extensions: model.extensions,
+			raw: model.raw,
+		}
+	}
+
 	## Nix's generated files live in their own directory beneath kai's
 	## generated root; Guix's beside them.
 	nix_layout : Layout -> Layout
@@ -335,8 +424,8 @@ Std := [].{
 		}
 
 	## The Guix pins in the lock, or why they are missing or stale.
-	guix_pins : Implementation.Context -> Try(GuixBackend.Locked, Str)
-	guix_pins = |ctx| {
+	guix_pins : Model, Implementation.Context -> Try(GuixBackend.Locked, Str)
+	guix_pins = |model, ctx| {
 		missing = "the guix lock is missing or stale; run kai --backend guix update"
 		section = match ctx.lock {
 			Present(text) =>
@@ -346,7 +435,7 @@ Std := [].{
 				}
 			Absent => return Err(missing)
 		}
-		GuixBackend.read_lock(section)
+		GuixBackend.read_lock(GuixBackend.project_channels(model), section)
 	}
 
 	## Guix has something to lock when any environment can run on it.
@@ -368,7 +457,7 @@ Std := [].{
 		GuixBackend.check_system(ctx.host.system)?
 		dir = "${ctx.layout.generated_root}/guix"
 		result = "${dir}/lock-result.json"
-		channels = [GuixBackend.default_channel]
+		channels = GuixBackend.project_channels(model)
 		trees = GuixBackend.source_trees(model)
 		match ctx.phase {
 			0 => {
@@ -390,6 +479,7 @@ Std := [].{
 					output: Inherit,
 					secrets: [],
 					removed_environment_variables: [],
+					kept_environment_variables: [],
 				})
 				Ok(
 					Plan.{
@@ -485,6 +575,7 @@ Std := [].{
 									output: Quiet,
 									secrets: [],
 									removed_environment_variables: [],
+									kept_environment_variables: [],
 								}),
 							),
 						next: Observe([backend_lock]),
@@ -551,6 +642,7 @@ context = {
 		generated_root: "/generated",
 		lock_path: "/authority/inputs.lock",
 	},
+	revision: { describe: "", commit_date: "" },
 	lock: Absent,
 	phase: 0,
 	observed: [],
@@ -569,8 +661,8 @@ planned = |command, ctx| {
 	(found.plan)(ctx)
 }
 
-named : Str -> Command.Args
-named = |name| [{ name: "name", value: Present(name) }]
+named : Str, Str -> Command.Args
+named = |argument, name| [{ name: argument, value: Present(name) }]
 
 in_shell : Str -> Command.Args
 in_shell = |name| [{ name: "shell", value: Present(name) }]
@@ -658,11 +750,35 @@ expect {
 		.append("${dir}/channels-unpinned.scm")
 		.concat(["assets", "/project/assets"])
 	runs(planned("update", guix)) == Ok([{ description: "guix lock", argv }])
-		and Std.guix_pins({ ..guix, lock: guix_lock })
+		and Std.guix_pins(Model.empty("x"), { ..guix, lock: guix_lock })
 			== Ok({
 				channels: [{ channel: GuixBackend.default_channel, commit: pin }],
 				sources: [{ name: "assets", path: "assets", hash: assets_hash }],
 			})
+}
+
+# Help lists a task's Description, else its command, and the task's own page
+# shows its command after the Description.
+expect {
+	described = Task("hush", [Use("dev"), Description("Quiet"), Run(["true"])])
+	tasks = |model|
+		Std.commands(model).find_first(|c| c.name == "run").map_ok(
+			|run|
+				run.args.join_map(
+					|arg|
+						match arg {
+							Name(n) => n.choices
+							_ => []
+						},
+				),
+		)
+	match ConfigToModel.convert(planning.append(described)) {
+		Ok(model) => tasks(model) == Ok([
+			{ value: "greet", summary: "hello -g hi [dev]", details: [] },
+			{ value: "hush", summary: "Quiet", details: ["true [dev]"] },
+		])
+		Err(_) => Bool.False
+	}
 }
 
 # A Nix shell enters the locked shell; an unknown shell or a missing lock is
@@ -692,21 +808,21 @@ expect {
 
 # A Nix build builds its package; an unknown build is refused.
 expect {
-	build = { ..context, args: named("app"), lock: nix_lock }
+	build = { ..context, args: named("build", "app"), lock: nix_lock }
 	match runs(planned("build", build)) {
 		Ok([{ description, argv }]) =>
 			description == "build app"
 				and argv.last() == Ok("path:/generated/nix#packages.x86_64-linux.app")
-				and planned("build", { ..build, args: named("missing") }).is_err()
+				and planned("build", { ..build, args: named("build", "missing") }).is_err()
 		_ => Bool.False
 	}
 }
 
 # A Nix workflow stages each step in order.
 expect {
-	ci = { ..context, args: named("ci"), lock: nix_lock }
+	ci = { ..context, args: named("workflow", "ci"), lock: nix_lock }
 	stages(planned("workflow", ci)) == Ok(["run greet", "build app"])
-		and planned("workflow", { ..ci, args: named("missing") }).is_err()
+		and planned("workflow", { ..ci, args: named("workflow", "missing") }).is_err()
 }
 
 # A Guix shell runs guix shell at the locked channels; without the Guix
@@ -737,7 +853,7 @@ expect {
 
 # A Guix build builds its generated file at the locked channels.
 expect {
-	build = { ..guix, args: named("app"), lock: guix_lock }
+	build = { ..guix, args: named("build", "app"), lock: guix_lock }
 	scm = "/generated/guix/build-app.scm"
 	argv = time_machine.concat(["--", "build", "-f", scm])
 	runs(planned("build", build)) == Ok([{ description: "build app", argv }])
@@ -745,7 +861,7 @@ expect {
 
 # A Guix workflow stages each step in order.
 expect {
-	ci = { ..guix, args: named("ci"), lock: guix_lock }
+	ci = { ..guix, args: named("workflow", "ci"), lock: guix_lock }
 	stages(planned("workflow", ci)) == Ok(["run greet", "build app"])
 }
 
@@ -771,6 +887,7 @@ expect {
 			generated_root: "/p/.kai/generated",
 			lock_path: "/p/.kai/lock.json",
 		},
+		revision: { describe: "", commit_date: "" },
 		lock: Absent,
 		phase: 0,
 		observed: [],

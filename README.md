@@ -100,8 +100,12 @@ plain identifier), or Guix specifications. Tasks run their argv exactly,
 without a shell, so use `Run(["sh", "-c", "...", "sh"])` for pipes: `sh -c`
 takes the argument after its script as `$0`, so the `"sh"` placeholder lets
 arguments after `--` reach the script as `$1`, `$2`, ... and `"$@"`. In Roc
-strings, multiline ones included, `${name}` is Roc interpolation, so a script
-writes `$NAME`, or `\${NAME}` where the shell needs braces. Every command has
+strings, multiline ones included, `${name}` is Roc interpolation, as is any
+`${...}` such as `${name%.txt}`, so a script writes `$NAME`, or `\${NAME}`
+where the shell needs braces. A backslash starts a Roc escape (`\\`, `\"`,
+`\'`, `\$`, `\n`, `\r`, `\t`, `\u(41)`), so others, such as sed's `\(x\)` and
+`\1`, are an "invalid escape sequence": write `\\(x\\)`, `\\1`, and `\\` for a
+trailing line continuation. Every command has
 help with examples, e.g. `kai run --help`; inside a project, help lists its
 shells, tasks, builds and workflows.
 `kai build -L` (`--print-build-logs`) shows the build's log as it runs, and
@@ -116,13 +120,19 @@ garbage collection.
 | `Systems([...])` | Systems the generated flake declares. Optional (default `x86_64-linux` and `aarch64-linux`); must include the system of the host Kai runs on. |
 | `Packages(name, source)` | A package source: `Auto`, `From(NixPackages(flakeRef))` or `From(GuixPackages(...))`. Tools use the `default` source (`Auto`: nixpkgs unstable on Nix, the installed channels on Guix) unless written `"source#tool"`. |
 | `Overlay(name, flakeRef)` | A Nix overlay, applied only where an environment selects it. |
-| `Environment(name, [...])` | A set of tools: `Tools([...])`, `Overlays([...])` in order, and `Extend(parent)` to inherit the parent's tools and overlays first. |
+| `Follows(overlay, input, source)` | Makes an overlay's own flake input, such as `nixpkgs`, the project's Nix package source `source` (`default` unless declared), so it is neither downloaded nor locked separately. |
+| `GuixChannel(name, url, branch, Introduction(commit, signer))` | A Guix channel beside Guix's own, authenticated by its introduction: the first signed commit and its signer's OpenPGP fingerprint, as the channel publishes them. Its packages are available to every Guix source; `kai update` locks its commit. Nix ignores it. |
+| `Environment(name, [...])` | A set of tools: `Tools([...])`, `Overlays([...])` in order, and `Extend(parent)` to inherit the parent's tools, overlays and aliases first. `Alias(command, tool, binary)` (Nix only) puts `command` on PATH running the tool's `bin/<binary>`, e.g. for two tools that both install `bin/roc`. `RustToolchain(text)` (Nix only) adds the Rust toolchain a `rust-toolchain.toml` pins (its `channel`, `profile`, `components` and `targets`), given its text with `import "rust-toolchain.toml" as toolchain : Str`; the environment must select an `Overlay` of [rust-overlay](https://github.com/oxalica/rust-overlay). |
 | `Env([(name, value), ...])` | Environment variables, in an `Environment` for its shells, tasks and builds (overriding its parent's by name), or in a `Task` or `Build` overriding its environment's. |
+| `Pure` | In an `Environment`, and those extending it, starts its shells and tasks from a clean environment, so a task can check it needs nothing undeclared. Only HOME, USER, TERM, Kai's own variables and the `Env`, `Secrets` and `OptionalEnvironmentVariables` declared reach them. On Nix this is `nix develop --ignore-environment`; Guix shells are always pure, so it changes nothing there. |
+| `Description(text)` | In a `Shell`, `Task`, `Build` or `Workflow`, its summary in help, in place of its environment, command, output or steps, which its own page (e.g. `kai run test --help`) still shows after it. |
 | `Shell(name, [Use(environment)])` | A shell for `kai shell`. |
-| `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. Optionally `Secrets([...])`: the names of the variables it receives when it runs. |
+| `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. Optionally `Secrets([...])`: the names of the variables it receives when it runs, `OptionalEnvironmentVariables([...])`: those it receives from kai's environment only when set there, and `Needs([...])`: builds kai builds first, in `$KAI_ARTIFACTS/<name>`. |
 | `Source(name, flakeRef)` | A locked, non-flake source that builds can read. |
-| `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, in `$KAI_INPUTS/<name>`) and `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`). |
-| `Workflow(name, [...])` | Steps for `kai workflow`: `RunTask(task, args)`, `BuildArtifact(build)`, `RunWorkflow(workflow)`. |
+| `Fetch(name, [{ system, url, sha256 }, ...])` | A file pinned by its published sha256 (hex or SRI), one per system; the host's system picks it, and it needs no lock entry. Builds read it in `Inputs([...])`, and the tool `"name#binary"` puts it on `PATH` as the executable `binary`. |
+| `CargoVendor(name, text)` | The crates a `Cargo.lock` names, vendored into one directory that builds can read, pinned by the lock's checksums with no lock entry. Pass the text with `import "Cargo.lock" as cargo_lock : Str`; git dependencies are not supported. |
+| `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, fetches and cargo vendors, in `$KAI_INPUTS/<name>`), `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`) and `Revision` (the project's revision, below). |
+| `Workflow(name, [...])` | Steps for `kai workflow`, which stops at the first that fails: `RunTask(task, args)`, `BuildArtifact(build)`, `RunWorkflow(workflow)`, and `MayFail(step)`, which notes the step's failure and continues. |
 | `Raw("nix", target, value)` | Extra attributes for the generated flake (`"flake"`) or one shell (`"shell:<name>"`), e.g. `Attrs([("shellHook", Str("echo hi"))])`. |
 
 Names and references are checked as the file compiles, so `kai check` reports
@@ -140,7 +150,9 @@ holds the `SHELL` kai was started from, since the environment may replace
 A task gets the secrets it declares with `Secrets([...])` from a `.env` file
 at the project root (`NAME=value` lines; `#` comments; no interpolation),
 else from kai's environment, and never those only other tasks declare. Only
-the names are in the Kaifile and plans; add `.env` to your `.gitignore`.
+the names are in the Kaifile and plans; add `.env` to your `.gitignore`. A
+name in its `OptionalEnvironmentVariables([...])` is optional, never read
+from `.env`, and reaches it even when another task declares it secret.
 
 Builds run sandboxed. A build gets a copy of the project, leaving out what
 its `.gitignore` files ignore (`Files([...])` narrows the copy to the given
@@ -151,7 +163,28 @@ store. A Nix build's sources that are Roc package bundles, such as
 `tarball+https://…/<hash>.tar.zst`, are in its Roc package cache, so Roc
 resolves those package URLs offline. The sandbox has no `/usr/bin/env`, so
 run scripts as `sh script` or through an interpreter's path rather than
-relying on a `#!/usr/bin/env` line.
+relying on a `#!/usr/bin/env` line. An artifact that embeds paths to its
+inputs, such as Rust panic locations in `$KAI_INPUTS/<name>`, keeps those
+inputs alive in its closure; remap them, e.g. with Rust's
+`--remap-path-prefix=$KAI_INPUTS/<name>=/<name>`, and check the closure with
+`nix path-info -rS <path>`.
+
+The sandbox has no `.git` either, so a build that stamps a version declares
+`Revision`: it gets `KAI_REVISION`, the project's
+`git describe --tags --always --dirty` (such as `v0.2.0-3-gabc1234`), and
+`KAI_COMMIT_DATE`, the date of its last commit (`YYYY-MM-DD`), both empty
+outside git or when git is not installed. Its inputs then change with every
+commit, which is why it is opt-in.
+
+A Rust build reads its crates from a `CargoVendor` in its inputs by pointing
+cargo at the vendored directory in place of crates.io, as
+[examples/cargo-vendor](examples/cargo-vendor) does:
+
+```sh
+cargo build --offline \
+  --config 'source.crates-io.replace-with="vendored"' \
+  --config "source.vendored.directory='$KAI_INPUTS/crates'"
+```
 
 Use a task for work that touches the project or the outside world, such as
 running tests, formatting or deploying. Use a build for an artifact that should
@@ -203,15 +236,15 @@ environment's tools come from a `GuixPackages` source. `--backend nix` or
 `--backend guix` forces one; Kai never falls back to the other.
 
 On Guix, `kai shell` and `kai run` run `guix time-machine -C CHANNELS --
-shell -q --pure` with the environment's tools, at the Guix channel commit
+shell -q --pure` with the environment's tools, at the Guix channel commits
 Kai's lock pins. `kai build` runs `guix build -f` on a generated file whose
 derivation runs the same sandboxed build runner as on Nix, and `kai workflow`
 runs tasks and builds in order. `kai update` pins every installed backend that
 fits, each in its own section of `.kai/lock.json` (`kai --backend guix update`
 pins only Guix), and Guix commands refuse to run without a Guix pin. The first
 Guix command at a new commit downloads, or builds, that Guix, which can take a
-long time. Overlays and build inputs (`Inputs([...])`) other than `path:`
-sources need Nix. See
+long time. Overlays, `Fetch` and build inputs (`Inputs([...])`) other than
+`path:` sources need Nix. See
 [examples/guix](examples/guix).
 
 ## The `.kai` directory
@@ -228,6 +261,28 @@ changed. Commit the lock; the rest of `.kai` is generated:
 
 `KAI_DIR=<name>` moves the whole directory to another top-level name in the
 project.
+
+## direnv
+
+To load a shell into your own shell whenever you enter the project, with
+[direnv](https://direnv.net), add an `.envrc` and run `direnv allow`:
+
+```sh
+watch_file Kaifile.roc .kai/lock.json
+direnv_load kai shell default -- direnv dump
+```
+
+direnv reloads it when `Kaifile.roc` or the lock changes. It needs Nix:
+Guix's pure shell drops the `PATH` and variable `direnv dump` needs. Avoid
+nix-direnv's `use flake` on `.kai/generated/nix`: each kai command regenerates
+that flake with only what it runs, so after `kai run` or `kai build` it may
+not have the shell.
+
+direnv waits for the shell before showing your prompt, which takes a while
+after `kai update` or a Kaifile change. To keep the prompt free meanwhile,
+replace direnv's shell hook with
+[direnv-instant](https://github.com/Mic92/direnv-instant)'s: it runs the same
+`.envrc` in the background and loads the shell once it is ready.
 
 ## Options
 

@@ -33,6 +33,16 @@ Project :: [].{
 	clean : Str -> Bool
 	clean = |text| !text.is_empty() and text.to_utf8().all(|b| b > 32 and b != 127)
 
+	## A commit id or OpenPGP fingerprint: 40 hexadecimal digits, either case.
+	forty_hex_digits : Str -> Bool
+	forty_hex_digits = |text|
+		text.count_utf8_bytes() == 40 and text.to_utf8().all(
+			|b|
+				(b >= '0' and b <= '9')
+					or (b >= 'a' and b <= 'f')
+					or (b >= 'A' and b <= 'F'),
+		)
+
 	## Generic syntax only. Provider grammar is checked once intent is known.
 	tool : Str -> Try(Model.Tool, Str)
 	tool = |text| {
@@ -156,6 +166,46 @@ Project :: [].{
 				url.starts_with(prefix) and !url.drop_prefix(prefix).is_empty(),
 		)
 
+	hex_digit : U8 -> Try(U8, {})
+	hex_digit = |byte| if byte >= '0' and byte <= '9' {
+		Ok(byte - '0')
+	} else if byte >= 'a' and byte <= 'f' {
+		Ok(byte - 'a' + 10)
+	} else if byte >= 'A' and byte <= 'F' {
+		Ok(byte - 'A' + 10)
+	} else Err({})
+
+	## A sha256 hash as SRI, `sha256-<base64>`, given as SRI or 64 hex digits.
+	sri_sha256 : Str -> Try(Str, {})
+	sri_sha256 = |text| {
+		alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+			.to_utf8()
+		if text.starts_with("sha256-") {
+			encoded = text.drop_prefix("sha256-").drop_suffix("=").to_utf8()
+			valid = text.ends_with("=") and encoded.len() == 43
+				and encoded.all(|b| alphabet.contains(b))
+			return if (valid) Ok(text) else Err({})
+		}
+		digits = text.to_utf8().map_try(hex_digit)?.map(|digit| digit.to_u64())
+		if digits.len() != 64 {
+			return Err({})
+		}
+		# Three hex digits are two base64 digits; the last hex digit pads to one.
+		var $encoded = []
+		var $index = 0
+		while $index < 63 {
+			value = (digits.get($index) ?? 0) * 256
+				+ (digits.get($index + 1) ?? 0) * 16
+				+ (digits.get($index + 2) ?? 0)
+			$encoded = $encoded
+				.append(alphabet.get(value // 64) ?? 'A')
+				.append(alphabet.get(value % 64) ?? 'A')
+			$index = $index + 3
+		}
+		last = alphabet.get((digits.get(63) ?? 0) * 4) ?? 'A'
+		Ok("sha256-".concat(Str.from_utf8($encoded.append(last)) ?? "").concat("="))
+	}
+
 	## Lexical containment only; the executor must also reject escaping symlinks.
 	## Spaces are valid path bytes. Empty, dot and parent segments are not.
 	valid_output : Str -> Bool
@@ -219,6 +269,29 @@ Project :: [].{
 	merge_env = |base, overrides|
 		base.keep_if(|b| !overrides.any(|o| o.name == b.name)).concat(overrides)
 
+	## Alias names and binaries are single file names in a bin directory.
+	check_aliases : List(Model.Alias), Str -> Try({}, Str)
+	check_aliases = |aliases, environment| {
+		file_name = |name|
+			clean(name) and !name.contains("/") and name != "." and name != ".."
+		var $seen = []
+		for alias in aliases {
+			if !file_name(alias.name) or !file_name(alias.binary) {
+				return Err("invalid Alias in environment ${environment}: ${alias.name}")
+			}
+			if $seen.contains(alias.name) {
+				return Err("DuplicateAlias: environment ${environment}: ${alias.name}")
+			}
+			$seen = $seen.append(alias.name)
+		}
+		Ok({})
+	}
+
+	## The tools an environment's packages come from, its aliases' included.
+	environment_tools : Model.Environment -> List(Model.Tool)
+	environment_tools = |environment|
+		unique(environment.tools.concat(environment.aliases.map(|alias| alias.tool)))
+
 	## The `env` argv prefix that sets `variables` for the command after it.
 	env_command : List(Model.Variable) -> List(Str)
 	env_command = |variables|
@@ -228,18 +301,21 @@ Project :: [].{
 			["env"].concat(variables.map(|v| "${v.name}=${v.value}"))
 		}
 
-	## The secrets other tasks declare, which a task's process never receives.
+	## The secrets other tasks declare, which a task's process never receives
+	## unless it declares them too, as secrets or optional environment variables.
 	other_tasks_secrets : Model, Model.Task -> List(Str)
-	other_tasks_secrets = |model, task|
+	other_tasks_secrets = |model, task| {
+		received = task.secrets.concat(task.optional_environment_variables)
 		model.tasks.join_map(|t| t.secrets).fold(
 			[],
 			|names, name|
-				if names.contains(name) or task.secrets.contains(name) {
+				if names.contains(name) or received.contains(name) {
 					names
 				} else {
 					names.append(name)
 				},
 		)
+	}
 
 	## Shared argv boundary for tasks and builds; arguments are never shell-split.
 	check_argv : List(Str), Str -> Try({}, Str)
@@ -301,6 +377,16 @@ Project :: [].{
 		check_names(model.builds.map(|b| b.name), "Build")?
 		check_names(model.sources.map(|s| s.name), "Source")?
 		check_names(model.inputs.map(|i| i.name), "Input")?
+		# Guix's own channel is always present, so no other may take its name.
+		channel_names = model.guix_channels.map(|c| c.name)
+		check_names(["guix"].concat(channel_names), "GuixChannel")?
+		for channel in model.guix_channels {
+			{ commit, signer } = channel.introduction
+			if !clean(channel.url) or !clean(channel.branch) or !forty_hex_digits(commit)
+				or !forty_hex_digits(signer.replace_each(" ", "")) {
+				return Err("invalid Guix channel: ${channel.name}")
+			}
+		}
 		check_names(model.environments.map(|e| e.name), "Environment")?
 		check_names(model.shells.map(|s| s.name), "Shell")?
 		check_names(model.tasks.map(|t| t.name), "Task")?
@@ -332,6 +418,61 @@ Project :: [].{
 				return Err("invalid build source reference: ${source.name}")
 			}
 		}
+		check_names(model.fetches.map(|f| f.name), "Fetch")?
+		for fetch in model.fetches {
+			if sources.any(|s| s.name == fetch.name) or
+				model.inputs.any(|i| i.name == fetch.name) or
+					model.build_sources.any(|s| s.name == fetch.name) {
+				return Err("DuplicateInput: ${fetch.name}")
+			}
+			if fetch.files.is_empty() {
+				return Err("Fetch ${fetch.name} has no files")
+			}
+			var $systems = []
+			for file in fetch.files {
+				if $systems.contains(file.system) or !clean(file.system) {
+					return Err("DuplicateFetchSystem: ${fetch.name}: ${file.system}")
+				}
+				$systems = $systems.append(file.system)
+				if !model.systems.contains(file.system) {
+					return Err(
+						"Fetch ${fetch.name} has a file for undeclared system "
+							.concat(file.system),
+					)
+				}
+				if !clean(file.url) or
+					!(file.url.starts_with("https://") or file.url.starts_with("http://")) {
+					return Err("invalid Fetch URL: ${fetch.name}: ${file.url}")
+				}
+				if sri_sha256(file.hash) != Ok(file.hash) {
+					return Err("invalid Fetch hash: ${fetch.name}")
+				}
+			}
+			for system in model.systems {
+				if !$systems.contains(system) {
+					return Err("Fetch ${fetch.name} has no file for system ${system}")
+				}
+			}
+		}
+		if !model.fetches.is_empty() and !model.requires_.contains("fetches") {
+			return Err("fetches require feature: fetches")
+		}
+		check_names(model.cargo_vendors.map(|c| c.name), "CargoVendor")?
+		for vendor in model.cargo_vendors {
+			if sources.any(|s| s.name == vendor.name) or
+				model.inputs.any(|i| i.name == vendor.name) or
+					model.build_sources.any(|s| s.name == vendor.name) or
+						model.fetches.any(|f| f.name == vendor.name) {
+				return Err("DuplicateInput: ${vendor.name}")
+			}
+			# Git checkouts have no checksum in Cargo.lock to pin them.
+			if vendor.lock.contains("source = \"git+") {
+				return Err("CargoVendor ${vendor.name}: git dependencies are not supported")
+			}
+		}
+		if !model.cargo_vendors.is_empty() and !model.requires_.contains("cargo") {
+			return Err("cargo vendors require feature: cargo")
+		}
 		if !model.build_sources.is_empty() and !model.requires_.contains("sources") {
 			return Err("build sources require feature: sources")
 		}
@@ -346,21 +487,52 @@ Project :: [].{
 				return Err("invalid input reference: ${input.name}")
 			}
 		}
+		if !model.follows.is_empty() and !model.requires_.contains("follows") {
+			return Err("Follows require feature: follows")
+		}
+		var $followed = []
+		for follows in model.follows {
+			{ overlay, input, source } = follows
+			if !model.inputs.any(|i| i.name == overlay and i.kind == Overlay) {
+				return Err("unknown overlay: ${overlay}")
+			}
+			if !valid_name(input) or $followed.contains((overlay, input)) {
+				return Err("invalid or duplicate Follows input of ${overlay}: ${input}")
+			}
+			$followed = $followed.append((overlay, input))
+			match sources.find_first(|s| s.name == source) {
+				Ok({ provider: GuixPackages(_), .. }) | Err(_) =>
+					return Err("Follows needs a Nix package source: ${source}")
+				Ok(_) => {}
+			}
+		}
 		var $environments = []
 		for env in model.environments {
 			check_env(env.env, "environment ${env.name}")?
+			match env.rust_toolchain {
+				Toml(text) if text.is_empty() or text.to_utf8().contains(0) =>
+					return Err("invalid RustToolchain in environment ${env.name}")
+				_ => {}
+			}
 			resolved = resolve(model.environments, env.name, [])?
-			for t in resolved.tools {
+			check_aliases(resolved.aliases, env.name)?
+			for t in environment_tools(resolved) {
 				parsed = tool("${t.source}#${t.name}")?
-				source = sources.find_first(|s| s.name == parsed.source)
-					.map_err(|_| "unknown source: ${t.source}")?
-				match source.provider {
-					Auto => {}
-					NixPackages(_) => {
-						check_tool(Nix, t.name)?
+				if model.fetches.any(|f| f.name == parsed.source) {
+					if !valid_name(t.name) {
+						return Err("invalid executable name for Fetch ${t.source}: ${t.name}")
 					}
-					GuixPackages(_) => {
-						check_tool(Guix, t.name)?
+				} else {
+					source = sources.find_first(|s| s.name == parsed.source)
+						.map_err(|_| "unknown source: ${t.source}")?
+					match source.provider {
+						Auto => {}
+						NixPackages(_) => {
+							check_tool(Nix, t.name)?
+						}
+						GuixPackages(_) => {
+							check_tool(Guix, t.name)?
+						}
 					}
 				}
 			}
@@ -387,6 +559,25 @@ Project :: [].{
 					return Err("invalid secret name in task ${task.name}")
 				}
 			}
+			for name in task.optional_environment_variables {
+				if !valid_variable_name(name) {
+					return Err(
+						"invalid optional environment variable name in task ${task.name}",
+					)
+				}
+				if task.secrets.contains(name) {
+					return Err(
+						"task ${task.name} declares ${name} in both Secrets and "
+							.concat("OptionalEnvironmentVariables"),
+					)
+				}
+			}
+			check_names(task.needs, "BuildDependency")?
+			for need in task.needs {
+				if !model.builds.any(|b| b.name == need) {
+					return Err("unknown build: ${need}")
+				}
+			}
 		}
 		for build in model.builds {
 			if !$environments.any(|e| e.name == build.environment) {
@@ -409,7 +600,9 @@ Project :: [].{
 			check_names(build.inputs, "BuildInput")?
 			check_names(build.needs, "BuildDependency")?
 			for input in build.inputs {
-				if !model.build_sources.any(|s| s.name == input) {
+				if !model.build_sources.any(|s| s.name == input) and
+					!model.fetches.any(|f| f.name == input) and
+						!model.cargo_vendors.any(|c| c.name == input) {
 					return Err("unknown build source: ${input}")
 				}
 			}
@@ -442,11 +635,15 @@ Project :: [].{
 				requires_: model.requires_,
 				systems: unique(model.systems),
 				sources,
+				guix_channels: model.guix_channels,
 				inputs: model.inputs,
+				follows: model.follows,
 				environments: $environments,
 				shells: model.shells,
 				tasks: model.tasks,
 				build_sources: model.build_sources,
+				fetches: model.fetches,
+				cargo_vendors: model.cargo_vendors,
 				builds: model.builds,
 				workflows: model.workflows,
 				extensions: model.extensions,
@@ -526,7 +723,7 @@ Project :: [].{
 		var $argv_bytes = 0.U64
 		var $productive = []
 		for step in workflow.steps {
-			match step {
+			match wrapped(step) {
 				RunTask(task_name, argv) => {
 					task = tasks.find_first(|t| t.name == task_name)
 						.map_err(|_| "unknown task: ${task_name}")?
@@ -567,6 +764,7 @@ Project :: [].{
 					$count = $count + entry.count
 					$argv_bytes = $argv_bytes + entry.argv_bytes
 				}
+				MayFail(_) => {}
 			}
 			# Reject while counting, before allocating any expanded output.
 			if $count > 4096 {
@@ -598,8 +796,15 @@ Project :: [].{
 		if entry.count == 0 {
 			return Ok(steps)
 		}
+		expand_steps(graph, entry.steps, steps)
+	}
+
+	## A MayFail step expands to MayFail(n) before its n atomic steps.
+	expand_steps :
+		List(WorkflowVisit), List(Model.WorkflowStep), Steps -> Try(Steps, Str)
+	expand_steps = |graph, declared, steps| {
 		var $steps = steps
-		for step in entry.steps {
+		for step in declared {
 			match step {
 				RunTask(task, argv) => {
 					$steps = $steps.append(RunTask(task, argv))
@@ -610,19 +815,67 @@ Project :: [].{
 				RunWorkflow(child) => {
 					$steps = expand_workflow(graph, child, $steps)?
 				}
+				MayFail(_) => {
+					group = expand_steps(graph, [wrapped(step)], [])?
+					count = group.count_if(
+						|s| match s {
+							MayFail(_) => Bool.False
+							_ => Bool.True
+						},
+					)
+					$steps = $steps.append(MayFail(count)).concat(group)
+				}
 			}
 		}
 		Ok($steps)
 	}
 
+	## The step a MayFail wraps, else the step itself.
+	wrapped : Model.WorkflowStep -> Model.WorkflowStep
+	wrapped = |step|
+		match step {
+			MayFail(RunTask(task, argv)) => RunTask(task, argv)
+			MayFail(BuildArtifact(build)) => BuildArtifact(build)
+			MayFail(RunWorkflow(child)) => RunWorkflow(child)
+			other => other
+		}
+
 	## Validate the whole project before returning the requested closure. Each
 	## dependency appears once, before its consumers, in Needs declaration order.
 	build_closure : Model, Str -> Try(List(Model.Build), Str)
-	build_closure = |model, name| {
+	build_closure = |model, name| builds_closure(model, [name])
+
+	builds_closure : Model, List(Str) -> Try(List(Model.Build), Str)
+	builds_closure = |model, names| {
 		project = validate(model)?
-		done = visit_build(project.builds, name, [], [])?
-		Ok(done.map(|entry| entry.build))
+		var $done = []
+		for name in names {
+			$done = visit_build(project.builds, name, [], $done)?
+		}
+		Ok($done.map(|entry| entry.build))
 	}
+
+	## What a closure's shared snapshot holds: the files each build selects.
+	snapshot_files : List(Model.Build) -> [All, Only(List(Str))]
+	snapshot_files = |builds|
+		builds.fold(
+			Only([]),
+			|selected, build|
+				match (selected, build.files) {
+					(Only(chosen), Only(paths)) => Only(chosen.concat(paths))
+					_ => All
+				},
+		)
+
+	## The variable that gives a task with Needs its artifacts directory, one
+	## entry per needed build, under the workspace.
+	artifacts_variable : Model.Task, Str -> List(Model.Variable)
+	artifacts_variable = |task, workspace|
+		if task.needs.is_empty() {
+			[]
+		} else {
+			[{ name: "KAI_ARTIFACTS", value: "${workspace}/artifacts-${task.name}" }]
+		}
 
 	## Memoized DAG traversal avoids exponential diamond expansion. Height is
 	## retained so memo hits cannot hide a path exceeding the 128-level bound.
@@ -679,7 +932,13 @@ Project :: [].{
 		env = environments.find_first(|e| e.name == name)
 			.map_err(|_| "unknown environment: ${name}")?
 		match env.parents {
-			[] => Ok({ ..env, tools: unique(env.tools), overlays: unique(env.overlays) })
+			[] =>
+				Ok({
+					..env,
+					tools: unique(env.tools),
+					overlays: unique(env.overlays),
+					aliases: unique(env.aliases),
+				})
 			[parent] => {
 				base = resolve(environments, parent, visiting.append(name))?
 				Ok({
@@ -688,6 +947,12 @@ Project :: [].{
 					tools: unique(base.tools.concat(env.tools)),
 					overlays: unique(base.overlays.concat(env.overlays)),
 					env: merge_env(base.env, env.env),
+					pure: base.pure or env.pure,
+					aliases: unique(base.aliases.concat(env.aliases)),
+					rust_toolchain: match env.rust_toolchain {
+						None => base.rust_toolchain
+						own => own
+					},
 				})
 			}
 			_ => Err("environment ${name} has several parents")
@@ -704,11 +969,22 @@ Project :: [].{
 		if backend == Guix and !env.overlays.is_empty() {
 			return Err("Guix does not support overlays in environment ${name}")
 		}
+		if backend == Guix and !env.aliases.is_empty() {
+			return Err("Alias needs Nix: environment ${name}")
+		}
+		if backend == Guix and env.rust_toolchain != None {
+			return Err("RustToolchain needs Nix: environment ${name}")
+		}
+		every_tool = environment_tools(env)
+		tools = package_tools(every_tool, project.fetches)
+		if backend == Guix and tools.len() != every_tool.len() {
+			return Err("Guix cannot use Fetch tools, in environment ${name}")
+		}
 		# An empty environment still uses the default provider's environment builder.
-		source_names = if env.tools.is_empty() {
+		source_names = if tools.is_empty() {
 			["default"]
 		} else {
-			unique(env.tools.map(|t| t.source))
+			unique(tools.map(|t| t.source))
 		}
 		for source_name in source_names {
 			source = project.sources.find_first(|s| s.name == source_name)
@@ -721,15 +997,28 @@ Project :: [].{
 				_ => {}
 			}
 		}
-		for t in env.tools {
+		for t in tools {
 			check_tool(backend, t.name)?
 		}
 		Ok({})
 	}
 
+	## The tools that come from package sources, not from Fetches.
+	package_tools : List(Model.Tool), List(Model.Fetch) -> List(Model.Tool)
+	package_tools = |tools, fetches|
+		tools.keep_if(|t| !fetches.any(|f| f.name == t.source))
+
 	unique : List(a) -> List(a) where [a.is_eq : a, a -> Bool]
 	unique = |items|
 		items.fold([], |acc, item| if (acc.contains(item)) acc else acc.append(item))
+}
+
+# A sha256 in hex or SRI normalizes to SRI; other text is not a sha256.
+expect {
+	sri = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+	hex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	Project.sri_sha256(hex) == Ok(sri) and Project.sri_sha256(sri) == Ok(sri)
+		and Project.sri_sha256("e3b0").is_err()
 }
 
 # A bare tool name resolves against the implicit "default" source.
@@ -779,15 +1068,19 @@ fixture = |environments| Model.{
 			provider: GuixPackages("https://git.savannah.gnu.org/git/guix.git"),
 		},
 	],
+	guix_channels: [],
 	inputs: [
 		{ name: "first", url: "github:example/first", kind: Overlay },
 		{ name: "second", url: "github:example/second", kind: Overlay },
 		{ name: "data", url: "github:example/data", kind: Flake },
 	],
+	follows: [],
 	environments,
 	shells: [],
 	tasks: [],
 	build_sources: [],
+	fetches: [],
+	cargo_vendors: [],
 	builds: [],
 	workflows: [],
 	extensions: [],
@@ -801,6 +1094,9 @@ base = {
 	tools: [{ source: "default", name: "git" }],
 	overlays: ["first"],
 	env: [],
+	pure: Bool.False,
+	aliases: [],
+	rust_toolchain: None,
 }
 
 child : Model.Environment
@@ -813,6 +1109,9 @@ child = {
 	],
 	overlays: ["first", "second"],
 	env: [],
+	pure: Bool.False,
+	aliases: [],
+	rust_toolchain: None,
 }
 
 # Declaration order is irrelevant; inheritance order is not. First wins.
@@ -827,6 +1126,9 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 			],
 			overlays: ["first", "second"],
 			env: [],
+			pure: Bool.False,
+			aliases: [],
+			rust_toolchain: None,
 		},
 		base,
 	]),
@@ -836,14 +1138,40 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 expect match Project.validate(
 	fixture([
 		base,
-		{ ..child, tools: [], overlays: [], env: [] },
-		{ name: "empty", parents: [], tools: [], overlays: [], env: [] },
+		{
+			..child,
+			tools: [],
+			overlays: [],
+			env: [],
+			pure: Bool.False,
+			aliases: [],
+			rust_toolchain: None,
+		},
+		{
+			name: "empty",
+			parents: [],
+			tools: [],
+			overlays: [],
+			env: [],
+			pure: Bool.False,
+			aliases: [],
+			rust_toolchain: None,
+		},
 	]),
 ) {
 	Ok(model) => model.environments == [
 		base,
 		{ ..base, name: "dev" },
-		{ name: "empty", parents: [], tools: [], overlays: [], env: [] },
+		{
+			name: "empty",
+			parents: [],
+			tools: [],
+			overlays: [],
+			env: [],
+			pure: Bool.False,
+			aliases: [],
+			rust_toolchain: None,
+		},
 	]
 	Err(_) => False
 }
@@ -929,6 +1257,9 @@ expect {
 			parents: [],
 			overlays: [],
 			env: [],
+			pure: Bool.False,
+			aliases: [],
+			rust_toolchain: None,
 			tools: [{ source: "guix", name: "git" }],
 		},
 	])
@@ -977,13 +1308,26 @@ build_fixture = |builds| Model.{
 	requires_: ["sources", "builds"],
 	systems: ["x86_64-linux"],
 	sources: [],
+	guix_channels: [],
 	inputs: [],
+	follows: [],
 	environments: [
-		{ name: "builder", parents: [], tools: [], overlays: [], env: [] },
+		{
+			name: "builder",
+			parents: [],
+			tools: [],
+			overlays: [],
+			env: [],
+			pure: Bool.False,
+			aliases: [],
+			rust_toolchain: None,
+		},
 	],
 	shells: [],
 	tasks: [],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
+	fetches: [],
+	cargo_vendors: [],
 	builds,
 	workflows: [],
 	extensions: [],
@@ -1007,7 +1351,9 @@ library = {
 	],
 	output: "dist/library",
 	files: All,
+	description: "",
 	env: [],
+	revision: Bool.False,
 }
 
 application : Model.Build
@@ -1168,11 +1514,15 @@ build_source_fixture = |build_sources, requires_| {
 		requires_,
 		systems: model.systems,
 		sources: model.sources,
+		guix_channels: model.guix_channels,
 		inputs: model.inputs,
+		follows: model.follows,
 		environments: model.environments,
 		shells: model.shells,
 		tasks: model.tasks,
 		build_sources,
+		fetches: [],
+		cargo_vendors: [],
 		builds: model.builds,
 		workflows: model.workflows,
 		extensions: model.extensions,
@@ -1308,9 +1658,20 @@ workflow_features = |workflows, features| Model.{
 	requires_: ["sources", "builds"].concat(features),
 	systems: ["x86_64-linux"],
 	sources: [],
+	guix_channels: [],
 	inputs: [],
+	follows: [],
 	environments: [
-		{ name: "builder", parents: [], tools: [], overlays: [], env: [] },
+		{
+			name: "builder",
+			parents: [],
+			tools: [],
+			overlays: [],
+			env: [],
+			pure: Bool.False,
+			aliases: [],
+			rust_toolchain: None,
+		},
 	],
 	shells: [],
 	tasks: [
@@ -1320,9 +1681,14 @@ workflow_features = |workflows, features| Model.{
 			run: ["cmd"],
 			env: [],
 			secrets: [],
+			optional_environment_variables: [],
+			needs: [],
+			description: "",
 		},
 	],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
+	fetches: [],
+	cargo_vendors: [],
 	builds: [library],
 	workflows,
 	extensions: [],
@@ -1332,10 +1698,11 @@ workflow_features = |workflows, features| Model.{
 # Flat steps keep literal extras separate from configured task argv.
 expect {
 	argv = ["", "two words", "\"quoted\"", "$HOME", "line\nbreak", "--flag"]
-	leaf = { name: "leaf", steps: [RunTask("check.all", argv)] }
+	leaf = { name: "leaf", description: "", steps: [RunTask("check.all", argv)] }
 	model = workflow_fixture([
 		{
 			name: "ci",
+			description: "",
 			steps: [
 				RunWorkflow("leaf"),
 				BuildArtifact("library"),
@@ -1356,10 +1723,22 @@ expect {
 # Forward references and shared diamonds retain declaration order/repetitions.
 expect {
 	model = workflow_fixture([
-		{ name: "root", steps: [RunWorkflow("left"), RunWorkflow("right")] },
-		{ name: "right", steps: [BuildArtifact("library"), RunWorkflow("leaf")] },
-		{ name: "left", steps: [RunWorkflow("leaf"), RunTask("check.all", ["L"])] },
-		{ name: "leaf", steps: [RunTask("check.all", ["shared"])] },
+		{
+			name: "root",
+			description: "",
+			steps: [RunWorkflow("left"), RunWorkflow("right")],
+		},
+		{
+			name: "right",
+			description: "",
+			steps: [BuildArtifact("library"), RunWorkflow("leaf")],
+		},
+		{
+			name: "left",
+			description: "",
+			steps: [RunWorkflow("leaf"), RunTask("check.all", ["L"])],
+		},
+		{ name: "leaf", description: "", steps: [RunTask("check.all", ["shared"])] },
 	])
 	Project.workflow_steps(model, "root") == Ok([
 		RunTask("check.all", ["shared"]),
@@ -1372,8 +1751,16 @@ expect {
 # All workflow tags and unusual argument bytes survive semantic normalization.
 expect {
 	model = workflow_fixture([
-		{ name: "ci", steps: [RunWorkflow("leaf"), BuildArtifact("library")] },
-		{ name: "leaf", steps: [RunTask("check.all", ["", "\n", "é"])] },
+		{
+			name: "ci",
+			description: "",
+			steps: [RunWorkflow("leaf"), BuildArtifact("library")],
+		},
+		{
+			name: "leaf",
+			description: "",
+			steps: [RunTask("check.all", ["", "\n", "é"])],
+		},
 	])
 	match Project.validate(model) {
 		Ok(project) => Project.validate(project) == Ok(project)
@@ -1384,7 +1771,7 @@ expect {
 # Empty workflows are valid no-ops, not missing requests.
 expect Project.workflow_steps(
 	workflow_fixture([
-		{ name: "empty", steps: [] },
+		{ name: "empty", description: "", steps: [] },
 	]),
 	"empty",
 ) == Ok([])
@@ -1396,15 +1783,15 @@ expect Project.workflow_steps(workflow_fixture([]), "missing") ==
 # Runtime model receives the same workflow-name checks as typed quotes.
 expect Project.validate(
 	workflow_fixture([
-		{ name: "bad/name", steps: [] },
+		{ name: "bad/name", description: "", steps: [] },
 	]),
 ) == Err("invalid name for Workflow: bad/name")
 
 # Duplicate workflow identities cannot silently choose the first declaration.
 expect Project.validate(
 	workflow_fixture([
-		{ name: "ci", steps: [] },
-		{ name: "ci", steps: [] },
+		{ name: "ci", description: "", steps: [] },
+		{ name: "ci", description: "", steps: [] },
 	]),
 ) == Err("DuplicateWorkflow: ci")
 
@@ -1412,7 +1799,7 @@ expect Project.validate(
 expect Project.validate(
 	workflow_features(
 		[
-			{ name: "ci", steps: [] },
+			{ name: "ci", description: "", steps: [] },
 		],
 		[],
 	),
@@ -1423,22 +1810,32 @@ expect [
 	RunTask("library", []),
 	BuildArtifact("check.all"),
 	RunWorkflow("check.all"),
-].all(|step|
-	Project.validate(workflow_fixture([{ name: "ci", steps: [step] }])).is_err())
+].all(
+	|step|
+		Project.validate(
+			workflow_fixture([
+				{
+					name: "ci",
+					description: "",
+					steps: [step],
+				},
+			]),
+		).is_err(),
+)
 
 # Direct cycles fail at the shared boundary before any expansion.
 expect Project.validate(
 	workflow_fixture([
-		{ name: "ci", steps: [RunWorkflow("ci")] },
+		{ name: "ci", description: "", steps: [RunWorkflow("ci")] },
 	]),
 ) == Err("workflow cycle: ci -> ci")
 
 # Even an unused indirect cycle invalidates a requested valid workflow.
 expect Project.workflow_steps(
 	workflow_fixture([
-		{ name: "safe", steps: [RunTask("check.all", [])] },
-		{ name: "a", steps: [RunWorkflow("b")] },
-		{ name: "b", steps: [RunWorkflow("a")] },
+		{ name: "safe", description: "", steps: [RunTask("check.all", [])] },
+		{ name: "a", description: "", steps: [RunWorkflow("b")] },
+		{ name: "b", description: "", steps: [RunWorkflow("a")] },
 	]),
 	"safe",
 ) == Err("workflow cycle: a -> b -> a")
@@ -1446,8 +1843,8 @@ expect Project.workflow_steps(
 # Unused unknown references also invalidate an otherwise valid request.
 expect Project.workflow_steps(
 	workflow_fixture([
-		{ name: "safe", steps: [] },
-		{ name: "broken", steps: [RunTask("absent", [])] },
+		{ name: "safe", description: "", steps: [] },
+		{ name: "broken", description: "", steps: [RunTask("absent", [])] },
 	]),
 	"safe",
 ) == Err("unknown task: absent")
@@ -1455,7 +1852,11 @@ expect Project.workflow_steps(
 # Workflow extras may be empty strings, but never contain a NUL byte.
 expect Project.validate(
 	workflow_fixture([
-		{ name: "ci", steps: [RunTask("check.all", [Str.from_utf8([0]) ?? ""])] },
+		{
+			name: "ci",
+			description: "",
+			steps: [RunTask("check.all", [Str.from_utf8([0]) ?? ""])],
+		},
 	]),
 ) == Err("NUL in argv: check.all")
 
@@ -1467,7 +1868,7 @@ expect {
 	}
 	Project.validate(
 		workflow_fixture([
-			{ name: "ci", steps: [RunTask("check.all", $argv)] },
+			{ name: "ci", description: "", steps: [RunTask("check.all", $argv)] },
 		]),
 	).is_err()
 }
@@ -1482,7 +1883,11 @@ workflow_chain = |count, double, leaf| {
 			step = RunWorkflow(($index - 1).to_str())
 			if (double) [step, step] else [step]
 		}
-		$workflows = $workflows.append({ name: $index.to_str(), steps })
+		$workflows = $workflows.append({
+			name: $index.to_str(),
+			description: "",
+			steps,
+		})
 		$index = $index + 1
 	}
 	$workflows
@@ -1498,6 +1903,7 @@ expect Project.workflow_steps(
 expect {
 	workflows = workflow_chain(120, True, []).append({
 		name: "mixed",
+		description: "",
 		steps: [
 			RunWorkflow("119"),
 			RunTask("check.all", []),
@@ -1557,8 +1963,8 @@ expect {
 	}
 	Project.validate(
 		workflow_fixture([
-			{ name: "empty", steps: [] },
-			{ name: "wide", steps: $steps },
+			{ name: "empty", description: "", steps: [] },
+			{ name: "wide", description: "", steps: $steps },
 		]),
 	) == Err("workflow graph exceeds 8192 steps")
 }
@@ -1571,8 +1977,12 @@ expect {
 	}
 	Project.validate(
 		workflow_fixture([
-			{ name: "leaf", steps: [RunTask("check.all", [$arg])] },
-			{ name: "twice", steps: [RunWorkflow("leaf"), RunWorkflow("leaf")] },
+			{ name: "leaf", description: "", steps: [RunTask("check.all", [$arg])] },
+			{
+				name: "twice",
+				description: "",
+				steps: [RunWorkflow("leaf"), RunWorkflow("leaf")],
+			},
 		]),
 	) == Err("workflow expansion exceeds 1 MiB argv bytes")
 }

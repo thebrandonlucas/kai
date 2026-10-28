@@ -114,6 +114,7 @@ Answer := [].{
 						backend,
 						host: request.host,
 						layout: request.layout,
+						revision: request.revision,
 						lock: request.lock,
 						phase,
 						observed,

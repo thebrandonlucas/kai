@@ -86,7 +86,7 @@ Arguments are data; the platform builds kai's parser and help from them.
 A command takes at most one `Name` (a project entry; each choice becomes a
 subcommand, so help and usage errors list the project's names; no choices
 means any name) and at most one `Trailing` (everything after `--`,
-exact), and any `Flag` (`--name`, or `-short`) and `Path` (`--name PATH`,
+exact; with choices, only the project's names), and any `Flag` (`--name`, or `-short`) and `Path` (`--name PATH`,
 made absolute against the directory kai runs in), given anywhere before
 `--`. `Command.name(args, "host")`, `Command.trailing(args, "args")`,
 `Command.flag(args, "name")` and `Command.path(args, "name")` read the
@@ -116,8 +116,9 @@ whose backend program works. A plan that fails is reported; kai never
 falls back to another backend after choosing one.
 
 `ctx` holds the parsed `args`, the chosen `backend`, the `host` system,
-the `layout` of the project and its `.kai` workspace, the `lock` text,
-and, for continued plans, `phase` and the `observed` files.
+the `layout` of the project and its `.kai` workspace, the project's git
+`revision` (`describe` and `commit_date`, empty outside git), the `lock`
+text, and, for continued plans, `phase` and the `observed` files.
 
 ## Plans
 
@@ -128,7 +129,7 @@ A plan is a list of steps and what comes next:
 | `Note(text)`, `Print(text)` | a note on stderr, a result on stdout (JSON events with `--json`) |
 | `Confirm(prompt)` | ask before anything runs; refused without `--yes` unless a person is at a terminal |
 | `Write(files)` | write generated files, only beneath the generated root |
-| `Run({ description, argv, output, secrets, removed_environment_variables })` | run exact argv from the project root, never through a shell |
+| `Run({ description, argv, output, secrets, removed_environment_variables, kept_environment_variables })` | run exact argv from the project root, never through a shell |
 | `VerifyPath`, `CheckSource`, `Snapshot`, `InstallRunner` | std's checks and build sandbox steps |
 | `PublishLock({ previous, contents })` | replace the lock, only for the lock owner |
 

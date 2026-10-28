@@ -37,7 +37,8 @@ E2eWorkflow := [].{
 		\\	Workflow("stops", [RunTask("mark", ["first"]), RunTask("fail", []),
 		\\		RunTask("mark", ["never"])]),
 
-	# More, for Nix only: edit changes the source the library is built from.
+	# More, for Nix only: edit changes the source the library is built from,
+	# and stale runs a task before the app, which reads the assets source.
 	extra =
 		\\	Task("edit", [Use("dev"),
 		\\		Run(["sh", "-c", "echo edited revision > src/message.txt"])]),
@@ -47,6 +48,7 @@ E2eWorkflow := [].{
 		\\		RunTask("mark", ["again"])]),
 		\\	Workflow("fresh", [BuildArtifact("library"), RunTask("edit", []),
 		\\		BuildArtifact("app")]),
+		\\	Workflow("stale", [RunTask("mark", ["one"]), BuildArtifact("app")]),
 
 	# Kai's stdout in JSON mode: whole lines, each a JSON object with a string
 	# type, and no terminal escapes.
@@ -161,22 +163,23 @@ E2eWorkflow := [].{
 					return Err(NotRepeated(E2eWorkflow.show(repeated)))
 				}
 		marked!("again\nagain\n")?
-		# A changed locked source stops the workflow before its first task.
+		# A changed locked source stops the workflow at the build that reads
+		# it, not at the task before it.
 		heading = file("assets/heading.txt")
 		original = Path.read_bytes!(heading)?
 		Path.write_utf8!(heading, "Changed heading\n")?
 		locked = json!(
-			["workflow", "stops"],
+			["workflow", "stale"],
 			1,
-			["backend", "step_started", "error"],
+			["backend"].concat(step).concat(["step_started", "error"]),
 		)?
 		if
 			!E2eWorkflow.text(locked.last() ?? LockJson.Null, "message")
-				.contains("run `kai update`")
+				.contains("run `kai update assets`")
 				{
 					return Err(LockedSourceIgnored(locked.map(LockJson.encode)))
 				}
-		marked!("")?
+		marked!("one\n")?
 		Path.write_bytes!(heading, original)?
 		# A task between builds edits the project; the app's library sees it.
 		fresh = json!(

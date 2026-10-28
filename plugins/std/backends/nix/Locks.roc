@@ -90,6 +90,21 @@ Locks := { identity : LockJson, graph : LockJson }.{
 	identity_for : Model -> Try(LockJson, Str)
 	identity_for = |model| {
 		declared = inputs(model)?
+		# An overlay's Follows are part of what its lock means; without any,
+		# the field is absent and the identity is unchanged.
+		follows_of = |name| {
+			pairs = model.follows.keep_if(|followed| followed.overlay == name).map(
+				|followed| {
+					name: followed.input,
+					value: LockJson.String(followed.source),
+				},
+			)
+			if pairs.is_empty() {
+				[]
+			} else {
+				[{ name: "follows", value: LockJson.Object(pairs) }]
+			}
+		}
 		Ok(
 			LockJson.Object([
 				{
@@ -98,11 +113,13 @@ Locks := { identity : LockJson, graph : LockJson }.{
 						declared.map(
 							|input| {
 								name: input.name,
-								value: LockJson.Object([
-									{ name: "ref", value: LockJson.String(input.ref) },
-									{ name: "kind", value: LockJson.String(input.kind) },
-									{ name: "flake", value: LockJson.Boolean(input.flake) },
-								]),
+								value: LockJson.Object(
+									[
+										{ name: "ref", value: LockJson.String(input.ref) },
+										{ name: "kind", value: LockJson.String(input.kind) },
+										{ name: "flake", value: LockJson.Boolean(input.flake) },
+									].concat(follows_of(input.name)),
+								),
 							},
 						),
 					),
@@ -242,6 +259,7 @@ Locks := { identity : LockJson, graph : LockJson }.{
 						path,
 						argv: ["nix", "hash", "path", "--sri", path],
 						stdout: nar_hash,
+						update: "kai update ${local.name}",
 					})
 					if !$checks.contains(check) {
 						$checks = $checks.append(check)
@@ -352,6 +370,17 @@ Locks := { identity : LockJson, graph : LockJson }.{
 				"flake",
 			)? != LockJson.Boolean(kind != "source") {
 				return Err("lock input flake intent mismatch")
+			}
+			# Follows map an overlay's own inputs to Nix package sources.
+			follows = LockJson.field(input.value, "follows") ?? LockJson.Object([])
+			for followed in LockJson.object(follows)? {
+				source_name = LockJson.string(followed.value)?
+				source = LockJson.field(LockJson.field(identity, "inputs")?, source_name)?
+				source_kind = LockJson.string(LockJson.field(source, "kind")?)?
+				if kind != "overlay" or !Project.valid_name(followed.name)
+					or !["auto", "packages"].contains(source_kind) {
+					return Err("invalid lock follows")
+				}
 			}
 		}
 		overlays = LockJson.object(LockJson.field(identity, "overlays")?)?
@@ -720,8 +749,8 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		var $out = []
 		while $index < bytes.len() {
 			byte = bytes.get($index) ?? 0
-			high = hex_digit(bytes.get($index + 1) ?? 0)
-			low = hex_digit(bytes.get($index + 2) ?? 0)
+			high = Project.hex_digit(bytes.get($index + 1) ?? 0)
+			low = Project.hex_digit(bytes.get($index + 2) ?? 0)
 			match (byte, high, low) {
 				('%', Ok(high_digit), Ok(low_digit)) => {
 					$out = $out.append(high_digit * 16 + low_digit)
@@ -735,15 +764,6 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		}
 		Str.from_utf8($out) ?? text
 	}
-
-	hex_digit : U8 -> Try(U8, {})
-	hex_digit = |byte| if byte >= '0' and byte <= '9' {
-		Ok(byte - '0')
-	} else if byte >= 'a' and byte <= 'f' {
-		Ok(byte - 'a' + 10)
-	} else if byte >= 'A' and byte <= 'F' {
-		Ok(byte - 'A' + 10)
-	} else Err({})
 
 	## SSH belongs to Git transport, not HTTP file/tarball fetching.
 	remote_url : Str, Str -> Bool
@@ -919,6 +939,7 @@ expect match locked_fixture {
 						path: "/moved/assets",
 						argv: ["nix", "hash", "path", "--sri", "/moved/assets"],
 						stdout: "sha256-mhO52EWOvxHOyTFt0V1hM6Oo6mlpNo2PFlxQtcmCJBc=",
+						update: "kai update assets",
 					}),
 				]
 				and Locks.decode(Locks.encode(locks)) == Ok(locks)

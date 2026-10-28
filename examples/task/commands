@@ -1,3 +1,5 @@
 update
+run --help
+run moo --help
 run moo
 run say -- hello

@@ -198,7 +198,8 @@ Execute := [].{
 
 	# Check the whole plan, then run its steps in order; the first failure
 	# stops the plan. Each Stage opens a numbered workflow step that the next
-	# Stage or the end closes.
+	# Stage or the end closes. A Run failing within a MayFail's Stages is
+	# noted, and the plan continues after them.
 	run! : Plan, Lock, Layout, Output.Mode, Options, Str => Try({}, _)
 	run! = |plan, lock, layout, mode, options, workflow| {
 		Execute.validate(plan, layout, lock)?
@@ -211,39 +212,47 @@ Execute := [].{
 		if plan.steps.any(Execute.uses_workspace) {
 			Workspace.prepare!(layout)?
 		}
-		snapshots = plan.steps.any(
-			|step| match step {
-				Snapshot(_) => Bool.True
-				_ => Bool.False
-			},
-		)
-		if !snapshots {
-			return Execute.steps!(plan, layout, mode, workflow, options)
-		}
-		guard = "${layout.workspace}/build.lock"
-		Execute.hold!(guard, mode)?
-		result = Execute.steps!(plan, layout, mode, workflow, options)
-		_ = Workspace.path(guard).delete_empty!()
-		result
+		Execute.steps!(plan, layout, mode, workflow, options)
 	}
 
-	# A directory in the workspace is the build lock: a plan that snapshots
-	# holds it from its first step to its last, so builds take turns.
+	# A symbolic link in the workspace naming its holder's process ID is the
+	# build lock, created atomically with its holder. Each build holds it from
+	# its snapshot through its build command, so builds take turns while the
+	# tasks around them, which may run kai build themselves, do not wait. A
+	# lock whose holder is no longer running is taken over.
 	hold! : Str, Output.Mode => Try({}, _)
 	hold! = |guard, mode| {
-		var $noted = Bool.False
+		process = Execute.shell!("echo $PPID", [])?.stdout
+		var $noted = ""
 		var $held = Bool.False
 		while !$held {
-			match Workspace.path(guard).create_dir!() {
+			match Path.symlink!(Workspace.path(process), Workspace.path(guard), File) {
 				Ok({}) => {
 					$held = Bool.True
 				}
 				Err(PathErr(AlreadyExists, _)) => {
-					if !$noted {
-						message = "waiting for another kai build to release ${guard}; "
-							.concat("if none is running, it is safe to remove that directory")
+					holder = match Workspace.path(guard).read_link!() {
+						Ok(target) => target.to_str() ?? ""
+						Err(PathErr(NotFound, _)) => "released"
+						Err(_) => ""
+					}
+					numeric = holder.to_utf8().all(|byte| byte >= '0' and byte <= '9')
+					message =
+						if holder == "released" {
+							""
+						} else if holder.is_empty() or !numeric {
+							"waiting for another kai build to release ${guard}; "
+								.concat("if none is running, it is safe to remove it")
+						} else if Execute.shell!("kill -0 \"$1\"", [holder])?.succeeded {
+							"waiting for kai process ${holder} to release ${guard}"
+						} else if Execute.take_over!(guard, holder)? {
+							"took over a build lock left by a process that is no longer running"
+						} else {
+							""
+						}
+					if !message.is_empty() and message != $noted {
 						Output.note!(mode, "kai: ${message}", Output.event("note", message, []))?
-						$noted = Bool.True
+						$noted = message
 					}
 					Sleep.millis!(200)?
 				}
@@ -251,6 +260,35 @@ Execute := [].{
 			}
 		}
 		Ok({})
+	}
+
+	# Remove the lock a stopped process left, unless another kai took it over
+	# first: the directory named after that process lets one kai do so.
+	take_over! : Str, Str => Try(Bool, _)
+	take_over! = |guard, holder| {
+		marker = Workspace.path("${guard}.${holder}")
+		match marker.create_dir!() {
+			Ok({}) => {
+				current = Workspace.path(guard).read_link!()
+				stale = current.map_ok(|target| target.to_str() ?? "") == Ok(holder)
+				if stale {
+					_ = Workspace.path(guard).delete!()
+				}
+				_ = marker.delete_empty!()
+				Ok(stale)
+			}
+			Err(PathErr(AlreadyExists, _)) => Ok(Bool.False)
+			Err(err) => Err(err)
+		}
+	}
+
+	# A shell script's trimmed stdout and whether it succeeded.
+	shell! = |script, args| {
+		ran = Cmd.new(OsStr.from_str("sh"))
+			.args(["-c", script, "sh"].concat(args).map(OsStr.from_str))
+			.run!()?
+		stdout = Str.from_utf8_lossy(ran.stdout_bytes).trim()
+		Ok({ stdout, succeeded: ran.status == Exited(0) })
 	}
 
 	steps! : Plan, Layout, Output.Mode, Str, Options => Try({}, _)
@@ -261,19 +299,63 @@ Execute := [].{
 				_ => Bool.False
 			},
 		)
+		guard = "${layout.workspace}/build.lock"
 		var $index = 0
 		var $finished = ""
+		var $holding = Bool.False
+		# The last Stage of each open MayFail, innermost last; a failure there
+		# skips the steps through that Stage.
+		var $may_fail = []
+		var $skipping = Bool.False
+		var $skip_through = 0
 		for step in plan.steps {
 			match step {
 				Stage(label) => {
 					Execute.finish!(mode, $finished)?
 					$index = $index + 1
-					progress = Output.step(workflow, $index, count, label)
-					Output.note!(mode, progress.human, progress.started)?
-					$finished = progress.finished
+					$may_fail = $may_fail.keep_if(|last| last >= $index)
+					$skipping = $skipping and $index <= $skip_through
+					$finished = ""
+					if !$skipping {
+						progress = Output.step(workflow, $index, count, label)
+						Output.note!(mode, progress.human, progress.started)?
+						$finished = progress.finished
+					}
 				}
-				_ => Execute.step!(step, layout, mode, options)?
+				MayFail(stages) => {
+					$may_fail = $may_fail.append($index + stages)
+				}
+				_ if $skipping => {}
+				_ => {
+					(snapshots, builds) = match step {
+						Snapshot(_) => (Bool.True, Bool.False)
+						Run({ output: Artifact(_), .. }) => (Bool.False, Bool.True)
+						_ => (Bool.False, Bool.False)
+					}
+					if snapshots and !$holding {
+						Execute.hold!(guard, mode)?
+						$holding = Bool.True
+					}
+					result = Execute.step!(step, layout, mode, options)
+					if $holding and (builds or result.is_err()) {
+						_ = Workspace.path(guard).delete!()
+						$holding = Bool.False
+					}
+					match (result, $may_fail.last()) {
+						(Err(ChildExited(description, code)), Ok(last)) => {
+							message = "${description} failed with code ${code.to_str()}; continuing"
+							Output.note!(mode, "kai: ${message}", Output.event("note", message, []))?
+							$skipping = Bool.True
+							$skip_through = last
+							$finished = ""
+						}
+						_ => result?
+					}
+				}
 			}
+		}
+		if $holding {
+			_ = Workspace.path(guard).delete!()
 		}
 		Execute.finish!(mode, $finished)
 	}
@@ -353,12 +435,14 @@ Execute := [].{
 				}
 			# Every variable name must be valid, so a name such as `A=B`
 			# cannot smuggle a value into the child process's environment.
-			Run({ argv, secrets, removed_environment_variables, .. }) => {
-				names = secrets.concat(removed_environment_variables)
+			Run(run_step) => {
+				names = run_step.secrets
+					.concat(run_step.removed_environment_variables)
+					.concat(run_step.kept_environment_variables)
 				if names.all(Execute.variable_name) {
-					command(argv)
+					command(run_step.argv)
 				} else {
-					Err("names an invalid secret")
+					Err("names an invalid environment variable")
 				}
 			}
 			PublishLock(_) =>
@@ -366,7 +450,7 @@ Execute := [].{
 					OwnsLock => Ok({})
 					ReadsLock => Err("only a command that owns the lock publishes it")
 				}
-			Note(_) | Print(_) | Stage(_) | Confirm(_) => Ok({})
+			Note(_) | Print(_) | Stage(_) | MayFail(_) | Confirm(_) => Ok({})
 		}
 	}
 
@@ -405,9 +489,9 @@ Execute := [].{
 				Output.note!(mode, "kai: ${message}", Output.event("note", message, []))
 			Print(text) =>
 				Output.result!(mode, text, Output.event("result", text, []))
-			Stage(_) => Ok({})
+			Stage(_) | MayFail(_) => Ok({})
 			Write(files) => Workspace.stage!(files, layout)
-			VerifyPath({ path, argv, stdout }) => {
+			VerifyPath({ path, argv, stdout, update }) => {
 				Workspace.safe_source!(path)?
 				(program, args) = match argv {
 					[first, .. as rest] => (first, rest)
@@ -420,7 +504,7 @@ Execute := [].{
 					.require_success()?
 				Stderr.write_bytes!(observed.stderr_bytes)?
 				if Str.from_utf8_lossy(observed.stdout_bytes).trim() != stdout {
-					return Err(LocalChanged(path))
+					return Err(LocalChanged(path, update))
 				}
 				Ok({})
 			}
@@ -455,6 +539,9 @@ Execute := [].{
 					Absent => Absent
 				}
 				Update.publish!(layout.lock_path, prior, contents)?
+				if previous == Present(contents) {
+					return Ok({})
+				}
 				updated = "updated ${layout.lock_path}"
 				fields = [("lock", Output.text(layout.lock_path))]
 				Output.result!(mode, updated, Output.event("update", updated, fields))
@@ -519,11 +606,12 @@ Execute := [].{
 	# A Run step's command, run from the project root in kai's environment,
 	# with the shell kai was started from as KAI_OPERATOR_SHELL (unset if it
 	# had none; backends such as `nix develop` replace SHELL), its secrets set
-	# and its removed environment variables unset. Each secret's value comes
-	# from the project's `.env`, else kai's environment, and never appears in
-	# kai's output, events or errors.
+	# and its removed environment variables, except those kept, unset. Each
+	# secret's value comes from the project's `.env`, else kai's environment,
+	# and never appears in kai's output, events or errors.
 	process_command! = |run, root| {
-		{ description, argv, secrets, removed_environment_variables, .. } = run
+		{ description, argv, secrets, kept_environment_variables, .. } = run
+		removed_environment_variables = run.removed_environment_variables
 		(program, args) = match argv {
 			[first, .. as rest] => (first, rest)
 			[] => return Err(RenderFailed("the plan has an empty command"))
@@ -549,11 +637,12 @@ Execute := [].{
 			}
 		}
 		# The child process inherits kai's environment minus every secret
-		# and removed environment variable, then receives the operator's shell
-		# and its own secrets' values.
+		# and removed environment variable it does not keep, then receives the
+		# operator's shell and its own secrets' values.
 		operator = OsStr.from_str("KAI_OPERATOR_SHELL")
 		removed = secrets
 			.concat(removed_environment_variables)
+			.keep_if(|name| !kept_environment_variables.contains(name))
 			.map(OsStr.from_str)
 			.append(operator)
 		kept = Env.dict!().keep_if(|(name, _)| !removed.contains(name))
@@ -664,14 +753,15 @@ layout = Layout.{
 	lock_path: "/p/.kai/lock.json",
 }
 
-run : List(Str), List(Str), List(Str) -> Plan.Step
-run = |argv, secrets, removed_environment_variables|
+run : List(Str), List(Str), List(Str), List(Str) -> Plan.Step
+run = |argv, secrets, removed_environment_variables, kept_environment_variables|
 	Run({
 		description: "t",
 		argv,
 		output: Inherit,
 		secrets,
 		removed_environment_variables,
+		kept_environment_variables,
 	})
 
 validated : List(Plan.Step) -> Try({}, [UnsafePlan(Str)])
@@ -683,11 +773,22 @@ validated = |steps|
 expect
 	validated([
 		Stage("build app"),
-		VerifyPath({ path: "/p/vendor", argv: ["nix", "hash"], stdout: "x" }),
-		Snapshot({ root: "/p", destination: "/p/.kai/snapshot", exclude: [] }),
+		VerifyPath({
+			path: "/p/vendor",
+			argv: ["nix", "hash"],
+			stdout: "x",
+			update: "kai update vendor",
+		}),
+		Snapshot({
+			root: "/p",
+			destination: "/p/.kai/snapshot",
+			exclude: [],
+			files: All,
+			store: "/nix/store",
+		}),
 		InstallRunner({ destination: "/p/.kai/build-runner" }),
 		Write([{ path: "/p/.kai/generated/flake.nix", contents: "" }]),
-		run(["/bin/nix", "build"], ["TOKEN"], ["OTHER"]),
+		run(["/bin/nix", "build"], ["TOKEN"], ["OTHER"], ["VERSION"]),
 		Note("n"),
 	])
 		== Ok({})
@@ -697,17 +798,24 @@ expect [
 	Write([{ path: "/p/.kai/lock.json", contents: "" }]),
 	Write([{ path: "/p/.kai/generated/../lock.json", contents: "" }]),
 	Write([{ path: "/p/flake.nix", contents: "" }]),
-	VerifyPath({ path: "/etc", argv: ["nix"], stdout: "" }),
-	VerifyPath({ path: "/p/../etc", argv: ["nix"], stdout: "" }),
-	VerifyPath({ path: "/p/src", argv: [], stdout: "" }),
-	Snapshot({ root: "/p", destination: "/p/src", exclude: [] }),
+	VerifyPath({ path: "/etc", argv: ["nix"], stdout: "", update: "" }),
+	VerifyPath({ path: "/p/../etc", argv: ["nix"], stdout: "", update: "" }),
+	VerifyPath({ path: "/p/src", argv: [], stdout: "", update: "" }),
+	Snapshot({
+		root: "/p",
+		destination: "/p/src",
+		exclude: [],
+		files: All,
+		store: "/nix/store",
+	}),
 	InstallRunner({ destination: "/tmp/runner" }),
-	run([], [], []),
-	run([""], [], []),
-	run(["-c"], [], []),
-	run(["bin/sh"], [], []),
-	run(["sh"], ["A=B"], []),
-	run(["sh"], [], ["1A"]),
+	run([], [], [], []),
+	run([""], [], [], []),
+	run(["-c"], [], [], []),
+	run(["bin/sh"], [], [], []),
+	run(["sh"], ["A=B"], [], []),
+	run(["sh"], [], ["1A"], []),
+	run(["sh"], [], [], ["A=B"]),
 	PublishLock({ previous: Absent, contents: "{}" }),
 ]
 	.all(

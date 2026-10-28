@@ -19,21 +19,25 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | Example | Shows | Try |
 |---|---|---|
 | [shell](shell) | An environment and a shell | `kai shell` |
-| [task](task) | Tasks, arguments after `--`, and secrets | `kai run moo` |
+| [task](task) | Tasks, arguments after `--`, secrets, optional environment variables and descriptions | `kai run moo` |
 | [environment](environment) | Reusable environments shared by shells and tasks | `kai shell pokemon` |
 | [extend](extend) | One environment building on another | `kai run wisdom` |
-| [env](env) | Environment variables, and a task overriding its `Environment`'s | `kai run shout` |
+| [env](env) | Environment variables, a task overriding its `Environment`'s, and a pure environment | `kai run shout` |
 | [build](build) | A sandboxed build and its output | `kai build wisecow` |
-| [needs](needs) | A build reading another build's artifact | `kai build loud` |
+| [needs](needs) | A build, and a task, reading another build's artifact | `kai build loud` |
+| [revision](revision) | A build stamped with the project's git revision | `kai build version` |
 | [source-build](source-build) | A build reading a locked source | `kai build moofasa` |
 | [path-source](path-source) | A build reading a locked project directory | `kai build kai` |
-| [workflow](workflow) | Tasks, builds and workflows run in order | `kai workflow encore` |
-| [packages](packages) | Package sources, a pinned release and flake inputs | `kai shell` |
+| [fetch](fetch) | A file pinned by its sha256, run as a tool and read by a build | `kai run version` |
+| [cargo-vendor](cargo-vendor) | A Rust build reading crates vendored from Cargo.lock, offline | `kai build count` |
+| [workflow](workflow) | Tasks, builds and workflows run in order, and a step that may fail | `kai workflow encore` |
+| [packages](packages) | Package sources, a pinned release, an `Alias` and flake inputs | `kai shell` |
 | [raw](raw) | Passing Nix-specific data through with `Raw` | `kai shell` |
-| [overlay](overlay) | An overlay adding a package, seen only where selected | `kai run moo` |
+| [overlay](overlay) | An overlay adding a package, seen only where selected, following the project's nixpkgs | `kai run moo` |
 | [modules](modules) | Settings shared through an ordinary Roc module | `kai run moo` |
 | [guix](guix) | Packages from a Guix channel beside the default source | `kai shell guix` |
 | [agenix](agenix) | A tool from another flake's overlay, encrypting and decrypting a secret | `kai run round-trip` |
+| [rust-toolchain](rust-toolchain) | A Rust toolchain pinned by `rust-toolchain.toml` | `kai shell` |
 | [plugins/deploy](plugins/deploy) | A third-party plugin adding `kai deploy` | see [plugin.md](../docs/plugin.md) |
 
 Run `kai update` first in each: it locks the packages the commands use.

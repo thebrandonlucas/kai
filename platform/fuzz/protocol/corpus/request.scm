@@ -20,5 +20,8 @@
 			(contents Missing)
 			(path "/x"))))
 		(phase 1))))
+	(revision (
+		(commit_date "2026-01-02")
+		(describe "v1.0-2-gabc1234-dirty")))
 	(style Plain)
 	(working_directory "/p"))

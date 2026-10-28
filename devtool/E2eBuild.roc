@@ -115,7 +115,7 @@ E2eBuild := [].{
 		heading = file("assets/heading.txt")
 		original = Path.read_bytes!(heading)?
 		Path.write_utf8!(heading, "Changed heading\n")?
-		_ = refused!("app", "run `kai update`")?
+		_ = refused!("app", "run `kai update assets`")?
 		Path.write_bytes!(heading, original)?
 		# Ordinary project files, even new ones, reach the next build.
 		Path.write_utf8!(file("src/message.txt"), "second revision\n")?
@@ -218,7 +218,7 @@ E2eBuild := [].{
 		Path.write_utf8!(Path.join(words, "greeting.txt"), "changed\n")?
 		match E2e.guix_kai!(kai, project, path, quote) {
 			Err(NonZeroExitCode({ stderr_utf8_lossy, .. }))
-			if stderr_utf8_lossy.contains("run `kai update`") => {}
+			if stderr_utf8_lossy.contains("run `kai --backend guix update`") => {}
 			other => return Err(GuixBuiltChangedSource(Str.inspect(other)))
 		}
 		Stdout.line!("kai built exact artifacts, one from a source, on Guix")

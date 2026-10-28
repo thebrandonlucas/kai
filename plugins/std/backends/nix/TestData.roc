@@ -18,6 +18,9 @@ TestData :: [].{
 		tools: [{ source: "default", name: "python3" }],
 		overlays: [],
 		env: [],
+		pure: Bool.False,
+		aliases: [],
+		rust_toolchain: None,
 	}
 
 	library : Model.Build
@@ -29,7 +32,9 @@ TestData :: [].{
 		run: ["python3", "build.py"],
 		output: "dist/library",
 		files: All,
+		description: "",
 		env: [],
+		revision: Bool.False,
 	}
 
 	application : Model.Build
@@ -39,7 +44,9 @@ TestData :: [].{
 		needs: ["library"],
 		output: "dist/app",
 		files: All,
+		description: "",
 		env: [],
+		revision: Bool.False,
 		run: ["python3", "build.py", "", "two words", "line\nbreak", "$HOME"],
 	}
 
@@ -64,7 +71,7 @@ TestData :: [].{
 		sources: [],
 		inputs: [],
 		environments: [builder],
-		shells: [{ name: "default", environment: "builder" }],
+		shells: [{ name: "default", environment: "builder", description: "" }],
 		tasks: [
 			{
 				name: "check",
@@ -72,6 +79,9 @@ TestData :: [].{
 				run: ["python3", "check.py", "configured argument"],
 				env: [],
 				secrets: [],
+				optional_environment_variables: [],
+				needs: [],
+				description: "",
 			},
 		],
 		build_sources: [{ name: "assets", ref: "path:./assets" }],
@@ -96,6 +106,7 @@ TestData :: [].{
 		workflows: [
 			{
 				name: "ci",
+				description: "",
 				steps: [
 					BuildArtifact("library"),
 					RunTask("check", ["", "two words", "--literal", "a\nb", "$HOME"]),
@@ -106,11 +117,12 @@ TestData :: [].{
 			},
 			{
 				name: "verify",
+				description: "",
 				steps: [RunTask("check", []), BuildArtifact("bundle")],
 			},
-			{ name: "empty", steps: [] },
-			{ name: "nothing", steps: [RunWorkflow("empty")] },
-			{ name: "one", steps: [RunTask("check", [])] },
+			{ name: "empty", description: "", steps: [] },
+			{ name: "nothing", description: "", steps: [RunWorkflow("empty")] },
+			{ name: "one", description: "", steps: [RunTask("check", [])] },
 		],
 	}
 
@@ -120,11 +132,15 @@ TestData :: [].{
 		name: "plan fixture",
 		systems: t.systems,
 		sources: t.sources,
+		guix_channels: [],
 		inputs: t.inputs,
+		follows: [],
 		environments: t.environments,
 		shells: t.shells,
 		tasks: t.tasks,
 		build_sources: t.build_sources,
+		fetches: [],
+		cargo_vendors: [],
 		builds: t.builds,
 		workflows: t.workflows,
 		requires_: t.requires_,

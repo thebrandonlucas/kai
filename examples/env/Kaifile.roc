@@ -2,6 +2,8 @@
 # reach every shell, task and build that uses it, and a task's or build's
 # own `Env` overrides them. `kai run moo` has the cow say "Moo", from the
 # cow `Environment`; `kai run shout` has it say "MOO!", from the task.
+# `Pure` starts a shell or task from a clean environment, but for HOME, USER
+# and TERM, so `kai run calm` sees only what its environments declare.
 app [kaifile] {
 	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",
@@ -18,6 +20,8 @@ kaifile = Std.kaifile([
 	Shell("default", [Use("cow")]),
 	Task("moo", [Use("cow"), say]),
 	Task("shout", [Use("cow"), Env([("GREETING", "MOO!")]), say]),
+	Environment("calm", [Extend("cow"), Pure]),
+	Task("calm", [Use("calm"), say]),
 	# `kai build greeting` keeps the build's own GREETING in a file.
 	Build(
 		"greeting",

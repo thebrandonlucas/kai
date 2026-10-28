@@ -10,7 +10,8 @@ Protocol := [].{
 	current = { major: 1, minor: 1 }
 
 	## `argv` is kai's argv without argv[0]; `working_directory` is where
-	## kai runs.
+	## kai runs. `revision` is the project's `git describe --tags --always
+	## --dirty` and its last commit's date (YYYY-MM-DD), both empty outside git.
 	Request := {
 		protocol : Version,
 		argv : List(Str),
@@ -18,6 +19,7 @@ Protocol := [].{
 		style : [Color, Plain],
 		host : { system : Str },
 		layout : Layout,
+		revision : { describe : Str, commit_date : Str },
 		lock : [Absent, Present(Str)],
 		resume : [
 			Fresh,
@@ -128,6 +130,7 @@ request = Protocol.Request.{
 		generated_root: "/p/.kai/generated",
 		lock_path: "/p/.kai/lock.json",
 	},
+	revision: { describe: "", commit_date: "" },
 	lock: Absent,
 	resume: Fresh,
 }
@@ -148,6 +151,10 @@ planned = {
 expect [
 	request,
 	{ ..request, argv: ["--", "-x", "--backend=nix", ""], style: Color },
+	{
+		..request,
+		revision: { describe: "v1.0-2-gabc1234-dirty", commit_date: "2026-01-02" },
+	},
 	{
 		..request,
 		lock: Present("{\n\t\"a\": \"b\\\"\"\n}"),

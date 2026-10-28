@@ -28,8 +28,9 @@ Command := {
 			},
 		),
 
-		## Everything after `--`, exact.
-		Trailing({ name : Str, help : Str }),
+		## Everything after `--`, exact. Choices restrict the words to the
+		## project's names; no choices means any words.
+		Trailing({ name : Str, help : Str, choices : List(Choice) }),
 
 		## `--name`, or `-short` unless "": given or not.
 		Flag({ name : Str, short : Str, help : Str }),

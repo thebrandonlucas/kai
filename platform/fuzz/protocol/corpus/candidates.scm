@@ -13,7 +13,7 @@
 			(backend "nix")
 			(outcome (Planned (
 				(next (Observe ("/g/flake.lock")))
-				(steps ((Note "n") (Print "p") (Stage "run test") (Confirm "go?") (Write ((
+				(steps ((Note "n") (Print "p") (Stage "run test") (MayFail 1) (Confirm "go?") (Write ((
 					(contents "{ }\n")
 					(path "/g/flake.nix")))) (VerifyPath (
 					(argv ("nix" "hash" "path" "--sri" "/p/src"))
@@ -21,13 +21,16 @@
 					(stdout "sha256-x"))) (Snapshot (
 					(destination "/w/src")
 					(exclude (".git"))
-					(root "/p"))) (InstallRunner (
+					(files (Only ("src")))
+					(root "/p")
+					(store "/nix/store"))) (InstallRunner (
 					(destination "/w/runner"))) (Run (
 					(argv ("bash"))
 					(output Inherit)
 					(secrets ("TOKEN"))
 					(description "task t")
-					(removed_environment_variables ("OTHER")))) (Run (
+					(removed_environment_variables ("OTHER"))
+					(kept_environment_variables ("VERSION")))) (Run (
 					(argv ("nix" "build"))
 					(output (Artifact (
 						(label "site")
@@ -35,7 +38,8 @@
 						(output "out"))))
 					(secrets ())
 					(description "build site")
-					(removed_environment_variables ()))) (PublishLock (
+					(removed_environment_variables ())
+					(kept_environment_variables ()))) (PublishLock (
 					(contents "{ }")
 					(previous (Present "{}")))))))))
 			(plugin "std")

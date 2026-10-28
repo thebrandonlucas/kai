@@ -40,25 +40,56 @@ Argv := [].{
 		parsed = Cli.parse_or_display_message(parser, argv, |a| Utf8(a))
 		top = |config| WeaverHelp.help_text(config, ["kai"], style)
 		match parsed {
-			Ok({ file, no_color, json, backend, yes, dry_run, command: (name, args) }) =>
+			Ok(found) => {
+				{ file, no_color, json, backend, yes, dry_run, .. } = found
+				(name, args) = found.command
+				Argv.unknown_name(commands, name, args)?
+				Argv.check_choices(commands, name, args).map_err(|why| Usage(why))?
 				Ok({
 					globals: { file, no_color, json, backend, yes, dry_run },
 					command: name,
 					args,
 				})
+			}
 			# kai's own help lists each command's summary; a command's page
-			# teaches it.
+			# teaches it and lists each of its choices' summaries, whose own
+			# page shows its details too.
 			Err(Help(message)) =>
 				if message == top(parser.config) {
 					config = parser.config
 					shown = top({ ..config, subcommands: Argv.summarized(config) })
 					Err(Help(Argv.indented(root, commands, shown)))
 				} else {
-					Err(Help(Argv.indented(root, commands, Argv.usage(commands, message))))
+					shown = Argv.listed(parser.config, commands, style, message)
+					Err(Help(Argv.indented(root, commands, Argv.usage(commands, shown))))
 				}
 			Err(Version(message)) => Err(Help(message))
 			Err(InvalidUsage(message)) => Err(Usage(Argv.usage(commands, message)))
 		}
+	}
+
+	## Words outside a `Trailing`'s choices, like a name outside a `Name`'s.
+	check_choices : List(Command), Str, Command.Args -> Try({}, Str)
+	check_choices = |commands, name, args| {
+		for command in commands.keep_if(|c| c.name == name) {
+			for arg in command.args {
+				match arg {
+					Trailing(t) if !t.choices.is_empty() => {
+						values = t.choices.map(|c| c.value)
+						words = Command.trailing(args, t.name)
+						unknown = words.drop_if(|word| values.contains(word))
+						if !unknown.is_empty() {
+							return Err(
+								"kai ${name}: unknown ${Str.join_with(unknown, ", ")}; "
+									.concat("the ${t.name} are ${Str.join_with(values, ", ")}"),
+							)
+						}
+					}
+					_ => {}
+				}
+			}
+		}
+		Ok({})
 	}
 
 	cli = |root, commands, style, directory|
@@ -150,21 +181,24 @@ Argv := [].{
 	## Weaver's usage line calls a name's choices COMMAND and lists the words
 	## after `--` before them; it names the argument and `--` instead, keeping
 	## the options Weaver lists, even when it wraps COMMAND onto a new line.
+	## Help lists the choices under their plural, such as Tasks, not Commands.
 	usage : List(Command), Str -> Str
 	usage = |commands, text|
 		commands.fold(
 			text,
 			|shown, command| {
 				start = "kai ${command.name} ["
-				{ name, listed, trailing } = command.args.fold(
-					{ name: "", listed: "", trailing: "" },
+				{ name, listed, trailing, plural } = command.args.fold(
+					{ name: "", listed: "", trailing: "", plural: "" },
 					|found, arg|
 						match arg {
-							Name(n) if !n.choices.is_empty() =>
+							Name(n) if !n.choices.is_empty() => {
+								choices = "${n.name}s"
 								match n.default {
-									Required => { ..found, name: " <${n.name}>" }
-									Default(_) => { ..found, name: " [<${n.name}>]" }
+									Required => { ..found, name: " <${n.name}>", plural: choices }
+									Default(_) => { ..found, name: " [<${n.name}>]", plural: choices }
 								}
+							}
 							Name(_) => found
 							Trailing(t) =>
 								{
@@ -190,6 +224,7 @@ Argv := [].{
 										.drop_suffix(listed)
 									rest = line.after.drop_prefix("]").drop_prefix(">")
 									"${before}${start}${options}${name}${trailing}${rest}"
+										.replace_each("Commands:", "${Argv.capitalized(plural)}:")
 								}
 								Err(_) => shown
 							}
@@ -198,6 +233,39 @@ Argv := [].{
 				}
 			},
 		)
+
+	## A word with its first letter in upper case.
+	capitalized : Str -> Str
+	capitalized = |word|
+		match word.to_utf8() {
+			[first, .. as rest] if first >= 'a' and first <= 'z' =>
+				Str.from_utf8_lossy([first - 'a' + 'A'].concat(rest))
+			_ => word
+		}
+
+	## The parser keeps a name that is none of its command's choices, so
+	## kai can list them.
+	unknown_name : List(Command), Str, Command.Args -> Try({}, Shown)
+	unknown_name = |commands, command_name, args| {
+		for command in commands.keep_if(|c| c.name == command_name) {
+			for arg in command.args {
+				match arg {
+					Name(n) if !n.choices.is_empty() => {
+						given = Command.name(args, n.name)
+						values = n.choices.map(|c| c.value)
+						if !values.contains(given) {
+							listed = Str.join_with(values, ", ")
+							return Err(
+								Usage("no ${n.name} named ${given}; available ${n.name}s: ${listed}"),
+							)
+						}
+					}
+					_ => {}
+				}
+			}
+		}
+		Ok({})
+	}
 
 	sections : Command.Page -> Str
 	sections = |page| {
@@ -257,6 +325,27 @@ Argv := [].{
 				})
 			NoSubcommands => NoSubcommands
 		}
+
+	## A command's page, if `message` is one, listing its choices' summaries.
+	listed = |config, commands, style, message| {
+		page = |shown, name| WeaverHelp.help_text(shown, ["kai", name], style)
+		shown = commands.find_first(|c| message == page(config, c.name))
+		match (shown, config.subcommands) {
+			(Ok(command), HasSubcommands({ commands: pages, required })) => {
+				summarized_pages = pages.map(
+					|(name, sub)|
+						if name == command.name {
+							(name, { ..sub, subcommands: Argv.summarized(sub) })
+						} else {
+							(name, sub)
+						},
+				)
+				subcommands = HasSubcommands({ commands: summarized_pages, required })
+				page({ ..config, subcommands }, command.name)
+			}
+			_ => message
+		}
+	}
 
 	# A builder that parses nothing, for options to join.
 	nothing = |{}|
@@ -327,7 +416,8 @@ Argv := [].{
 			([], [t, ..]) => finish(trailing(t))
 			([n, ..], _) if !n.choices.is_empty() => {
 				choice = |c| {
-					about = Str.join_with([c.summary].concat(c.details), "\n")
+					# Help lists the summary, the paragraph before the details.
+					about = Str.join_with([c.summary].concat(c.details), "\n\n")
 					match rest {
 						[t, ..] =>
 							SubCmd.finish(
@@ -347,33 +437,69 @@ Argv := [].{
 					}
 				}
 				choices = n.choices.map(choice)
-				match n.default {
-					Required => finish(SubCmd.required(choices))
-					# Without a name, the default's words follow `--` directly; a
-					# word before `--` names no choice.
-					Default(value) =>
-						match rest {
-							[t, ..] => {
-								unknown = Builder.from_arg_parser(
-									|args|
-										match args {
-											[Parameter(word), ..] => Err(UnrecognizedSubcommand(word))
-											_ => Ok({ data: {}, remaining_args: args })
-										},
-								)
-								finish(
-									Cli.weave(
-										Cli.weave(SubCmd.optional(choices), unknown, |chosen, _| chosen),
-										trailing(t),
-										|chosen, words| chosen ?? [picked(n, value)].concat(words),
-									),
-								)
-							}
-							[] =>
-								finish(
-									Cli.map(SubCmd.optional(choices), |p| p ?? [picked(n, value)]),
-								)
-						}
+				# List.map as a function: see the BUG-016 note above.
+				values = List.map(n.choices, |c| c.value)
+				# A word that names no choice reaches `parse`, which lists the
+				# choices; a required name cannot be left out.
+				missing = |args|
+					if n.default == Required {
+						Err(NoSubcommandCalled)
+					} else {
+						Ok({ data: [], remaining_args: args })
+					}
+				unchosen = Builder.from_arg_parser(
+					|args|
+						match args {
+							[Parameter(word), .. as after] =>
+								match word.to_str() {
+									Ok(value) if !values.contains(value) =>
+										Ok({ data: [picked(n, value)], remaining_args: after })
+									_ => Ok({ data: [], remaining_args: args })
+								}
+							[] => missing(args)
+							[PassedThrough(_), ..] => missing(args)
+							_ => Ok({ data: [], remaining_args: args })
+						},
+				)
+				# Without a name, the default's words follow `--` directly.
+				fallback = match n.default {
+					Required => []
+					Default(value) => [picked(n, value)]
+				}
+				# A choice parses its own words; any other name is followed by them.
+				name = Cli.weave(
+					unchosen,
+					SubCmd.optional(choices),
+					|unknown, chosen|
+						match chosen {
+							Ok(parsed) => Ok(parsed)
+							Err(_) => Err(if (unknown.is_empty()) fallback else unknown)
+						},
+				)
+				match rest {
+					[t, ..] =>
+						finish(
+							Cli.weave(
+								name,
+								trailing(t),
+								|found, words|
+									match found {
+										Ok(parsed) => parsed
+										Err(other) => other.concat(words)
+									},
+							),
+						)
+					[] =>
+						finish(
+							Cli.map(
+								name,
+								|found|
+									match found {
+										Ok(parsed) => parsed
+										Err(other) => other
+									},
+							),
+						)
 				}
 			}
 			([n, ..], _) => {
@@ -412,12 +538,12 @@ toy = [
 		help: page,
 		args: [
 			Name({
-				name: "name",
+				name: "shell",
 				help: "",
 				choices: choices(["default", "ci"]),
 				default: Default("default"),
 			}),
-			Trailing({ name: "command", help: "" }),
+			Trailing({ name: "command", help: "", choices: [] }),
 		],
 		lock: ReadsLock,
 	},
@@ -432,7 +558,7 @@ toy = [
 				choices: choices(["args"]),
 				default: Required,
 			}),
-			Trailing({ name: "args", help: "" }),
+			Trailing({ name: "args", help: "", choices: [] }),
 		],
 		lock: ReadsLock,
 	},
@@ -470,37 +596,46 @@ expect [
 			],
 		),
 	),
-	(["shell"], ("shell", [present("name", "default"), many("command", [])])),
+	(["shell"], ("shell", [present("shell", "default"), many("command", [])])),
 	(
 		["shell", "--", "git", "--version"],
 		(
 			"shell",
-			[present("name", "default"), many("command", ["git", "--version"])],
+			[present("shell", "default"), many("command", ["git", "--version"])],
 		),
 	),
 	(
 		["shell", "ci", "--", "git", "--version"],
-		("shell", [present("name", "ci"), many("command", ["git", "--version"])]),
+		("shell", [present("shell", "ci"), many("command", ["git", "--version"])]),
 	),
 	(["-f", "Kaifile.roc", "update"], ("update", [])),
 	(["build", "anything"], ("build", [present("name", "anything")])),
 	(
 		["--backend", "guix", "shell", "ci", "--", "--backend", "nix"],
-		("shell", [present("name", "ci"), many("command", ["--backend", "nix"])]),
+		("shell", [present("shell", "ci"), many("command", ["--backend", "nix"])]),
 	),
 ].all(|(argv, expected)| parsed(argv) == Ok(expected))
 
-# Choices reject names the project does not define; help lists commands.
+# Choices reject names the project does not define, listing them; help lists
+# commands, and a command's help its choices.
 expect
-	[["run", "missing"], ["shell", "missing"], ["run"], ["build"]].all(
+	[["run"], ["build"]].all(
 		|argv|
 			match parsed(argv) {
 				Err(Usage(_)) => Bool.True
 				_ => Bool.False
 			},
 	)
+		and parsed(["run", "missing", "--", "x"])
+			== Err(Usage("no task named missing; available tasks: args"))
+		and parsed(["shell", "missing"])
+			== Err(Usage("no shell named missing; available shells: default, ci"))
 		and match parsed(["--help"]) {
 			Err(Help(text)) => text.contains("shell") and text.contains("About.")
+			_ => Bool.False
+		}
+		and match parsed(["run", "--help"]) {
+			Err(Help(text)) => text.contains("Tasks:") and !text.contains("Commands:")
 			_ => Bool.False
 		}
 
@@ -530,6 +665,38 @@ expect {
 			.concat("[-V/--version] <build>\n"),
 	)
 		and usage_of(toy, ["shell", "--help"]).contains(
-			"kai shell [-h/--help] [-V/--version] [<name>] [-- <command>...]\n",
+			"kai shell [-h/--help] [-V/--version] [<shell>] [-- <command>...]\n",
 		)
+}
+
+# A command's page lists each choice's summary; the choice's own page shows
+# its details after it.
+expect {
+	run = Command.{
+		name: "run",
+		summary: "",
+		help: page,
+		args: [
+			Name({
+				name: "task",
+				help: "",
+				choices: [
+					{ value: "moo", summary: "Says moo", details: ["cowsay moo [cow]"] },
+				],
+				default: Required,
+			}),
+			Trailing({ name: "args", help: "", choices: [] }),
+		],
+		lock: ReadsLock,
+	}
+	help_of = |argv|
+		match Argv.parse(page, [run], Plain, "/work", argv) {
+			Err(Help(text)) => text
+			_ => ""
+		}
+	listing = help_of(["run", "--help"])
+	own = help_of(["run", "moo", "--help"])
+	listing.contains("  moo  Says moo\n")
+		and !listing.contains("cowsay moo")
+		and own.contains("Says moo\n\ncowsay moo [cow]")
 }
