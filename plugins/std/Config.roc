@@ -70,20 +70,25 @@ Config :: [].{
 	PackageSource : [Auto, From(Provider)]
 	Provider : [NixPackages(FlakeRef), GuixPackages(Str)]
 
-	## Each setting but Alias occurs at most once. Extend inherits tools,
-	## overlays and aliases parent first; an omitted or empty list does not clear
-	## inherited values. Env sets variables in the environment's shells, tasks
-	## and builds. They override the parent's by name, and a task's or build's
-	## Env overrides them. Pure starts its shells and tasks from a clean
-	## environment, as does Extend of a Pure environment. Alias(name, tool,
-	## binary) puts a command `name` on PATH that runs the tool's
-	## `bin/<binary>`, without the tool's other binaries; it needs Nix.
+	## Each setting but Alias and OnSystems occurs at most once. Extend
+	## inherits tools, overlays and aliases parent first; an omitted or empty
+	## list does not clear inherited values. Env sets variables in the
+	## environment's shells, tasks and builds. They override the parent's by
+	## name, and a task's or build's Env overrides them. Pure starts its
+	## shells and tasks from a clean environment, as does Extend of a Pure
+	## environment. Alias(name, tool, binary) puts a command `name` on PATH
+	## that runs the tool's `bin/<binary>`, without the tool's other
+	## binaries; it needs Nix.
 	## RustToolchain takes a rust-toolchain.toml's text and adds the toolchain
 	## its [toolchain] table pins, overriding the parent's; it needs Nix and an
 	## Overlay providing rust-bin, such as rust-overlay.
 	## PackageEnv sets variables to paths in packages, which the backend
 	## computes. Like Env, they override the parent's variables by name, and a
 	## task's or build's Env overrides them. It needs Nix.
+	## OnSystems(systems, settings) adds tools and variables on the named
+	## declared systems only: its Tools after the environment's own, its Env
+	## overriding the environment's. Nix evaluates only the host's; Guix plans
+	## for the host's system.
 	EnvironmentSetting : [
 		Tools(List(Tool)),
 		Overlays(List(InputName)),
@@ -93,7 +98,11 @@ Config :: [].{
 		Alias(Str, Tool, Str),
 		RustToolchain(Str),
 		PackageEnv(List((Str, PackageValue))),
+		OnSystems(List(System), List(SystemSetting)),
 	]
+
+	## What OnSystems adds; each occurs at most once.
+	SystemSetting : [Tools(List(Tool)), Env(List((Str, Str)))]
 
 	## Tools' `lib` or `bin` directories joined with `:`, or one tool's path.
 	PackageValue : [
