@@ -314,7 +314,9 @@ code can also come from it; with `--json`, its `error` event says
 
 With `--json`, a failure ends with an `error` event: `message` says what went
 wrong, `exit_code` is Kai's exit code, `hint`, when Kai knows the fix, is
-usually a command to run (`kai update`), and `error` is one of these codes:
+usually a command to run (`kai update`), `suggestions`, after a mistyped
+command, task, shell, build or workflow, lists the closest names (Kai never
+runs them), and `error` is one of these codes:
 
 | `error` | Meaning |
 |---|---|

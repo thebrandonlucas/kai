@@ -56,9 +56,13 @@ main! = |args| {
 				Human => Stderr.line!(message)
 				Json =>
 					Stderr.line!(
-						Output.error(
-							{ code: "invalid_usage", message, exit_code: 2, hint: "" },
-						),
+						Output.error({
+							code: "invalid_usage",
+							message,
+							exit_code: 2,
+							hint: "",
+							suggestions: suggestions(message),
+						}),
 					)
 			}
 			Err(Exit(2))
@@ -70,9 +74,13 @@ main! = |args| {
 				Human => Stderr.line!("kai: ${message}")
 				Json =>
 					Stderr.line!(
-						Output.error(
-							{ code: error_code(err), message, exit_code, hint: hint(err) },
-						),
+						Output.error({
+							code: error_code(err),
+							message,
+							exit_code,
+							hint: hint(err),
+							suggestions: [],
+						}),
 					)
 			}
 			Err(Exit(exit_code))
@@ -413,6 +421,18 @@ named_fix = |message|
 		_ => ""
 	}
 
+# The names a usage error suggests for a mistyped one, as it words them:
+# "did you mean `a` or `b`?".
+suggestions : Str -> List(Str)
+suggestions = |message|
+	match message.split_first("did you mean ") {
+		Ok({ after, .. }) =>
+			(after.split_first("?").map_ok(|found| found.before) ?? "")
+				.split_on("`")
+				.drop_if(|part| part.is_empty() or part.starts_with(" "))
+		Err(_) => []
+	}
+
 describe : _ -> Str
 describe = |err|
 	match err {
@@ -570,3 +590,10 @@ expect [
 # A missing linker input hints at building a checkout's platform host.
 expect unbuilt("── ✗ missing target file ──\n").contains("zig build --release")
 	and unbuilt("── TYPE MISMATCH ──\n") == ""
+
+# A usage error's suggestions are the names it asks about.
+expect [
+	("no task named mo; available tasks: moo; did you mean `moo`?", ["moo"]),
+	("no task a; available tasks: b, c; did you mean `b` or `c`?", ["b", "c"]),
+	("no task named zzz; available tasks: moo", []),
+].all(|(message, expected)| suggestions(message) == expected)

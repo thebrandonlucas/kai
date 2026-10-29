@@ -64,7 +64,11 @@ Argv := [].{
 					Err(Help(Argv.indented(root, commands, Argv.usage(commands, shown))))
 				}
 			Err(Version(message)) => Err(Help(message))
-			Err(InvalidUsage(message)) => Err(Usage(Argv.usage(commands, message)))
+			Err(InvalidUsage(message)) =>
+				match Argv.misnamed(commands, argv, message) {
+					Ok(why) => Err(Usage(why))
+					Err(NotMisnamed) => Err(Usage(Argv.usage(commands, message)))
+				}
 		}
 	}
 
@@ -244,27 +248,138 @@ Argv := [].{
 		}
 
 	## The parser keeps a name that is none of its command's choices, so
-	## kai can list them.
+	## kai can list them, and suggest the closest.
 	unknown_name : List(Command), Str, Command.Args -> Try({}, Shown)
-	unknown_name = |commands, command_name, args| {
+	unknown_name = |commands, command_name, args|
+		match Argv.chosen_name(commands, command_name) {
+			Ok({ name, values }) if !values.is_empty() => {
+				given = Command.name(args, name)
+				if values.contains(given) {
+					Ok({})
+				} else {
+					offered = Argv.offered(name, given, values)
+					Err(Usage("no ${name} named ${given}; ${offered}"))
+				}
+			}
+			_ => Ok({})
+		}
+
+	## The name a command takes, such as run's task, and its choices.
+	chosen_name :
+		List(Command), Str -> Try({ name : Str, values : List(Str) }, [NoName])
+	chosen_name = |commands, command_name| {
 		for command in commands.keep_if(|c| c.name == command_name) {
 			for arg in command.args {
 				match arg {
-					Name(n) if !n.choices.is_empty() => {
-						given = Command.name(args, n.name)
-						values = n.choices.map(|c| c.value)
-						if !values.contains(given) {
-							listed = Str.join_with(values, ", ")
-							return Err(
-								Usage("no ${n.name} named ${given}; available ${n.name}s: ${listed}"),
-							)
-						}
-					}
+					Name(n) =>
+						return Ok({ name: n.name, values: n.choices.map(|c| c.value) })
 					_ => {}
 				}
 			}
 		}
-		Ok({})
+		Err(NoName)
+	}
+
+	## The available names, then the closest to a mistyped `given`, if any.
+	offered : Str, Str, List(Str) -> Str
+	offered = |name, given, values| {
+		listed = "available ${name}s: ${Str.join_with(values, ", ")}"
+		match Argv.closest(given, values) {
+			[] => listed
+			close => {
+				quoted = close.map(|c| "`${c}`")
+				"${listed}; did you mean ${Str.join_with(quoted, " or ")}?"
+			}
+		}
+	}
+
+	## Instead of Weaver's report, the words kai uses for a missing name or an
+	## unknown command, as for an unknown name.
+	misnamed : List(Command), List(Str), Str -> Try(Str, [NotMisnamed])
+	misnamed = |commands, argv, message| {
+		names = commands.map(|c| c.name)
+		unrecognized = message.contains("The subcommand")
+		missing = message.contains("A subcommand must be called")
+			or message.contains("did not receive a value")
+		match Argv.positional(commands, argv) {
+			[given, ..] if unrecognized and !names.contains(given) =>
+				Ok("no command named ${given}; ${Argv.offered("command", given, names)}")
+			[given] if missing =>
+				match Argv.chosen_name(commands, given) {
+					Ok({ name, values }) if values.is_empty() =>
+						Ok("kai ${given} needs a ${name}")
+					Ok({ name, values }) =>
+						Ok("kai ${given} needs a ${name}; ${Argv.offered(name, "", values)}")
+					Err(NoName) => Err(NotMisnamed)
+				}
+			_ => Err(NotMisnamed)
+		}
+	}
+
+	## The words before `--` that are neither options nor their values.
+	positional : List(Command), List(Str) -> List(Str)
+	positional = |commands, argv| {
+		paths = commands.join_map(
+			|c|
+				c.args.join_map(
+					|arg|
+						match arg {
+							Path(p) => ["--${p.name}", "-${p.short}"]
+							_ => []
+						},
+				),
+		)
+		Argv.positional_after(["-f", "--file", "--backend"].concat(paths), argv)
+	}
+
+	positional_after : List(Str), List(Str) -> List(Str)
+	positional_after = |valued, argv|
+		match argv {
+			[] | ["--", ..] => []
+			[option, _, .. as rest] if valued.contains(option) =>
+				Argv.positional_after(valued, rest)
+			[arg, .. as rest] if arg.starts_with("-") =>
+				Argv.positional_after(valued, rest)
+			[word, .. as rest] => [word].concat(Argv.positional_after(valued, rest))
+		}
+
+	## The names closest to a mistyped `given`: at most two edits away, and
+	## fewer edits than it has letters.
+	closest : Str, List(Str) -> List(Str)
+	closest = |given, names| {
+		scored = names.map(|name| (name, Argv.distance(given, name)))
+		best = scored.fold(3, |lowest, (_, edits)| lowest.min(edits))
+		limit = given.count_utf8_bytes().min(3)
+		scored.keep_if(|(_, edits)| edits == best and edits < limit)
+			.map(|(name, _)| name)
+	}
+
+	## How many one-byte insertions, deletions or replacements turn `a` into
+	## `b` (Levenshtein distance).
+	distance : Str, Str -> U64
+	distance = |a, b| {
+		right = b.to_utf8()
+		var $previous = []
+		var $count = 0
+		for _ in [0].concat(right) {
+			$previous = $previous.append($count)
+			$count = $count + 1
+		}
+		var $row_number = 0
+		for x in a.to_utf8() {
+			$row_number = $row_number + 1
+			var $row = [$row_number]
+			var $j = 0
+			for y in right {
+				deleted = ($previous.get($j + 1) ?? 0) + 1
+				inserted = ($row.get($j) ?? 0) + 1
+				replaced = ($previous.get($j) ?? 0) + (if (x == y) 0 else 1)
+				$row = $row.append(deleted.min(inserted).min(replaced))
+				$j = $j + 1
+			}
+			$previous = $row
+		}
+		$previous.last() ?? 0
 	}
 
 	sections : Command.Page -> Str
@@ -638,6 +753,37 @@ expect
 			Err(Help(text)) => text.contains("Tasks:") and !text.contains("Commands:")
 			_ => Bool.False
 		}
+
+# A missing name lists the choices, and an unknown command or name suggests
+# the closest without running it.
+expect
+	parsed(["--backend", "guix", "run"])
+		== Err(Usage("kai run needs a task; available tasks: args"))
+		and parsed(["build"]) == Err(Usage("kai build needs a name"))
+		and parsed(["rn", "args"])
+			== Err(
+				Usage(
+					"no command named rn; available commands: shell, run, build, "
+						.concat("update; did you mean `run`?"),
+				),
+			)
+		and parsed(["shell", "dfault"])
+			== Err(
+				Usage(
+					"no shell named dfault; available shells: default, ci; "
+						.concat("did you mean `default`?"),
+				),
+			)
+
+# The closest names are at most two edits away, and fewer than the word has.
+expect [
+	("rn", ["run", "shell", "build"], ["run"]),
+	("moo2", ["moo", "say", "moon"], ["moo", "moon"]),
+	("frobnicate", ["run", "shell"], []),
+	("x", ["a", "b"], []),
+	("bild", ["build", "build-all"], ["build"]),
+].all(|(given, names, expected)| Argv.closest(given, names) == expected)
+	and Argv.distance("kitten", "sitting") == 3
 
 # Usage lines name the argument and the words after `--`, keeping the options
 # Weaver lists even when it wraps the line.
