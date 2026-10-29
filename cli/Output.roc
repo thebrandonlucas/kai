@@ -58,15 +58,25 @@ Output := [].{
 		}
 
 	# An error with its documented code and kai's exit code, then the fix
-	# when kai knows one.
-	error : { code : Str, message : Str, exit_code : I32, hint : Str } -> Str
-	error = |{ code, message, exit_code, hint }|
+	# when kai knows one, and the names closest to a mistyped one.
+	error :
+		{
+			code : Str,
+			message : Str,
+			exit_code : I32,
+			hint : Str,
+			suggestions : List(Str),
+		} -> Str
+	error = |{ code, message, exit_code, hint, suggestions }| {
+		close = LockJson.Array(suggestions.map(Output.text))
 		Output.event(
 			"error",
 			message,
 			[("error", Output.text(code)), ("exit_code", Output.number(exit_code))]
-				.concat(if (hint.is_empty()) [] else [("hint", Output.text(hint))]),
+				.concat(if (hint.is_empty()) [] else [("hint", Output.text(hint))])
+				.concat(if (suggestions.is_empty()) [] else [("suggestions", close)]),
 		)
+	}
 
 	# One workflow step, numbered from 1. Its label is what it runs: a verb,
 	# then the name it acts on ("build app").
@@ -115,15 +125,18 @@ expect {
 }
 
 # Errors carry their code, the readable message, kai's exit code and, when
-# kai knows it, the fix.
+# kai knows them, the fix and the names closest to a mistyped one.
 expect {
-	error = |hint|
-		Output.error({ code: "stale_lock", message: "changed", exit_code: 1, hint })
-	error("")
+	error = |hint, suggestions|
+		Output.error(
+			{ code: "stale_lock", message: "changed", exit_code: 1, hint, suggestions },
+		)
+	error("", [])
 		== "{\"type\":\"error\",\"message\":\"changed\",".concat(
 			"\"error\":\"stale_lock\",\"exit_code\":1}",
 		)
-		and error("kai update").ends_with(",\"hint\":\"kai update\"}")
+		and error("kai update", []).ends_with(",\"hint\":\"kai update\"}")
+		and error("", ["run"]).ends_with(",\"suggestions\":[\"run\"]}")
 }
 
 # Workflow steps say which step of how many runs what, for both audiences.
