@@ -27,4 +27,16 @@ kaifile = Std.kaifile([
 			Files([]),
 		],
 	),
+	# A build's tools are its build inputs, so their setup hooks run as in
+	# `kai shell`: `kai build zlib-flags` asks pkg-config for zlib's flags.
+	Environment("zlib", [Tools(["pkg-config", "zlib"])]),
+	Build(
+		"zlib-flags",
+		[
+			Use("zlib"),
+			Run(["sh", "-c", "pkg-config --libs zlib > flags"]),
+			Output("flags"),
+			Files([]),
+		],
+	),
 ])
