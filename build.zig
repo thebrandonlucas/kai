@@ -175,16 +175,19 @@ fn addDevtoolCommand(
 }
 
 // One end-to-end test, or `all`, with fixed flags, then any flags passed
-// after `--`, then the Nix-installed and bare kai.
+// after `--`, then the Nix-installed and bare kai. Its projects name this
+// checkout's platform, so it waits for the platform host.
 fn addE2e(
     b: *std.Build,
     devtool: std.Build.LazyPath,
     test_name: []const u8,
     kai: std.Build.LazyPath,
     bare: std.Build.LazyPath,
+    platform_host: *std.Build.Step,
     flags: []const []const u8,
 ) *std.Build.Step.Run {
     const run = addDevtoolCommand(b, devtool, "e2e", &.{test_name});
+    run.step.dependOn(platform_host);
     run.setName(b.fmt("run devtool e2e {s}", .{test_name}));
     run.addArgs(flags);
     if (b.args) |args| run.addArgs(args);
@@ -448,13 +451,21 @@ pub fn build(b: *std.Build) void {
 
     // Integration steps run the kai that ships, not a --opt=dev build: the
     // bare binary a release archive holds. Kai decides what to rebuild, so
-    // this always runs.
+    // this always runs. CI builds it once and hands it to its end-to-end
+    // jobs with -Dkai, which skips the build and the checks it waits on.
     const native_kai = switch (b.graph.host.result.cpu.arch) {
         .aarch64 => "kai-arm64musl",
         else => "kai-x64musl",
     };
-    const kai_binary = addKaiBuild(b, test_step, native_kai);
-    const cli_binary = kai_binary.addOutputFileArg("kai").path(b, "kai");
+    const prebuilt_kai = b.option(
+        []const u8,
+        "kai",
+        "Run the integration steps with this kai rather than building it",
+    );
+    const cli_binary: std.Build.LazyPath = if (prebuilt_kai) |path|
+        .{ .cwd_relative = path }
+    else
+        addKaiBuild(b, test_step, native_kai).addOutputFileArg("kai").path(b, "kai");
     const bare_binary = cli_binary;
     // Every maintained example must load and convert to std's model.
     const examples = [_][]const u8{
@@ -496,7 +507,7 @@ pub fn build(b: *std.Build) void {
             b.fmt("e2e-{s}", .{test_name}),
             b.fmt("Run the {s} end-to-end test (-- --nix | --guix)", .{test_name}),
         );
-        step.dependOn(&addE2e(b, devtool, test_name, cli_binary, bare_binary, &.{}).step);
+        step.dependOn(&addE2e(b, devtool, test_name, cli_binary, bare_binary, &build_platform_host.step, &.{}).step);
         e2e_step.dependOn(step);
     }
 
@@ -505,7 +516,7 @@ pub fn build(b: *std.Build) void {
         "Run the update and run end-to-end tests on Nix, the cheap real checks",
     );
     for ([_][]const u8{ "update", "run" }) |test_name| {
-        const smoke = addE2e(b, devtool, test_name, cli_binary, bare_binary, &.{"--nix"});
+        const smoke = addE2e(b, devtool, test_name, cli_binary, bare_binary, &build_platform_host.step, &.{"--nix"});
         smoke_step.dependOn(&smoke.step);
     }
 
@@ -520,6 +531,7 @@ pub fn build(b: *std.Build) void {
         "all",
         cli_binary,
         bare_binary,
+        &build_platform_host.step,
         &.{ "--guix", "--require-guix" },
     );
     guix_integration_step.dependOn(&run_guix_integration.step);
