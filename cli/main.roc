@@ -55,22 +55,36 @@ main! = |args| {
 		Err(Usage(message)) => {
 			_ = match mode {
 				Human => Stderr.line!(message)
-				Json => Stderr.line!(Output.error("InvalidUsage", message, 2))
+				Json =>
+					Stderr.line!(
+						Output.error({
+							code: "invalid_usage",
+							message,
+							exit_code: 2,
+							hint: "",
+							suggestions: [],
+						}),
+					)
 			}
 			Err(Exit(2))
 		}
 		Err(err) => {
-			code = exit_status(err)
+			exit_code = exit_status(err)
 			message = describe(err)
-			json = match err {
-				PlanFailed(failure) => Output.failure(failure, message, code)
-				_ => Output.error(Str.inspect(err), message, code)
-			}
 			_ = match mode {
 				Human => Stderr.line!("kai: ${message}")
-				Json => Stderr.line!(json)
+				Json =>
+					Stderr.line!(
+						Output.error({
+							code: error_code(err),
+							message,
+							exit_code,
+							hint: hint(err),
+							suggestions: plan_suggestions(err),
+						}),
+					)
 			}
-			Err(Exit(code))
+			Err(Exit(exit_code))
 		}
 	}
 }
@@ -357,11 +371,68 @@ requests = |args, flag|
 		[arg, .. as rest] => arg == flag or requests(rest, flag)
 	}
 
+# kai's exit codes, as the README's Exit codes lists them: a failing child's
+# status, 2 for a usage error, 6 when a step needs confirmation, else 1.
 exit_status = |err|
 	match err {
 		ChildExited(_, code) => Execute.exit_code(code)
 		Refused(_) => 2
+		ConfirmationRequired(_) => 6
 		_ => 1
+	}
+
+# The `error` of a --json error, as the README's Exit codes lists them. They
+# are kai's interface, so they never follow a rename in the code.
+error_code = |err|
+	match err {
+		Refused(_) => "refused"
+		NoKaifile(_) => "no_kaifile"
+		NotAnApp(_) => "not_a_kaifile"
+		KaifileExists(_) => "kaifile_exists"
+		KaifileInvalid(_, _) | KaifileFailed(_, _, _) | PreviousHeader =>
+			"kaifile_invalid"
+		IncompatibleProtocol(_, _) => "incompatible_protocol"
+		CompilerUnavailable(_, _) | CompilerMismatch(_, _) | NixMissing =>
+			"no_compiler"
+		UnsupportedHost => "unsupported_host"
+		NoPlatformReference(_) | BundleFailed(_) => "bundle_failed"
+		BadResponse(_) | AnswerTooLarge(_) => "bad_response"
+		InvalidProject(_) | InvalidWorkspace(_) => "invalid_project"
+		UnsafeWorkspace(_) | UnsafePath(_) | UnsafePlan(_) => "unsafe"
+		MissingSource(_) => "missing_source"
+		LocalChanged(_, _) => "stale_lock"
+		LockFailed(_) => "lock_failed"
+		UpdateLocked(_) | AuthorityChanged => "update_conflict"
+		ConfirmationRequired(_) => "confirmation_required"
+		Declined(_) => "declined"
+		ChildExited(_, _) => "child_exited"
+		MissingSecret(_, _) => "missing_secret"
+		InvalidDotenv(_) => "invalid_dotenv"
+		BackendConflict(_, _) | NoEligibleBackend(_) => "no_backend"
+		RequiredBackendUnavailable(_, _) => "no_backend"
+		NoImplementation(_) => "no_implementation"
+		PlanFailed(failure) => failure.code
+		RenderFailed(_) | SnapshotFailed(_) => "plan_failed"
+		_ => "failed"
+	}
+
+# The fix for a --json error, when kai knows one: usually a command to run.
+hint = |err|
+	match err {
+		NoKaifile(_) => "kai init"
+		KaifileFailed(_, _, _) => "kai check"
+		LocalChanged(_, update) => update
+		AuthorityChanged => "kai update"
+		ConfirmationRequired(_) => "pass --yes"
+		PlanFailed(failure) => failure.hint
+		_ => ""
+	}
+
+# The names a plan's failure says the request may have meant.
+plan_suggestions = |err|
+	match err {
+		PlanFailed(failure) => failure.suggestions
+		_ => []
 	}
 
 describe : _ -> Str
@@ -440,8 +511,8 @@ describe = |err|
 # A plan's failure as kai says it: the plugin's message, then the command
 # that fixes it and the names the request may have meant.
 explained : Plan.Failure -> Str
-explained = |{ message, hint, suggestions, .. }| {
-	fix = if (hint.is_empty()) "" else "; run `${hint}`"
+explained = |{ message, hint: command, suggestions, .. }| {
+	fix = if (command.is_empty()) "" else "; run `${command}`"
 	quoted = Str.join_with(suggestions.map(|name| "`${name}`"), " or ")
 	close = if (quoted.is_empty()) "" else "; did you mean ${quoted}?"
 	"${message}${fix}${close}"
@@ -513,10 +584,11 @@ expect [
 	(["bundle-plugin", "--yes"], Err(Usage(Help.bundle_plugin))),
 ].all(|(args, expected)| bundle_arguments(args, [], Err(NoValue)) == expected)
 
-# A failing child's status becomes kai's, a refusal is a usage error, and
-# every other failure is 1.
+# A failing child's status becomes kai's, a refusal is a usage error, a
+# needed confirmation is 6, and every other failure is 1.
 expect exit_status(ChildExited("task fail", 7)) == 7
 	and exit_status(Refused("--backend must be one of nix, guix")) == 2
+	and exit_status(ConfirmationRequired("deploy?")) == 6
 	and exit_status(PlanFailed(Plan.fail("no lock file"))) == 1
 
 # A plan's failure names its fix and the names it suggests after its message.
