@@ -36,7 +36,7 @@ Download the archive for your system from the
 check it against the release's `SHA256SUMS`, and put `kai` on `PATH`:
 
 ```sh
-tar -xzf kai-0.0.9-x86_64-linux.tar.gz
+tar -xzf kai-0.0.10-x86_64-linux.tar.gz
 install -Dm755 kai ~/.local/bin/kai
 kai --version
 ```
@@ -55,8 +55,8 @@ made of plugins; Kai's standard plugin, std, takes a list of settings:
 
 ```roc
 app [kaifile] {
-	pf: platform "https://github.com/thebrandonlucas/kai/releases/download/v0.0.8/8eM3r3RE4n1BFSWqD7wvqch5UW3ACJ7LLJiiin5nxJdK.tar.zst",
-	std: "https://github.com/thebrandonlucas/kai/releases/download/v0.0.8/std-6zJHFrCtGkKhyuiNbmnJNHPx2DQvcgUeDL2znXw86ZEx.tar.zst",
+	pf: platform "https://github.com/thebrandonlucas/kai/releases/download/v0.0.10/9jXNkEdEWZ3cyQqHMLyTenLr4Xj5nEJT48UwnU8AxPCp.tar.zst",
+	std: "https://github.com/thebrandonlucas/kai/releases/download/v0.0.10/std-CJKhhQ3UzajxpUqUKcpv2cwHGJpXQ8qPRiHKL5prqK2y.tar.zst",
 }
 
 import std.Std
