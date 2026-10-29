@@ -144,7 +144,7 @@ Help := [].{
 		\\workflow, update and model.
 		\\
 		\\Options:
-		\\  -f STR, --file STR  Read configuration from PATH (default: Kaifile.roc).
+		\\  -f STR, --file STR  Read PATH (default: the nearest Kaifile.roc).
 		\\  --no-color          Print plain text without colors.
 		\\  --json              Print kai's own output as JSON Lines.
 		\\  --backend STR       Use this backend instead of choosing automatically.
