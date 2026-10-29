@@ -66,11 +66,14 @@ NixBackend :: [].{
 	## run reports (a build's artifact), its workflow stage and the variables
 	## its process receives, is denied and keeps, and the files its
 	## snapshot copies. `reads` names the inputs it reads. `needs_build`
-	## builds a task's Needs before it runs.
+	## builds a task's Needs before it runs. `evaluate` evaluates a shell's or
+	## task's environment first, so a failure to evaluate it is not reported
+	## as the command's.
 	Prepared : {
 		inputs : List(Locks.Input),
 		reads : List(Str),
 		needs_build : List(Plan.Step),
+		evaluate : List(Plan.Step),
 		argv : List(Str),
 		secrets : List(Str),
 		removed_environment_variables : List(Str),
@@ -158,6 +161,25 @@ NixBackend :: [].{
 		develop = |entry, isolation|
 			["nix", "develop"].concat(read_only).concat(isolation)
 				.append("${base_ref}#devShells.${target}.${entry}")
+		# `nix develop` exits 1 both when its environment fails to evaluate
+		# and when its command does; evaluating the environment alone first
+		# tells the two apart. It prints nothing: stdout is the command's.
+		evaluate = |entry, what| [
+			Run({
+				description: "evaluating the environment of ${what}",
+				argv: ["nix", "eval", "--raw"]
+					.concat(read_only)
+					.concat([
+						"${base_ref}#devShells.${target}.${entry}",
+						"--apply",
+						"shell: builtins.seq shell.drvPath \"\"",
+					]),
+				output: Quiet,
+				secrets: [],
+				removed_environment_variables: [],
+				kept_environment_variables: [],
+			}),
+		]
 		# Namespace witnesses compare caller/build on the same kernel.
 		# Never dispatch this local isolation contract to a remote builder.
 		# The runner refuses an unsandboxed build, so no `--option
@@ -190,6 +212,7 @@ NixBackend :: [].{
 					builds: [],
 					needs: [],
 					needs_build: [],
+					evaluate: evaluate(name, "shell ${name}"),
 					argv,
 					output: Inherit,
 					secrets: [],
@@ -243,6 +266,10 @@ NixBackend :: [].{
 					builds,
 					needs: task.needs,
 					needs_build,
+					evaluate: evaluate(
+						environment_shell(task.environment),
+						"task ${name}",
+					),
 					argv: develop(environment_shell(task.environment), isolation)
 						.append("--command")
 						# Overrides the environment's Env, which kai-env-* sets.
@@ -271,6 +298,7 @@ NixBackend :: [].{
 					builds,
 					needs: [],
 					needs_build: [],
+					evaluate: [],
 					argv: build(link, shown.print_build_logs, label),
 					output: Artifact({ name, label, output: built.output }),
 					secrets: [],
@@ -301,6 +329,7 @@ NixBackend :: [].{
 			inputs,
 			reads: read_inputs(project, selected.names, selected.builds),
 			needs_build: selected.needs_build,
+			evaluate: selected.evaluate,
 			argv: selected.argv,
 			secrets: selected.secrets,
 			removed_environment_variables: selected.removed_environment_variables,
@@ -359,7 +388,7 @@ NixBackend :: [].{
 	materialize : Prepared, Layout, Locks.Derived -> List(Plan.Step)
 	materialize = |selected, layout, derived| {
 		{ inputs, reads, argv, contents, description, output, .. } = selected
-		{ secrets, kept_environment_variables, needs_build, .. } = selected
+		{ secrets, kept_environment_variables, needs_build, evaluate, .. } = selected
 		removed_environment_variables = selected.removed_environment_variables
 		builds = match output {
 			Artifact(_) => Bool.True
@@ -407,6 +436,7 @@ NixBackend :: [].{
 		)
 		checks.concat(sandbox)
 			.append(Write(files))
+			.concat(evaluate)
 			.concat(needs_build)
 			.append(
 				Run({
@@ -1689,10 +1719,12 @@ plan_fixture = |request| {
 	)
 }
 
-# One request's steps: its checks and sandbox steps, then its files and run.
+# One request's steps: its checks and sandbox steps, then its files, the
+# evaluation of a shell's or task's environment, and its run.
 Single : {
 	before : List(Plan.Step),
 	files : List(Plan.File),
+	evaluate : List(Str),
 	description : Str,
 	argv : List(Str),
 	output : Plan.Output,
@@ -1701,10 +1733,28 @@ Single : {
 split : List(Plan.Step) -> Try(Single, Str)
 split = |steps|
 	match steps {
+		[.. as before, Write(files), Run(e), Run({ description, argv, output, .. })]
+		if e.description.starts_with("evaluating ") =>
+			Ok({ before, files, evaluate: e.argv, description, argv, output })
 		[.. as before, Write(files), Run({ description, argv, output, .. })] =>
-			Ok({ before, files, description, argv, output })
+			Ok({ before, files, evaluate: [], description, argv, output })
 		_ => Err("not one request's steps")
 	}
+
+# A shell evaluates its environment before entering it.
+expect match single(Request.Shell("default", [])) {
+	Ok(step) => step.evaluate == [
+		"nix",
+		"eval",
+		"--raw",
+		"--no-update-lock-file",
+		"--no-write-lock-file",
+		"path:/generated#devShells.x86_64-linux.default",
+		"--apply",
+		"shell: builtins.seq shell.drvPath \"\"",
+	]
+	_ => False
+}
 
 single : Request -> Try(Single, Str)
 single = |request| {
@@ -1712,12 +1762,15 @@ single = |request| {
 	split(planned.steps)
 }
 
+# A plan's runs, apart from evaluating an environment before entering it,
+# which `split` and its own expect cover.
 runs : Plan -> List({ description : Str, argv : List(Str) })
 runs = |planned|
 	planned.steps.keep_oks(
 		|step|
 			match step {
-				Run({ description, argv, .. }) => Ok({ description, argv })
+				Run({ description, argv, .. }) if !description.starts_with("evaluating ") =>
+					Ok({ description, argv })
 				_ => Err({})
 			},
 	)
