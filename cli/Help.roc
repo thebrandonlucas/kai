@@ -156,6 +156,27 @@ Help := [].{
 		\\
 		\\${Help.tips}
 
+	# What `kai` alone prints at a terminal: what kai is and its common
+	# commands, the same in a project or not.
+	concise : Str -> Str
+	concise = |version|
+		\\kai ${version}: ${About.tagline}
+		\\
+		\\Usage:
+		\\  kai [OPTIONS] <COMMAND>
+		\\
+		\\Common commands:
+		\\  init            Create a Kaifile.roc here to start a project.
+		\\  update          Pin the packages Kaifile.roc uses.
+		\\  shell [<NAME>]  Enter a shell, or run a command in it after --.
+		\\  run <TASK>      Run a task; arguments after -- are the task's.
+		\\  build <NAME>    Build an artifact and print its store path.
+		\\
+		\\Run `kai --help` for every command and option.
+
+	# Without a command, and not at a terminal, `kai` is a usage error.
+	needs_command = "kai needs a command; run `kai --help` to list them"
+
 	# `kai bundle-plugin`'s help, also its usage error.
 	bundle_plugin =
 		\\Usage:

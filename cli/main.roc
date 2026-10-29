@@ -94,6 +94,14 @@ run! = |shown, mode| {
 	if requests(shown, "--version") or requests(shown, "-V") {
 		return Stdout.line!(version)
 	}
+	# Without a command, a person at a terminal gets concise help and a
+	# script a usage error, whether or not there is a Kaifile.roc.
+	if command_word(shown).is_err() and !asks_help(shown) {
+		if mode == Human and is_terminal!("1") {
+			return Stdout.line!(Help.concise(version))
+		}
+		return Err(Usage(Help.needs_command))
+	}
 	if command_word(shown) == Ok("init") and !asks_help(shown) {
 		return init!(requested_file(shown), mode)
 	}
@@ -247,7 +255,7 @@ revision! = |root| {
 # Help without a Kaifile to ask is kai's generic help.
 asks_help : List(Str) -> Bool
 asks_help = |args|
-	args.is_empty() or requests(args, "--help") or requests(args, "-h")
+	requests(args, "--help") or requests(args, "-h")
 
 # The first word that is not one of kai's options, and the one after it.
 command_word : List(Str) -> Try(Str, [NoCommand])
