@@ -15,6 +15,11 @@ Variables := [].{
 		description: "The project's workspace directory (default: .kai).",
 	}
 
+	kai_no_cache = {
+		name: "KAI_NO_CACHE",
+		description: "Compile Kaifile.roc for every command when non-empty.",
+	}
+
 	no_color = {
 		name: "NO_COLOR",
 		description: "Print plain text without colors when non-empty.",
@@ -59,6 +64,7 @@ Variables := [].{
 	all = [
 		Variables.roc,
 		Variables.kai_dir,
+		Variables.kai_no_cache,
 		Variables.no_color,
 		Variables.xdg_cache_home,
 		Variables.home,

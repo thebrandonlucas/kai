@@ -203,7 +203,20 @@ ask! = |{ project, layout, shown, style }, resume| {
 		lock,
 		resume,
 	}
-	Load.ask!(project, request)
+	Load.ask!(project, request, kaifile_cache!(layout))
+}
+
+# The compiled Kaifile is kept in the project's workspace once one exists,
+# unless KAI_NO_CACHE is set.
+kaifile_cache! : Layout => Try(Str, [NoCache])
+kaifile_cache! = |layout| {
+	disabled = !(Variables.read!(Variables.kai_no_cache) ?? "").is_empty()
+	exists = Workspace.path(layout.workspace).is_dir!() ?? Bool.False
+	if disabled or !exists or Workspace.prepare!(layout).is_err() {
+		Err(NoCache)
+	} else {
+		Ok("${layout.workspace}/kaifile")
+	}
 }
 
 # The project's revision, for builds that stamp it; empty outside git or
