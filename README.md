@@ -133,6 +133,7 @@ garbage collection.
 | `Fetch(name, [{ system, url, sha256 }, ...])` | A file pinned by its published sha256 (hex or SRI), one per system; the host's system picks it, and it needs no lock entry. Builds read it in `Inputs([...])`, and the tool `"name#binary"` puts it on `PATH` as the executable `binary`. |
 | `CargoVendor(name, text)` | The crates a `Cargo.lock` names, vendored into one directory that builds can read, pinned by the lock's checksums with no lock entry. Pass the text with `import "Cargo.lock" as cargo_lock : Str`. A git dependency is fetched at the commit the lock records. |
 | `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, fetches and cargo vendors, in `$KAI_INPUTS/<name>`), `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`), `Revision` (the project's revision, below) and `Default`, which makes it the build `kai build` builds when given no name (at most one build). |
+| `BuildRoot(path)` | The directory builds copy, when it is above the project's, as `..` segments: `BuildRoot("../..")` lets an app whose Kaifile sits in `apps/web` build against a library at the repository root. Builds copy that directory instead of the project's, and their `Files`, `Run` and `Output` work from it; `.kai` stays out of the copy. |
 | `Workflow(name, [...])` | Steps for `kai workflow`, which stops at the first that fails: `RunTask(task, args)`, `BuildArtifact(build)`, `RunWorkflow(workflow)`, and `MayFail(step)`, which notes the step's failure and continues. |
 | `Raw("nix", target, value)` | Extra attributes for the generated flake (`"flake"`) or one shell (`"shell:<name>"`), e.g. `Attrs([("shellHook", Str("echo hi"))])`. |
 
@@ -155,10 +156,11 @@ the names are in the Kaifile and plans; add `.env` to your `.gitignore`. A
 name in its `OptionalEnvironmentVariables([...])` is optional, never read
 from `.env`, and reaches it even when another task declares it secret.
 
-Builds run sandboxed. A build gets a copy of the project, leaving out what
-its `.gitignore` files ignore (`Files([...])` narrows the copy to the given
-project-relative paths), plus only the tools its environment's shell has, its
-declared sources (`$KAI_INPUTS`) and the artifacts of the builds it needs
+Builds run sandboxed. A build gets a copy of the project (or of its
+`BuildRoot`, from which it then runs), leaving out what its `.gitignore`
+files ignore (`Files([...])` narrows the copy to the given relative paths),
+plus only the tools its environment's shell has, its declared sources
+(`$KAI_INPUTS`) and the artifacts of the builds it needs
 (`$KAI_ARTIFACTS`). It has no network, and only its `Output` is kept, in the
 store. On Nix, its tools are its build inputs, so their setup hooks run as in
 `kai shell`: `pkg-config` finds the environment's libraries, and the compiler

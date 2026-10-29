@@ -12,6 +12,8 @@ Setup in each example/<example> dir is:
     | commands          input command args to kai e.g. `update`, `run` etc.
     | Kaifile.roc       describes what to run given the above commands
     | stdout            expected stdout given the run for validation
+    | project           optional: the subdirectory holding Kaifile.roc, where
+                        the commands run, such as an app in a workspace
 ```
 
 Examples run using `wisecow`, a custom program which is a combination of the [`fortune`]() and [`cowsay`]() programs to demonstrate Kai's ability to create environments with programs and stitch them together in interesting and useful ways.
@@ -28,6 +30,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [revision](revision) | A build stamped with the project's git revision | `kai build version` |
 | [source-build](source-build) | A build reading a locked source | `kai build moofasa` |
 | [path-source](path-source) | A build reading a locked project directory | `kai build kai` |
+| [workspace](workspace) | An app whose Kaifile sits in a subdirectory, building against a module at the workspace root with `BuildRoot` | `kai build greeting` in `apps/greeter` |
 | [fetch](fetch) | A file pinned by its sha256, run as a tool and read by a build | `kai run version` |
 | [cargo-vendor](cargo-vendor) | A Rust build reading crates, one from git, vendored from Cargo.lock, offline | `kai build count` |
 | [workflow](workflow) | Tasks, builds and workflows run in order, and a step that may fail | `kai workflow encore` |

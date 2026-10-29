@@ -8,11 +8,14 @@ import Value
 ## Parents are resolved by Project.validate, parent first with first-occurrence
 ## deduplication. Shells and tasks refer directly to environment identities.
 ## Consumers must reject unknown required features before deriving effects.
+## Build root is the directory builds copy, as `..` segments from the
+## project's directory, empty for that directory itself.
 Model := {
 	format : { major : U64, minor : U64 },
 	name : Str,
 	requires_ : List(Str),
 	systems : List(Str),
+	build_root : Str,
 	sources : List(
 		{ name : Str, provider : [Auto, NixPackages(Str), GuixPackages(Str)] },
 	),
@@ -230,6 +233,7 @@ Model := {
 		name,
 		requires_: [],
 		systems: [],
+		build_root: "",
 		sources: [],
 		guix_channels: [],
 		inputs: [],

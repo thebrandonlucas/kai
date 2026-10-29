@@ -5,6 +5,8 @@
 #   | commands          input command args to kai e.g. `update`, `run` etc.
 #   | Kaifile.roc       describes what to run given the above commands
 #   | stdout            expected stdout given the run for validation
+#   | project           optional: the subdirectory holding Kaifile.roc, in
+#                       which the commands run, such as an app in a workspace
 import pf.Cmd
 import pf.Env
 import pf.Path
@@ -20,7 +22,7 @@ E2eExamples := [].{
 	unshown = ["Custom"]
 
 	## Files an example keeps beside its project rather than in it.
-	metadata = ["Kaifile.roc", "commands", "stdout"]
+	metadata = ["Kaifile.roc", "commands", "stdout", "project"]
 
 	nix! = |binary| {
 		root = Path.canonicalize!(Env.cwd!()?)?
@@ -36,7 +38,10 @@ E2eExamples := [].{
 			entries = Path.list!(dir)?
 				.map(|path| Path.display(Path.filename(path) ?? path))
 				.keep_if(|entry| !E2eExamples.metadata.contains(entry))
-			(kai, project) = E2e.nix_copy!(binary, "examples/${name}", entries)?
+			kaifile_dir = E2eExamples.kaifile_dir!(dir)?
+			(kai, copy) =
+				E2e.nix_copy_tree!(binary, "examples/${name}", entries, kaifile_dir)?
+			(source, project) = E2e.kaifile_dirs(dir, copy, kaifile_dir)
 			result = E2eExamples.run_in!(kai, project, name, lines)
 			match result {
 				Ok(_) if $offered.is_empty() => {
@@ -44,14 +49,14 @@ E2eExamples := [].{
 				}
 				_ => {}
 			}
-			Path.delete_all!(project)?
+			Path.delete_all!(copy)?
 			stdout = result?
 			expected = Path.join(dir, "stdout")
 			if Path.exists!(expected)? and Path.read_utf8!(expected)? != stdout {
 				return Err(WrongExampleOutput({ example: name, stdout }))
 			}
 			$commands = $commands.concat(lines.map(E2eExamples.command_name))
-			for file in Path.list!(dir)? {
+			for file in Path.list!(source)? {
 				if Path.display(file).ends_with(".roc") {
 					$sources = $sources.append(Path.read_utf8!(file)?)
 				}
@@ -71,20 +76,32 @@ E2eExamples := [].{
 		Stdout.line!("every std command and Kaifile setting has an example")
 	}
 
-	## Example directories: those holding a Kaifile.roc and a commands file.
+	## Example directories: those holding a commands file and a Kaifile.roc,
+	## or a project file naming the subdirectory that holds it.
 	names! = |examples| {
 		var $names = []
 		for dir in Path.list!(examples)? {
 			name = Path.display(Path.filename(dir) ?? dir)
 			if
 				Path.is_dir!(dir)?
-					and Path.is_file!(Path.join(dir, "Kaifile.roc"))?
 					and Path.is_file!(Path.join(dir, "commands"))?
+					and (Path.is_file!(Path.join(dir, "Kaifile.roc"))?
+						or Path.is_file!(Path.join(dir, "project"))?)
 					{
 						$names = $names.append(name)
 					}
 		}
 		Ok($names)
+	}
+
+	## The subdirectory an example's project file names, empty without one.
+	kaifile_dir! = |dir| {
+		project = Path.join(dir, "project")
+		if Path.is_file!(project)? {
+			Ok(Path.read_utf8!(project)?.trim())
+		} else {
+			Ok("")
+		}
 	}
 
 	## Run each command in order and return their stdout, apart from update's
