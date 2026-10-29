@@ -230,7 +230,7 @@ Execute := [].{
 	# lock whose holder is no longer running is taken over.
 	hold! : Str, Output.Mode => Try({}, _)
 	hold! = |guard, mode| {
-		process = Execute.shell!("echo $PPID", [])?.stdout
+		process = Execute.process!()?
 		var $noted = ""
 		var $held = Bool.False
 		while !$held {
@@ -251,7 +251,7 @@ Execute := [].{
 						} else if holder.is_empty() or !numeric {
 							"waiting for another kai build to release ${guard}; "
 								.concat("if none is running, it is safe to remove it")
-						} else if Execute.shell!("kill -0 \"$1\"", [holder])?.succeeded {
+						} else if Execute.running!(holder)? {
 							"waiting for kai process ${holder} to release ${guard}"
 						} else if Execute.take_over!(guard, holder)? {
 							"took over a build lock left by a process that is no longer running"
@@ -287,6 +287,26 @@ Execute := [].{
 			}
 			Err(PathErr(AlreadyExists, _)) => Ok(Bool.False)
 			Err(err) => Err(err)
+		}
+	}
+
+	# kai's own process ID. Linux names it in /proc, so kai needs no shell on
+	# PATH there; a Guix environment may have none. Elsewhere a shell reports
+	# its parent's.
+	process! = || {
+		match Workspace.path("/proc/self").read_link!() {
+			Ok(target) => Ok(target.to_str() ?? "")
+			Err(_) => Ok(Execute.shell!("echo $PPID", [])?.stdout)
+		}
+	}
+
+	# Whether a process is running: on Linux, whether /proc names it, else
+	# what `kill -0` says.
+	running! = |process| {
+		if Workspace.path("/proc/self").exists!() ?? Bool.False {
+			Ok(Workspace.path("/proc/${process}").exists!() ?? Bool.False)
+		} else {
+			Ok(Execute.shell!("kill -0 \"$1\"", [process])?.succeeded)
 		}
 	}
 
