@@ -35,6 +35,7 @@ NixBackend :: [].{
 		"pure",
 		"aliases",
 		"rust-toolchain",
+		"rust_toolchain_with",
 		"follows",
 		"package_env",
 		"task_dir",
@@ -896,14 +897,28 @@ NixBackend :: [].{
 		tools = environment.tools.map(reference).concat(aliases)
 		match environment.rust_toolchain {
 			None => tools
-			Toml(text) => {
+			Toml({ text, components, target_triples }) => {
 				declaration = "RustToolchain in environment ${environment.name}"
 				no_overlay = "${declaration} needs an Overlay providing rust-bin, "
 					.concat("such as github:oxalica/rust-overlay")
 				no_table = "${declaration} has no [toolchain] table"
 				rust_bin = "(sets.${primary}.rust-bin or (throw ${quote(no_overlay)}))"
-				table = "((builtins.fromTOML ${quote(text)}).toolchain "
+				pinned = "((builtins.fromTOML ${quote(text)}).toolchain "
 					.concat("or (throw ${quote(no_table)}))")
+				# fromRustupToolchain passes the table's lists to rust-overlay's
+				# override as extensions and targets; overriding its result
+				# instead would replace the file's lists rather than add to them.
+				added = |field, list|
+					"${field} = (table.${field} or [ ]) ++ "
+						.concat("[ ${Str.join_with(list.map(quote), " ")} ]; ")
+				table = if components.is_empty() and target_triples.is_empty() {
+					pinned
+				} else {
+					"(let table = ${pinned}; in table // { "
+						.concat(added("components", components))
+						.concat(added("targets", target_triples))
+						.concat("})")
+				}
 				tools.append("(${rust_bin}.fromRustupToolchain ${table})")
 			}
 		}
@@ -3371,5 +3386,27 @@ expect {
 				and count(text, "\"wayland\" or") == 1
 				and count(text, "env = { \"GPU\" = \"on\"; };") == 1
 		Err(_) => Bool.False
+	}
+}
+
+# RustToolchainWith adds its components and targets to the file's lists, and
+# a plain RustToolchain passes the file's table unchanged.
+expect {
+	toolchain = |components, target_triples|
+		Toml({ text: "[toolchain]\nchannel = \"1.90\"", components, target_triples })
+	render = |rust_toolchain| {
+		environments = [{ ..base, rust_toolchain }]
+		NixBackend.render(mk({ ..simple, environments }))
+	}
+	added = "table // { components = (table.components or [ ]) ++ "
+		.concat("[ \"llvm-tools-preview\" ]; targets = (table.targets or [ ]) ++ ")
+		.concat("[ \"wasm32-unknown-unknown\" ]; })")
+	extended = toolchain(["llvm-tools-preview"], ["wasm32-unknown-unknown"])
+	match (render(extended), render(toolchain([], []))) {
+		(Ok(added_text), Ok(plain)) =>
+			added_text.contains(added)
+				and plain.contains(".fromRustupToolchain ((builtins.fromTOML")
+				and !plain.contains("table //")
+		_ => Bool.False
 	}
 }

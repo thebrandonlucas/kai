@@ -889,6 +889,39 @@ ConfigFixtures := [].{
 				\\ [PackageEnv([]), PackageEnv([])])]
 		},
 		{
+			name: "RustToolchainWith",
+			expected: Valid,
+			body: \\config = [Name("rust"),
+				\\ Overlay("rust", "github:oxalica/rust-overlay"),
+				\\ Environment("dev", [Overlays(["rust"]),
+				\\  RustToolchainWith("[toolchain]\\nchannel = \\"1.90.0\\"",
+				\\   [Components(["llvm-tools-preview"]),
+				\\    Targets(["wasm32-unknown-unknown"])])])]
+		},
+		{
+			name: "RustToolchainWithBadName",
+			expected: Rejected(
+				"invalid RustToolchainWith name in environment dev: rust src",
+			),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [RustToolchainWith("[toolchain]", [Components(["rust src"])])])]
+		},
+		{
+			name: "DuplicateComponents",
+			expected: Rejected(
+				"DuplicateComponents: RustToolchainWith in environment dev",
+			),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [RustToolchainWith("[toolchain]",
+				\\  [Components(["clippy"]), Components(["rust-src"])])])]
+		},
+		{
+			name: "RustToolchainAndRustToolchainWith",
+			expected: Rejected("DuplicateRustToolchain: environment dev"),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [RustToolchain("[toolchain]"), RustToolchainWith("[toolchain]", [])])]
+		},
+		{
 			name: "CargoVendorGit",
 			expected: Valid,
 			body: \\config = [Name("cargo-git"), CargoVendor("crates",

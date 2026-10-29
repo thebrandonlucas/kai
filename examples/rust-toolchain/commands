@@ -1,3 +1,5 @@
 update
 shell default -- rustc --version
 shell default -- cargo fmt --version
+shell wasm -- cargo clippy --version
+run wasm-target
