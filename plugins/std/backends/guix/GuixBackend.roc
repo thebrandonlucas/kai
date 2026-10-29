@@ -16,6 +16,22 @@ GuixBackend :: [].{
 	check_system = |system|
 		if (system.ends_with("-linux")) Ok({}) else Err("Guix runs only on Linux")
 
+	## Guix plans for the host, whose `system` its environments give their
+	## shells, tasks and builds as KAI_SYSTEM. It goes under the Env of
+	## environments extending none, so the ones that set it keep theirs.
+	with_system : Model, Str -> Model
+	with_system = |model, system| {
+		variable = { name: "KAI_SYSTEM", value: system }
+		stamp = |environment|
+			if environment.parents.is_empty()
+				and !environment.package_env.any(|v| v.name == variable.name) {
+				{ ..environment, env: Project.merge_env([variable], environment.env) }
+			} else {
+				environment
+			}
+		{ ..model, environments: model.environments.map(stamp) }
+	}
+
 	## `guix shell` arguments for a shell or task, run under time-machine, and
 	## the variables it keeps from kai's environment, KAI_ARTIFACTS under
 	## `workspace` for a task with Needs.
@@ -954,4 +970,18 @@ expect {
 		and rendered.contains("(\"lib\" ,kai-build-lib)")
 		and rendered.ends_with("kai-build-app\n")
 		and GuixBackend.build_scm(model, Build("data"), "/p", "/p/.kai").is_err()
+}
+
+# KAI_SYSTEM goes under the Env of environments extending none, which those
+# extending them inherit.
+expect {
+	system = { name: "KAI_SYSTEM", value: "x86_64-linux" }
+	mine = { name: "KAI_SYSTEM", value: "mine" }
+	environments = [
+		env("base", ["git"]),
+		{ ..env("dev", ["hello"]), parents: ["base"] },
+		{ ..env("own", ["git"]), env: [mine] },
+	]
+	stamped = GuixBackend.with_system(fixture(environments), "x86_64-linux")
+	stamped.environments.map(|e| e.env) == [[system], [], [mine]]
 }

@@ -266,8 +266,9 @@ Std := [].{
 						Std.known(model, wanted)?
 						locked = Std.guix_pins(model, ctx)?
 						# Guix plans for the host, so it takes the host's OnSystems.
-						host = Project.for_system(model, ctx.host.system)
-						revised = Std.revised(host, ctx)
+						system = ctx.host.system
+						host = Project.for_system(model, system)
+						revised = Std.revised(GuixBackend.with_system(host, system), ctx)
 						GuixBackend.request_steps(revised, wanted, ctx.layout, locked)
 							.map_err(|why| Std.guix_failure(command, why))
 					},
@@ -933,13 +934,14 @@ expect {
 			== "unknown_name"
 }
 
-# A Guix shell runs guix shell at the locked channels; without the Guix
-# section it is refused.
+# A Guix shell runs guix shell at the locked channels, keeping the
+# KAI_SYSTEM the environment sets; without the Guix section it is refused.
 expect {
 	shell = { ..guix, args: in_shell("default"), lock: guix_lock }
-	argv = time_machine
+	argv = ["env", "KAI_SYSTEM=x86_64-linux"]
+		.concat(time_machine)
 		.concat(["--", "shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"])
-		.concat(["hello"])
+		.concat(["--preserve=^KAI_SYSTEM$", "hello"])
 	runs(planned("shell", shell)) == Ok([{ description: "shell default", argv }])
 		and failed(planned("shell", { ..shell, lock: nix_lock }))
 			== "missing_guix_lock"
@@ -952,9 +954,10 @@ expect {
 		{ name: "args", value: Many(["a b"]) },
 	]
 	command = ["--", "hello", "-g", "hi", "a b"]
-	argv = time_machine
+	argv = ["env", "KAI_SYSTEM=x86_64-linux"]
+		.concat(time_machine)
 		.concat(["--", "shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"])
-		.concat(["hello"])
+		.concat(["--preserve=^KAI_SYSTEM$", "hello"])
 		.concat(command)
 	runs(planned("run", { ..guix, args, lock: guix_lock }))
 		== Ok([{ description: "task greet", argv }])

@@ -3,6 +3,8 @@
 # version; rust-overlay, selected with Overlays, builds the toolchain it pins.
 # RustToolchainWith adds components and targets that only Kai's environment
 # needs, leaving the file to what every contributor's rustup installs.
+# Tasks find the host's target triple, for paths such as
+# target/<triple>/release, in KAI_RUST_TARGET.
 app [kaifile] {
 	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",
@@ -39,6 +41,20 @@ kaifile = Std.kaifile([
 				"-c",
 				"test -d \"$(rustc --print sysroot)/lib/rustlib/"
 					.concat("wasm32-unknown-unknown\""),
+			]),
+		],
+	),
+	# Fails unless KAI_SYSTEM is set and KAI_RUST_TARGET is the triple rustc
+	# builds for here.
+	Task(
+		"host-target",
+		[
+			Use("rust"),
+			Run([
+				"sh",
+				"-c",
+				"test -n \"$KAI_SYSTEM\" && rustc -vV | grep -qx "
+					.concat("\"host: $KAI_RUST_TARGET\""),
 			]),
 		],
 	),
