@@ -187,6 +187,13 @@ The sandbox has no `.git` either, so a build that stamps a version declares
 outside git or when git is not installed. Its inputs then change with every
 commit, which is why it is opt-in.
 
+Every shell, task and build also gets `KAI_SYSTEM`, the system it runs on,
+such as `x86_64-linux` or `aarch64-darwin`, and, when its environment has a
+`RustToolchain` (Nix only), `KAI_RUST_TARGET`, that system's Rust target
+triple, such as `x86_64-unknown-linux-gnu`, for paths like
+`target/$KAI_RUST_TARGET/release`. A variable of the same name in an `Env`
+replaces them.
+
 A Rust build reads its crates from a `CargoVendor` in its inputs through the
 cargo configuration in the vendored directory, which replaces crates.io and
 each git dependency with it, as [examples/cargo-vendor](examples/cargo-vendor)
