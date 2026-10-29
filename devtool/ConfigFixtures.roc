@@ -894,6 +894,20 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Environment("dev", []),
 				\\ Task("test", [Use("dev"), Dir("a"), Dir("b"), Run(["true"])])]
 		},
+		{
+			name: "DefaultBuild",
+			expected: Valid,
+			body: \\config = [Name("default-build"), Environment("dev", []),
+				\\ Build("app", [Use("dev"), Default, Run(["true"]), Output("out")]),
+				\\ Build("docs", [Use("dev"), Run(["true"]), Output("out")])]
+		},
+		{
+			name: "SeveralDefaultBuilds",
+			expected: Rejected("several builds are Default: app, docs"),
+			body: \\config = [Name("bad"), Environment("dev", []),
+				\\ Build("app", [Use("dev"), Default, Run(["true"]), Output("out")]),
+				\\ Build("docs", [Use("dev"), Default, Run(["true"]), Output("out")])]
+		},
 	].concat(ConfigFixtures.bad_outputs).concat(ConfigFixtures.bad_sources)
 
 	bad_outputs : List(Fixture)
