@@ -328,6 +328,13 @@ Execute := [].{
 				_ => Bool.False
 			},
 		)
+		# A task's or shell's program inherits stdout, which is then only its own.
+		shares_stdout = plan.steps.any(
+			|step| match step {
+				Run({ output: Inherit, .. }) => Bool.True
+				_ => Bool.False
+			},
+		)
 		guard = "${layout.workspace}/build.lock"
 		var $index = 0
 		var $finished = ""
@@ -365,7 +372,7 @@ Execute := [].{
 						Execute.hold!(guard, mode)?
 						$holding = Bool.True
 					}
-					result = Execute.step!(step, layout, mode, options)
+					result = Execute.step!(step, layout, mode, options, shares_stdout)
 					if $holding and (builds or result.is_err()) {
 						_ = Workspace.path(guard).delete!()
 						$holding = Bool.False
@@ -515,15 +522,17 @@ Execute := [].{
 		}
 
 	# One step's effect. Children run from the project root; a failing child
-	# stops the plan.
-	step! : Plan.Step, Layout, Output.Mode, Options => Try({}, _)
-	step! = |step, layout, mode, options| {
+	# stops the plan. Its results go where `shares_stdout` leaves room for them.
+	step! : Plan.Step, Layout, Output.Mode, Options, Bool => Try({}, _)
+	step! = |step, layout, mode, options, shares_stdout| {
 		root = layout.project_root
 		match step {
 			Note(message) =>
 				Output.note!(mode, "kai: ${message}", Output.event("note", message, []))
-			Print(text) =>
-				Output.result!(mode, text, Output.event("result", text, []))
+			Print(text) => {
+				event = Output.event("result", text, [])
+				Output.step_result!(mode, shares_stdout, text, event)
+			}
 			Stage(_) | MayFail(_) => Ok({})
 			Write(files) => Workspace.stage!(files, layout)
 			VerifyPath({ path, argv, stdout, update }) => {
@@ -555,7 +564,13 @@ Execute := [].{
 					Remembered(files) =>
 						Execute.remembered!(process_command, run, files, layout)
 					Artifact(artifact) =>
-						Execute.build!(process_command, description, artifact, mode)
+						Execute.build!(
+							process_command,
+							description,
+							artifact,
+							mode,
+							shares_stdout,
+						)
 				}
 			}
 			Confirm(prompt) =>
@@ -581,17 +596,21 @@ Execute := [].{
 				}
 				updated = "updated ${layout.lock_path}"
 				fields = [("lock", Output.text(layout.lock_path))]
-				Output.result!(mode, updated, Output.event("update", updated, fields))
+				event = Output.event("update", updated, fields)
+				Output.step_result!(mode, shares_stdout, updated, event)
 			}
 		}
 	}
 
 	# Resolve the requested artifact with the planned command: its store path
 	# on stdout, only after success.
-	build! : Cmd.Command, Str, Plan.Artifact, Output.Mode => Try({}, _)
-	build! = |process_command, description, artifact, mode| {
+	build! : Cmd.Command, Str, Plan.Artifact, Output.Mode, Bool => Try({}, _)
+	build! = |process_command, description, artifact, mode, shares_stdout| {
 		{ name, label, output: declared } = artifact
-		Stderr.line!("building ${name}: ${label} (output ${declared})")?
+		# With --json, the artifact event says what was built.
+		if mode == Human {
+			Stderr.line!("building ${name}: ${label} (output ${declared})")?
+		}
 		output = process_command.stderr(Tee).run!()?
 		match output.status {
 			Exited(0) => {
@@ -608,7 +627,10 @@ Execute := [].{
 						Stdout.write_bytes!(output.stdout_bytes)?
 						Stderr.line!(built)
 					}
-					Json => Stdout.line!(Output.event("artifact", built, fields))
+					Json => {
+						event = Output.event("artifact", built, fields)
+						Output.step_result!(mode, shares_stdout, built, event)
+					}
 				}
 			}
 			Exited(code) => {

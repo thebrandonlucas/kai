@@ -1,10 +1,12 @@
-# Where kai's own messages go. For people, results go to stdout and progress
-# and diagnostics to stderr. With --json, each one is instead a JSON object on
-# its own stdout line, with its type and a readable message first. Children
-# (tasks, shells and their commands) keep inheriting stdout and stderr in both
-# modes: their bytes are the user's program output, which kai must neither
-# rewrite, buffer nor detach from a terminal. Kai writes an event only
-# between children, so its events stay whole lines.
+# Where kai's own messages go: results to stdout, and progress and diagnostics
+# to stderr. With --json, each one is instead a JSON object on its own line of
+# the same stream, with its type and a readable message first; a result goes
+# to stderr instead when the plan also runs a task's or shell's program, so
+# stdout is only that program's. Children (tasks, shells and their commands)
+# keep inheriting stdout and stderr in both modes: their bytes are the user's
+# program output, which kai must neither rewrite, buffer nor detach from a
+# terminal. Kai writes an event only between children, so its events stay
+# whole lines.
 import pf.Stderr
 import pf.Stdout
 
@@ -41,12 +43,22 @@ Output := [].{
 			Json => Stdout.line!(machine)
 		}
 
-	# Progress or a note: stderr for people, an event on stdout for machines.
+	# A plan step's result: as `result!`, except that with --json it is an event
+	# on stderr when the plan also runs a program that inherits stdout.
+	step_result! : Output.Mode, Bool, Str, Str => Try({}, _)
+	step_result! = |mode, shares_stdout, human, machine|
+		if mode == Json and shares_stdout {
+			Stderr.line!(machine)
+		} else {
+			Output.result!(mode, human, machine)
+		}
+
+	# Progress or a note: stderr, as text for people or an event for machines.
 	note! : Output.Mode, Str, Str => Try({}, _)
 	note! = |mode, human, machine|
 		match mode {
 			Human => Stderr.line!(human)
-			Json => Stdout.line!(machine)
+			Json => Stderr.line!(machine)
 		}
 
 	# An event only machines need.
@@ -54,7 +66,7 @@ Output := [].{
 	json! = |mode, machine|
 		match mode {
 			Human => Ok({})
-			Json => Stdout.line!(machine)
+			Json => Stderr.line!(machine)
 		}
 
 	# A tag's name in snake case, from how Str.inspect shows the value.
