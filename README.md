@@ -47,6 +47,14 @@ as `ROC=/path/to/roc`, or else one it gets with Nix from
 [roc-overlay](https://github.com/roc-lang/roc-overlay). Roc downloads the
 platform the first time it checks a `Kaifile.roc`.
 
+With Nix, you can also run or install the latest release from this
+repository's flake:
+
+```sh
+nix run github:thebrandonlucas/kai -- --version
+nix profile install github:thebrandonlucas/kai
+```
+
 ## Getting started
 
 A project is configured by `Kaifile.roc`, an ordinary
