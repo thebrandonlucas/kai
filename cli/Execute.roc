@@ -76,7 +76,15 @@ Execute := [].{
 					Selection.explain(answer.choice, answer.options, probe, candidate)
 				}
 				backend = [("backend", Output.text(candidate.backend))]
-				Output.note!(mode, "kai: ${why}", Output.event("backend", why, backend))?
+				event = Output.event("backend", why, backend)
+				# Only a fallback is worth a person's attention; machines get
+				# every choice.
+				fell_back = Selection.fell_back(answer.choice, answer.options, candidate)
+				if ran.len() > 1 or fell_back {
+					Output.note!(mode, "kai: ${why}", event)?
+				} else {
+					Output.json!(mode, event)?
+				}
 			}
 			plan = Execute.planned(candidate.outcome)?
 			Execute.follow!(

@@ -90,6 +90,19 @@ Selection := [].{
 		"using ${chosen.backend} (${why})"
 	}
 
+	## Whether kai chose another backend than the preferred one that fits, the
+	## only choice worth a note: one a person did not name or expect.
+	fell_back : Choice, List(Candidate), Candidate -> Bool
+	fell_back = |choice, options, chosen|
+		match choice {
+			Only(_) => Bool.False
+			Auto =>
+				match options.keep_if(Selection.fits).first() {
+					Ok(first) => first.backend != chosen.backend
+					Err(_) => Bool.False
+				}
+		}
+
 	probe_text : Probe -> Str
 	probe_text = |probe|
 		match probe {
@@ -232,4 +245,14 @@ expect {
 				Err(_) => Bool.False
 			},
 	)
+}
+
+# Only choosing a backend other than the first that fits is a fallback.
+expect {
+	generic = [candidate("nix", Fit), candidate("guix", Fit)]
+	guix_only = [candidate("nix", Unfit("needs Guix")), candidate("guix", Fit)]
+	Selection.fell_back(Auto, generic, candidate("guix", Fit))
+		and !Selection.fell_back(Auto, generic, candidate("nix", Fit))
+		and !Selection.fell_back(Auto, guix_only, candidate("guix", Fit))
+		and !Selection.fell_back(Only("guix"), generic, candidate("guix", Fit))
 }

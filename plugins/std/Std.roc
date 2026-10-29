@@ -725,6 +725,14 @@ develop = [
 	"--no-write-lock-file",
 ]
 
+# The Nix steps that evaluate an environment before a shell or task enters it.
+evaluating : Str, Str -> { description : Str, argv : List(Str) }
+evaluating = |what, installable| {
+	description: "evaluating the environment of ${what}",
+	argv: ["nix", "eval", "--raw", "--no-update-lock-file", "--no-write-lock-file"]
+		.concat([installable, "--apply", "shell: builtins.seq shell.drvPath \"\""]),
+}
+
 time_machine = ["guix", "time-machine", "-C", "/generated/guix/channels.scm"]
 
 # Nix update resolves the generated flake, then publishes the observed lock
@@ -781,13 +789,16 @@ expect {
 	}
 }
 
-# A Nix shell enters the locked shell; an unknown shell or a missing lock is
-# refused.
+# A Nix shell evaluates its environment, then enters the locked shell; an
+# unknown shell or a missing lock is refused.
 expect {
 	shell = { ..context, args: in_shell("default"), lock: nix_lock }
 	installable = "path:/generated/nix#devShells.x86_64-linux.default"
 	runs(planned("shell", shell))
-		== Ok([{ description: "shell default", argv: develop.append(installable) }])
+		== Ok([
+			evaluating("shell default", installable),
+			{ description: "shell default", argv: develop.append(installable) },
+		])
 		and planned("shell", { ..shell, args: in_shell("missing") })
 			== Err("unknown shell: missing")
 		and planned("shell", { ..shell, lock: Absent })
@@ -803,7 +814,10 @@ expect {
 	installable = "path:/generated/nix#devShells.x86_64-linux.kai-env-dev"
 	argv = develop.concat([installable, "--command", "hello", "-g", "hi", "a b"])
 	runs(planned("run", { ..context, args, lock: nix_lock }))
-		== Ok([{ description: "task greet", argv }])
+		== Ok([
+			evaluating("task greet", installable),
+			{ description: "task greet", argv },
+		])
 }
 
 # A Nix build builds its package; an unknown build is refused.
