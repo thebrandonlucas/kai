@@ -305,7 +305,7 @@ replace direnv's shell hook with
 |---|---|
 | 0 | Success. |
 | 1 | A failure of Kai's that no other code covers. |
-| 2 | A usage error, such as an unknown command, task or flag. |
+| 2 | A usage error, such as an unknown command, task or flag, or `kai` without a command when stdout is not a terminal. |
 | 6 | A step needs confirmation; pass `--yes` to accept it. |
 
 A failing shell, task or build's exit status becomes Kai's unchanged, so any
