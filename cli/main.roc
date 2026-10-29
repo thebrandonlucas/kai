@@ -28,11 +28,16 @@ import "../VERSION" as canonical_version : Str
 
 version = canonical_version.trim()
 
-is_terminal! = |descriptor|
-	match Cmd.new("test").args(["-t", OsStr.from_str(descriptor)]).run!() {
+# Whether kai's own stdin ("0"), stdout ("1") or stderr ("2") is a terminal.
+# `test` inherits kai's streams: by default Cmd.run! gives it a null stdin and
+# captures its stdout and stderr, so it never saw a terminal.
+is_terminal! = |descriptor| {
+	test = Cmd.new("test").args(["-t", OsStr.from_str(descriptor)])
+	match test.inherit_stdio().run!() {
 		Ok(output) => output.status == Exited(0)
 		Err(_) => Bool.False
 	}
+}
 
 main! : List(OsStr) => Try({}, [Exit(I32)])
 main! = |args| {
