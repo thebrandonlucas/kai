@@ -38,6 +38,8 @@ Config :: [].{
 		Task(TaskName, List(TaskSetting)),
 		Source(InputName, FlakeRef),
 		Fetch(InputName, List(FetchFile)),
+		FetchAll(InputName, { url : Str, sha256 : Str }),
+		FetchUnavailable(InputName, List(System)),
 		CargoVendor(InputName, Str),
 		Build(InputName, List(BuildSetting)),
 		Workflow(WorkflowName, List(WorkflowStep)),
@@ -65,6 +67,10 @@ Config :: [].{
 	## A file pinned by its published sha256 (hex or SRI) for each system it
 	## exists for; the host's system picks one. A build lists it in Inputs, and
 	## a tool "<name>#<binary>" puts it on PATH as the executable <binary>.
+	## FetchAll is one file for every system, such as a data archive.
+	## FetchUnavailable names the declared systems a Fetch or FetchAll has no
+	## file for: an environment or build using it is refused there, rather
+	## than the Kaifile everywhere.
 	FetchFile : { system : System, url : Str, sha256 : Str }
 
 	PackageSource : [Auto, From(Provider)]

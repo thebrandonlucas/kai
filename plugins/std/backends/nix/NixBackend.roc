@@ -40,6 +40,7 @@ NixBackend :: [].{
 		"task_dir",
 		"build_root",
 		"on_systems",
+		"fetch_unavailable",
 	]
 
 	default_nixpkgs : Str
@@ -315,6 +316,7 @@ NixBackend :: [].{
 				"workflow must expand into atomic requests",
 			)
 		}
+		Project.check_fetches_on(project, selected.names, selected.builds, target)?
 		inputs = Locks.inputs(project)?
 		remaining = charge_rendered(
 			budget,

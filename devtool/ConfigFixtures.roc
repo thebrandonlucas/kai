@@ -600,6 +600,31 @@ ConfigFixtures := [].{
 				\\  sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" }])]
 		},
 		{
+			name: "FetchAll",
+			expected: Valid,
+			body: \\config = [Name("fetch-all"),
+				\\ FetchAll("data", { url: "https://example.com/data.tar.gz",
+				\\  sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" }),
+				\\ Environment("dev", []),
+				\\ Build("app", [Use("dev"), Inputs(["data"]), Run(["true"]),
+				\\  Output("out")])]
+		},
+		{
+			name: "FetchUnavailable",
+			expected: Valid,
+			body: \\config = [Name("fetch-unavailable"),
+				\\ Fetch("tool", [{ system: "x86_64-linux",
+				\\  url: "https://example.com/tool",
+				\\  sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" }]),
+				\\ FetchUnavailable("tool", ["aarch64-linux"]),
+				\\ Environment("dev", [Tools(["tool#tool"])])]
+		},
+		{
+			name: "FetchUnavailableNoFetch",
+			expected: Rejected("FetchUnavailable tool names no Fetch"),
+			body: \\config = [Name("bad"), FetchUnavailable("tool", ["x86_64-linux"])]
+		},
+		{
 			name: "TaskIsNotBuildDependency",
 			expected: Rejected("unknown build"),
 			body: \\config = [Name("bad"), Environment("builder", []),
