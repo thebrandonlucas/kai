@@ -76,7 +76,11 @@ Model := {
 	),
 	build_sources : List({ name : Str, ref : Str }),
 	fetches : List(
-		{ name : Str, files : List({ system : Str, url : Str, hash : Str }) },
+		{
+			name : Str,
+			files : List({ system : Str, url : Str, hash : Str }),
+			unavailable : List(Str),
+		},
 	),
 	cargo_vendors : List({ name : Str, lock : Str }),
 	builds : List(
@@ -192,8 +196,9 @@ Model := {
 	## Non-flake locked inputs, distinct from package-provider sources.
 	BuildSource : { name : Str, ref : Str }
 
-	## A file per system, pinned by its SRI sha256 hash rather than the lock.
-	Fetch : { name : Str, files : List(FetchFile) }
+	## A file per system, pinned by its SRI sha256 hash rather than the lock,
+	## except on the declared systems it is unavailable on.
+	Fetch : { name : Str, files : List(FetchFile), unavailable : List(Str) }
 	FetchFile : { system : Str, url : Str, hash : Str }
 
 	## The crates a Cargo.lock's text names, vendored into one directory and

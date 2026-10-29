@@ -31,7 +31,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [source-build](source-build) | A build reading a locked source | `kai build moofasa` |
 | [path-source](path-source) | A build reading a locked project directory | `kai build kai` |
 | [workspace](workspace) | An app whose Kaifile sits in a subdirectory, building against a module at the workspace root with `BuildRoot` | `kai build greeting` in `apps/greeter` |
-| [fetch](fetch) | A file pinned by its sha256, run as a tool and read by a build | `kai run version` |
+| [fetch](fetch) | A file pinned by its sha256, run as a tool and read by a build, one file for every system, and a system a file is unavailable on | `kai run version` |
 | [cargo-vendor](cargo-vendor) | A Rust build reading crates, one from git, vendored from Cargo.lock, offline | `kai build count` |
 | [workflow](workflow) | Tasks, builds and workflows run in order, and a step that may fail | `kai workflow encore` |
 | [packages](packages) | Package sources, a pinned release, an `Alias` and flake inputs | `kai shell` |
