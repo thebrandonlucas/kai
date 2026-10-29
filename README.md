@@ -29,9 +29,21 @@ The goal is to make using determinate systems so easy and powerful that they bec
 ## Installation
 
 Kai runs on Linux and needs
-[Nix with flakes enabled](https://docs.determinate.systems/?phid=019ef5f5-e228-7eb4-9a1e-4dbe9b75b79e).
+[Nix with flakes enabled](https://nixos.org/download).
 
-Download the archive for your system from the
+Install the latest release into `~/.local/bin`:
+
+```sh
+curl -fsSL https://github.com/thebrandonlucas/kai/releases/latest/download/install.sh | sh
+```
+
+The [script](install.sh) checks the download against the release's
+`SHA256SUMS`. When neither Nix nor Guix is installed, it asks whether to
+install Nix with the official installer and enable flakes; not at a
+terminal, it only prints how, unless given `--yes`. Pass options after
+`sh -s --`, such as `--version 0.0.10` or `--dir DIR`; see `--help`.
+
+Or download the archive for your system from the
 [latest release](https://github.com/thebrandonlucas/kai/releases/latest),
 check it against the release's `SHA256SUMS`, and put `kai` on `PATH`:
 

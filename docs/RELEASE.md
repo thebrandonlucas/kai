@@ -22,12 +22,14 @@ From `kai shell` on an x86_64 Linux host, build and validate the release artifac
 zig build build-release
 ```
 
-This runs `zig build ci` first. Artifacts are written to `dist/`. Checksums cover a portable CLI archive for each system in `RELEASE_SYSTEMS` and the platform bundle:
+This runs `zig build ci` first. Artifacts are written to `dist/`. Checksums cover a portable CLI archive for each system in `RELEASE_SYSTEMS`, the platform and std bundles, and the `install.sh` install script:
 
 ```text
 dist/kai-X.Y.Z-x86_64-linux.tar.gz
 dist/kai-X.Y.Z-aarch64-linux.tar.gz   (only when RELEASE_SYSTEMS lists aarch64-linux)
 dist/<hash>.tar.zst
+dist/std-<hash>.tar.zst
+dist/install.sh
 dist/SHA256SUMS
 ```
 
@@ -75,7 +77,7 @@ A push to `master` that changes `VERSION` or `RELEASE_NAME`, such as the release
 zig build publish-release
 ```
 
-The Roc publisher rebuilds the artifacts, creates the matching annotated tag using the committed release name, creates a draft GitHub release, uploads the CLI archives, the platform bundle and `SHA256SUMS`, and publishes only after every upload succeeds. Matching completed releases are successful no-ops.
+The Roc publisher rebuilds the artifacts, creates the matching annotated tag using the committed release name, creates a draft GitHub release, uploads the CLI archives, the platform and std bundles, `install.sh` and `SHA256SUMS`, and publishes only after every upload succeeds. Matching completed releases are successful no-ops.
 
 `publish-release` is CI-only and is not part of normal local release preparation.
 
