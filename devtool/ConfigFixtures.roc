@@ -949,6 +949,22 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Environment("dev",
 				\\ [OnSystems(["x86_64-linux"], [Tools(["a"]), Tools(["b"])])])]
 		},
+		{
+			name: "RawEnvironment",
+			expected: Valid,
+			body: \\config = [Name("raw-environment"), Environment("dev", []),
+				\\ Task("test", [Use("dev"), Run(["true"])]),
+				\\ Raw("nix", "environment:dev",
+				\\  Attrs([("shellHook", Str("export MOO=moo"))]))]
+		},
+		{
+			name: "RawEnvironmentUnknown",
+			expected: Rejected(
+				"raw nix target \"environment:nope\" names no environment",
+			),
+			body: \\config = [Name("bad"), Environment("dev", []),
+				\\ Raw("nix", "environment:nope", Attrs([]))]
+		},
 	].concat(ConfigFixtures.bad_outputs).concat(ConfigFixtures.bad_sources)
 
 	bad_outputs : List(Fixture)

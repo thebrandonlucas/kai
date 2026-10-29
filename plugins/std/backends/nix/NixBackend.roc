@@ -667,7 +667,7 @@ NixBackend :: [].{
 		shells = model.shells.keep_if(|s| names.contains(s.environment))
 		# Validate all Raw declarations, even aliases outside this request.
 		# Only selected aliases are emitted; flake-level data is always retained.
-		{ flake_raw, shell_raw } = raw_values(model)?
+		{ flake_raw, shell_raw, environment_raw } = raw_values(model)?
 		if model.shells.any(|shell| shell.name.starts_with("kai-env-")) {
 			return Err("shell prefix kai-env- is reserved")
 		}
@@ -755,7 +755,12 @@ NixBackend :: [].{
 		for environment in environments {
 			$rendered = append_rendered(
 				$rendered,
-				render_environment_systems(environment, model.systems, model.fetches),
+				render_environment_systems(
+					environment,
+					model.systems,
+					model.fetches,
+					environment_attrs(environment_raw, environment.name),
+				),
 			)?
 		}
 		$rendered = append_rendered(
@@ -906,16 +911,17 @@ NixBackend :: [].{
 	## the system's name, and selected by `system`, so Nix evaluates only the
 	## host's tools.
 	render_environment_systems :
-		Model.Environment, List(Str), List(Model.Fetch) -> Str
-	render_environment_systems = |environment, systems, fetches|
+		Model.Environment, List(Str), List(Model.Fetch), RawAttrs -> Str
+	render_environment_systems = |environment, systems, fetches, raw|
 		if environment.on_systems.is_empty() {
-			render_environment_definition(environment, fetches)
+			render_environment_definition(environment, fetches, raw)
 		} else {
 			definitions = systems.map(
 				|system|
 					render_environment_definition(
 						{ ..Project.on_system(environment, system), name: system },
 						fetches,
+						raw,
 					),
 			)
 			"        ${quote(environment.name)} = {\n"
@@ -923,8 +929,10 @@ NixBackend :: [].{
 				.concat("        }.\${system};\n")
 		}
 
-	render_environment_definition : Model.Environment, List(Model.Fetch) -> Str
-	render_environment_definition = |environment, fetches| {
+	## Raw attributes `raw` go before a shell's own, which `extra` holds.
+	render_environment_definition :
+		Model.Environment, List(Model.Fetch), RawAttrs -> Str
+	render_environment_definition = |environment, fetches, raw| {
 		sources = source_names(environment, fetches)
 		primary = sources.first() ?? "default"
 		overlays = environment.overlays.map(
@@ -936,6 +944,7 @@ NixBackend :: [].{
 					.concat("{ inherit system overlays; };"),
 		)
 		tools = path_packages(environment, fetches).map(|tool| "            ${tool}")
+		own = if (raw.is_empty()) "" else " // ${value_to_nix(Value.Attrs(raw))}"
 		# mkShell exports `env` to its shells, and to tasks through kai-env-*.
 		env = if environment.env.is_empty() and environment.package_env.is_empty() {
 			[]
@@ -954,7 +963,7 @@ NixBackend :: [].{
 				"          packages = [",
 			]),
 		).concat(lines(tools)).concat(
-			lines(["          ];"].concat(env).concat(["        } // extra);"])),
+			lines(["          ];"].concat(env).concat(["        }${own} // extra);"])),
 		)
 	}
 
@@ -1123,18 +1132,21 @@ NixBackend :: [].{
 		_ => Err("raw nix value for \"${r.target}\" must be Attrs")
 	}
 
-	## The Nix Raw attributes of the flake and of each shell, or why a Nix Raw
-	## is one this backend does not accept; std reports that at compile time.
+	## The Nix Raw attributes of the flake, of each shell and of each
+	## environment, or why a Nix Raw is one this backend does not accept; std
+	## reports that at compile time.
 	raw_values : Model -> Try(
 		{
 			flake_raw : List({ name : Str, value : Value }),
 			shell_raw : List({ shell : Str, attr : { name : Str, value : Value } }),
+			environment_raw : EnvironmentRaw,
 		},
 		Str,
 	)
 	raw_values = |model| {
 		var $shell_raw = []
 		var $flake_raw = []
+		var $environment_raw = []
 		for r in model.raw.keep_if(|r| r.backend == "nix") {
 			if r.target == "flake" {
 				$flake_raw = $flake_raw.concat(raw_attrs(r)?)
@@ -1146,10 +1158,18 @@ NixBackend :: [].{
 				$shell_raw = $shell_raw.concat(
 					raw_attrs(r)?.map(|a| { shell: name, attr: a }),
 				)
+			} else if r.target.starts_with("environment:") {
+				name = r.target.drop_prefix("environment:")
+				if !model.environments.any(|e| e.name == name) {
+					return Err("raw nix target \"${r.target}\" names no environment")
+				}
+				$environment_raw = $environment_raw.concat(
+					raw_attrs(r)?.map(|a| { environment: name, attr: a }),
+				)
 			} else {
 				return Err(
-					"unknown raw nix target \"${r.target}\"; "
-						.concat("expected \"flake\" or \"shell:<name>\""),
+					"unknown raw nix target \"${r.target}\"; expected \"flake\", "
+						.concat("\"shell:<name>\" or \"environment:<name>\""),
 				)
 			}
 		}
@@ -1167,8 +1187,33 @@ NixBackend :: [].{
 				["packages"],
 			)?
 		}
-		Ok({ flake_raw: $flake_raw, shell_raw: $shell_raw })
+		for environment in model.environments {
+			check_attr_names(
+				"the raw attributes of environment \"${environment.name}\"",
+				environment_attrs($environment_raw, environment.name).map(|a| a.name),
+				["packages", "env"],
+			)?
+		}
+		Ok({
+			flake_raw: $flake_raw,
+			shell_raw: $shell_raw,
+			environment_raw: $environment_raw,
+		})
 	}
+
+	## Raw data rendered as Nix attributes.
+	RawAttrs : List({ name : Str, value : Value })
+
+	## Raw attributes, each for the environment it names.
+	EnvironmentRaw : List(
+		{ environment : Str, attr : { name : Str, value : Value } },
+	)
+
+	## The Raw attributes of environment `name`.
+	environment_attrs :
+		EnvironmentRaw, Str -> RawAttrs
+	environment_attrs = |environment_raw, name|
+		environment_raw.keep_if(|x| x.environment == name).map(|x| x.attr)
 
 	check_attr_names : Str, List(Str), List(Str) -> Try({}, Str)
 	check_attr_names = |what, names, reserved| {
@@ -1779,6 +1824,42 @@ expect {
 	rejects({ ..simple, raw: [raw, raw] }, "more than once")
 }
 
+# Environment Raw applies to the environment's shells and tasks, before a
+# shell's own; it names a declared environment and never sets env.
+expect {
+	hook = |target, text| {
+		backend: "nix",
+		target,
+		value: Value.Attrs([{ name: "shellHook", value: Value.Str(text) }]),
+	}
+	raw = [hook("environment:dev", "env"), hook("shell:default", "shell")]
+	match NixBackend.render(mk({ ..simple, raw })) {
+		Ok(text) =>
+			text.contains("        } // { \"shellHook\" = \"env\"; } // extra);")
+				and text.contains(
+					"\"default\" = environments.\"dev\" { \"shellHook\" = \"shell\"; };",
+				)
+				and text.contains("\"kai-env-dev\" = environments.\"dev\" { };")
+				and rejects(
+					{ ..simple, raw: [hook("environment:nope", "")] },
+					"names no environment",
+				)
+				and rejects(
+					{
+						..simple,
+						raw: [
+							{
+								backend: "nix",
+								target: "environment:dev",
+								value: Value.Attrs([{ name: "env", value: Value.Attrs([]) }]),
+							},
+						],
+					},
+					"set \"env\"",
+				)
+		Err(_) => Bool.False
+	}
+}
 # Shell aliases cannot collide with stable task environment output names.
 expect NixBackend.render(
 	mk({
