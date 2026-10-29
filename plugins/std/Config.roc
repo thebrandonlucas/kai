@@ -87,7 +87,9 @@ Config :: [].{
 	## binaries; it needs Nix.
 	## RustToolchain takes a rust-toolchain.toml's text and adds the toolchain
 	## its [toolchain] table pins, overriding the parent's; it needs Nix and an
-	## Overlay providing rust-bin, such as rust-overlay.
+	## Overlay providing rust-bin, such as rust-overlay. RustToolchainWith
+	## takes the same text and adds, to what the file pins, the components
+	## and targets its settings name.
 	## PackageEnv sets variables to paths in packages, which the backend
 	## computes. Like Env, they override the parent's variables by name, and a
 	## task's or build's Env overrides them. It needs Nix.
@@ -103,9 +105,15 @@ Config :: [].{
 		Pure,
 		Alias(Str, Tool, Str),
 		RustToolchain(Str),
+		RustToolchainWith(Str, List(RustToolchainSetting)),
 		PackageEnv(List((Str, PackageValue))),
 		OnSystems(List(System), List(SystemSetting)),
 	]
+
+	## What RustToolchainWith adds: rustup components, such as
+	## "llvm-tools-preview", and target triples, such as
+	## "wasm32-unknown-unknown". Each occurs at most once.
+	RustToolchainSetting : [Components(List(Str)), Targets(List(Str))]
 
 	## What OnSystems adds; each occurs at most once.
 	SystemSetting : [Tools(List(Tool)), Env(List((Str, Str)))]
