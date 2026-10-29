@@ -38,6 +38,16 @@ Model := {
 				{ name : Str, tool : { source : Str, name : Str }, binary : Str },
 			),
 			rust_toolchain : [None, Toml(Str)],
+			package_env : List(
+				{
+					name : Str,
+					value : [
+						LibraryPath(List({ source : Str, name : Str })),
+						BinPath(List({ source : Str, name : Str })),
+						PackagePath({ source : Str, name : Str }),
+					],
+				},
+			),
 		},
 	),
 	shells : List({ name : Str, environment : Str, description : Str }),
@@ -118,11 +128,21 @@ Model := {
 		pure : Bool,
 		aliases : List(Alias),
 		rust_toolchain : RustToolchain,
+		package_env : List(PackageVariable),
 	}
 
 	## The text of a rust-toolchain.toml, whose [toolchain] table the backend
 	## reads.
 	RustToolchain : [None, Toml(Str)]
+
+	## A variable whose value is a path in packages, which the backend computes:
+	## tools' `lib` or `bin` directories joined with `:`, or one tool's path.
+	PackageVariable : { name : Str, value : PackageValue }
+	PackageValue : [
+		LibraryPath(List(Tool)),
+		BinPath(List(Tool)),
+		PackagePath(Tool),
+	]
 
 	## A command `name` on the environment's PATH that runs `binary` from
 	## `tool`'s bin directory.
@@ -196,7 +216,7 @@ Model := {
 	Raw : { backend : Str, target : Str, value : Value }
 
 	current_format : Format
-	current_format = { major: 2, minor: 4 }
+	current_format = { major: 2, minor: 5 }
 
 	empty : Str -> Model
 	empty = |name| Model.{

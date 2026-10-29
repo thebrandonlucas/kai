@@ -836,6 +836,33 @@ ConfigFixtures := [].{
 				\\ Overlay("tools", "github:example/tools"),
 				\\ Environment("dev", [Tools(["git"]), Overlays(["tools"])])]
 		},
+		{
+			name: "PackageEnv",
+			expected: Valid,
+			body: \\config = [Name("package-env"),
+				\\ Environment("base", [PackageEnv([("LIBS", LibraryPath(["zlib"]))])]),
+				\\ Environment("dev", [Extend("base"), Env([("LIBS", "/x")]),
+				\\  PackageEnv([("BINS", BinPath(["git", "zlib"])),
+				\\   ("GIT", PackagePath("git"))])])]
+		},
+		{
+			name: "PackageEnvAndEnv",
+			expected: Rejected("Env and PackageEnv both set LIBS in environment dev"),
+			body: \\config = [Name("bad"), Environment("dev", [Env([("LIBS", "/x")]),
+				\\ PackageEnv([("LIBS", LibraryPath(["zlib"]))])])]
+		},
+		{
+			name: "PackageEnvReservedName",
+			expected: Rejected("invalid Env name in environment dev: PATH"),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [PackageEnv([("PATH", BinPath(["git"]))])])]
+		},
+		{
+			name: "DuplicatePackageEnv",
+			expected: Rejected("DuplicatePackageEnv: environment dev"),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [PackageEnv([]), PackageEnv([])])]
+		},
 	].concat(ConfigFixtures.bad_outputs).concat(ConfigFixtures.bad_sources)
 
 	bad_outputs : List(Fixture)
@@ -937,7 +964,7 @@ ConfigFixtures := [].{
 		{
 			name: "Builds",
 			texts: [
-				"(minor 4)",
+				"(minor 5)",
 				"(requires (\"sources\" \"builds\"))",
 				"(build_sources ",
 				"(builds ",
@@ -946,7 +973,7 @@ ConfigFixtures := [].{
 		{
 			name: "Workflows",
 			texts: [
-				"(minor 4)",
+				"(minor 5)",
 				"(requires (\"builds\" \"workflows\"))",
 				"(workflows ",
 				"(RunTask \"check.all\" ${ConfigFixtures.workflow_argv_ir})",
