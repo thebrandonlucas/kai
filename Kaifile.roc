@@ -220,6 +220,7 @@ kaifile = Std.kaifile(
 						"jujutsu",
 						"llvmPackages.bintools",
 						"nixfmt",
+						"shellcheck",
 						"sops",
 					]),
 				),
