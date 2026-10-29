@@ -220,7 +220,22 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		validate_graph(locks.graph)?
 		validate_binding(locks.identity, locks.graph)?
 		declared = identity_for(project)?
-		if !equivalent(locks.identity, declared) {
+		# The inputs, and the order an environment applies its overlays in,
+		# decide what the lock means. An environment added or removed changes
+		# neither, so it needs no update.
+		inputs_of = |identity| LockJson.field(identity, "inputs")
+		overlays_of = |identity|
+			LockJson.object(LockJson.field(identity, "overlays")?)
+		locked_overlays = overlays_of(locks.identity)?
+		reordered = overlays_of(declared)?.any(
+			|environment|
+				match locked_overlays.find_first(|e| e.name == environment.name) {
+					Ok(locked) => !equivalent(locked.value, environment.value)
+					Err(_) => False
+				},
+		)
+		same_inputs = equivalent(inputs_of(locks.identity)?, inputs_of(declared)?)
+		if reordered or !same_inputs {
 			changed = Str.join_with(changed_inputs(locks.identity, declared), ", ")
 			named = if (changed.is_empty()) "" else " (${changed})"
 			return Err(
@@ -1096,6 +1111,28 @@ expect [
 		}
 	},
 )
+
+# A lock stays valid when an environment is added that needs no new input;
+# a changed input needs an update.
+expect match locked_fixture {
+	Ok(locks) => {
+		project = TestData.project(TestData.data)
+		extra = { ..TestData.builder, name: "extra", env: [] }
+		added = { ..project, environments: project.environments.append(extra) }
+		moved = {
+			..project,
+			build_sources: [{ name: "assets", ref: "path:./other" }],
+		}
+		derive = |model| Locks.derive(locks, model, TestData.layout)
+		derive(added).is_ok()
+			and derive(moved)
+				== Err(
+					"lock input or ordered-overlay identity changed (assets); "
+						.concat("run kai update"),
+				)
+	}
+	Err(_) => False
+}
 
 # Object order is irrelevant; ordered overlay lists are not sets.
 expect {
