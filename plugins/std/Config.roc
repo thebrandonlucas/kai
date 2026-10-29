@@ -128,6 +128,8 @@ Config :: [].{
 	## Revision sets KAI_REVISION, the project's `git describe --tags --always
 	## --dirty`, and KAI_COMMIT_DATE, its last commit's date, both empty outside
 	## git. It is opt-in, since the build then changes with every commit.
+	## Default makes it the build `kai build` builds when given no name; at
+	## most one build is Default.
 	BuildSetting : [
 		Use(EnvName),
 		Inputs(List(InputName)),
@@ -137,6 +139,7 @@ Config :: [].{
 		Files(List(Str)),
 		Env(List((Str, Str))),
 		Revision,
+		Default,
 		Description(Str),
 	]
 }

@@ -80,6 +80,7 @@ Model := {
 			files : [All, Only(List(Str))],
 			env : List({ name : Str, value : Str }),
 			revision : Bool,
+			default : Bool,
 			description : Str,
 		},
 	),
@@ -187,6 +188,7 @@ Model := {
 	## Run is exact argv. Output is a relative file or directory path; dependencies
 	## expose only that artifact, separately from the writable project snapshot.
 	## A revision build receives the project's revision in its environment.
+	## The default build is the one `kai build` builds when given no name.
 	Build : {
 		name : Str,
 		environment : Str,
@@ -197,6 +199,7 @@ Model := {
 		files : [All, Only(List(Str))],
 		env : List(Variable),
 		revision : Bool,
+		default : Bool,
 		description : Str,
 	}
 

@@ -36,6 +36,7 @@ TestData :: [].{
 		description: "",
 		env: [],
 		revision: Bool.False,
+		default: Bool.False,
 	}
 
 	application : Model.Build
@@ -48,6 +49,7 @@ TestData :: [].{
 		description: "",
 		env: [],
 		revision: Bool.False,
+		default: Bool.False,
 		run: ["python3", "build.py", "", "two words", "line\nbreak", "$HOME"],
 	}
 

@@ -1,6 +1,7 @@
 # Builds run in a sandbox on a fresh copy of the project and keep only their
-# declared output: `kai build wisecow` prints the store path of a wisecow
-# script that combines fortune and cowsay.
+# declared output: `kai build wisecow`, or `kai build` since it is the
+# Default, prints the store path of a wisecow script that combines fortune
+# and cowsay.
 app [kaifile] {
 	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",
@@ -16,6 +17,7 @@ kaifile = Std.kaifile([
 		"wisecow",
 		[
 			Use("cow"),
+			Default,
 			Run([
 				"sh",
 				"-c",

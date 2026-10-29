@@ -89,6 +89,7 @@ Std := [].{
 			} else {
 				{ value, summary: description, details: [summary] }
 			}
+		default_build = model.builds.find_first(|b| b.default)
 		command = |name, page, args, lock|
 			Command.{ name, summary: page.description, help: page, args, lock }
 		[
@@ -142,7 +143,10 @@ Std := [].{
 				[
 					Name({
 						name: "build",
-						help: "The build to run.",
+						help: match default_build {
+							Ok(build) => "The build to run (default: ${build.name})."
+							Err(_) => "The build to run."
+						},
 						choices: model.builds.map(
 							|b| choice(
 								b.name,
@@ -150,7 +154,10 @@ Std := [].{
 								"Output ${b.output} [${b.environment}]",
 							),
 						),
-						default: Required,
+						default: match default_build {
+							Ok(build) => Default(build.name)
+							Err(_) => Required
+						},
 					}),
 					Flag({
 						name: "print-build-logs",
@@ -921,4 +928,33 @@ expect {
 		and [Auto, Only("nix"), Only("guix")].all(
 			|choice| backends("model", choice) == [""],
 		)
+}
+
+# A Default build is what `kai build` builds without a name, and its help says
+# so; without one the name is required. Only one build may be Default.
+expect {
+	defaults = |settings|
+		ConfigToModel.convert(settings).map_ok(
+			|model|
+				Std.commands(model).keep_if(|c| c.name == "build").join_map(
+					|build|
+						build.args.join_map(
+							|arg|
+								match arg {
+									Name(n) => [(n.default, n.help)]
+									_ => []
+								},
+						),
+				),
+		)
+	default = Build("main", [Use("dev"), Default, Run(["make"]), Output("out")])
+	defaults(planning.append(default))
+		== Ok([(Default("main"), "The build to run (default: main).")])
+		and defaults(planning) == Ok([(Required, "The build to run.")])
+		and defaults(
+			planning
+				.append(default)
+				.append(Build("other", [Use("dev"), Default, Run(["make"]), Output("o")])),
+		)
+			== Err("several builds are Default: main, other")
 }
