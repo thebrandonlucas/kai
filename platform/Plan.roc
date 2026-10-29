@@ -78,8 +78,10 @@ Plan := { steps : List(Step), next : Next }.{
 
 	File : { path : Str, contents : Str }
 
-	## `Quiet` shows the child's stderr only when it fails.
-	Output : [Inherit, Quiet, Artifact(Artifact)]
+	## `Quiet` shows the child's stderr only when it fails. `Remembered(files)`
+	## is Quiet, and kai skips the run once it succeeded with the same argv
+	## and the same contents of `files`, which lie in the generated root.
+	Output : [Inherit, Quiet, Remembered(List(Str)), Artifact(Artifact)]
 
 	## `output` is the declared output name; the store path is the child's
 	## last stdout line (`nix build --print-out-paths`, `guix build`).
@@ -122,6 +124,14 @@ expect {
 				description: "lock",
 				argv: ["nix", "flake", "update"],
 				output: Quiet,
+				secrets: [],
+				removed_environment_variables: [],
+				kept_environment_variables: [],
+			}),
+			Run({
+				description: "evaluate",
+				argv: ["nix", "eval"],
+				output: Remembered(["/g/flake.nix", "/g/flake.lock"]),
 				secrets: [],
 				removed_environment_variables: [],
 				kept_environment_variables: [],

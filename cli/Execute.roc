@@ -467,10 +467,16 @@ Execute := [].{
 				names = run_step.secrets
 					.concat(run_step.removed_environment_variables)
 					.concat(run_step.kept_environment_variables)
-				if names.all(Execute.variable_name) {
-					command(run_step.argv)
-				} else {
+				remembered = match run_step.output {
+					Remembered(files) => files
+					_ => []
+				}
+				if !names.all(Execute.variable_name) {
 					Err("names an invalid environment variable")
+				} else if remembered.any(|file| !under(file, layout.generated_root)) {
+					Err("remembers a file outside the generated files")
+				} else {
+					command(run_step.argv)
 				}
 			}
 			PublishLock(_) =>
@@ -545,6 +551,8 @@ Execute := [].{
 				match output {
 					Inherit => Execute.child!(process_command, description, Inherit)
 					Quiet => Execute.child!(process_command, description, Capture)
+					Remembered(files) =>
+						Execute.remembered!(process_command, run, files, layout)
 					Artifact(artifact) =>
 						Execute.build!(process_command, description, artifact, mode)
 				}
@@ -609,6 +617,52 @@ Execute := [].{
 			Signaled(signal) =>
 				Err(ChildExited(description, Execute.signal_status(signal)))
 		}
+	}
+
+	# A Remembered run is skipped while the record of its last success names
+	# its argv and its files' contents; otherwise it runs Quiet and, when it
+	# succeeds, is recorded. With KAI_NO_CACHE set it runs every time.
+	remembered! = |process_command, run, files, layout| {
+		directory = "${layout.workspace}/remembered"
+		record = "${directory}/${Execute.record_name(run.description)}"
+		disabled = !(Variables.read!(Variables.kai_no_cache) ?? "").is_empty()
+		var $read = []
+		for path in files {
+			Workspace.safe_path!(path)?
+			match Workspace.path(path).read_utf8!() {
+				Ok(contents) => {
+					$read = $read.append({ path, contents })
+				}
+				Err(_) => {}
+			}
+		}
+		key = Execute.remembrance(run.argv, $read)
+		Workspace.safe_path!(record)?
+		stored = Workspace.path(record).read_utf8!() ?? ""
+		every_file_read = $read.len() == files.len()
+		if !disabled and every_file_read and stored == key {
+			return Ok({})
+		}
+		Execute.child!(process_command, run.description, Capture)?
+		if !disabled and every_file_read {
+			# A record that cannot be written only means running it next time.
+			_ = Workspace.path(directory).create_all!()
+			_ = Workspace.atomic_write!(record, key)
+		}
+		Ok({})
+	}
+
+	# What a Remembered run's record holds: its argv and its files.
+	remembrance : List(Str), List(Plan.File) -> Str
+	remembrance = |argv, files| Sexpr.to_str({ argv, files })
+
+	# A record's file name: the run's description, with every character
+	# other than a lowercase letter or digit replaced by '-'.
+	record_name : Str -> Str
+	record_name = |description| {
+		plain = |b| (b >= 'a' and b <= 'z') or (b >= '0' and b <= '9')
+		bytes = description.to_utf8().map(|b| if (plain(b)) b else '-')
+		Str.from_utf8_lossy(bytes)
 	}
 
 	# Run a child process prepared by `process_command!`, which also sets its
@@ -844,6 +898,7 @@ expect [
 	run(["sh"], ["A=B"], [], []),
 	run(["sh"], [], ["1A"], []),
 	run(["sh"], [], [], ["A=B"]),
+	remembering("/p/flake.nix"),
 	PublishLock({ previous: Absent, contents: "{}" }),
 ]
 	.all(
@@ -906,3 +961,38 @@ expect [
 	("A=1\nsecret value\n", Err(InvalidDotenv(2))),
 	("1A=x\n", Err(InvalidDotenv(1))),
 ].all(|(text, expected)| Execute.dotenv(text) == expected)
+
+remembering : Str -> Plan.Step
+remembering = |file|
+	Run({
+		description: "evaluating the environment of shell default",
+		argv: ["nix", "eval"],
+		output: Remembered([file]),
+		secrets: [],
+		removed_environment_variables: [],
+		kept_environment_variables: [],
+	})
+
+# A remembered run may name only generated files.
+expect validated([remembering("/p/.kai/generated/flake.nix")]) == Ok({})
+
+# A remembered run is skipped only for the same argv and the same contents
+# of the same files.
+expect {
+	flake = { path: "/g/flake.nix", contents: "{ }" }
+	lock = { path: "/g/flake.lock", contents: "{}" }
+	key = Execute.remembrance(["nix", "eval"], [flake, lock])
+	changed = [
+		Execute.remembrance(["nix", "eval", "x"], [flake, lock]),
+		Execute.remembrance(["nix", "eval"], [{ ..flake, contents: "x" }, lock]),
+		Execute.remembrance(["nix", "eval"], [flake, { ..lock, path: "/h/l" }]),
+		Execute.remembrance(["nix", "eval"], [flake]),
+		Execute.remembrance(["nix eval"], [flake, lock]),
+	]
+	key == Execute.remembrance(["nix", "eval"], [flake, lock])
+		and changed.all(|other| other != key)
+}
+
+# A record is named after its run's description, as one file name.
+expect Execute.record_name("evaluating the environment of task ../x")
+	== "evaluating-the-environment-of-task----x"
