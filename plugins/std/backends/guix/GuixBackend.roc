@@ -310,7 +310,8 @@ GuixBackend :: [].{
 			{ name: "signer", value: String(introduction.signer) },
 		])
 
-	stale_lock = "the guix lock is missing or stale; run kai --backend guix update"
+	stale_lock =
+		"the guix lock is missing or stale; run `kai --backend guix update`"
 
 	## The pins of `channels` and the source hashes a guix section holds.
 	read_lock : List(Channel), LockJson -> Try(Locked, Str)

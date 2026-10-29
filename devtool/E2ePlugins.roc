@@ -119,7 +119,7 @@ E2ePlugins := [].{
 		failed!(["deploy", "nope"], 2, "nope")?
 		_ = kai!(["update"])?
 		lock = Path.read_bytes!(Path.join(project, ".kai/lock.json"))?
-		failed!(["--json", "deploy", "web"], 1, "confirmation_required")?
+		failed!(["--json", "deploy", "web"], 6, "confirmation_required")?
 		failed!(["deploy", "web"], 1, "pass --yes to accept")?
 		dry = kai!(["--dry-run", "deploy", "web"])?.stdout_utf8
 		if !dry.contains("(Confirm ") or !dry.contains("\"nixos-rebuild\"") {

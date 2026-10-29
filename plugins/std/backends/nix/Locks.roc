@@ -144,7 +144,7 @@ Locks := { identity : LockJson, graph : LockJson }.{
 	decode = |text| {
 		section = match LockFile.section(text, "nix")? {
 			Present(found) => found
-			Absent => return Err("the lock has no Nix section; run kai update")
+			Absent => return Err("the lock has no Nix section; run `kai update`")
 		}
 		identity = LockJson.field(section, "identity")?
 		graph = LockJson.field(section, "graph")?

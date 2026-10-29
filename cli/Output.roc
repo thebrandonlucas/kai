@@ -57,32 +57,15 @@ Output := [].{
 			Json => Stderr.line!(machine)
 		}
 
-	# A tag's name in snake case, from how Str.inspect shows the value.
-	kind : Str -> Str
-	kind = |inspected| {
-		name = (inspected.split_on("(").first() ?? inspected).to_utf8()
-		upper = |b| b >= 'A' and b <= 'Z'
-		var $bytes = []
-		var $lower = Bool.False
-		for b in name {
-			if upper(b) and $lower {
-				$bytes = $bytes.append('_')
-			}
-			$bytes = $bytes.append(if (upper(b)) b + 32 else b)
-			$lower = !upper(b)
-		}
-		Str.from_utf8_lossy($bytes)
-	}
-
-	error : Str, Str, I32 -> Str
-	error = |inspected, message, exit_code|
+	# An error with its documented code and kai's exit code, then the fix
+	# when kai knows one.
+	error : { code : Str, message : Str, exit_code : I32, hint : Str } -> Str
+	error = |{ code, message, exit_code, hint }|
 		Output.event(
 			"error",
 			message,
-			[
-				("error", LockJson.String(Output.kind(inspected))),
-				("exit_code", Output.number(exit_code)),
-			],
+			[("error", Output.text(code)), ("exit_code", Output.number(exit_code))]
+				.concat(if (hint.is_empty()) [] else [("hint", Output.text(hint))]),
 		)
 
 	# One workflow step, numbered from 1. Its label is what it runs: a verb,
@@ -131,23 +114,17 @@ expect {
 		and line.contains("é 😀")
 }
 
-# Errors carry a stable kind, the readable message and kai's exit code.
+# Errors carry their code, the readable message, kai's exit code and, when
+# kai knows it, the fix.
 expect {
-	line = Output.error("ChildExited(Run(\"t\"), 7)", "task t exited", 7)
-	line
-		== "{\"type\":\"error\",\"message\":\"task t exited\",".concat(
-			"\"error\":\"child_exited\",\"exit_code\":7}",
+	error = |hint|
+		Output.error({ code: "stale_lock", message: "changed", exit_code: 1, hint })
+	error("")
+		== "{\"type\":\"error\",\"message\":\"changed\",".concat(
+			"\"error\":\"stale_lock\",\"exit_code\":1}",
 		)
+		and error("kai update").ends_with(",\"hint\":\"kai update\"}")
 }
-
-# Error kinds are snake case, including acronyms and payload-free tags.
-expect [
-	("ChildExited(Run(\"x\"), 7.0)", "child_exited"),
-	("UnsupportedHost", "unsupported_host"),
-	("IO(NotFound)", "io"),
-	("BadIr(Bad)", "bad_ir"),
-	("InvalidUsage", "invalid_usage"),
-].all(|(inspected, expected)| Output.kind(inspected) == expected)
 
 # Workflow steps say which step of how many runs what, for both audiences.
 expect {

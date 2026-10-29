@@ -172,9 +172,11 @@ E2eWorkflow := [].{
 			1,
 			["backend"].concat(step).concat(["step_started", "error"]),
 		)?
+		stale = locked.last() ?? LockJson.Null
 		if
-			!E2eWorkflow.text(locked.last() ?? LockJson.Null, "message")
-				.contains("run `kai update assets`")
+			!E2eWorkflow.text(stale, "message").contains("run `kai update assets`")
+				or E2eWorkflow.text(stale, "error") != "stale_lock"
+				or E2eWorkflow.text(stale, "hint") != "kai update assets"
 				{
 					return Err(LockedSourceIgnored(locked.map(LockJson.encode)))
 				}

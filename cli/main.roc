@@ -54,17 +54,28 @@ main! = |args| {
 		Err(Usage(message)) => {
 			_ = match mode {
 				Human => Stderr.line!(message)
-				Json => Stderr.line!(Output.error("InvalidUsage", message, 2))
+				Json =>
+					Stderr.line!(
+						Output.error(
+							{ code: "invalid_usage", message, exit_code: 2, hint: "" },
+						),
+					)
 			}
 			Err(Exit(2))
 		}
 		Err(err) => {
-			code = exit_status(err)
+			exit_code = exit_status(err)
+			message = describe(err)
 			_ = match mode {
-				Human => Stderr.line!("kai: ${describe(err)}")
-				Json => Stderr.line!(Output.error(Str.inspect(err), describe(err), code))
+				Human => Stderr.line!("kai: ${message}")
+				Json =>
+					Stderr.line!(
+						Output.error(
+							{ code: error_code(err), message, exit_code, hint: hint(err) },
+						),
+					)
 			}
-			Err(Exit(code))
+			Err(Exit(exit_code))
 		}
 	}
 }
@@ -338,11 +349,68 @@ requests = |args, flag|
 		[arg, .. as rest] => arg == flag or requests(rest, flag)
 	}
 
+# kai's exit codes, as the README's Exit codes lists them: a failing child's
+# status, 2 for a usage error, 6 when a step needs confirmation, else 1.
 exit_status = |err|
 	match err {
 		ChildExited(_, code) => Execute.exit_code(code)
 		Refused(_) => 2
+		ConfirmationRequired(_) => 6
 		_ => 1
+	}
+
+# The `error` of a --json error, as the README's Exit codes lists them. They
+# are kai's interface, so they never follow a rename in the code.
+error_code = |err|
+	match err {
+		Refused(_) => "refused"
+		NoKaifile(_) => "no_kaifile"
+		NotAnApp(_) => "not_a_kaifile"
+		KaifileExists(_) => "kaifile_exists"
+		KaifileInvalid(_, _) | KaifileFailed(_, _, _) | PreviousHeader =>
+			"kaifile_invalid"
+		IncompatibleProtocol(_, _) => "incompatible_protocol"
+		CompilerUnavailable(_, _) | CompilerMismatch(_, _) | NixMissing =>
+			"no_compiler"
+		UnsupportedHost => "unsupported_host"
+		NoPlatformReference(_) | BundleFailed(_) => "bundle_failed"
+		BadResponse(_) | AnswerTooLarge(_) => "bad_response"
+		InvalidProject(_) | InvalidWorkspace(_) => "invalid_project"
+		UnsafeWorkspace(_) | UnsafePath(_) | UnsafePlan(_) => "unsafe"
+		MissingSource(_) => "missing_source"
+		LocalChanged(_, _) => "stale_lock"
+		LockFailed(_) => "lock_failed"
+		UpdateLocked(_) | AuthorityChanged => "update_conflict"
+		ConfirmationRequired(_) => "confirmation_required"
+		Declined(_) => "declined"
+		ChildExited(_, _) => "child_exited"
+		MissingSecret(_, _) => "missing_secret"
+		InvalidDotenv(_) => "invalid_dotenv"
+		BackendConflict(_, _) | NoEligibleBackend(_) => "no_backend"
+		RequiredBackendUnavailable(_, _) => "no_backend"
+		NoImplementation(_) => "no_implementation"
+		PlanFailed(_) | RenderFailed(_) | SnapshotFailed(_) => "plan_failed"
+		_ => "failed"
+	}
+
+# The fix for a --json error, when kai knows one: usually a command to run.
+# A plan names its fix as "run `command`".
+hint = |err|
+	match err {
+		NoKaifile(_) => "kai init"
+		KaifileFailed(_, _, _) => "kai check"
+		LocalChanged(_, update) => update
+		AuthorityChanged => "kai update"
+		ConfirmationRequired(_) => "pass --yes"
+		PlanFailed(message) => named_fix(message)
+		_ => ""
+	}
+
+named_fix : Str -> Str
+named_fix = |message|
+	match message.split_on("run `") {
+		[_, .., after] => after.split_first("`").map_ok(|found| found.before) ?? ""
+		_ => ""
 	}
 
 describe : _ -> Str
@@ -484,11 +552,20 @@ expect [
 	(["bundle-plugin", "--yes"], Err(Usage(Help.bundle_plugin))),
 ].all(|(args, expected)| bundle_arguments(args, [], Err(NoValue)) == expected)
 
-# A failing child's status becomes kai's, a refusal is a usage error, and
-# every other failure is 1.
+# A failing child's status becomes kai's, a refusal is a usage error, a
+# needed confirmation is 6, and every other failure is 1.
 expect exit_status(ChildExited("task fail", 7)) == 7
 	and exit_status(Refused("--backend must be one of nix, guix")) == 2
+	and exit_status(ConfirmationRequired("deploy?")) == 6
 	and exit_status(PlanFailed("no lock file")) == 1
+
+# A plan names its fix as "run `command`"; the last one is the hint.
+expect [
+	("no lock file at /p/.kai/lock.json; run `kai update`", "kai update"),
+	("run `kai update a`, or run `kai update b`", "kai update b"),
+	("no backend can serve this request", ""),
+	("run `unclosed", ""),
+].all(|(message, expected)| named_fix(message) == expected)
 
 # A missing linker input hints at building a checkout's platform host.
 expect unbuilt("── ✗ missing target file ──\n").contains("zig build --release")

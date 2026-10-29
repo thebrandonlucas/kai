@@ -426,7 +426,7 @@ Std := [].{
 	## The Guix pins in the lock, or why they are missing or stale.
 	guix_pins : Model, Implementation.Context -> Try(GuixBackend.Locked, Str)
 	guix_pins = |model, ctx| {
-		missing = "the guix lock is missing or stale; run kai --backend guix update"
+		missing = "the guix lock is missing or stale; run `kai --backend guix update`"
 		section = match ctx.lock {
 			Present(text) =>
 				match LockFile.section(text, "guix")? {
