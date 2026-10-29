@@ -204,6 +204,7 @@ build_release_stage! = |root, dist, workspace, version| {
 	copy_file!(pf_bundle.archive, Path.join(dist, "${pf_bundle.hash}.tar.zst"))?
 	std_asset = "std-${std_bundle.hash}.tar.zst"
 	copy_file!(std_bundle.archive, Path.join(dist, std_asset))?
+	copy_file!(Path.utf8(Release.installer), Path.join(dist, Release.installer))?
 
 	systems = Release.release_systems(
 		Path.read_utf8!(Path.utf8(Release.systems_file))?,
