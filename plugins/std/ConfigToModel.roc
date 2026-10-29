@@ -108,6 +108,7 @@ ConfigToModel :: [].{
 				.concat(if (acc.environments.any(|e| e.pure)) ["pure"] else [])
 				.concat(if (uses_aliases(acc)) ["aliases"] else [])
 				.concat(if (uses_rust_toolchain(acc)) ["rust-toolchain"] else [])
+				.concat(if (uses_rust_toolchain_with(acc)) ["rust_toolchain_with"] else [])
 				.concat(if (acc.follows.is_empty()) [] else ["follows"])
 				.concat(if (uses_package_env(acc)) ["package_env"] else [])
 				.concat(if (acc.tasks.all(|t| t.dir.is_empty())) [] else ["task_dir"])
@@ -360,7 +361,11 @@ ConfigToModel :: [].{
 					}
 					RustToolchain(text) => {
 						..acc,
-						toolchains: acc.toolchains.append(Toml(text)),
+						toolchains: acc.toolchains.append((text, [])),
+					}
+					RustToolchainWith(text, settings) => {
+						..acc,
+						toolchains: acc.toolchains.append((text, settings)),
 					}
 					PackageEnv(pairs) => {
 						..acc,
@@ -382,9 +387,6 @@ ConfigToModel :: [].{
 		on_systems = draft.on_systems.map_try(
 			|(systems, settings)| on_systems_setting(name, systems, settings),
 		)?
-		if draft.toolchains.len() > 1 {
-			return Err("DuplicateRustToolchain: environment ${name}")
-		}
 		if draft.overlays.len() > 1 {
 			return Err("DuplicateOverlays: environment ${name}")
 		}
@@ -402,7 +404,11 @@ ConfigToModel :: [].{
 			env: single_env(draft.envs, "environment ${name}")?,
 			pure: draft.pures == 1,
 			aliases: draft.aliases,
-			rust_toolchain: draft.toolchains.first() ?? None,
+			rust_toolchain: match draft.toolchains {
+				[] => None
+				[(text, settings)] => rust_toolchain(name, text, settings)?
+				_ => return Err("DuplicateRustToolchain: environment ${name}")
+			},
 			package_env: match draft.package_envs {
 				[] => []
 				[one] => one
@@ -410,6 +416,35 @@ ConfigToModel :: [].{
 			},
 			on_systems,
 		})
+	}
+
+	## The toolchain a RustToolchain or RustToolchainWith in environment `name`
+	## declares, with the components and targets `settings` add.
+	rust_toolchain :
+		Str, Str, List(Config.RustToolchainSetting) -> Try(Model.RustToolchain, Str)
+	rust_toolchain = |name, text, settings| {
+		(components, target_triples) = settings.fold(
+			([], []),
+			|(components_so_far, triples_so_far), setting|
+				match setting {
+					Components(list) => (components_so_far.append(list), triples_so_far)
+					Targets(list) => (components_so_far, triples_so_far.append(list))
+				},
+		)
+		declaration = "RustToolchainWith in environment ${name}"
+		if components.len() > 1 {
+			return Err("DuplicateComponents: ${declaration}")
+		}
+		if target_triples.len() > 1 {
+			return Err("DuplicateTargets: ${declaration}")
+		}
+		Ok(
+			Toml({
+				text,
+				components: components.first() ?? [],
+				target_triples: target_triples.first() ?? [],
+			}),
+		)
 	}
 
 	## One OnSystems setting of environment `name`.
@@ -691,6 +726,17 @@ ConfigToModel :: [].{
 
 	uses_package_env : Acc -> Bool
 	uses_package_env = |acc| acc.environments.any(|e| !e.package_env.is_empty())
+
+	uses_rust_toolchain_with : Acc -> Bool
+	uses_rust_toolchain_with = |acc|
+		acc.environments.any(
+			|e|
+				match e.rust_toolchain {
+					Toml({ components, target_triples, .. }) =>
+						!components.is_empty() or !target_triples.is_empty()
+					None => False
+				},
+		)
 
 	uses_rust_toolchain : Acc -> Bool
 	uses_rust_toolchain = |acc|

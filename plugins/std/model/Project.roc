@@ -602,9 +602,19 @@ Project :: [].{
 			check_env(env.env, "environment ${env.name}")?
 			check_package_env(env)?
 			match env.rust_toolchain {
-				Toml(text) if text.is_empty() or text.to_utf8().contains(0) =>
+				Toml({ text, .. }) if text.is_empty() or text.to_utf8().contains(0) =>
 					return Err("invalid RustToolchain in environment ${env.name}")
-				_ => {}
+				# Components and targets are rustup names, such as
+				# llvm-tools-preview or x86_64-unknown-linux-gnu.
+				Toml({ components, target_triples, .. }) =>
+					for name in components.concat(target_triples) {
+						if !valid_task_name(name) {
+							return Err(
+								"invalid RustToolchainWith name in environment ${env.name}: ${name}",
+							)
+						}
+					}
+				None => {}
 			}
 			check_on_systems(env, model.systems)?
 			resolved = resolve(model.environments, env.name, [])?
@@ -2350,4 +2360,35 @@ expect {
 				"environment tooled is unavailable on aarch64-darwin: "
 					.concat("it uses Fetch tool, which has no file there"),
 			)
+}
+
+# RustToolchainWith adds rustup names only; a child's toolchain, with its
+# additions, replaces the parent's.
+expect {
+	toolchain = |components|
+		Toml({ text: "[toolchain]", components, target_triples: [] })
+	rust_parent = {
+		..base,
+		name: "parent",
+		rust_toolchain: toolchain(["rust-src"]),
+	}
+	rust_child = {
+		..base,
+		name: "child",
+		parents: ["parent"],
+		rust_toolchain: toolchain(["llvm-tools-preview"]),
+	}
+	validate = |components|
+		Project.validate(fixture([{ ..base, rust_toolchain: toolchain(components) }]))
+	resolved = Project.validate(fixture([rust_parent, rust_child]))
+		.map_ok(
+			|project|
+				project.environments
+					.keep_if(|e| e.name == "child")
+					.map(|e| e.rust_toolchain),
+		)
+	resolved == Ok([toolchain(["llvm-tools-preview"])])
+		and validate(["rust-src", "x86_64-unknown-linux-gnu"]).is_ok()
+		and validate(["rust src"])
+			== Err("invalid RustToolchainWith name in environment base: rust src")
 }

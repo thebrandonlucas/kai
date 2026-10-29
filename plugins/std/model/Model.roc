@@ -40,7 +40,10 @@ Model := {
 			aliases : List(
 				{ name : Str, tool : { source : Str, name : Str }, binary : Str },
 			),
-			rust_toolchain : [None, Toml(Str)],
+			rust_toolchain : [
+				None,
+				Toml({ text : Str, components : List(Str), target_triples : List(Str) }),
+			],
 			package_env : List(
 				{
 					name : Str,
@@ -153,8 +156,11 @@ Model := {
 	OnSystems : { systems : List(Str), tools : List(Tool), env : List(Variable) }
 
 	## The text of a rust-toolchain.toml, whose [toolchain] table the backend
-	## reads.
-	RustToolchain : [None, Toml(Str)]
+	## reads, and the components and targets added to those it pins.
+	RustToolchain : [
+		None,
+		Toml({ text : Str, components : List(Str), target_triples : List(Str) }),
+	]
 
 	## A variable whose value is a path in packages, which the backend computes:
 	## tools' `lib` or `bin` directories joined with `:`, or one tool's path.
