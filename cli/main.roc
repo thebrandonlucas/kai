@@ -469,9 +469,14 @@ describe = |err|
 			"${file} did not compile; see the errors above${mixed(releases)}"
 		KaifileFailed(file, output, releases) =>
 			"${file} did not compile:\n${output}${mixed(releases)}${unbuilt(output)}"
-		IncompatibleProtocol(major, minor) =>
-			"Kaifile.roc uses platform protocol ${major.to_str()}.${minor.to_str()}; "
-				.concat("this kai speaks ${Protocol.current.major.to_str()}.x")
+		IncompatibleProtocol(major, minor) => {
+			theirs = "${major.to_str()}.${minor.to_str()}"
+			own = Protocol.current.major.to_str()
+			ours = "${own}.0 to ${own}.${Protocol.current.minor.to_str()}"
+			"Kaifile.roc's platform speaks protocol ${theirs}, and this kai ${ours}; "
+				.concat("use a kai of that platform's release, or this kai's platform ")
+				.concat("and std (${Load.release}), as `kai --help` shows")
+		}
 		BadResponse(reason) => "could not read the Kaifile's answer: ${reason}"
 		AnswerTooLarge(size) =>
 			"the Kaifile's answer is ${(size // 1048576).to_str()} MiB, over kai's "
