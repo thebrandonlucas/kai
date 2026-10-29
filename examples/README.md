@@ -35,7 +35,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [cargo-vendor](cargo-vendor) | A Rust build reading crates, one from git, vendored from Cargo.lock, offline | `kai build count` |
 | [workflow](workflow) | Tasks, builds and workflows run in order, and a step that may fail | `kai workflow encore` |
 | [packages](packages) | Package sources, a pinned release, an `Alias` and flake inputs | `kai shell` |
-| [raw](raw) | Passing Nix-specific data through with `Raw` | `kai shell` |
+| [raw](raw) | Passing Nix-specific data through with `Raw`, to a shell and to an environment's shells and tasks | `kai run moo` |
 | [overlay](overlay) | An overlay adding a package, seen only where selected, following the project's nixpkgs | `kai run moo` |
 | [modules](modules) | Settings shared through an ordinary Roc module | `kai run moo` |
 | [guix](guix) | Packages from a Guix channel beside the default source | `kai shell guix` |

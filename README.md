@@ -136,7 +136,7 @@ garbage collection.
 | `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, fetches and cargo vendors, in `$KAI_INPUTS/<name>`), `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`), `Revision` (the project's revision, below) and `Default`, which makes it the build `kai build` builds when given no name (at most one build). |
 | `BuildRoot(path)` | The directory builds copy, when it is above the project's, as `..` segments: `BuildRoot("../..")` lets an app whose Kaifile sits in `apps/web` build against a library at the repository root. Builds copy that directory instead of the project's, and their `Files`, `Run` and `Output` work from it; `.kai` stays out of the copy. |
 | `Workflow(name, [...])` | Steps for `kai workflow`, which stops at the first that fails: `RunTask(task, args)`, `BuildArtifact(build)`, `RunWorkflow(workflow)`, and `MayFail(step)`, which notes the step's failure and continues. |
-| `Raw("nix", target, value)` | Extra attributes for the generated flake (`"flake"`) or one shell (`"shell:<name>"`), e.g. `Attrs([("shellHook", Str("echo hi"))])`. |
+| `Raw("nix", target, value)` | Extra attributes for the generated flake (`"flake"`), one shell (`"shell:<name>"`), or every shell and task using an environment (`"environment:<name>"`, not its builds or the environments extending it), e.g. `Attrs([("shellHook", Str("echo hi"))])`. A shell's own attribute replaces its environment's of the same name. |
 
 Names and references are checked as the file compiles, so `kai check` reports
 mistakes before anything runs. [examples](examples/) has a small project for
