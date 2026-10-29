@@ -523,8 +523,20 @@ Project :: [].{
 					return Err("invalid Fetch hash: ${fetch.name}")
 				}
 			}
+			for system in fetch.unavailable {
+				if !model.systems.contains(system) {
+					return Err(
+						"Fetch ${fetch.name} is unavailable on undeclared system ${system}",
+					)
+				}
+				if $systems.contains(system) {
+					return Err(
+						"Fetch ${fetch.name} has a file for unavailable system ${system}",
+					)
+				}
+			}
 			for system in model.systems {
-				if !$systems.contains(system) {
+				if !$systems.contains(system) and !fetch.unavailable.contains(system) {
 					return Err("Fetch ${fetch.name} has no file for system ${system}")
 				}
 			}
@@ -1138,6 +1150,29 @@ Project :: [].{
 		}
 		for t in tools {
 			check_tool(backend, t.name)?
+		}
+		Ok({})
+	}
+
+	## Refuses environments and builds that use a Fetch unavailable on
+	## `system`, the host's: tools the environment has there, and inputs.
+	check_fetches_on : Model, List(Str), List(Model.Build), Str -> Try({}, Str)
+	check_fetches_on = |model, environments, builds, system| {
+		for fetch in model.fetches.keep_if(|f| f.unavailable.contains(system)) {
+			why = "unavailable on ${system}: it uses Fetch ${fetch.name}, "
+				.concat("which has no file there")
+			for environment in model.environments {
+				on = on_system(environment, system)
+				if environments.contains(environment.name)
+					and environment_tools(on).any(|t| t.source == fetch.name) {
+					return Err("environment ${environment.name} is ${why}")
+				}
+			}
+			for build in builds {
+				if build.inputs.contains(fetch.name) {
+					return Err("build ${build.name} is ${why}")
+				}
+			}
 		}
 		Ok({})
 	}
@@ -2281,4 +2316,38 @@ expect {
 		and env_on(overriding, "x86_64-linux") == [[{ name: "A", value: "dev" }]]
 		and Project.validate(fixture([parent, undeclared]))
 			== Err("OnSystems in environment dev names undeclared system aarch64-darwin")
+}
+
+# A Fetch may be unavailable on declared systems it has no file for; an
+# environment or build using it is refused on those systems only.
+expect {
+	hash = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+	file = |system| { system, url: "https://example.com/tool", hash }
+	tooled = {
+		..base,
+		name: "tooled",
+		tools: [{ source: "tool", name: "tool" }],
+		overlays: [],
+	}
+	model = |files, unavailable| {
+		..fixture([tooled]),
+		systems: ["x86_64-linux", "aarch64-darwin"],
+		requires_: ["fetches"],
+		fetches: [{ name: "tool", files, unavailable }],
+	}
+	linux_only = model([file("x86_64-linux")], ["aarch64-darwin"])
+	on = |system| Project.check_fetches_on(linux_only, ["tooled"], [], system)
+	Project.validate(linux_only).is_ok()
+		and Project.validate(model([file("x86_64-linux")], []))
+			== Err("Fetch tool has no file for system aarch64-darwin")
+		and Project.validate(
+			model([file("x86_64-linux"), file("aarch64-darwin")], ["aarch64-darwin"]),
+		)
+			== Err("Fetch tool has a file for unavailable system aarch64-darwin")
+		and on("x86_64-linux") == Ok({})
+		and on("aarch64-darwin")
+			== Err(
+				"environment tooled is unavailable on aarch64-darwin: "
+					.concat("it uses Fetch tool, which has no file there"),
+			)
 }

@@ -23,6 +23,8 @@ ConfigToModel :: [].{
 		tasks : List(Model.Task),
 		build_sources : List(Model.BuildSource),
 		fetches : List(Model.Fetch),
+		fetch_alls : List({ name : Str, url : Str, hash : Str }),
+		unavailable : List((Str, List(Str))),
 		cargo_vendors : List(Model.CargoVendor),
 		builds : List(Model.Build),
 		workflows : List(Model.Workflow),
@@ -58,6 +60,8 @@ ConfigToModel :: [].{
 			tasks: [],
 			build_sources: [],
 			fetches: [],
+			fetch_alls: [],
+			unavailable: [],
 			cargo_vendors: [],
 			builds: [],
 			workflows: [],
@@ -79,7 +83,13 @@ ConfigToModel :: [].{
 			(if (acc.extensions.is_empty()) [] else ["extensions"])
 				.concat(if (acc.raw.is_empty()) [] else ["raw"])
 				.concat(if (acc.build_sources.is_empty()) [] else ["sources"])
-				.concat(if (acc.fetches.is_empty()) [] else ["fetches"])
+				.concat(
+					if (acc.fetches.is_empty() and acc.fetch_alls.is_empty())
+						[]
+					else
+						["fetches"],
+				)
+				.concat(if (acc.unavailable.is_empty()) [] else ["fetch_unavailable"])
 				.concat(if (acc.cargo_vendors.is_empty()) [] else ["cargo"])
 				.concat(if (acc.builds.is_empty()) [] else ["builds"])
 				.concat(if (acc.workflows.is_empty()) [] else ["workflows"])
@@ -122,7 +132,7 @@ ConfigToModel :: [].{
 				shells: acc.shells,
 				tasks: acc.tasks,
 				build_sources: acc.build_sources,
-				fetches: acc.fetches,
+				fetches: fetches(acc, systems)?,
 				cargo_vendors: acc.cargo_vendors,
 				build_root: match acc.build_roots {
 					[] => ""
@@ -220,7 +230,23 @@ ConfigToModel :: [].{
 									.map_err(|_| "invalid sha256 in Fetch ${name.to_str()}")?,
 							}),
 					)?,
+					unavailable: [],
 				}),
+			}
+			FetchAll(name, { url, sha256 }) => {
+				..acc,
+				fetch_alls: acc.fetch_alls.append({
+					name: name.to_str(),
+					url,
+					hash: Project.sri_sha256(sha256)
+						.map_err(|_| "invalid sha256 in FetchAll ${name.to_str()}")?,
+				}),
+			}
+			FetchUnavailable(name, systems) => {
+				..acc,
+				unavailable: acc.unavailable.append(
+					(name.to_str(), systems.map(|s| s.to_str())),
+				),
 			}
 			CargoVendor(name, lock) => {
 				..acc,
@@ -594,6 +620,38 @@ ConfigToModel :: [].{
 
 	variables : List((Str, Str)) -> List(Model.Variable)
 	variables = |pairs| pairs.map(|(name, value)| { name, value })
+
+	## Every Fetch, a FetchAll with one file for each of `systems` it is
+	## available on, and each marked with the systems FetchUnavailable names.
+	fetches : Acc, List(Str) -> Try(List(Model.Fetch), Str)
+	fetches = |acc, systems| {
+		var $named = []
+		for (name, _) in acc.unavailable {
+			if $named.contains(name) {
+				return Err("DuplicateFetchUnavailable: ${name}")
+			}
+			$named = $named.append(name)
+		}
+		unavailable_on = |name|
+			acc.unavailable.find_first(|(named, _)| named == name)
+				.map_ok(|(_, on)| on)
+				?? []
+		every_system = acc.fetch_alls.map(
+			|f| {
+				name: f.name,
+				files: systems.keep_if(|s| !unavailable_on(f.name).contains(s))
+					.map(|system| { system, url: f.url, hash: f.hash }),
+				unavailable: [],
+			},
+		)
+		all = acc.fetches.concat(every_system)
+		for name in $named {
+			if !all.any(|f| f.name == name) {
+				return Err("FetchUnavailable ${name} names no Fetch")
+			}
+		}
+		Ok(all.map(|f| { ..f, unavailable: unavailable_on(f.name) }))
+	}
 
 	single_env : List(List(Model.Variable)), Str -> Try(List(Model.Variable), Str)
 	single_env = |envs, declaration|
