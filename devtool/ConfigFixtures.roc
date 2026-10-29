@@ -925,6 +925,30 @@ ConfigFixtures := [].{
 			expected: Rejected("DuplicateBuildRoot: declare BuildRoot at most once"),
 			body: \\config = [Name("bad"), BuildRoot(".."), BuildRoot("../..")]
 		},
+		{
+			name: "OnSystems",
+			expected: Valid,
+			body: \\config = [Name("on-systems"),
+				\\ Systems(["x86_64-linux", "aarch64-darwin"]),
+				\\ Environment("dev", [Tools(["cowsay"]),
+				\\  OnSystems(["x86_64-linux"],
+				\\   [Tools(["wayland"]), Env([("GPU", "on")])]),
+				\\  OnSystems(["aarch64-darwin"], [Env([("GPU", "off")])])])]
+		},
+		{
+			name: "OnSystemsUndeclared",
+			expected: Rejected(
+				"OnSystems in environment dev names undeclared system aarch64-darwin",
+			),
+			body: \\config = [Name("bad"),
+				\\ Environment("dev", [OnSystems(["aarch64-darwin"], [Tools(["hello"])])])]
+		},
+		{
+			name: "DuplicateOnSystemsTools",
+			expected: Rejected("DuplicateTools: OnSystems in environment dev"),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [OnSystems(["x86_64-linux"], [Tools(["a"]), Tools(["b"])])])]
+		},
 	].concat(ConfigFixtures.bad_outputs).concat(ConfigFixtures.bad_sources)
 
 	bad_outputs : List(Fixture)

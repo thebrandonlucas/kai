@@ -261,7 +261,9 @@ Std := [].{
 						GuixBackend.check_system(ctx.host.system)?
 						wanted = Std.request(command, ctx.args)?
 						locked = Std.guix_pins(model, ctx)?
-						revised = Std.revised(model, ctx)
+						# Guix plans for the host, so it takes the host's OnSystems.
+						host = Project.for_system(model, ctx.host.system)
+						revised = Std.revised(host, ctx)
 						GuixBackend.request_steps(revised, wanted, ctx.layout, locked)
 							.map_err(|message| "cannot plan the Guix ${command}: ${message}")
 					},
