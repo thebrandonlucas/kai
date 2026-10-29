@@ -963,12 +963,10 @@ NixBackend :: [].{
 		tools = path_packages(environment, fetches).map(|tool| "            ${tool}")
 		own = if (raw.is_empty()) "" else " // ${value_to_nix(Value.Attrs(raw))}"
 		# mkShell exports `env` to its shells, and to tasks through kai-env-*.
-		env = if environment.env.is_empty() and environment.package_env.is_empty() {
-			[]
-		} else {
-			computed = package_env_attrs(environment, fetches)
-			["          env = ${env_attrs(environment.env, computed)};"]
-		}
+		computed = package_env_attrs(environment, fetches).concat(
+			system_attrs(environment, [], "sets.${quote(primary)}"),
+		)
+		env = ["          env = ${env_attrs(environment.env, computed)};"]
 		lines([
 			"        ${quote(environment.name)} = let",
 			"          overlays = [ ${Str.join_with(overlays, " ")} ];",
@@ -1068,7 +1066,7 @@ NixBackend :: [].{
 				),
 			},
 			model.fetches,
-		)
+		).concat(system_attrs(environment, build.env, "pkgs"))
 		lines([
 			"          ${quote(build.name)} = let",
 			"            system = ${quote(system)};",
@@ -1299,6 +1297,26 @@ NixBackend :: [].{
 		)
 		missing = quote("Fetch ${fetch.name} has no file for system ")
 		"({ ${Str.join_with(files, "")}}.\${system} or (throw (${missing} + system)))"
+	}
+
+	## KAI_SYSTEM, the evaluating Nix system, and, with a RustToolchain,
+	## KAI_RUST_TARGET, its Rust target triple from the package set `pkgs`,
+	## as Nix attributes. The environment's own variables, and the build's
+	## `own`, override them.
+	system_attrs : Model.Environment, List(Model.Variable), Str -> List(Str)
+	system_attrs = |environment, own, pkgs| {
+		rust_target = "${pkgs}.stdenv.hostPlatform.rust.rustcTarget"
+		set = environment.env.concat(own).map(|v| v.name)
+			.concat(environment.package_env.map(|v| v.name))
+		[("KAI_SYSTEM", "system")]
+			.concat(
+				if (environment.rust_toolchain == None)
+					[]
+				else
+					[("KAI_RUST_TARGET", rust_target)],
+			)
+			.keep_if(|(name, _)| !set.contains(name))
+			.map(|(name, value)| "${quote(name)} = ${value}; ")
 	}
 
 	## Variables as Nix attributes, followed by `computed` ones.
@@ -3384,7 +3402,8 @@ expect {
 				and text.contains("        }.\${system};\n")
 				and count(text, "\"cowsay\" or") == 2
 				and count(text, "\"wayland\" or") == 1
-				and count(text, "env = { \"GPU\" = \"on\"; };") == 1
+				and count(text, "env = { \"GPU\" = \"on\"; \"KAI_SYSTEM\" = system; };")
+					== 1
 		Err(_) => Bool.False
 	}
 }
@@ -3407,6 +3426,43 @@ expect {
 			added_text.contains(added)
 				and plain.contains(".fromRustupToolchain ((builtins.fromTOML")
 				and !plain.contains("table //")
+		_ => Bool.False
+	}
+}
+
+# Shells, tasks and builds get KAI_SYSTEM, and with a RustToolchain
+# KAI_RUST_TARGET, unless their own variables set them.
+expect {
+	toolchain = Toml({ text: "[toolchain]", components: [], target_triples: [] })
+	render = |environment|
+		NixBackend.render(mk({ ..simple, environments: [environment] }))
+	own = |name| [{ name, value: "mine" }]
+	target = |pkgs|
+		"\"KAI_RUST_TARGET\" = ${pkgs}.stdenv.hostPlatform.rust.rustcTarget; "
+	rust_target = target("sets.\"default\"")
+	data = {
+		..TestData.data,
+		environments: [{ ..TestData.builder, rust_toolchain: toolchain }],
+		builds: [
+			TestData.application,
+			{ ..TestData.library, env: own("KAI_RUST_TARGET") },
+		],
+	}
+	rendered = (
+		render({ ..base, rust_toolchain: toolchain }),
+		render({ ..base, env: own("KAI_SYSTEM") }),
+		NixBackend.render(TestData.project(data)),
+	)
+	match rendered {
+		(Ok(rust), Ok(set), Ok(builds)) =>
+			rust.contains("env = { \"KAI_SYSTEM\" = system; ${rust_target}};")
+				and set.contains("env = { \"KAI_SYSTEM\" = \"mine\"; };")
+				and builds.contains(
+					"env = { \"KAI_SYSTEM\" = system; ${target("pkgs")}};",
+				)
+				and builds.contains(
+					"env = { \"KAI_RUST_TARGET\" = \"mine\"; \"KAI_SYSTEM\" = system; };",
+				)
 		_ => Bool.False
 	}
 }

@@ -23,6 +23,7 @@
             (sets."default"."hello" or (throw "tool hello not found in source default of environment dev"))
             (sets."stable"."jq" or (throw "tool jq not found in source stable of environment dev"))
           ];
+          env = { "KAI_SYSTEM" = system; };
         } // extra);
         "empty" = let
           overlays = [  ];
@@ -32,6 +33,7 @@
         in extra: sets."default".mkShell ({
           packages = [
           ];
+          env = { "KAI_SYSTEM" = system; };
         } // extra);
         "headless" = let
           overlays = [  ];
@@ -42,6 +44,7 @@
           packages = [
             (sets."stable"."jq" or (throw "tool jq not found in source stable of environment headless"))
           ];
+          env = { "KAI_SYSTEM" = system; };
         } // extra);
       };
     in
