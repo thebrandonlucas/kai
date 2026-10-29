@@ -27,6 +27,23 @@ kaifile = Std.kaifile([
 			Files([]),
 		],
 	),
+	# Links that stay in the project are copied, and an output may link
+	# inside itself or into the store: `kai build links` runs bin/moo, a link
+	# to scripts/moo.sh, and keeps a link to its text and one to cowsay.
+	Build(
+		"links",
+		[
+			Use("cow"),
+			Run([
+				"sh",
+				"-c",
+				"mkdir out && sh bin/moo > out/moo.txt && ln -s moo.txt out/latest "
+					.concat("&& ln -s \"$(command -v cowsay)\" out/cowsay"),
+			]),
+			Output("out"),
+			Files(["bin", "scripts"]),
+		],
+	),
 	# A build's tools are its build inputs, so their setup hooks run as in
 	# `kai shell`: `kai build zlib-flags` asks pkg-config for zlib's flags.
 	Environment("zlib", [Tools(["pkg-config", "zlib"])]),

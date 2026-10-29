@@ -162,7 +162,10 @@ declared sources (`$KAI_INPUTS`) and the artifacts of the builds it needs
 (`$KAI_ARTIFACTS`). It has no network, and only its `Output` is kept, in the
 store. On Nix, its tools are its build inputs, so their setup hooks run as in
 `kai shell`: `pkg-config` finds the environment's libraries, and the compiler
-their headers and library paths. A Nix build's sources that are Roc package bundles, such as
+their headers and library paths. Symbolic links in the project and its
+sources must resolve inside them, and those in its `Output` inside the output
+or into the store; Kai refuses any other. A Nix build's sources that are Roc
+package bundles, such as
 `tarball+https://…/<hash>.tar.zst`, are in its Roc package cache, so Roc
 resolves those package URLs offline. The sandbox has no `/usr/bin/env`, so
 run scripts as `sh script` or through an interpreter's path rather than
