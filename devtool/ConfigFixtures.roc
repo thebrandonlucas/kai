@@ -863,6 +863,19 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), Environment("dev",
 				\\ [PackageEnv([]), PackageEnv([])])]
 		},
+		{
+			name: "CargoVendorGit",
+			expected: Valid,
+			body: \\config = [Name("cargo-git"), CargoVendor("crates",
+				\\ "source = \\"git+https://github.com/dtolnay/ryu?tag=1.0.20#"
+				\\  .concat("02237f8751db162e9ed0f5bd3e7135d1b256822e\\"\\n"))]
+		},
+		{
+			name: "CargoVendorGitWithoutCommit",
+			expected: Rejected("CargoVendor crates: a git source names no commit"),
+			body: \\config = [Name("bad"), CargoVendor("crates",
+				\\ "source = \\"git+https://github.com/dtolnay/ryu?tag=1.0.20\\"\\n")]
+		},
 	].concat(ConfigFixtures.bad_outputs).concat(ConfigFixtures.bad_sources)
 
 	bad_outputs : List(Fixture)

@@ -493,9 +493,13 @@ Project :: [].{
 						model.fetches.any(|f| f.name == vendor.name) {
 				return Err("DuplicateInput: ${vendor.name}")
 			}
-			# Git checkouts have no checksum in Cargo.lock to pin them.
-			if vendor.lock.contains("source = \"git+") {
-				return Err("CargoVendor ${vendor.name}: git dependencies are not supported")
+			# Cargo.lock pins a git checkout by the commit after its source's `#`.
+			for line in vendor.lock.split_on("\n").map(|l| l.trim()) {
+				commit = line.drop_suffix("\"").split_on("#").last() ?? ""
+				if line.starts_with("source = \"git+")
+					and !(line.ends_with("\"") and forty_hex_digits(commit)) {
+					return Err("CargoVendor ${vendor.name}: a git source names no commit")
+				}
 			}
 		}
 		if !model.cargo_vendors.is_empty() and !model.requires_.contains("cargo") {
@@ -2069,4 +2073,20 @@ expect {
 		and Project.check_environment(fixture([parent]), Guix, "base")
 			== Err("PackageEnv needs Nix: environment base")
 		and Project.check_environment(fixture([parent]), Nix, "base") == Ok({})
+}
+
+# CargoVendor takes git sources pinned by the commit Cargo.lock records.
+expect {
+	commit = "02237f8751db162e9ed0f5bd3e7135d1b256822e"
+	source = "source = \"git+https://github.com/dtolnay/ryu?tag=1.0.20"
+	vendor = |lock| Project.validate({
+		..fixture([]),
+		requires_: ["cargo"],
+		cargo_vendors: [{ name: "crates", lock }],
+	})
+	vendor("${source}#${commit}\"\n").is_ok()
+		and vendor("  ${source}#${commit}\"").is_ok()
+		and vendor("${source}\"")
+			== Err("CargoVendor crates: a git source names no commit")
+		and vendor("${source}#${commit.drop_suffix("e")}\"").is_err()
 }

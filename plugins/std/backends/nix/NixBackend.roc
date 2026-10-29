@@ -945,19 +945,23 @@ NixBackend :: [].{
 					.concat("{ inherit system overlays; };"),
 		)
 		tools = path_packages(environment, model.fetches)
-		# Cargo.lock's checksums pin a vendor's crates, which Nix fetches. Builds
-		# refuse symlinks in inputs, so the vendored directory is copied whole.
+		# Cargo.lock's checksums pin a vendor's crates, and its commits its git
+		# checkouts, which Nix fetches. Builds refuse symlinks in inputs, so the
+		# vendored directory is copied whole, and its cargo config names the copy.
 		inputs = build.inputs.map(
 			|name| {
 				fetched = model.fetches.find_first(|f| f.name == name)
 				vendored = model.cargo_vendors.find_first(|c| c.name == name)
+				copy = "cp -rL $vendor $out && chmod -R u+w $out && substituteInPlace "
+					.concat("$out/.cargo/config.toml --replace-fail cargo-vendor-dir $out")
 				path = match (fetched, vendored) {
 					(Ok(fetch), _) => "pkgs.fetchurl ${fetch_file(fetch)}"
 					(_, Ok(vendor)) =>
 						"pkgs.runCommand ${quote("kai-cargo-vendor-${name}")} { "
 							.concat("vendor = pkgs.rustPlatform.importCargoLock { ")
 							.concat("lockFile = builtins.toFile \"Cargo.lock\" ")
-							.concat("${quote(vendor.lock)}; }; } \"cp -rL $vendor $out\"")
+							.concat("${quote(vendor.lock)}; allowBuiltinFetchGit = true; }; } ")
+							.concat(quote(copy))
 					_ => "inputs.${quote(name)}"
 				}
 				"{ name = ${quote(name)}; path = ${path}; }"
