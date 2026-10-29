@@ -96,6 +96,7 @@ ConfigToModel :: [].{
 				.concat(if (uses_aliases(acc)) ["aliases"] else [])
 				.concat(if (uses_rust_toolchain(acc)) ["rust-toolchain"] else [])
 				.concat(if (acc.follows.is_empty()) [] else ["follows"])
+				.concat(if (uses_package_env(acc)) ["package_env"] else [])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -292,6 +293,7 @@ ConfigToModel :: [].{
 				pures: 0.U64,
 				aliases: [],
 				toolchains: [],
+				package_envs: [],
 			},
 			|acc, setting|
 				match setting {
@@ -315,6 +317,14 @@ ConfigToModel :: [].{
 					RustToolchain(text) => {
 						..acc,
 						toolchains: acc.toolchains.append(Toml(text)),
+					}
+					PackageEnv(pairs) => {
+						..acc,
+						package_envs: acc.package_envs.append(
+							pairs.map(
+								|(variable, value)| { name: variable, value: package_value(value) },
+							),
+						),
 					}
 				},
 		)
@@ -342,6 +352,11 @@ ConfigToModel :: [].{
 			pure: draft.pures == 1,
 			aliases: draft.aliases,
 			rust_toolchain: draft.toolchains.first() ?? None,
+			package_env: match draft.package_envs {
+				[] => []
+				[one] => one
+				_ => return Err("DuplicatePackageEnv: environment ${name}")
+			},
 		})
 	}
 
@@ -508,6 +523,14 @@ ConfigToModel :: [].{
 		})
 	}
 
+	package_value : Config.PackageValue -> Model.PackageValue
+	package_value = |value|
+		match value {
+			LibraryPath(tools) => LibraryPath(tools.map(|tool| tool.to_ir()))
+			BinPath(tools) => BinPath(tools.map(|tool| tool.to_ir()))
+			PackagePath(tool) => PackagePath(tool.to_ir())
+		}
+
 	variables : List((Str, Str)) -> List(Model.Variable)
 	variables = |pairs| pairs.map(|(name, value)| { name, value })
 
@@ -546,6 +569,9 @@ ConfigToModel :: [].{
 
 	uses_aliases : Acc -> Bool
 	uses_aliases = |acc| acc.environments.any(|e| !e.aliases.is_empty())
+
+	uses_package_env : Acc -> Bool
+	uses_package_env = |acc| acc.environments.any(|e| !e.package_env.is_empty())
 
 	uses_rust_toolchain : Acc -> Bool
 	uses_rust_toolchain = |acc|

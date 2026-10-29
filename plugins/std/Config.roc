@@ -77,6 +77,9 @@ Config :: [].{
 	## RustToolchain takes a rust-toolchain.toml's text and adds the toolchain
 	## its [toolchain] table pins, overriding the parent's; it needs Nix and an
 	## Overlay providing rust-bin, such as rust-overlay.
+	## PackageEnv sets variables to paths in packages, which the backend
+	## computes. Like Env, they override the parent's variables by name, and a
+	## task's or build's Env overrides them. It needs Nix.
 	EnvironmentSetting : [
 		Tools(List(Tool)),
 		Overlays(List(InputName)),
@@ -85,6 +88,14 @@ Config :: [].{
 		Pure,
 		Alias(Str, Tool, Str),
 		RustToolchain(Str),
+		PackageEnv(List((Str, PackageValue))),
+	]
+
+	## Tools' `lib` or `bin` directories joined with `:`, or one tool's path.
+	PackageValue : [
+		LibraryPath(List(Tool)),
+		BinPath(List(Tool)),
+		PackagePath(Tool),
 	]
 
 	## A shell is an alias for exactly one environment. A Description, in a
