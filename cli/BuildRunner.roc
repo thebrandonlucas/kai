@@ -2,8 +2,9 @@
 # executable as `kai __build-runner SPEC`, where SPEC is the JSON that
 # NixBackend.render_build writes. It refuses unless the build is isolated from
 # the caller, runs exactly the declared argv on a writable copy of the project
-# snapshot, and copies only the declared, contained, symlink-free output to
-# $out. It uses the spec's coreutils, never the user's PATH.
+# snapshot, and copies only the declared, contained output to $out, whose links
+# stay inside it or point into the store. Links in the project and sources must
+# stay inside them. It uses the spec's coreutils, never the user's PATH.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -145,7 +146,7 @@ BuildRunner := [].{
 			BuildRunner.compare(name, caller, current)
 				.map_err(|message| Refused(message))?
 		}
-		BuildRunner.safe_tree!(Path.unix(spec.project))?
+		BuildRunner.check_tree!(Path.unix(spec.project), [])?
 		BuildRunner.check_inputs!(spec.inputs, tool!)?
 		cwd = Env.cwd!()?.to_str()?
 		work = "${cwd}/kai-work"
@@ -189,7 +190,8 @@ BuildRunner := [].{
 			Exited(code) => return Err(RunFailed(code))
 			Signaled(signal) => return Err(RunFailed(128 + signal))
 		}
-		output = BuildRunner.output!(work, spec.output)?
+		stores = BuildRunner.stores(spec.coreutils)
+		output = BuildRunner.output!(work, spec.output, stores)?
 		out = Variables.read!(Variables.out)?
 		match Path.unix(out).type!() {
 			Err(PathErr(NotFound, _)) => {}
@@ -211,8 +213,9 @@ BuildRunner := [].{
 					|part| !part.is_empty() and part != "." and part != "..",
 				)
 
-	# The declared output, checked to be a contained, link-free tree.
-	output! = |work, relative| {
+	# The declared output, checked to be a contained tree whose links stay in
+	# it or in the store.
+	output! = |work, relative, stores| {
 		if !BuildRunner.valid_output(relative) {
 			return Err(Refused("invalid declared relative output"))
 		}
@@ -245,25 +248,37 @@ BuildRunner := [].{
 		if !Snapshot.within(root, resolved) {
 			return Err(Refused("declared output escapes the project: ${relative}"))
 		}
-		BuildRunner.safe_tree!(Path.unix(output))?
+		BuildRunner.check_tree!(Path.unix(output), stores)?
 		Ok(output)
 	}
 
-	# Reject links and special files anywhere in a tree, its root included.
-	safe_tree! = |path|
+	# Reject special files anywhere in a tree, its root included, and links
+	# that leave it. A link may resolve inside the tree, or, in a build's
+	# output, inside one of `stores`.
+	check_tree! = |tree, stores| {
+		root = Snapshot.bytes(tree.canonicalize!()?)
+		BuildRunner.safe_tree!(tree, root, stores)
+	}
+
+	safe_tree! = |path, root, stores|
 		match path.type!()? {
 			IsDir => {
 				for entry in path.list!()? {
-					BuildRunner.safe_tree!(entry)?
+					BuildRunner.safe_tree!(entry, root, stores)?
 				}
 				Ok({})
 			}
 			IsFile => Ok({})
-			IsSymLink => Err(
-				Refused(
-					"symlink is not allowed in build output/source: ${path.display()}",
-				),
-			)
+			IsSymLink =>
+				match path.canonicalize!() {
+					Ok(target) if Snapshot.link_kept(root, stores, Snapshot.bytes(target)) =>
+						Ok({})
+					_ => Err(
+						Refused(
+							"symlink leaves the build output/source: ${path.display()}",
+						),
+					)
+				}
 			IsOther => Err(
 				Refused(
 					"special file is not allowed in build output/source: "
@@ -272,8 +287,18 @@ BuildRunner := [].{
 			)
 		}
 
-	# Allow the generated farm's links, then follow exactly each one's target
-	# (not links within it), rejecting symlinks in any locked source tree.
+	# The store a spec's coreutils lie in, such as /nix/store, whose paths a
+	# build's output may link to; none unless coreutils is in one.
+	stores : Str -> List(List(U8))
+	stores = |coreutils|
+		match coreutils.split_on("/") {
+			["", top, store, ..] if !top.is_empty() and !store.is_empty() =>
+				["/${top}/${store}".to_utf8()]
+			_ => []
+		}
+
+	# Allow the generated farm's links, then follow exactly each one's target,
+	# checking each locked source tree.
 	check_inputs! = |farm, tool!| {
 		for entry in Path.unix(farm).list!()? {
 			match entry.type!()? {
@@ -284,7 +309,7 @@ BuildRunner := [].{
 			}
 			target = tool!("readlink", ["--", entry.to_str()?])?.drop_suffix("\n")
 			resolved = if (target.starts_with("/")) target else "${farm}/${target}"
-			BuildRunner.safe_tree!(Path.unix(resolved))?
+			BuildRunner.check_tree!(Path.unix(resolved), [])?
 		}
 		Ok({})
 	}
@@ -349,3 +374,15 @@ expect {
 		Err(_) => Bool.False
 	}
 }
+
+# An output may link into the store its coreutils come from, and into none
+# when they come from no store.
+expect [
+	("/nix/store/abc-coreutils/bin", ["/nix/store"]),
+	("/gnu/store/abc-coreutils/bin", ["/gnu/store"]),
+	("/bin", []),
+	("", []),
+].all(
+	|(coreutils, expected)|
+		BuildRunner.stores(coreutils) == expected.map(Str.to_utf8),
+)
