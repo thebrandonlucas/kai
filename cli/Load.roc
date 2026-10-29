@@ -25,16 +25,55 @@ Load := [].{
 	default_file = "Kaifile.roc"
 
 	# A --file path is relative to the invocation directory; its containing
-	# directory becomes the project root.
-	project! : Try(Str, [NoValue]) => Try(Location, _)
-	project! = |requested| {
+	# directory becomes the project root. Without one, kai uses the nearest
+	# Kaifile.roc, and notes which when it is not in that directory.
+	project! : Try(Str, [NoValue]), Output.Mode => Try(Location, _)
+	project! = |requested, mode| {
 		cwd = Env.cwd!()?.to_str()?
-		location = Load.resolve(cwd, requested ?? Load.default_file)
+		location = match requested {
+			Ok(file) => Load.resolve(cwd, file)
+			Err(NoValue) => Load.nearest!(cwd)
+		}
 		if !(Load.path(location).exists!() ?? Bool.False) {
 			return Err(NoKaifile(location))
 		}
+		if requested.is_err() and location != Load.resolve(cwd, Load.default_file) {
+			message = "using ${location}"
+			event = Output.event("note", message, [("file", Output.text(location))])
+			Output.note!(mode, "kai: ${message}", event)?
+		}
 		canonical = Load.path(location).canonicalize!()?.to_str()?
 		Ok(Load.split_file(canonical))
+	}
+
+	# The first Kaifile.roc in `cwd` or above it, up to the git repository's
+	# root (the first directory holding .git) or the filesystem root; the one
+	# in `cwd` when there is none, which is then missing.
+	nearest! : Str => Str
+	nearest! = |cwd| {
+		for directory in Load.ancestors(cwd) {
+			file = Load.resolve(directory, Load.default_file)
+			if Load.path(file).exists!() ?? Bool.False {
+				return file
+			}
+			if Load.path(Load.resolve(directory, ".git")).exists!() ?? Bool.False {
+				return Load.resolve(cwd, Load.default_file)
+			}
+		}
+		Load.resolve(cwd, Load.default_file)
+	}
+
+	# A directory and those above it, nearest first. The filesystem root is
+	# the empty string, so that `resolve` gives it "/Kaifile.roc".
+	ancestors : Str -> List(Str)
+	ancestors = |directory| {
+		var $above = [""]
+		var $prefix = ""
+		for part in directory.split_on("/").keep_if(|part| !part.is_empty()) {
+			$prefix = "${$prefix}/${part}"
+			$above = [$prefix].concat($above)
+		}
+		$above
 	}
 
 	resolve : Str, Str -> Str
@@ -385,3 +424,9 @@ expect Load.current("K", "app [config] { pf: platform \"p\" }")
 	and Load.current("K", "Kaifile := [].{}\n") == Err(NotAnApp("K"))
 	and Load.current("K", "") == Ok({})
 	and Load.current("K", "app [kaifile] {\n\tpf: platform \"p\",\n}\n") == Ok({})
+
+# The search for a Kaifile.roc goes up from the invocation directory to the
+# filesystem root, written as the empty string.
+expect Load.ancestors("/srv/app") == ["/srv/app", "/srv", ""]
+	and Load.ancestors("/") == [""]
+	and Load.resolve("", Load.default_file) == "/Kaifile.roc"

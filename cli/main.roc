@@ -79,7 +79,7 @@ run! = |shown, mode| {
 		}
 		return bundle_plugin!(bundle_arguments(shown, [], Err(NoValue))?, mode)
 	}
-	located = Load.project!(requested_file(shown))
+	located = Load.project!(requested_file(shown), mode)
 	if command_word(shown) == Ok("check") and !asks_help(shown) {
 		project = located?
 		Load.check!(project, mode)?

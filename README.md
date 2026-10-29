@@ -299,7 +299,9 @@ replace direnv's shell hook with
 ## Options
 
 - `-f`, `--file PATH`: use another configuration file. Its directory is the
-  project root.
+  project root. Without it, kai uses the nearest `Kaifile.roc`: in the
+  current directory or the first above it, up to the git repository's root,
+  and says which when it is not in the current directory.
 - `--json`: print Kai's own messages as JSON Lines on stdout. Each has `type`
   and `message`, plus fields for its type (e.g. `backend`, `step_started`,
   `artifact`, or `error` with `error` and `exit_code`). Output from shells and
