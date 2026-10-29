@@ -95,6 +95,45 @@ Plan := { steps : List(Step), next : Next }.{
 	## A failure with no code of its own: `plan_failed`.
 	fail : Str -> Failure
 	fail = |message| { code: "plan_failed", message, hint: "", suggestions: [] }
+
+	## The names closest to a mistyped `given`: at most two edits away, and
+	## fewer edits than it has letters.
+	closest : Str, List(Str) -> List(Str)
+	closest = |given, names| {
+		scored = names.map(|name| (name, Plan.distance(given, name)))
+		best = scored.fold(3, |lowest, (_, edits)| lowest.min(edits))
+		limit = given.count_utf8_bytes().min(3)
+		scored.keep_if(|(_, edits)| edits == best and edits < limit)
+			.map(|(name, _)| name)
+	}
+
+	## How many one-byte insertions, deletions or replacements turn `a` into
+	## `b` (Levenshtein distance).
+	distance : Str, Str -> U64
+	distance = |a, b| {
+		right = b.to_utf8()
+		var $previous = []
+		var $count = 0
+		for _ in [0].concat(right) {
+			$previous = $previous.append($count)
+			$count = $count + 1
+		}
+		var $row_number = 0
+		for x in a.to_utf8() {
+			$row_number = $row_number + 1
+			var $row = [$row_number]
+			var $j = 0
+			for y in right {
+				deleted = ($previous.get($j + 1) ?? 0) + 1
+				inserted = ($row.get($j) ?? 0) + 1
+				replaced = ($previous.get($j) ?? 0) + (if (x == y) 0 else 1)
+				$row = $row.append(deleted.min(inserted).min(replaced))
+				$j = $j + 1
+			}
+			$previous = $row
+		}
+		$previous.last() ?? 0
+	}
 }
 
 # Every step kind survives an S-expression round trip.
@@ -168,3 +207,13 @@ expect {
 	}
 	Sexpr.parse(Sexpr.to_str(plan)) == Ok(plan)
 }
+
+# The closest names are at most two edits away, and fewer than the word has.
+expect [
+	("rn", ["run", "shell", "build"], ["run"]),
+	("moo2", ["moo", "say", "moon"], ["moo", "moon"]),
+	("frobnicate", ["run", "shell"], []),
+	("x", ["a", "b"], []),
+	("bild", ["build", "build-all"], ["build"]),
+].all(|(given, names, expected)| Plan.closest(given, names) == expected)
+	and Plan.distance("kitten", "sitting") == 3

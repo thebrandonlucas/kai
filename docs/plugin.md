@@ -132,7 +132,8 @@ request may have meant. kai prints the message, then "run `hint`" and "did
 you mean …?", and with `--json` its `error` event carries `code` as
 `error`, `hint` and `suggestions`. `Plan.fail(message)` is a failure with
 no code of its own, `plan_failed`, so a plugin's string errors map with
-`.map_err(Plan.fail)`. std uses these codes:
+`.map_err(Plan.fail)`, and `Plan.closest(given, names)` finds the names
+closest to a mistyped one. std uses these codes:
 
 | Code | Meaning |
 |---|---|

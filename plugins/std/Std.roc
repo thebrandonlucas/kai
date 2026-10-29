@@ -330,7 +330,8 @@ Std := [].{
 			Ok({})
 		} else {
 			message = "unknown ${kind}: ${requested}"
-			Err({ code: "unknown_name", message, hint: "", suggestions: [] })
+			suggestions = Plan.closest(requested, declared)
+			Err({ code: "unknown_name", message, hint: "", suggestions })
 		}
 	}
 
@@ -344,7 +345,8 @@ Std := [].{
 		} else {
 			message = "unknown input ${Str.join_with(unknown, ", ")}; "
 				.concat("the inputs are ${Str.join_with(declared, ", ")}")
-			Err({ code: "unknown_input", message, hint: "", suggestions: [] })
+			suggestions = unknown.join_map(|name| Plan.closest(name, declared))
+			Err({ code: "unknown_input", message, hint: "", suggestions })
 		}
 	}
 
