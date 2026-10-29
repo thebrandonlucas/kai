@@ -107,7 +107,8 @@ Config :: [].{
 	## it runs; their values never enter the Kaifile, plan or store.
 	## OptionalEnvironmentVariables names those it receives from kai's
 	## environment only when set there. Needs names builds kai builds first,
-	## for the task in `$KAI_ARTIFACTS/<name>`.
+	## for the task in `$KAI_ARTIFACTS/<name>`. Dir is the project-relative
+	## directory the task runs in, in place of the project root.
 	TaskSetting : [
 		Use(EnvName),
 		Run(List(Str)),
@@ -116,6 +117,7 @@ Config :: [].{
 		Needs(List(InputName)),
 		OptionalEnvironmentVariables(List(Str)),
 		Description(Str),
+		Dir(Str),
 	]
 
 	## Builds require Use, Run and one relative Output. Optional Inputs select

@@ -83,6 +83,7 @@ TestData :: [].{
 				optional_environment_variables: [],
 				needs: [],
 				description: "",
+				dir: "",
 			},
 		],
 		build_sources: [{ name: "assets", ref: "path:./assets" }],

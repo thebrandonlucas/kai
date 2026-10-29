@@ -97,6 +97,7 @@ ConfigToModel :: [].{
 				.concat(if (uses_rust_toolchain(acc)) ["rust-toolchain"] else [])
 				.concat(if (acc.follows.is_empty()) [] else ["follows"])
 				.concat(if (uses_package_env(acc)) ["package_env"] else [])
+				.concat(if (acc.tasks.all(|t| t.dir.is_empty())) [] else ["task_dir"])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -393,6 +394,7 @@ ConfigToModel :: [].{
 				optional_environment_variables: [],
 				needs: [],
 				descriptions: [],
+				dirs: [],
 			},
 			|acc, setting|
 				match setting {
@@ -410,6 +412,7 @@ ConfigToModel :: [].{
 						needs: acc.needs.append(needs.map(|need| need.to_str())),
 					}
 					Description(text) => { ..acc, descriptions: acc.descriptions.append(text) }
+					Dir(path) => { ..acc, dirs: acc.dirs.append(path) }
 				},
 		)
 		environment_name = match draft.environments {
@@ -444,6 +447,11 @@ ConfigToModel :: [].{
 			optional_environment_variables,
 			needs: draft.needs.first() ?? [],
 			description: single_description(draft.descriptions, "task ${name}")?,
+			dir: match draft.dirs {
+				[] => ""
+				[one] => one
+				_ => return Err("DuplicateDir: task ${name}")
+			},
 		})
 	}
 

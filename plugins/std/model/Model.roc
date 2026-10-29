@@ -61,6 +61,7 @@ Model := {
 			optional_environment_variables : List(Str),
 			needs : List(Str),
 			description : Str,
+			dir : Str,
 		},
 	),
 	build_sources : List({ name : Str, ref : Str }),
@@ -155,6 +156,7 @@ Model := {
 	## task receives, never values; it receives an optional one only when kai's
 	## environment sets it.
 	## Needs names the builds whose artifacts it reads in `$KAI_ARTIFACTS`.
+	## Dir is the project-relative directory it runs in, empty for the root.
 	Task : {
 		name : Str,
 		environment : Str,
@@ -164,6 +166,7 @@ Model := {
 		optional_environment_variables : List(Str),
 		needs : List(Str),
 		description : Str,
+		dir : Str,
 	}
 
 	## An environment variable. A task's or build's own override its

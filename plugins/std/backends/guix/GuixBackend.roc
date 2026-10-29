@@ -717,8 +717,6 @@ GuixBackend :: [].{
 	steps : Model, Request, Layout, List(Pin) -> Try(Steps, Str)
 	steps = |model, request, layout, locked| {
 		shell = GuixBackend.plan(model, request, layout.workspace)?
-		# --pure keeps only what --preserve names, so kai sets it on guix.
-		set_env = Project.env_command(shell.env)
 		description = match request {
 			Request.Shell(name, _) => "shell ${name}"
 			Request.Run(name, _) => "task ${name}"
@@ -728,20 +726,28 @@ GuixBackend :: [].{
 			secrets,
 			removed_environment_variables,
 			kept_environment_variables,
+			dir,
 		) = match request {
 			Request.Run(name, _) =>
 				match model.tasks.find_first(|t| t.name == name) {
 					Ok(task) => {
 						removed = Project.other_tasks_secrets(model, task)
-						(task.secrets, removed, task.optional_environment_variables)
+						(
+							task.secrets,
+							removed,
+							task.optional_environment_variables,
+							task.dir,
+						)
 					}
-					Err(_) => ([], [], [])
+					Err(_) => ([], [], [], "")
 				}
-			_ => ([], [], [])
+			_ => ([], [], [], "")
 		}
 		channels = "${layout.generated_root}/guix/channels.scm"
 		entries = locked.map(|p| { channel: p.channel, commit: Pinned(p.commit) })
-		argv = set_env
+		# --pure keeps only what --preserve names, so kai sets it on guix, which
+		# runs the task in its directory.
+		argv = Project.env_command(dir, shell.env)
 			.concat(["guix", "time-machine", "-C", channels, "--"])
 			.concat(shell.args)
 		Ok(

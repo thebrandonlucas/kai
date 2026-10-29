@@ -320,13 +320,16 @@ Project :: [].{
 		Ok({})
 	}
 
-	## The `env` argv prefix that sets `variables` for the command after it.
-	env_command : List(Model.Variable) -> List(Str)
-	env_command = |variables|
-		if variables.is_empty() {
+	## The `env` argv prefix that runs the command after it in the
+	## project-relative directory `dir`, unless it is empty, with `variables`
+	## set.
+	env_command : Str, List(Model.Variable) -> List(Str)
+	env_command = |dir, variables|
+		if dir.is_empty() and variables.is_empty() {
 			[]
 		} else {
-			["env"].concat(variables.map(|v| "${v.name}=${v.value}"))
+			chdir = if (dir.is_empty()) [] else ["--chdir=${dir}"]
+			["env"].concat(chdir).concat(variables.map(|v| "${v.name}=${v.value}"))
 		}
 
 	## The secrets other tasks declare, which a task's process never receives
@@ -587,6 +590,9 @@ Project :: [].{
 			}
 			check_argv(task.run, task.name)?
 			check_env(task.env, "task ${task.name}")?
+			if !task.dir.is_empty() and !valid_output(task.dir) {
+				return Err("invalid Dir in task ${task.name}: ${task.dir}")
+			}
 			for secret in task.secrets {
 				if !valid_variable_name(secret) {
 					return Err("invalid secret name in task ${task.name}")
@@ -1738,6 +1744,7 @@ workflow_features = |workflows, features| Model.{
 			optional_environment_variables: [],
 			needs: [],
 			description: "",
+			dir: "",
 		},
 	],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
@@ -2089,4 +2096,31 @@ expect {
 		and vendor("${source}\"")
 			== Err("CargoVendor crates: a git source names no commit")
 		and vendor("${source}#${commit.drop_suffix("e")}\"").is_err()
+}
+
+# A task with a Dir runs through env --chdir; Dir stays inside the project.
+expect {
+	variables = [{ name: "A", value: "1" }]
+	task = {
+		name: "test",
+		environment: "base",
+		run: ["true"],
+		env: [],
+		secrets: [],
+		optional_environment_variables: [],
+		needs: [],
+		description: "",
+		dir: "apps/web",
+	}
+	in_dir = |dir|
+		Project.validate({ ..fixture([base]), tasks: [{ ..task, dir }] })
+	Project.env_command("apps/web", variables)
+		== ["env", "--chdir=apps/web", "A=1"]
+		and Project.env_command("", variables) == ["env", "A=1"]
+		and Project.env_command("", []) == []
+		and in_dir("apps/web").is_ok()
+		and in_dir("").is_ok()
+		and ["../web", "/abs", "apps/../..", "."].all(
+			|dir| in_dir(dir) == Err("invalid Dir in task test: ${dir}"),
+		)
 }
