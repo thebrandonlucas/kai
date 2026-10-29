@@ -287,15 +287,55 @@ Project :: [].{
 		Ok({})
 	}
 
-	## The tools an environment's packages come from, its aliases' and
-	## PackageEnv's included.
+	## The tools an environment's packages come from, its aliases',
+	## PackageEnv's and those it adds on some systems included.
 	environment_tools : Model.Environment -> List(Model.Tool)
 	environment_tools = |environment|
 		unique(
 			environment.tools
 				.concat(environment.aliases.map(|alias| alias.tool))
-				.concat(environment.package_env.join_map(|v| package_tools_of(v.value))),
+				.concat(environment.package_env.join_map(|v| package_tools_of(v.value)))
+				.concat(environment.on_systems.join_map(|o| o.tools)),
 		)
+
+	## OnSystems names only declared systems, at least one, and sets variables
+	## as Env does.
+	check_on_systems : Model.Environment, List(Str) -> Try({}, Str)
+	check_on_systems = |environment, systems| {
+		declaration = "OnSystems in environment ${environment.name}"
+		for on in environment.on_systems {
+			if on.systems.is_empty() {
+				return Err("${declaration} names no system")
+			}
+			for system in on.systems {
+				if !systems.contains(system) {
+					return Err("${declaration} names undeclared system ${system}")
+				}
+			}
+			check_env(on.env, declaration)?
+		}
+		Ok({})
+	}
+
+	## An environment as it is on `system`: what its OnSystems add there, the
+	## tools after its own and the variables overriding its own, in order.
+	on_system : Model.Environment, Str -> Model.Environment
+	on_system = |environment, system| {
+		chosen = environment.on_systems.keep_if(|on| on.systems.contains(system))
+		{
+			..environment,
+			tools: unique(environment.tools.concat(chosen.join_map(|on| on.tools))),
+			env: chosen.fold(environment.env, |env, on| merge_env(env, on.env)),
+			on_systems: [],
+		}
+	}
+
+	## The model as it is on `system`, for a backend that plans for the host.
+	for_system : Model, Str -> Model
+	for_system = |model, system| {
+		..model,
+		environments: model.environments.map(|e| on_system(e, system)),
+	}
 
 	## The tools a PackageEnv value names.
 	package_tools_of : Model.PackageValue -> List(Model.Tool)
@@ -554,7 +594,15 @@ Project :: [].{
 					return Err("invalid RustToolchain in environment ${env.name}")
 				_ => {}
 			}
+			check_on_systems(env, model.systems)?
 			resolved = resolve(model.environments, env.name, [])?
+			for variable in resolved.on_systems.join_map(|o| o.env) {
+				if resolved.package_env.any(|v| v.name == variable.name) {
+					return Err(
+						"Env and PackageEnv both set ${variable.name} in environment ${env.name}",
+					)
+				}
+			}
 			check_aliases(resolved.aliases, env.name)?
 			for t in environment_tools(resolved) {
 				parsed = tool("${t.source}#${t.name}")?
@@ -1028,6 +1076,19 @@ Project :: [].{
 						None => base.rust_toolchain
 						own => own
 					},
+					# The child's own variables override the parent's on every
+					# system, as its OnSystems override them on theirs.
+					on_systems: base.on_systems
+						.map(
+							|on| {
+								..on,
+								env: on.env.keep_if(
+									|b| !env.env.any(|o| o.name == b.name)
+										and !env.package_env.any(|o| o.name == b.name),
+								),
+							},
+						)
+						.concat(env.on_systems),
 				})
 			}
 			_ => Err("environment ${name} has several parents")
@@ -1177,6 +1238,7 @@ base = {
 	aliases: [],
 	rust_toolchain: None,
 	package_env: [],
+	on_systems: [],
 }
 
 child : Model.Environment
@@ -1193,6 +1255,7 @@ child = {
 	aliases: [],
 	rust_toolchain: None,
 	package_env: [],
+	on_systems: [],
 }
 
 # Declaration order is irrelevant; inheritance order is not. First wins.
@@ -1211,6 +1274,7 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 			aliases: [],
 			rust_toolchain: None,
 			package_env: [],
+			on_systems: [],
 		},
 		base,
 	]),
@@ -1229,6 +1293,7 @@ expect match Project.validate(
 			aliases: [],
 			rust_toolchain: None,
 			package_env: [],
+			on_systems: [],
 		},
 		{
 			name: "empty",
@@ -1240,6 +1305,7 @@ expect match Project.validate(
 			aliases: [],
 			rust_toolchain: None,
 			package_env: [],
+			on_systems: [],
 		},
 	]),
 ) {
@@ -1256,6 +1322,7 @@ expect match Project.validate(
 			aliases: [],
 			rust_toolchain: None,
 			package_env: [],
+			on_systems: [],
 		},
 	]
 	Err(_) => False
@@ -1346,6 +1413,7 @@ expect {
 			aliases: [],
 			rust_toolchain: None,
 			package_env: [],
+			on_systems: [],
 			tools: [{ source: "guix", name: "git" }],
 		},
 	])
@@ -1408,6 +1476,7 @@ build_fixture = |builds| Model.{
 			aliases: [],
 			rust_toolchain: None,
 			package_env: [],
+			on_systems: [],
 		},
 	],
 	shells: [],
@@ -1762,6 +1831,7 @@ workflow_features = |workflows, features| Model.{
 			aliases: [],
 			rust_toolchain: None,
 			package_env: [],
+			on_systems: [],
 		},
 	],
 	shells: [],
@@ -2172,4 +2242,43 @@ expect {
 		and ["../web", "/abs", "apps/../..", "."].all(
 			|dir| in_dir(dir) == Err("invalid Dir in task test: ${dir}"),
 		)
+}
+
+# OnSystems adds tools and variables on its systems only, after and over the
+# environment's own; a child's own variables override its parent's on every
+# system. It names only declared systems.
+expect {
+	wayland = { source: "default", name: "wayland" }
+	on = |name, value| {
+		systems: ["x86_64-linux"],
+		tools: [wayland],
+		env: [{ name, value }],
+	}
+	parent = {
+		..base,
+		env: [{ name: "A", value: "base" }],
+		on_systems: [on("A", "linux")],
+	}
+	env_on = |dev, system|
+		match Project.validate(fixture([parent, dev])) {
+			Ok(model) =>
+				model.environments.keep_if(|e| e.name == "dev")
+					.map(|e| Project.on_system(e, system).env)
+			Err(_) => []
+		}
+	own = { ..child, env: [{ name: "B", value: "dev" }] }
+	overriding = { ..child, env: [{ name: "A", value: "dev" }] }
+	undeclared = {
+		..child,
+		on_systems: [{ ..on("B", "x"), systems: ["aarch64-darwin"] }],
+	}
+	Project.on_system(parent, "x86_64-linux").tools == base.tools.append(wayland)
+		and Project.on_system(parent, "aarch64-linux").tools == base.tools
+		and env_on(own, "x86_64-linux")
+			== [[{ name: "B", value: "dev" }, { name: "A", value: "linux" }]]
+		and env_on(own, "aarch64-linux")
+			== [[{ name: "A", value: "base" }, { name: "B", value: "dev" }]]
+		and env_on(overriding, "x86_64-linux") == [[{ name: "A", value: "dev" }]]
+		and Project.validate(fixture([parent, undeclared]))
+			== Err("OnSystems in environment dev names undeclared system aarch64-darwin")
 }

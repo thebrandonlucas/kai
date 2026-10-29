@@ -22,7 +22,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 |---|---|---|
 | [shell](shell) | An environment and a shell | `kai shell` |
 | [task](task) | Tasks, arguments after `--`, secrets, optional environment variables, descriptions and a working directory | `kai run moo` |
-| [environment](environment) | Reusable environments shared by shells and tasks | `kai shell pokemon` |
+| [environment](environment) | Reusable environments shared by shells and tasks, and tools and variables on some systems only | `kai shell pokemon` |
 | [extend](extend) | One environment building on another | `kai run wisdom` |
 | [env](env) | Environment variables, a task overriding its `Environment`'s, a pure environment and paths in packages | `kai run shout` |
 | [build](build) | A sandboxed build and its output, a default build, symbolic links in a build, and a build finding a library with pkg-config | `kai build wisecow` |

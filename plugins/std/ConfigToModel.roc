@@ -1,5 +1,6 @@
 # Authoring cardinality checks feed the shared whole-project validator.
 import Config
+import System
 import Val
 import model.Value
 import model.Model
@@ -101,6 +102,12 @@ ConfigToModel :: [].{
 				.concat(if (uses_package_env(acc)) ["package_env"] else [])
 				.concat(if (acc.tasks.all(|t| t.dir.is_empty())) [] else ["task_dir"])
 				.concat(if (acc.build_roots.is_empty()) [] else ["build_root"])
+				.concat(
+					if (acc.environments.all(|e| e.on_systems.is_empty()))
+						[]
+					else
+						["on_systems"],
+				)
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -304,6 +311,7 @@ ConfigToModel :: [].{
 				aliases: [],
 				toolchains: [],
 				package_envs: [],
+				on_systems: [],
 			},
 			|acc, setting|
 				match setting {
@@ -336,11 +344,18 @@ ConfigToModel :: [].{
 							),
 						),
 					}
+					OnSystems(systems, settings) => {
+						..acc,
+						on_systems: acc.on_systems.append((systems, settings)),
+					}
 				},
 		)
 		if draft.tools.len() > 1 {
 			return Err("DuplicateTools: environment ${name}")
 		}
+		on_systems = draft.on_systems.map_try(
+			|(systems, settings)| on_systems_setting(name, systems, settings),
+		)?
 		if draft.toolchains.len() > 1 {
 			return Err("DuplicateRustToolchain: environment ${name}")
 		}
@@ -367,6 +382,29 @@ ConfigToModel :: [].{
 				[one] => one
 				_ => return Err("DuplicatePackageEnv: environment ${name}")
 			},
+			on_systems,
+		})
+	}
+
+	## One OnSystems setting of environment `name`.
+	on_systems_setting :
+		Str, List(System), List(Config.SystemSetting) -> Try(Model.OnSystems, Str)
+	on_systems_setting = |name, systems, settings| {
+		(tools, envs) = settings.fold(
+			([], []),
+			|(tools_so_far, envs_so_far), setting|
+				match setting {
+					Tools(list) => (tools_so_far.append(list.map(|t| t.to_ir())), envs_so_far)
+					Env(pairs) => (tools_so_far, envs_so_far.append(variables(pairs)))
+				},
+		)
+		if tools.len() > 1 {
+			return Err("DuplicateTools: OnSystems in environment ${name}")
+		}
+		Ok({
+			systems: systems.map(|s| s.to_str()),
+			tools: tools.first() ?? [],
+			env: single_env(envs, "OnSystems in environment ${name}")?,
 		})
 	}
 

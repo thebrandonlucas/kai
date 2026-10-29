@@ -51,6 +51,13 @@ Model := {
 					],
 				},
 			),
+			on_systems : List(
+				{
+					systems : List(Str),
+					tools : List({ source : Str, name : Str }),
+					env : List({ name : Str, value : Str }),
+				},
+			),
 		},
 	),
 	shells : List({ name : Str, environment : Str, description : Str }),
@@ -134,7 +141,12 @@ Model := {
 		aliases : List(Alias),
 		rust_toolchain : RustToolchain,
 		package_env : List(PackageVariable),
+		on_systems : List(OnSystems),
 	}
+
+	## Tools and variables an environment adds on `systems` only: the tools
+	## after its own, the variables overriding its own.
+	OnSystems : { systems : List(Str), tools : List(Tool), env : List(Variable) }
 
 	## The text of a rust-toolchain.toml, whose [toolchain] table the backend
 	## reads.

@@ -265,7 +265,9 @@ Std := [].{
 						wanted = Std.request(command, ctx.args).map_err(Plan.fail)?
 						Std.known(model, wanted)?
 						locked = Std.guix_pins(model, ctx)?
-						revised = Std.revised(model, ctx)
+						# Guix plans for the host, so it takes the host's OnSystems.
+						host = Project.for_system(model, ctx.host.system)
+						revised = Std.revised(host, ctx)
 						GuixBackend.request_steps(revised, wanted, ctx.layout, locked)
 							.map_err(|why| Std.guix_failure(command, why))
 					},

@@ -39,6 +39,7 @@ NixBackend :: [].{
 		"package_env",
 		"task_dir",
 		"build_root",
+		"on_systems",
 	]
 
 	default_nixpkgs : Str
@@ -758,7 +759,7 @@ NixBackend :: [].{
 		for environment in environments {
 			$rendered = append_rendered(
 				$rendered,
-				render_environment_definition(environment, model.fetches),
+				render_environment_systems(environment, model.systems, model.fetches),
 			)?
 		}
 		$rendered = append_rendered(
@@ -811,7 +812,13 @@ NixBackend :: [].{
 						.map_err(|_| "unknown build environment")?
 					$rendered = append_rendered(
 						$rendered,
-						render_build(build, env, model, system, workspace),
+						render_build(
+							build,
+							Project.on_system(env, system),
+							model,
+							system,
+							workspace,
+						),
 					)?
 				}
 				$rendered = append_rendered(
@@ -898,6 +905,27 @@ NixBackend :: [].{
 			}
 		}
 	}
+
+	## An environment with OnSystems is defined for each system apart, under
+	## the system's name, and selected by `system`, so Nix evaluates only the
+	## host's tools.
+	render_environment_systems :
+		Model.Environment, List(Str), List(Model.Fetch) -> Str
+	render_environment_systems = |environment, systems, fetches|
+		if environment.on_systems.is_empty() {
+			render_environment_definition(environment, fetches)
+		} else {
+			definitions = systems.map(
+				|system|
+					render_environment_definition(
+						{ ..Project.on_system(environment, system), name: system },
+						fetches,
+					),
+			)
+			"        ${quote(environment.name)} = {\n"
+				.concat(Str.join_with(definitions, ""))
+				.concat("        }.\${system};\n")
+		}
 
 	render_environment_definition : Model.Environment, List(Model.Fetch) -> Str
 	render_environment_definition = |environment, fetches| {
@@ -1287,6 +1315,7 @@ sample_model = {
 			aliases: [],
 			rust_toolchain: None,
 			package_env: [],
+			on_systems: [],
 		},
 		{
 			name: "dev",
@@ -1298,6 +1327,7 @@ sample_model = {
 			aliases: [],
 			rust_toolchain: None,
 			package_env: [],
+			on_systems: [],
 		},
 	],
 	shells: [
@@ -1335,6 +1365,7 @@ full_model = {
 			aliases: [],
 			rust_toolchain: None,
 			package_env: [],
+			on_systems: [],
 		},
 		{
 			name: "empty",
@@ -1346,6 +1377,7 @@ full_model = {
 			aliases: [],
 			rust_toolchain: None,
 			package_env: [],
+			on_systems: [],
 		},
 		{
 			name: "headless",
@@ -1357,6 +1389,7 @@ full_model = {
 			aliases: [],
 			rust_toolchain: None,
 			package_env: [],
+			on_systems: [],
 		},
 	],
 	shells: [
@@ -1452,6 +1485,7 @@ base = {
 	aliases: [],
 	rust_toolchain: None,
 	package_env: [],
+	on_systems: [],
 }
 
 simple : TestIr
@@ -3242,6 +3276,37 @@ expect {
 					"\"BROWSERS\" = \"\${(sets.\"default\""
 						.concat(".\"playwright-driver\".\"browsers\" or "),
 				)
+		Err(_) => Bool.False
+	}
+}
+
+# OnSystems defines the environment for each system apart, selected by the
+# system, each with only its own tools and variables.
+expect {
+	cowsay = { source: "default", name: "cowsay" }
+	wayland = { source: "default", name: "wayland" }
+	environment = {
+		..base,
+		tools: [cowsay],
+		on_systems: [
+			{
+				systems: ["x86_64-linux"],
+				tools: [wayland],
+				env: [{ name: "GPU", value: "on" }],
+			},
+		],
+	}
+	systems = ["x86_64-linux", "aarch64-darwin"]
+	count = |text, part| text.split_on(part).len() - 1
+	model = mk({ ..simple, systems, environments: [environment] })
+	match NixBackend.render(model) {
+		Ok(text) =>
+			text.contains("        \"dev\" = {\n        \"x86_64-linux\" = let")
+				and text.contains("        \"aarch64-darwin\" = let")
+				and text.contains("        }.\${system};\n")
+				and count(text, "\"cowsay\" or") == 2
+				and count(text, "\"wayland\" or") == 1
+				and count(text, "env = { \"GPU\" = \"on\"; };") == 1
 		Err(_) => Bool.False
 	}
 }
