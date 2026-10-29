@@ -21,9 +21,13 @@ Config :: [].{
 	## GuixChannel adds a channel beside Guix's own: its name, git URL, branch
 	## and introduction (first signed commit, signer's OpenPGP fingerprint).
 	## `Custom` and `Raw` retain consumer-specific extension data.
+	## BuildRoot names, as `..` segments such as "../..", the directory above
+	## the project that builds copy instead of the project's own; their Files,
+	## Output and working directory are then relative to it.
 	Setting : [
 		Name(Str),
 		Systems(List(System)),
+		BuildRoot(Str),
 		Packages(InputName, PackageSource),
 		Input(InputName, FlakeRef),
 		Overlay(InputName, FlakeRef),

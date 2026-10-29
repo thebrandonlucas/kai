@@ -908,6 +908,23 @@ ConfigFixtures := [].{
 				\\ Build("app", [Use("dev"), Default, Run(["true"]), Output("out")]),
 				\\ Build("docs", [Use("dev"), Default, Run(["true"]), Output("out")])]
 		},
+		{
+			name: "BuildRoot",
+			expected: Valid,
+			body: \\config = [Name("build-root"), BuildRoot("../.."),
+				\\ Environment("dev", []),
+				\\ Build("app", [Use("dev"), Run(["true"]), Output("apps/app/out")])]
+		},
+		{
+			name: "BuildRootNotAncestor",
+			expected: Rejected("invalid BuildRoot: ../lib: use only .. segments"),
+			body: \\config = [Name("bad"), BuildRoot("../lib")]
+		},
+		{
+			name: "DuplicateBuildRoot",
+			expected: Rejected("DuplicateBuildRoot: declare BuildRoot at most once"),
+			body: \\config = [Name("bad"), BuildRoot(".."), BuildRoot("../..")]
+		},
 	].concat(ConfigFixtures.bad_outputs).concat(ConfigFixtures.bad_sources)
 
 	bad_outputs : List(Fixture)

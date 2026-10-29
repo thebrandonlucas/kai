@@ -397,6 +397,10 @@ Project :: [].{
 		) > 8192 {
 			return Err("build graph exceeds 8192 references")
 		}
+		if !model.build_root.is_empty()
+			and !model.build_root.split_on("/").all(|part| part == "..") {
+			return Err("invalid BuildRoot: ${model.build_root}: use only .. segments")
+		}
 		if model.workflows.len() > 1024 {
 			return Err("workflows exceed 1024 declarations")
 		}
@@ -687,6 +691,7 @@ Project :: [].{
 				build_sources: model.build_sources,
 				fetches: model.fetches,
 				cargo_vendors: model.cargo_vendors,
+				build_root: model.build_root,
 				builds: model.builds,
 				workflows: model.workflows,
 				extensions: model.extensions,
@@ -896,6 +901,24 @@ Project :: [].{
 			$done = visit_build(project.builds, name, [], $done)?
 		}
 		Ok($done.map(|entry| entry.build))
+	}
+
+	## The directory builds copy: the project root, or its ancestor the
+	## model's BuildRoot names, which must lie below the filesystem root.
+	snapshot_root : Model, Str -> Try(Str, Str)
+	snapshot_root = |model, project_root| {
+		if model.build_root.is_empty() {
+			return Ok(project_root)
+		}
+		parts = project_root.split_on("/").drop_first(1)
+		up = model.build_root.split_on("/").len()
+		if up >= parts.len() {
+			return Err(
+				"BuildRoot ${model.build_root} reaches the filesystem root "
+					.concat("from ${project_root}"),
+			)
+		}
+		Ok("/".concat(Str.join_with(parts.drop_last(up), "/")))
 	}
 
 	## What a closure's shared snapshot holds: the files each build selects.
@@ -1136,6 +1159,7 @@ fixture = |environments| Model.{
 	build_sources: [],
 	fetches: [],
 	cargo_vendors: [],
+	build_root: "",
 	builds: [],
 	workflows: [],
 	extensions: [],
@@ -1391,6 +1415,7 @@ build_fixture = |builds| Model.{
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
 	fetches: [],
 	cargo_vendors: [],
+	build_root: "",
 	builds,
 	workflows: [],
 	extensions: [],
@@ -1587,6 +1612,7 @@ build_source_fixture = |build_sources, requires_| {
 		build_sources,
 		fetches: [],
 		cargo_vendors: [],
+		build_root: model.build_root,
 		builds: model.builds,
 		workflows: model.workflows,
 		extensions: model.extensions,
@@ -1755,6 +1781,7 @@ workflow_features = |workflows, features| Model.{
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
 	fetches: [],
 	cargo_vendors: [],
+	build_root: "",
 	builds: [library],
 	workflows,
 	extensions: [],
@@ -2101,6 +2128,23 @@ expect {
 		and vendor("${source}\"")
 			== Err("CargoVendor crates: a git source names no commit")
 		and vendor("${source}#${commit.drop_suffix("e")}\"").is_err()
+}
+
+# A BuildRoot names an ancestor with .. segments only, below the filesystem
+# root.
+expect {
+	model = |build_root| { ..fixture([base]), build_root }
+	root = |build_root| Project.snapshot_root(model(build_root), "/repo/apps/web")
+	root("") == Ok("/repo/apps/web")
+		and root("..") == Ok("/repo/apps")
+		and root("../..") == Ok("/repo")
+		and root("../../..").is_err()
+		and Project.validate(model("../..")).is_ok()
+		and ["../apps", "/repo", ".", "../", "..//.."].all(
+			|bad|
+				Project.validate(model(bad))
+					== Err("invalid BuildRoot: ${bad}: use only .. segments"),
+		)
 }
 
 # A task with a Dir runs through env --chdir; Dir stays inside the project.

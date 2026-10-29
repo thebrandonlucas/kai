@@ -38,6 +38,7 @@ NixBackend :: [].{
 		"follows",
 		"package_env",
 		"task_dir",
+		"build_root",
 	]
 
 	default_nixpkgs : Str
@@ -66,8 +67,8 @@ NixBackend :: [].{
 
 	## One atomic request: its rendered flake, the argv that runs it, how the
 	## run reports (a build's artifact), its workflow stage and the variables
-	## its process receives, is denied and keeps, and the files its
-	## snapshot copies. `reads` names the inputs it reads. `needs_build`
+	## its process receives, is denied and keeps, and the directory and files
+	## its snapshot copies. `reads` names the inputs it reads. `needs_build`
 	## builds a task's Needs before it runs. `evaluate` evaluates a shell's or
 	## task's environment first, so a failure to evaluate it is not reported
 	## as the command's.
@@ -85,6 +86,7 @@ NixBackend :: [].{
 		stage : Str,
 		output : Plan.Output,
 		snapshot_files : [All, Only(List(Str))],
+		snapshot_root : Str,
 		may_fail : List(U64),
 	}
 
@@ -341,6 +343,7 @@ NixBackend :: [].{
 			stage: selected.stage,
 			output: selected.output,
 			snapshot_files: Project.snapshot_files(selected.builds),
+			snapshot_root: Project.snapshot_root(project, layout.project_root)?,
 			may_fail: [],
 		})
 	}
@@ -411,7 +414,7 @@ NixBackend :: [].{
 				.concat(local)
 			[
 				Snapshot({
-					root: layout.project_root,
+					root: selected.snapshot_root,
 					destination: "${layout.workspace}/snapshot",
 					exclude,
 					files: selected.snapshot_files,
@@ -1475,6 +1478,7 @@ mk = |t| Model.{
 	build_sources: [],
 	fetches: [],
 	cargo_vendors: [],
+	build_root: "",
 	builds: [],
 	workflows: [],
 	requires_: t.requires_,
@@ -1937,6 +1941,34 @@ expect match single(Request.build("app")) {
 		"/generated/flake.lock",
 	]
 	_ => False
+}
+
+# A BuildRoot snapshots the project's ancestor; one reaching / is refused.
+expect {
+	snapshot_root = |build_root, project_root| {
+		layout = Layout.{
+			project_root,
+			workspace: "/work",
+			generated_root: "/generated",
+			lock_path: "/authority/inputs.lock",
+		}
+		project = TestData.project(TestData.data)
+		requires_ = project.requires_.append("build_root")
+		model = { ..project, build_root, requires_ }
+		# The fixture's lock records its local source under /project.
+		lock = native_lock.replace_each("\"/project/", "\"${project_root}/")
+		locks = Locks.from_nix(model, layout, lock)?
+		request = Request.build("app")
+		planned = NixBackend.plan(model, request, "x86_64-linux", layout, locks)?
+		match planned.steps.find_first(is_snapshot) {
+			Ok(Snapshot({ root, .. })) => Ok(root)
+			_ => Err("no snapshot")
+		}
+	}
+	snapshot_root("..", "/repo/app") == Ok("/repo")
+		and snapshot_root("", "/repo/app") == Ok("/repo/app")
+		and snapshot_root("../..", "/repo/app")
+			== Err("BuildRoot ../.. reaches the filesystem root from /repo/app")
 }
 
 # User argv is data; source/dependency views are immutable store farms.
