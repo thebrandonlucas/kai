@@ -42,4 +42,13 @@ kaifile = Std.kaifile([
 			Run(["sh", "-c", "cowsay \"hello $COW_NAME\""]),
 		],
 	),
+	# `kai run graze` runs in the pasture directory, not the project root.
+	Task(
+		"graze",
+		[
+			Use("cow"),
+			Dir("pasture"),
+			Run(["sh", "-c", "cowsay \"grazing on $(cat grass)\""]),
+		],
+	),
 ])
