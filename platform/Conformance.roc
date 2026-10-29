@@ -1,6 +1,7 @@
 # Helps a plugin show that every implementation has planning tests: list
 # its implementations and the cases the plugin's tests run, and `missing`
 # names the uncovered ones.
+import Plan
 import Plugin
 
 Conformance := [].{
@@ -26,6 +27,8 @@ Conformance := [].{
 			)
 }
 
+failed = Err(Plan.fail(""))
+
 covered : Plugin
 covered = Plugin.new({
 	name: "p",
@@ -34,8 +37,8 @@ covered = Plugin.new({
 	commands: [],
 	backends: [],
 	implementations: [
-		{ command: "a", backend: On("nix"), fit: |_| Ok({}), plan: |_| Err("") },
-		{ command: "b", backend: Independent, fit: |_| Ok({}), plan: |_| Err("") },
+		{ command: "a", backend: On("nix"), fit: |_| Ok({}), plan: |_| failed },
+		{ command: "b", backend: Independent, fit: |_| Ok({}), plan: |_| failed },
 	],
 })
 

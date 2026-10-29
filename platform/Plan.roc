@@ -86,6 +86,15 @@ Plan := { steps : List(Step), next : Next }.{
 	## `output` is the declared output name; the store path is the child's
 	## last stdout line (`nix build --print-out-paths`, `guix build`).
 	Artifact : { name : Str, label : Str, output : Str }
+
+	## Why there is no plan: a stable `code` scripts can match, as
+	## docs/plugin.md lists them, what went wrong, the command that fixes it
+	## ("" when none) and the names the request may have meant.
+	Failure : { code : Str, message : Str, hint : Str, suggestions : List(Str) }
+
+	## A failure with no code of its own: `plan_failed`.
+	fail : Str -> Failure
+	fail = |message| { code: "plan_failed", message, hint: "", suggestions: [] }
 }
 
 # Every step kind survives an S-expression round trip.

@@ -104,6 +104,7 @@ ConfigFixtures := [].{
 			body: \\import pf.Command
 				\\import pf.Implementation
 				\\import pf.Kaifile
+				\\import pf.Plan
 				\\import pf.Plugin
 				\\import std.Config
 				\\import std.Std
@@ -111,7 +112,7 @@ ConfigFixtures := [].{
 				\\page = { description: "", examples: [], config: [] }
 				\\cmd = |id, lock|
 				\\	Command.{ name: id, summary: "", help: page, args: [], lock }
-				\\unused = |_| Err("unused")
+				\\unused = |_| Err(Plan.fail("unused"))
 				\\free = |id|
 				\\	Implementation.{
 				\\		command: id,

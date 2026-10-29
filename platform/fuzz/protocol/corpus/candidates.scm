@@ -49,6 +49,14 @@
 			(backend "")
 			(outcome (Failed "no"))
 			(plugin "x")
+			(probes ())) (
+			(backend "nix")
+			(outcome (Failure (
+				(code "missing_lock")
+				(hint "kai update")
+				(message "no lock file at /p/.kai/lock.json")
+				(suggestions ()))))
+			(plugin "std")
 			(probes ()))))
 		(plugin "std"))))
 	(platform "0.0.8")

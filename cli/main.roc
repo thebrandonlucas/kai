@@ -11,6 +11,7 @@ import pf.Stderr
 import pf.Stdout
 import api.Layout
 import api.LockJson
+import api.Plan
 import api.Protocol
 
 import BuildRunner
@@ -55,9 +56,14 @@ main! = |args| {
 		}
 		Err(err) => {
 			code = exit_status(err)
+			message = describe(err)
+			json = match err {
+				PlanFailed(failure) => Output.failure(failure, message, code)
+				_ => Output.error(Str.inspect(err), message, code)
+			}
 			_ = match mode {
-				Human => Stderr.line!("kai: ${describe(err)}")
-				Json => Stdout.line!(Output.error(Str.inspect(err), describe(err), code))
+				Human => Stderr.line!("kai: ${message}")
+				Json => Stdout.line!(json)
 			}
 			Err(Exit(code))
 		}
@@ -420,11 +426,21 @@ describe = |err|
 		RequiredBackendUnavailable(backend, probe) =>
 			"this request needs ${backend}, which "
 				.concat(Selection.probe_text(probe))
-		PlanFailed(message) => message
+		PlanFailed(failure) => explained(failure)
 		NoImplementation("") => "no plugin implements this command"
 		NoImplementation(backend) => "no plugin implements this command on ${backend}"
 		other => Str.inspect(other)
 	}
+
+# A plan's failure as kai says it: the plugin's message, then the command
+# that fixes it and the names the request may have meant.
+explained : Plan.Failure -> Str
+explained = |{ message, hint, suggestions, .. }| {
+	fix = if (hint.is_empty()) "" else "; run `${hint}`"
+	quoted = Str.join_with(suggestions.map(|name| "`${name}`"), " or ")
+	close = if (quoted.is_empty()) "" else "; did you mean ${quoted}?"
+	"${message}${fix}${close}"
+}
 
 # What to do about bundles from releases other than this kai's.
 mixed : List(Str) -> Str
@@ -496,7 +512,21 @@ expect [
 # every other failure is 1.
 expect exit_status(ChildExited("task fail", 7)) == 7
 	and exit_status(Refused("--backend must be one of nix, guix")) == 2
-	and exit_status(PlanFailed("no lock file")) == 1
+	and exit_status(PlanFailed(Plan.fail("no lock file"))) == 1
+
+# A plan's failure names its fix and the names it suggests after its message.
+expect {
+	lock = {
+		code: "missing_lock",
+		message: "no lock file",
+		hint: "kai update",
+		suggestions: [],
+	}
+	explained(lock) == "no lock file; run `kai update`"
+		and explained({ ..lock, hint: "", suggestions: ["a", "b"] })
+			== "no lock file; did you mean `a` or `b`?"
+		and explained(Plan.fail("no plan")) == "no plan"
+}
 
 # A missing linker input hints at building a checkout's platform host.
 expect unbuilt("── ✗ missing target file ──\n").contains("zig build --release")
