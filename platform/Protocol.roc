@@ -76,14 +76,15 @@ Protocol := [].{
 		parser_for : _
 	}
 
-	## `backend` is "" for an implementation that needs none.
+	## `backend` is "" for an implementation that needs none. A protocol 1.1
+	## platform answers a failed plan with `Failed`, which has no code.
 	Candidate : {
 		backend : Str,
 		plugin : Str,
 		probes : List(
 			{ program : Str, flag : [DoubleDashVersion, DashV, VersionWord] },
 		),
-		outcome : [Unfit(Str), Planned(Plan), Failed(Str)],
+		outcome : [Unfit(Str), Planned(Plan), Failed(Str), Failure(Plan.Failure)],
 	}
 
 	## Placeholder until the Kaifile's validated description is designed.
@@ -181,6 +182,17 @@ candidates = Candidates({
 		{ backend: "guix", plugin: "std", probes: [], outcome: Unfit("overlays") },
 		planned,
 		{ backend: "", plugin: "x", probes: [], outcome: Failed("no") },
+		{
+			backend: "nix",
+			plugin: "std",
+			probes: [],
+			outcome: Failure({
+				code: "missing_lock",
+				message: "no lock file",
+				hint: "kai update",
+				suggestions: ["a", "b"],
+			}),
+		},
 	],
 })
 

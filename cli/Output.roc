@@ -9,6 +9,7 @@ import pf.Stderr
 import pf.Stdout
 
 import api.LockJson
+import api.Plan
 
 Output := [].{
 	Mode : [Human, Json]
@@ -84,6 +85,20 @@ Output := [].{
 			],
 		)
 
+	# A plan's failure, with the plugin's code instead of kai's, its fix and
+	# the names it suggests when it has them.
+	failure : Plan.Failure, Str, I32 -> Str
+	failure = |{ code, hint, suggestions, .. }, message, exit_code| {
+		close = LockJson.Array(suggestions.map(Output.text))
+		Output.event(
+			"error",
+			message,
+			[("error", Output.text(code)), ("exit_code", Output.number(exit_code))]
+				.concat(if (hint.is_empty()) [] else [("hint", Output.text(hint))])
+				.concat(if (suggestions.is_empty()) [] else [("suggestions", close)]),
+		)
+	}
+
 	# One workflow step, numbered from 1. Its label is what it runs: a verb,
 	# then the name it acts on ("build app").
 	step : Str, U64, U64, Str -> { human : Str, started : Str, finished : Str }
@@ -137,6 +152,24 @@ expect {
 		== "{\"type\":\"error\",\"message\":\"task t exited\",".concat(
 			"\"error\":\"child_exited\",\"exit_code\":7}",
 		)
+}
+
+# A plan's failure carries its own code, and its fix and suggestions when it
+# has them.
+expect {
+	lock = {
+		code: "missing_lock",
+		message: "",
+		hint: "kai update",
+		suggestions: [],
+	}
+	Output.failure(lock, "no lock", 1)
+		== "{\"type\":\"error\",\"message\":\"no lock\",".concat(
+			"\"error\":\"missing_lock\",\"exit_code\":1,\"hint\":\"kai update\"}",
+		)
+		and Output.failure(Plan.fail("x"), "x", 1).ends_with("\"exit_code\":1}")
+		and Output.failure({ ..lock, suggestions: ["a"] }, "x", 1)
+			.ends_with(",\"suggestions\":[\"a\"]}")
 }
 
 # Error kinds are snake case, including acronyms and payload-free tags.

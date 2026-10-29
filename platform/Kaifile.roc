@@ -61,7 +61,7 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 				Ok({}) =>
 					match (implementation.plan)(ctx) {
 						Ok(plan) => Planned(plan)
-						Err(message) => Failed(message)
+						Err(failure) => Failure(failure)
 					}
 			}
 			{ backend, plugin, probes, outcome }
@@ -272,7 +272,7 @@ toy = {
 			implementations: [
 				on("shell", "nix", Ok({}), planned("nix shell")),
 				on("shell", "guix", Err("uses overlays"), planned("unused")),
-				on("build", "nix", Ok({}), Err("no lock")),
+				on("build", "nix", Ok({}), Err(Plan.fail("no lock"))),
 				Implementation.{
 					command: "ir",
 					backend: Independent,
@@ -319,7 +319,7 @@ expect {
 		and outcomes("shell", Only("apt"))
 			== Err("--backend must be one of nix, guix")
 		and outcomes("ir", Only("guix")) == Ok([("", note("ir"))])
-		and outcomes("build", Auto) == Ok([("nix", Failed("no lock"))])
+		and outcomes("build", Auto) == Ok([("nix", Failure(Plan.fail("no lock")))])
 }
 
 command = |name, lock|
@@ -336,7 +336,7 @@ implementing = |name, backend|
 		command: name,
 		backend,
 		fit: |_| Ok({}),
-		plan: |_| Err("unused"),
+		plan: |_| Err(Plan.fail("unused")),
 	}
 
 plugin = |name, commands, backends, implementations|

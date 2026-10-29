@@ -62,7 +62,7 @@ Deploy := [].{
 					backend: On("nix"),
 					fit: |args| Deploy.find(known, Command.name(args, "host")).map_ok(|_| {}),
 					plan: |ctx| {
-						h = Deploy.find(known, Command.name(ctx.args, "host"))?
+						h = Deploy.find(known, Command.name(ctx.args, "host")).map_err(Plan.fail)?
 						run = Std.run_in(
 							project,
 							ctx,
@@ -176,11 +176,11 @@ context = {
 }
 
 # The plan `plugin`'s Nix implementation of `command` makes for the context.
-planned : Plugin, Str, Implementation.Context -> Try(Plan, Str)
+planned : Plugin, Str, Implementation.Context -> Try(Plan, Plan.Failure)
 planned = |plugin, command, ctx| {
 	found = plugin.implementations
 		.find_first(|i| i.command == command and i.backend == On("nix"))
-		.map_err(|_| "no ${command} on nix")?
+		.map_err(|_| Plan.fail("no ${command} on nix"))?
 	(found.plan)(ctx)
 }
 
@@ -212,7 +212,8 @@ expect {
 			prompt == "Deploy .#web to root@203.0.113.7 and switch it now?"
 				and description == "deploy web"
 				and argv.ends_with(rebuild)
-				and planned(plugin, "deploy", deploy("db")) == Err("unknown host: db")
+				and planned(plugin, "deploy", deploy("db"))
+					== Err(Plan.fail("unknown host: db"))
 		_ => Bool.False
 	}
 }
