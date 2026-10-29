@@ -288,10 +288,12 @@ replace direnv's shell hook with
 
 - `-f`, `--file PATH`: use another configuration file. Its directory is the
   project root.
-- `--json`: print Kai's own messages as JSON Lines on stdout. Each has `type`
-  and `message`, plus fields for its type (e.g. `backend`, `step_started`,
-  `artifact`, or `error` with `error` and `exit_code`). Output from shells and
-  tasks passes through unchanged.
+- `--json`: print Kai's own messages as JSON Lines on stderr, one object per
+  line. Each has `type` and `message`, plus fields for its type (e.g.
+  `backend`, `step_started`, `artifact`, or `error` with `error` and
+  `exit_code`). Output from shells, tasks and builds passes through unchanged,
+  so stdout is only theirs, and their stderr shares Kai's: Kai's events are
+  the lines that start with `{`.
 - `--no-color`, or a non-empty `NO_COLOR`: plain text.
 - `--backend nix|guix`: see [Backends](#backends).
 - `ROC`: the Roc compiler that evaluates `Kaifile.roc` (default: `roc`). It

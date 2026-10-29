@@ -1,10 +1,11 @@
 # Where kai's own messages go. For people, results go to stdout and progress
 # and diagnostics to stderr. With --json, each one is instead a JSON object on
-# its own stdout line, with its type and a readable message first. Children
-# (tasks, shells and their commands) keep inheriting stdout and stderr in both
-# modes: their bytes are the user's program output, which kai must neither
-# rewrite, buffer nor detach from a terminal. Kai writes an event only
-# between children, so its events stay whole lines.
+# its own stderr line, with its type and a readable message first, so stdout
+# is only the children's. Children (tasks, shells and their commands) keep
+# inheriting stdout and stderr in both modes: their bytes are the user's
+# program output, which kai must neither rewrite, buffer nor detach from a
+# terminal. Kai writes an event only between children, so its events stay
+# whole lines.
 import pf.Stderr
 import pf.Stdout
 
@@ -32,20 +33,20 @@ Output := [].{
 	number : I32 -> LockJson
 	number = |value| LockJson.Number(value.to_str())
 
-	# A command's result: stdout either way.
+	# A command's result: stdout for people, an event on stderr for machines.
 	result! : Output.Mode, Str, Str => Try({}, _)
 	result! = |mode, human, machine|
 		match mode {
 			Human => Stdout.line!(human)
-			Json => Stdout.line!(machine)
+			Json => Stderr.line!(machine)
 		}
 
-	# Progress or a note: stderr for people, an event on stdout for machines.
+	# Progress or a note: stderr, as text for people or an event for machines.
 	note! : Output.Mode, Str, Str => Try({}, _)
 	note! = |mode, human, machine|
 		match mode {
 			Human => Stderr.line!(human)
-			Json => Stdout.line!(machine)
+			Json => Stderr.line!(machine)
 		}
 
 	# An event only machines need.
@@ -53,7 +54,7 @@ Output := [].{
 	json! = |mode, machine|
 		match mode {
 			Human => Ok({})
-			Json => Stdout.line!(machine)
+			Json => Stderr.line!(machine)
 		}
 
 	# A tag's name in snake case, from how Str.inspect shows the value.

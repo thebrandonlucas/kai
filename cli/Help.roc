@@ -144,7 +144,7 @@ Help := [].{
 		\\Options:
 		\\  -f STR, --file STR  Read configuration from PATH (default: Kaifile.roc).
 		\\  --no-color          Print plain text without colors.
-		\\  --json              Print kai's own output as JSON Lines.
+		\\  --json              Print kai's own output as JSON Lines on stderr.
 		\\  --backend STR       Use this backend instead of choosing automatically.
 		\\  --yes               Answer yes to every confirmation.
 		\\  --dry-run           Print the plan instead of running it.
