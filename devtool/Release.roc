@@ -275,28 +275,34 @@ Release := [].{
 	# The file recording the released std bundle's URL.
 	std_file = "plugins/std-release"
 
+	# A copy of the release's SHA256SUMS, from which flake.nix packages the
+	# release archives.
+	checksums_file = "RELEASE_SHA256SUMS"
+
 	release_files = [
 		"build.zig.zon",
 		Release.platform_file,
 		Release.std_file,
+		Release.checksums_file,
 		"RELEASE_NAME",
 		"VERSION",
 	]
 
 	# A new version changes VERSION and its build.zig.zon mirror together; a
 	# release of the committed, never released version changes only its name.
-	# Either way the bundle URLs change.
+	# Either way the bundle URLs, and so the checksums, change.
 	are_allowed_release_files : List(Str) -> Bool
 	are_allowed_release_files = |files| {
 		bumped = files.contains("VERSION") and files.contains("build.zig.zon")
 		kept = !files.contains("VERSION") and !files.contains("build.zig.zon")
 		renamed = files.contains("RELEASE_NAME")
-		expected_length = 2 + (if (bumped) 2 else 0) + (if (renamed) 1 else 0)
+		expected_length = 3 + (if (bumped) 2 else 0) + (if (renamed) 1 else 0)
 		(bumped or (kept and renamed)) and
 			files.contains(Release.platform_file) and
 				files.contains(Release.std_file) and
-					files.len() == expected_length and
-						List.all(files, |file| Release.release_files.contains(file))
+					files.contains(Release.checksums_file) and
+						files.len() == expected_length and
+							List.all(files, |file| Release.release_files.contains(file))
 	}
 
 	manifest_version :
@@ -467,7 +473,7 @@ invalid_versions = [
 # A release changes the bundle URLs and either bumps the version or, for the
 # committed, never released version, only renames it.
 expect {
-	urls = [Release.platform_file, Release.std_file]
+	urls = [Release.platform_file, Release.std_file, Release.checksums_file]
 	bump = ["VERSION", "build.zig.zon"]
 	allowed = |files| Release.are_allowed_release_files(urls.concat(files))
 	allowed(bump)
@@ -476,4 +482,7 @@ expect {
 		and !allowed([])
 		and !allowed(["VERSION", "RELEASE_NAME"])
 		and !allowed(["RELEASE_NAME", "README.md"])
+		and !Release.are_allowed_release_files(
+			[Release.platform_file, Release.std_file].concat(bump),
+		)
 }

@@ -12,6 +12,7 @@ Kai releases use a protected release branch. Release preparation pushes only tha
 - `build.zig.zon` contains Zig's required literal version mirror. Release automation updates it and validates exact agreement with `VERSION`.
 - `RELEASE_SYSTEMS` lists, one per line, the systems (`x86_64-linux`, `aarch64-linux`) a release publishes a CLI archive for; see [aarch64-linux archives](#aarch64-linux-archives).
 - `platform-release` records the URL this release publishes the Kai platform bundle at, `https://github.com/OWNER/REPOSITORY/releases/download/vX.Y.Z/<hash>.tar.zst`, where `<hash>` is Roc's content hash of the bundle. `kai` embeds it and prints it in `kai --help` as the header a `Kaifile.roc` starts with.
+- `RELEASE_SHA256SUMS` is a copy of the release's `SHA256SUMS`. The root `flake.nix` reads it with `VERSION` to package the release archives, for `nix run github:OWNER/REPOSITORY` and `nix profile install`. Release preparation writes it from the artifacts it builds, and `publish-release` refuses to publish unless the artifacts it rebuilds match it, so the flake names exactly the published archives once the release is published.
 - The release branch, annotated tag, and GitHub release derive their version and name from this committed metadata. Do not edit them independently.
 
 ## Build artifacts without releasing
@@ -59,7 +60,7 @@ zig build release -- "Kai X.Y.Z" X.Y.Z
 The command:
 
 1. creates `release/vX.Y.Z` from `origin/master` without moving local `master`;
-2. updates only `VERSION`, `RELEASE_NAME`, `build.zig.zon`, and `platform-release` (from the platform bundle it builds);
+2. updates only `VERSION`, `RELEASE_NAME`, `build.zig.zon`, `platform-release` and `plugins/std-release` (from the bundles it builds), and `RELEASE_SHA256SUMS` (from the artifacts it builds);
 3. runs the complete release artifact build;
 4. commits `Release <name>` and pushes only the release branch;
 5. restores the clean local `master`; and

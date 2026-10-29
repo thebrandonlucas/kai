@@ -83,3 +83,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KAI_AARCH64_VERIFIED_COMMIT: ${{ needs.aarch64.outputs.verified-commit }}
         run: kai shell default -- zig build publish-release
+
+      - name: Check that the flake installs the published release
+        run: nix build --no-link .#default

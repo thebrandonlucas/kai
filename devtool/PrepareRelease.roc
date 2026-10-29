@@ -167,6 +167,7 @@ PrepareRelease := [].{
 				"build.zig.zon",
 				Release.platform_file,
 				Release.std_file,
+				Release.checksums_file,
 				"RELEASE_NAME",
 				"VERSION",
 			])?
@@ -203,6 +204,10 @@ PrepareRelease := [].{
 		PrepareRelease.write_release_metadata!(name, version, repository)?
 		Stdout.line!("Building and checking ${name} (${version})...")?
 		Exec.cmd!(Exec.cmd("zig").args(Exec.strs(["build", "build-release"])))?
+		# The artifacts build reproducibly, so flake.nix can name the archives
+		# publish-release will upload; it checks that they match.
+		checksums = Path.read_utf8!(Path.utf8("dist/SHA256SUMS"))?
+		Path.write_utf8!(Path.utf8(Release.checksums_file), checksums)?
 		PrepareRelease.verify_release_changes!()?
 		PrepareRelease.git!(["commit", "--no-gpg-sign", "-m", "Release ${name}"])?
 		committed = PrepareRelease.git_lines!([
