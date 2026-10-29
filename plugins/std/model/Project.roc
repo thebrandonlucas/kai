@@ -287,10 +287,38 @@ Project :: [].{
 		Ok({})
 	}
 
-	## The tools an environment's packages come from, its aliases' included.
+	## The tools an environment's packages come from, its aliases' and
+	## PackageEnv's included.
 	environment_tools : Model.Environment -> List(Model.Tool)
 	environment_tools = |environment|
-		unique(environment.tools.concat(environment.aliases.map(|alias| alias.tool)))
+		unique(
+			environment.tools
+				.concat(environment.aliases.map(|alias| alias.tool))
+				.concat(environment.package_env.join_map(|v| package_tools_of(v.value))),
+		)
+
+	## The tools a PackageEnv value names.
+	package_tools_of : Model.PackageValue -> List(Model.Tool)
+	package_tools_of = |value|
+		match value {
+			LibraryPath(tools) | BinPath(tools) => tools
+			PackagePath(one) => [one]
+		}
+
+	## The variables an environment's PackageEnv sets, checked like Env's, and
+	## never one its Env sets too.
+	check_package_env : Model.Environment -> Try({}, Str)
+	check_package_env = |environment| {
+		declaration = "environment ${environment.name}"
+		names = environment.package_env.map(|v| { name: v.name, value: "" })
+		check_env(names, declaration)?
+		for variable in environment.package_env {
+			if environment.env.any(|v| v.name == variable.name) {
+				return Err("Env and PackageEnv both set ${variable.name} in ${declaration}")
+			}
+		}
+		Ok({})
+	}
 
 	## The `env` argv prefix that sets `variables` for the command after it.
 	env_command : List(Model.Variable) -> List(Str)
@@ -509,6 +537,7 @@ Project :: [].{
 		var $environments = []
 		for env in model.environments {
 			check_env(env.env, "environment ${env.name}")?
+			check_package_env(env)?
 			match env.rust_toolchain {
 				Toml(text) if text.is_empty() or text.to_utf8().contains(0) =>
 					return Err("invalid RustToolchain in environment ${env.name}")
@@ -946,7 +975,16 @@ Project :: [].{
 					parents: [],
 					tools: unique(base.tools.concat(env.tools)),
 					overlays: unique(base.overlays.concat(env.overlays)),
-					env: merge_env(base.env, env.env),
+					env: merge_env(
+						base.env.keep_if(|b| !env.package_env.any(|o| o.name == b.name)),
+						env.env,
+					),
+					package_env: base.package_env
+						.keep_if(
+							|b| !env.env.any(|o| o.name == b.name)
+								and !env.package_env.any(|o| o.name == b.name),
+						)
+						.concat(env.package_env),
 					pure: base.pure or env.pure,
 					aliases: unique(base.aliases.concat(env.aliases)),
 					rust_toolchain: match env.rust_toolchain {
@@ -974,6 +1012,9 @@ Project :: [].{
 		}
 		if backend == Guix and env.rust_toolchain != None {
 			return Err("RustToolchain needs Nix: environment ${name}")
+		}
+		if backend == Guix and !env.package_env.is_empty() {
+			return Err("PackageEnv needs Nix: environment ${name}")
 		}
 		every_tool = environment_tools(env)
 		tools = package_tools(every_tool, project.fetches)
@@ -1097,6 +1138,7 @@ base = {
 	pure: Bool.False,
 	aliases: [],
 	rust_toolchain: None,
+	package_env: [],
 }
 
 child : Model.Environment
@@ -1112,6 +1154,7 @@ child = {
 	pure: Bool.False,
 	aliases: [],
 	rust_toolchain: None,
+	package_env: [],
 }
 
 # Declaration order is irrelevant; inheritance order is not. First wins.
@@ -1129,6 +1172,7 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			package_env: [],
 		},
 		base,
 	]),
@@ -1146,6 +1190,7 @@ expect match Project.validate(
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			package_env: [],
 		},
 		{
 			name: "empty",
@@ -1156,6 +1201,7 @@ expect match Project.validate(
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			package_env: [],
 		},
 	]),
 ) {
@@ -1171,6 +1217,7 @@ expect match Project.validate(
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			package_env: [],
 		},
 	]
 	Err(_) => False
@@ -1260,6 +1307,7 @@ expect {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			package_env: [],
 			tools: [{ source: "guix", name: "git" }],
 		},
 	])
@@ -1321,6 +1369,7 @@ build_fixture = |builds| Model.{
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			package_env: [],
 		},
 	],
 	shells: [],
@@ -1671,6 +1720,7 @@ workflow_features = |workflows, features| Model.{
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			package_env: [],
 		},
 	],
 	shells: [],
@@ -1985,4 +2035,38 @@ expect {
 			},
 		]),
 	) == Err("workflow expansion exceeds 1 MiB argv bytes")
+}
+
+# A child's Env and PackageEnv override its parent's variables by name, either
+# way. One environment may not set a variable with both, and Guix refuses
+# PackageEnv.
+expect {
+	zlib = { source: "default", name: "zlib" }
+	libraries = { name: "LIBS", value: LibraryPath([zlib]) }
+	git = { source: "default", name: "git" }
+	git_path = { name: "A", value: PackagePath(git) }
+	parent = {
+		..base,
+		overlays: [],
+		env: [{ name: "A", value: "1" }],
+		package_env: [libraries],
+	}
+	dev = {
+		..child,
+		overlays: [],
+		env: [{ name: "LIBS", value: "/x" }],
+		package_env: [git_path],
+	}
+	resolved = match Project.validate(fixture([parent, dev])) {
+		Ok(model) => model.environments.keep_if(|e| e.name == "dev")
+			.map(|e| (e.env, e.package_env))
+		Err(_) => []
+	}
+	both = { ..parent, env: [{ name: "LIBS", value: "/x" }] }
+	resolved == [([{ name: "LIBS", value: "/x" }], [git_path])]
+		and Project.validate(fixture([both]))
+			== Err("Env and PackageEnv both set LIBS in environment base")
+		and Project.check_environment(fixture([parent]), Guix, "base")
+			== Err("PackageEnv needs Nix: environment base")
+		and Project.check_environment(fixture([parent]), Nix, "base") == Ok({})
 }

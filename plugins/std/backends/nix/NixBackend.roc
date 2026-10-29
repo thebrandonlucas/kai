@@ -36,6 +36,7 @@ NixBackend :: [].{
 		"aliases",
 		"rust-toolchain",
 		"follows",
+		"package_env",
 	]
 
 	default_nixpkgs : Str
@@ -904,10 +905,11 @@ NixBackend :: [].{
 		)
 		tools = path_packages(environment, fetches).map(|tool| "            ${tool}")
 		# mkShell exports `env` to its shells, and to tasks through kai-env-*.
-		env = if environment.env.is_empty() {
+		env = if environment.env.is_empty() and environment.package_env.is_empty() {
 			[]
 		} else {
-			["          env = ${env_attrs(environment.env)};"]
+			computed = package_env_attrs(environment, fetches)
+			["          env = ${env_attrs(environment.env, computed)};"]
 		}
 		lines([
 			"        ${quote(environment.name)} = let",
@@ -993,6 +995,16 @@ NixBackend :: [].{
 		}
 		argv = Str.join_with(build.run.map(quote), " ")
 		build_env = Project.merge_env(environment.env, build.env)
+		# A build's own Env overrides its environment's PackageEnv by name.
+		computed = package_env_attrs(
+			{
+				..environment,
+				package_env: environment.package_env.keep_if(
+					|v| !build.env.any(|own| own.name == v.name),
+				),
+			},
+			model.fetches,
+		)
 		lines([
 			"          ${quote(build.name)} = let",
 			"            system = ${quote(system)};",
@@ -1010,7 +1022,7 @@ NixBackend :: [].{
 				"              isolation = ${isolation};",
 				"              argv = [ ${argv} ];",
 				"              output = ${quote(build.output)};",
-				"              env = ${env_attrs(build_env)};",
+				"              env = ${env_attrs(build_env, computed)};",
 				"              path = pkgs.lib.makeBinPath (tools ++ "
 					.concat("builtins.filter pkgs.lib.isDerivation ")
 					.concat("pkgs.stdenv.defaultNativeBuildInputs ++ ")
@@ -1188,10 +1200,34 @@ NixBackend :: [].{
 		"({ ${Str.join_with(files, "")}}.\${system} or (throw (${missing} + system)))"
 	}
 
-	env_attrs : List(Model.Variable) -> Str
-	env_attrs = |variables| {
+	## Variables as Nix attributes, followed by `computed` ones.
+	env_attrs : List(Model.Variable), List(Str) -> Str
+	env_attrs = |variables, computed| {
 		attrs = variables.map(|v| "${quote(v.name)} = ${quote(v.value)}; ")
-		"{ ${Str.join_with(attrs, "")}}"
+		"{ ${Str.join_with(attrs.concat(computed), "")}}"
+	}
+
+	## An environment's PackageEnv as Nix attributes, its paths computed from
+	## the packages of the environment's sets.
+	package_env_attrs : Model.Environment, List(Model.Fetch) -> List(Str)
+	package_env_attrs = |environment, fetches| {
+		primary = source_names(environment, fetches).first() ?? "default"
+		references = |tools|
+			Str.join_with(
+				tools.map(|tool| tool_reference(tool, environment, fetches, primary)),
+				" ",
+			)
+		lib = "sets.${quote(primary)}.lib"
+		environment.package_env.map(
+			|variable| {
+				value = match variable.value {
+					LibraryPath(tools) => "${lib}.makeLibraryPath [ ${references(tools)} ]"
+					BinPath(tools) => "${lib}.makeBinPath [ ${references(tools)} ]"
+					PackagePath(tool) => "\"\${${references([tool])}}\""
+				}
+				"${quote(variable.name)} = ${value}; "
+			},
+		)
 	}
 
 	lines : List(Str) -> Str
@@ -1235,6 +1271,7 @@ sample_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			package_env: [],
 		},
 		{
 			name: "dev",
@@ -1245,6 +1282,7 @@ sample_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			package_env: [],
 		},
 	],
 	shells: [
@@ -1281,6 +1319,7 @@ full_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			package_env: [],
 		},
 		{
 			name: "empty",
@@ -1291,6 +1330,7 @@ full_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			package_env: [],
 		},
 		{
 			name: "headless",
@@ -1301,6 +1341,7 @@ full_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			package_env: [],
 		},
 	],
 	shells: [
@@ -1394,6 +1435,7 @@ base = {
 	pure: Bool.False,
 	aliases: [],
 	rust_toolchain: None,
+	package_env: [],
 }
 
 simple : TestIr
@@ -3110,4 +3152,30 @@ expect {
 			).is_err()
 		},
 	)
+}
+
+# PackageEnv computes its paths from the environment's packages, beside Env.
+expect {
+	zlib = { source: "default", name: "zlib" }
+	browsers = { source: "default", name: "playwright-driver.browsers" }
+	environment = {
+		..base,
+		env: [{ name: "GREETING", value: "moo" }],
+		package_env: [
+			{ name: "LD_LIBRARY_PATH", value: LibraryPath([zlib]) },
+			{ name: "BROWSERS", value: PackagePath(browsers) },
+		],
+	}
+	match NixBackend.render(mk({ ..simple, environments: [environment] })) {
+		Ok(text) =>
+			text.contains(
+				"env = { \"GREETING\" = \"moo\"; \"LD_LIBRARY_PATH\" = sets.\"default\""
+					.concat(".lib.makeLibraryPath [ (sets.\"default\".\"zlib\" or "),
+			)
+				and text.contains(
+					"\"BROWSERS\" = \"\${(sets.\"default\""
+						.concat(".\"playwright-driver\".\"browsers\" or "),
+				)
+		Err(_) => Bool.False
+	}
 }

@@ -3,3 +3,4 @@ run moo
 run shout
 shell default -- printenv GREETING
 run calm
+run libraries

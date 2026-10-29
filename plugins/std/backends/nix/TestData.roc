@@ -21,6 +21,7 @@ TestData :: [].{
 		pure: Bool.False,
 		aliases: [],
 		rust_toolchain: None,
+		package_env: [],
 	}
 
 	library : Model.Build
