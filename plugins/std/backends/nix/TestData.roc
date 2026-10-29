@@ -145,6 +145,7 @@ TestData :: [].{
 		build_sources: t.build_sources,
 		fetches: [],
 		cargo_vendors: [],
+		build_root: "",
 		builds: t.builds,
 		workflows: t.workflows,
 		requires_: t.requires_,

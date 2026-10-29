@@ -12,6 +12,7 @@ ConfigToModel :: [].{
 	Acc : {
 		names : List(Str),
 		systems : List(List(Str)),
+		build_roots : List(Str),
 		sources : List(Model.Source),
 		guix_channels : List(Model.GuixChannel),
 		inputs : List(Model.Input),
@@ -46,6 +47,7 @@ ConfigToModel :: [].{
 		initial = {
 			names: [],
 			systems: [],
+			build_roots: [],
 			sources: [],
 			guix_channels: [],
 			inputs: [],
@@ -98,6 +100,7 @@ ConfigToModel :: [].{
 				.concat(if (acc.follows.is_empty()) [] else ["follows"])
 				.concat(if (uses_package_env(acc)) ["package_env"] else [])
 				.concat(if (acc.tasks.all(|t| t.dir.is_empty())) [] else ["task_dir"])
+				.concat(if (acc.build_roots.is_empty()) [] else ["build_root"])
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -114,6 +117,11 @@ ConfigToModel :: [].{
 				build_sources: acc.build_sources,
 				fetches: acc.fetches,
 				cargo_vendors: acc.cargo_vendors,
+				build_root: match acc.build_roots {
+					[] => ""
+					[one] => one
+					_ => return Err("DuplicateBuildRoot: declare BuildRoot at most once")
+				},
 				builds: acc.builds,
 				workflows: acc.workflows,
 				extensions: acc.extensions,
@@ -130,6 +138,7 @@ ConfigToModel :: [].{
 				..acc,
 				systems: acc.systems.append(systems.map(|s| s.to_str())),
 			}
+			BuildRoot(path) => { ..acc, build_roots: acc.build_roots.append(path) }
 			Packages(name, source) => {
 				..acc,
 				sources: acc.sources.append({

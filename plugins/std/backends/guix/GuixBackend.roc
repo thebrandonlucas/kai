@@ -578,7 +578,7 @@ GuixBackend :: [].{
 			Steps.{
 				steps: $checks.concat(before).concat([
 					Snapshot({
-						root: layout.project_root,
+						root: Project.snapshot_root(model, root)?,
 						destination: "${workspace}/snapshot",
 						exclude,
 						files: Project.snapshot_files(closure),
