@@ -124,6 +124,17 @@ Answer := [].{
 		}
 	}
 
+	## Why a platform refuses a request in a protocol it does not speak.
+	unspoken : Protocol.Version -> Str
+	unspoken = |asked| {
+		version = "${asked.major.to_str()}.${asked.minor.to_str()}"
+		major = Protocol.current.major.to_str()
+		spoken = "${major}.0 to ${major}.${Protocol.current.minor.to_str()}"
+		"kai speaks protocol ${version}, and Kaifile.roc's platform ${spoken}; "
+			.concat("use the platform and std of kai's release, as `kai --help` ")
+			.concat("shows, or a kai of the platform's release")
+	}
+
 	## The response to kai's request text: refused before anything else when
 	## it cannot be read or speaks another protocol version.
 	respond : Kaifile, Str -> Str
@@ -139,10 +150,7 @@ Answer := [].{
 		response = match header {
 			Ok({ protocol }) if protocol.major != Protocol.current.major
 				or protocol.minor > Protocol.current.minor =>
-				refused(
-					"kai speaks protocol ${protocol.major.to_str()}."
-						.concat(protocol.minor.to_str()),
-				)
+				refused(Answer.unspoken(protocol))
 			Ok(_) => {
 				request : Try(Protocol.Request, _)
 				request = Sexpr.parse(text)
