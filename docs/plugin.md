@@ -126,7 +126,7 @@ A plan is a list of steps and what comes next:
 
 | Step | Effect |
 |---|---|
-| `Note(text)`, `Print(text)` | a note on stderr, a result on stdout (JSON events with `--json`) |
+| `Note(text)`, `Print(text)` | a note on stderr, a result on stdout (JSON events on stderr with `--json`) |
 | `Confirm(prompt)` | ask before anything runs; refused without `--yes` unless a person is at a terminal |
 | `Write(files)` | write generated files, only beneath the generated root |
 | `Run({ description, argv, output, secrets, removed_environment_variables, kept_environment_variables })` | run exact argv from the project root, never through a shell |

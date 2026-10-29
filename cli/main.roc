@@ -54,7 +54,7 @@ main! = |args| {
 		Err(Usage(message)) => {
 			_ = match mode {
 				Human => Stderr.line!(message)
-				Json => Stdout.line!(Output.error("InvalidUsage", message, 2))
+				Json => Stderr.line!(Output.error("InvalidUsage", message, 2))
 			}
 			Err(Exit(2))
 		}
@@ -62,7 +62,7 @@ main! = |args| {
 			code = exit_status(err)
 			_ = match mode {
 				Human => Stderr.line!("kai: ${describe(err)}")
-				Json => Stdout.line!(Output.error(Str.inspect(err), describe(err), code))
+				Json => Stderr.line!(Output.error(Str.inspect(err), describe(err), code))
 			}
 			Err(Exit(code))
 		}

@@ -582,7 +582,10 @@ Execute := [].{
 	build! : Cmd.Command, Str, Plan.Artifact, Output.Mode => Try({}, _)
 	build! = |process_command, description, artifact, mode| {
 		{ name, label, output: declared } = artifact
-		Stderr.line!("building ${name}: ${label} (output ${declared})")?
+		# With --json, the artifact event says what was built.
+		if mode == Human {
+			Stderr.line!("building ${name}: ${label} (output ${declared})")?
+		}
 		output = process_command.stderr(Tee).run!()?
 		match output.status {
 			Exited(0) => {
@@ -599,7 +602,7 @@ Execute := [].{
 						Stdout.write_bytes!(output.stdout_bytes)?
 						Stderr.line!(built)
 					}
-					Json => Stdout.line!(Output.event("artifact", built, fields))
+					Json => Stderr.line!(Output.event("artifact", built, fields))
 				}
 			}
 			Exited(code) => {

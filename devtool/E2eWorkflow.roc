@@ -2,10 +2,10 @@
 # run in order, a failing step stops the rest and keeps its exit code,
 # repeated steps repeat, each build snapshots the project afresh, a changed
 # locked source stops a workflow before its first effect, and the lock is
-# never written. In JSON mode kai's stdout is whole JSON objects without
-# terminal escapes. On Guix, on a copy of the channels fixture with Nix off
-# PATH: a workflow runs its task, then its build, and a failing step stops
-# the rest and keeps its exit code.
+# never written. In JSON mode kai's events are whole JSON lines on stderr,
+# never stdout, without terminal escapes. On Guix, on a copy of the channels
+# fixture with Nix off PATH: a workflow runs its task, then its build, and a
+# failing step stops the rest and keeps its exit code.
 import pf.Cmd
 import pf.Path
 import pf.Stdout
@@ -50,19 +50,17 @@ E2eWorkflow := [].{
 		\\		BuildArtifact("app")]),
 		\\	Workflow("stale", [RunTask("mark", ["one"]), BuildArtifact("app")]),
 
-	# Kai's stdout in JSON mode: whole lines, each a JSON object with a string
-	# type, and no terminal escapes.
+	# Kai's events in JSON mode: the stderr lines that start with `{`, each a
+	# JSON object with a string type and no terminal escapes. A child's own
+	# stderr, such as a build's log, shares the stream.
 	events : List(U8) -> Try(List(LockJson), Str)
 	events = |bytes| {
-		if bytes.contains(27) {
-			return Err("escape byte in JSON output")
-		}
 		utf8 = Str.from_utf8(bytes).map_err(|_| "JSON output is not UTF-8")?
-		if !utf8.ends_with("\n") {
-			return Err("JSON output does not end with a newline")
-		}
 		var $parsed = []
-		for line in utf8.drop_suffix("\n").split_on("\n") {
+		for line in utf8.split_on("\n").keep_if(|l| l.starts_with("{")) {
+			if line.contains("\u(001b)") {
+				return Err("escape byte in a JSON event")
+			}
 			value = LockJson.decode(line)?
 			_ = LockJson.string(LockJson.field(value, "type")?)?
 			$parsed = $parsed.append(value)
@@ -88,10 +86,11 @@ E2eWorkflow := [].{
 		# Runs kai with --json, expecting its exit code and event types.
 		json! = |args, code, types| {
 			output = kai!(["--json"].concat(args))?
-			parsed = E2eWorkflow.events(output.stdout_bytes)
+			parsed = E2eWorkflow.events(output.stderr_bytes)
 				.map_err(|message| BadJson(args, message, E2eWorkflow.show(output)))?
 			found = parsed.map(|event| E2eWorkflow.text(event, "type"))
-			if output.status != Exited(code) or found != types {
+			leaked = E2eWorkflow.events(output.stdout_bytes) != Ok([])
+			if output.status != Exited(code) or found != types or leaked {
 				return Err(UnexpectedEvents(args, found, E2eWorkflow.show(output)))
 			}
 			Ok(parsed)
@@ -263,11 +262,12 @@ E2eWorkflow := [].{
 	}
 }
 
-# Only whole JSON object lines with a type, and no escapes, are JSON output.
+# Lines that start with `{` are events: JSON objects with a type and no escapes.
+# Other lines are a child's.
 expect [
 	("{\"type\":\"check\"}\n{\"type\":\"error\",\"exit_code\":2}\n", Bool.True),
-	("{\"type\":\"check\"}", Bool.False),
-	("source checked\n{\"type\":\"check\"}\n", Bool.False),
+	("building\n{\"type\":\"check\"}", Bool.True),
+	("{\"type\":", Bool.False),
 	("{\"message\":\"no type\"}\n", Bool.False),
 	("{\"type\":\"note\",\"message\":\"\u(001b)[31m\"}\n", Bool.False),
 ].all(|(text, ok)| E2eWorkflow.events(text.to_utf8()).is_ok() == ok)

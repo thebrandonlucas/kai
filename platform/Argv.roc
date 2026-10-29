@@ -108,7 +108,7 @@ Argv := [].{
 				json: Opt.flag({
 					short: "",
 					long: "json",
-					help: "Print kai's own output as JSON Lines.",
+					help: "Print kai's own output as JSON Lines on stderr.",
 				}),
 				backend: Opt.maybe_str({
 					short: "",
