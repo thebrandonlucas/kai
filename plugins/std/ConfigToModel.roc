@@ -467,6 +467,7 @@ ConfigToModel :: [].{
 				files: [],
 				envs: [],
 				revisions: 0.U64,
+				defaults: 0.U64,
 				descriptions: [],
 			},
 			|acc, setting|
@@ -485,6 +486,7 @@ ConfigToModel :: [].{
 					Files(paths) => { ..acc, files: acc.files.append(paths) }
 					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
 					Revision => { ..acc, revisions: acc.revisions + 1 }
+					Default => { ..acc, defaults: acc.defaults + 1 }
 					Description(text) => { ..acc, descriptions: acc.descriptions.append(text) }
 				},
 		)
@@ -509,6 +511,9 @@ ConfigToModel :: [].{
 		if draft.needs.len() > 1 {
 			return Err("DuplicateNeeds: build ${name}")
 		}
+		if draft.defaults > 1 {
+			return Err("DuplicateDefault: build ${name}")
+		}
 		if draft.revisions > 1 {
 			return Err("DuplicateRevision: build ${name}")
 		}
@@ -527,6 +532,7 @@ ConfigToModel :: [].{
 			files,
 			env: single_env(draft.envs, "build ${name}")?,
 			revision: draft.revisions == 1,
+			default: draft.defaults == 1,
 			description: single_description(draft.descriptions, "build ${name}")?,
 		})
 	}

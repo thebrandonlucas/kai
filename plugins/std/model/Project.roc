@@ -618,6 +618,10 @@ Project :: [].{
 				}
 			}
 		}
+		defaults = model.builds.keep_if(|b| b.default).map(|b| b.name)
+		if defaults.len() > 1 {
+			return Err("several builds are Default: ${Str.join_with(defaults, ", ")}")
+		}
 		for build in model.builds {
 			if !$environments.any(|e| e.name == build.environment) {
 				return Err("unknown environment: ${build.environment}")
@@ -1413,6 +1417,7 @@ library = {
 	description: "",
 	env: [],
 	revision: Bool.False,
+	default: Bool.False,
 }
 
 application : Model.Build

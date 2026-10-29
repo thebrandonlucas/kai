@@ -937,6 +937,7 @@ expect {
 		description: "",
 		env: [],
 		revision: Bool.False,
+		default: Bool.False,
 	}
 	model = {
 		..fixture([env("dev", ["hello"])]),
