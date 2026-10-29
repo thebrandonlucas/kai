@@ -163,7 +163,9 @@ NixBackend :: [].{
 				.append("${base_ref}#devShells.${target}.${entry}")
 		# `nix develop` exits 1 both when its environment fails to evaluate
 		# and when its command does; evaluating the environment alone first
-		# tells the two apart. It prints nothing: stdout is the command's.
+		# tells the two apart. It prints nothing: stdout is the command's. The
+		# flake and its lock, whose local sources the plan verifies, are all it
+		# reads, so kai skips it once it succeeded with them unchanged.
 		evaluate = |entry, what| [
 			Run({
 				description: "evaluating the environment of ${what}",
@@ -174,7 +176,9 @@ NixBackend :: [].{
 						"--apply",
 						"shell: builtins.seq shell.drvPath \"\"",
 					]),
-				output: Quiet,
+				output: Remembered(
+					["flake.nix", "flake.lock"].map(|file| "${layout.generated_root}/${file}"),
+				),
 				secrets: [],
 				removed_environment_variables: [],
 				kept_environment_variables: [],
@@ -392,7 +396,7 @@ NixBackend :: [].{
 		removed_environment_variables = selected.removed_environment_variables
 		builds = match output {
 			Artifact(_) => Bool.True
-			Inherit | Quiet => !needs_build.is_empty()
+			Inherit | Quiet | Remembered(_) => !needs_build.is_empty()
 		}
 		sandbox = if builds {
 			local = inputs.keep_if(|i| i.ref.starts_with("path:"))
@@ -1740,6 +1744,22 @@ split = |steps|
 			Ok({ before, files, evaluate: [], description, argv, output })
 		_ => Err("not one request's steps")
 	}
+
+# kai may skip evaluating once it succeeded with the same flake and lock.
+expect match plan_fixture(Request.Shell("default", [])) {
+	Ok(planned) =>
+		planned.steps.any(
+			|step|
+				match step {
+					Run({ description, output, .. }) =>
+						description.starts_with("evaluating ")
+							and output
+								== Remembered(["/generated/flake.nix", "/generated/flake.lock"])
+					_ => False
+				},
+		)
+	_ => False
+}
 
 # A shell evaluates its environment before entering it.
 expect match single(Request.Shell("default", [])) {
