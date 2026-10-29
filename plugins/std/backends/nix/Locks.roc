@@ -219,16 +219,25 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		validate_identity(locks.identity)?
 		validate_graph(locks.graph)?
 		validate_binding(locks.identity, locks.graph)?
-		declared = identity_for(project)?
-		if !equivalent(locks.identity, declared) {
-			changed = Str.join_with(changed_inputs(locks.identity, declared), ", ")
-			named = if (changed.is_empty()) "" else " (${changed})"
-			return Err(
-				"lock input or ordered-overlay identity changed${named}; "
-					.concat("run kai update"),
-			)
+		stale = staleness(locks, project)?
+		if !stale.is_empty() {
+			return Err("${stale}; run kai update")
 		}
 		rebase(locks, layout)
+	}
+
+	## Why the lock was made for other inputs or overlays than `model`
+	## declares, naming the changed ones; "" when it was not.
+	staleness : Locks, Model -> Try(Str, Str)
+	staleness = |locks, model| {
+		declared = identity_for(Project.validate(model)?)?
+		if equivalent(locks.identity, declared) {
+			Ok("")
+		} else {
+			changed = Str.join_with(changed_inputs(locks.identity, declared), ", ")
+			named = if (changed.is_empty()) "" else " (${changed})"
+			Ok("lock input or ordered-overlay identity changed${named}")
+		}
 	}
 
 	## The locked graph rebased onto a layout, whatever the project now

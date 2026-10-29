@@ -138,17 +138,18 @@ Execute := [].{
 		match answer {
 			Candidates({ options: [only], .. }) => Execute.planned(only.outcome)
 			Refused(why) => Err(Refused(why))
-			_ => Err(PlanFailed("the Kaifile did not continue the plan"))
+			_ => Err(PlanFailed(Plan.fail("the Kaifile did not continue the plan")))
 		}
 	}
 
-	Outcome : [Unfit(Str), Planned(Plan), Failed(Str)]
+	Outcome : [Unfit(Str), Planned(Plan), Failed(Str), Failure(Plan.Failure)]
 
-	planned : Outcome -> Try(Plan, [PlanFailed(Str)])
+	planned : Outcome -> Try(Plan, [PlanFailed(Plan.Failure)])
 	planned = |outcome|
 		match outcome {
 			Planned(plan) => Ok(plan)
-			Failed(message) | Unfit(message) => Err(PlanFailed(message))
+			Failure(failure) => Err(PlanFailed(failure))
+			Failed(message) | Unfit(message) => Err(PlanFailed(Plan.fail(message)))
 		}
 
 	lookup : List((Str, Selection.Probe)) -> (Str -> Selection.Probe)

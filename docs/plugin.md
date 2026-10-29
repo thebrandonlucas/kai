@@ -105,7 +105,7 @@ Implementation.{
 	command: "deploy",
 	backend: On("nix"),          # or Independent: no backend, no --backend
 	fit: |args| ...,             # Err(why) when this backend cannot serve it
-	plan: |ctx| ...,             # Ok(Plan) or Err(message)
+	plan: |ctx| ...,             # Ok(Plan) or Err(Plan.Failure)
 }
 ```
 
@@ -119,6 +119,32 @@ falls back to another backend after choosing one.
 the `layout` of the project and its `.kai` workspace, the project's git
 `revision` (`describe` and `commit_date`, empty outside git), the `lock`
 text, and, for continued plans, `phase` and the `observed` files.
+
+A plan that fails says why as a `Plan.Failure`:
+
+```roc
+Err({ code: "missing_lock", message: "no lock file at …", hint: "kai update", suggestions: [] })
+```
+
+`code` is stable, for scripts to match; `message` says what went wrong;
+`hint` is the command that fixes it, or `""`; `suggestions` are names the
+request may have meant. kai prints the message, then "run `hint`" and "did
+you mean …?", and with `--json` its `error` event carries `code` as
+`error`, `hint` and `suggestions`. `Plan.fail(message)` is a failure with
+no code of its own, `plan_failed`, so a plugin's string errors map with
+`.map_err(Plan.fail)`. std uses these codes:
+
+| Code | Meaning |
+|---|---|
+| `missing_lock` | There is no lock, or it has no Nix section; hint `kai update`. |
+| `invalid_lock` | The lock cannot be read; hint `kai update`. |
+| `stale_lock` | The lock was made for other inputs, overlays or Guix channels; hint `kai update` or `kai --backend guix update`. |
+| `missing_guix_lock` | The lock has no Guix pins; hint `kai --backend guix update`. |
+| `unknown_input` | `kai update` names an input the project does not declare. |
+| `unknown_name` | The project declares no shell, task, build or workflow of that name. |
+| `plan_failed` | Any other failure. |
+
+A plugin may use these codes for the same meaning, or its own.
 
 ## Plans
 
