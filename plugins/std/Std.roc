@@ -358,6 +358,7 @@ Std := [].{
 				optional_environment_variables: [],
 				needs: [],
 				description: "",
+				dir: "",
 			}),
 			build_sources: model.build_sources,
 			fetches: model.fetches,

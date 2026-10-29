@@ -37,6 +37,7 @@ NixBackend :: [].{
 		"rust-toolchain",
 		"follows",
 		"package_env",
+		"task_dir",
 	]
 
 	default_nixpkgs : Str
@@ -274,7 +275,7 @@ NixBackend :: [].{
 					argv: develop(environment_shell(task.environment), isolation)
 						.append("--command")
 						# Overrides the environment's Env, which kai-env-* sets.
-						.concat(Project.env_command(task.env.concat(artifacts)))
+						.concat(Project.env_command(task.dir, task.env.concat(artifacts)))
 						.concat(command),
 					output: Inherit,
 					secrets: task.secrets,
@@ -1365,6 +1366,7 @@ full_model = {
 			optional_environment_variables: [],
 			needs: [],
 			description: "",
+			dir: "",
 		},
 	],
 	raw: [
@@ -1523,6 +1525,7 @@ expect match NixBackend.render(
 				optional_environment_variables: [],
 				needs: [],
 				description: "",
+				dir: "",
 			},
 		],
 	}),
@@ -2336,6 +2339,7 @@ expect {
 					optional_environment_variables: [],
 					needs: [],
 					description: "",
+					dir: "",
 				},
 			],
 		}),
@@ -2786,6 +2790,7 @@ expect {
 			optional_environment_variables: [],
 			needs: [],
 			description: "",
+			dir: "",
 		}),
 		workflows: TestData.workflow_data.workflows.concat([
 			{
@@ -3044,6 +3049,7 @@ expect {
 					optional_environment_variables: [],
 					needs: [],
 					description: "",
+					dir: "",
 				},
 			],
 		},

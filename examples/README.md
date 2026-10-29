@@ -19,7 +19,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | Example | Shows | Try |
 |---|---|---|
 | [shell](shell) | An environment and a shell | `kai shell` |
-| [task](task) | Tasks, arguments after `--`, secrets, optional environment variables and descriptions | `kai run moo` |
+| [task](task) | Tasks, arguments after `--`, secrets, optional environment variables, descriptions and a working directory | `kai run moo` |
 | [environment](environment) | Reusable environments shared by shells and tasks | `kai shell pokemon` |
 | [extend](extend) | One environment building on another | `kai run wisdom` |
 | [env](env) | Environment variables, a task overriding its `Environment`'s, a pure environment and paths in packages | `kai run shout` |

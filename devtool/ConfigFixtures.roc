@@ -876,6 +876,24 @@ ConfigFixtures := [].{
 			body: \\config = [Name("bad"), CargoVendor("crates",
 				\\ "source = \\"git+https://github.com/dtolnay/ryu?tag=1.0.20\\"\\n")]
 		},
+		{
+			name: "TaskDir",
+			expected: Valid,
+			body: \\config = [Name("task-dir"), Environment("dev", []),
+				\\ Task("test", [Use("dev"), Dir("apps/web"), Run(["true"])])]
+		},
+		{
+			name: "TaskDirEscape",
+			expected: Rejected("invalid Dir in task test: ../web"),
+			body: \\config = [Name("bad"), Environment("dev", []),
+				\\ Task("test", [Use("dev"), Dir("../web"), Run(["true"])])]
+		},
+		{
+			name: "DuplicateTaskDir",
+			expected: Rejected("DuplicateDir: task test"),
+			body: \\config = [Name("bad"), Environment("dev", []),
+				\\ Task("test", [Use("dev"), Dir("a"), Dir("b"), Run(["true"])])]
+		},
 	].concat(ConfigFixtures.bad_outputs).concat(ConfigFixtures.bad_sources)
 
 	bad_outputs : List(Fixture)

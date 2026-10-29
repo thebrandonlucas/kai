@@ -128,7 +128,7 @@ garbage collection.
 | `Pure` | In an `Environment`, and those extending it, starts its shells and tasks from a clean environment, so a task can check it needs nothing undeclared. Only HOME, USER, TERM, Kai's own variables and the `Env`, `Secrets` and `OptionalEnvironmentVariables` declared reach them. On Nix this is `nix develop --ignore-environment`; Guix shells are always pure, so it changes nothing there. |
 | `Description(text)` | In a `Shell`, `Task`, `Build` or `Workflow`, its summary in help, in place of its environment, command, output or steps, which its own page (e.g. `kai run test --help`) still shows after it. |
 | `Shell(name, [Use(environment)])` | A shell for `kai shell`. |
-| `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. Optionally `Secrets([...])`: the names of the variables it receives when it runs, `OptionalEnvironmentVariables([...])`: those it receives from kai's environment only when set there, and `Needs([...])`: builds kai builds first, in `$KAI_ARTIFACTS/<name>`. |
+| `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. Optionally `Secrets([...])`: the names of the variables it receives when it runs, `OptionalEnvironmentVariables([...])`: those it receives from kai's environment only when set there, `Needs([...])`: builds kai builds first, in `$KAI_ARTIFACTS/<name>`, and `Dir(path)`: the project-relative directory it runs in, in place of the project root. |
 | `Source(name, flakeRef)` | A locked, non-flake source that builds can read. |
 | `Fetch(name, [{ system, url, sha256 }, ...])` | A file pinned by its published sha256 (hex or SRI), one per system; the host's system picks it, and it needs no lock entry. Builds read it in `Inputs([...])`, and the tool `"name#binary"` puts it on `PATH` as the executable `binary`. |
 | `CargoVendor(name, text)` | The crates a `Cargo.lock` names, vendored into one directory that builds can read, pinned by the lock's checksums with no lock entry. Pass the text with `import "Cargo.lock" as cargo_lock : Str`. A git dependency is fetched at the commit the lock records. |
@@ -142,11 +142,11 @@ each setting and command, from a first shell to builds, workflows and Guix.
 
 ### Tasks and builds
 
-Shells and tasks run on your machine, in the project directory, inside the
-environment's shell: they see your files, your network and anything else you
-can reach, and what they write stays in the working tree. `KAI_OPERATOR_SHELL`
-holds the `SHELL` kai was started from, since the environment may replace
-`SHELL`.
+Shells and tasks run on your machine, in the project directory (or a task's
+`Dir`), inside the environment's shell: they see your files, your network and
+anything else you can reach, and what they write stays in the working tree.
+`KAI_OPERATOR_SHELL` holds the `SHELL` kai was started from, since the
+environment may replace `SHELL`.
 
 A task gets the secrets it declares with `Secrets([...])` from a `.env` file
 at the project root (`NAME=value` lines; `#` comments; no interpolation),
