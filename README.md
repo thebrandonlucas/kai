@@ -325,6 +325,19 @@ and `zig build e2e-run` (or `-build`, `-workflow`, `-update`, ...) runs one;
 `zig build guix-integration` runs every Guix test and fails without Guix. If
 the shell is missing a dependency, please open an issue.
 
+To try a checkout's kai on another project, build it and the platform host
+it links Kaifiles with:
+
+```sh
+kai build kai-x64musl --out-link /tmp/kai-dev    # kai at /tmp/kai-dev/kai
+kai shell default -- sh -c 'cd platform && zig build --release'
+```
+
+`kai-arm64musl` is the aarch64 build. The project's Kaifile.roc then names
+the checkout's platform and std by relative path, as `examples/` do, such as
+`pf: platform "../kai/platform/main.roc"` and
+`std: "../kai/plugins/std/main.roc"`: Roc refuses an absolute platform path.
+
 The code follows the pipeline:
 
 - `platform`: Kai's plugin platform, the Roc platform `Kaifile.roc` builds

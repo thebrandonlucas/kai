@@ -353,6 +353,9 @@ describe = |err|
 			"Kaifile.roc uses the pre-plugin header `app [config]`; start it as "
 				.concat("`kai --help` shows and wrap the settings in ")
 				.concat("`kaifile = Std.kaifile([...])`")
+		NotAnApp(file) =>
+			"${file} has no `app [kaifile]` header, so it is not a Kaifile; "
+				.concat("run kai in a project directory or pass one with -f")
 		UnsupportedHost =>
 			"Kai runs only on x86_64 and aarch64 Linux and Apple Silicon macOS hosts"
 		CompilerUnavailable(compiler, message) =>
@@ -364,7 +367,7 @@ describe = |err|
 		KaifileInvalid(file, releases) =>
 			"${file} did not compile; see the errors above${mixed(releases)}"
 		KaifileFailed(file, output, releases) =>
-			"${file} did not compile:\n${output}${mixed(releases)}"
+			"${file} did not compile:\n${output}${mixed(releases)}${unbuilt(output)}"
 		IncompatibleProtocol(major, minor) =>
 			"Kaifile.roc uses platform protocol ${major.to_str()}.${minor.to_str()}; "
 				.concat("this kai speaks ${Protocol.current.major.to_str()}.x")
@@ -421,6 +424,17 @@ mixed = |releases|
 			.concat("kai's release, ${Load.release}, as `kai --help` shows")
 	}
 
+# A Kaifile naming a Kai checkout's platform by path needs that platform's
+# host built; roc reports only the missing linker inputs.
+unbuilt : Str -> Str
+unbuilt = |output|
+	if output.contains("missing target file") {
+		"\nIf its platform is a Kai checkout's, build the platform host first: "
+			.concat("`zig build --release` in its platform directory")
+	} else {
+		""
+	}
+
 needs_compiler =
 	"kai evaluates Kaifile.roc with Roc ${Load.pinned_compiler}; put it on "
 		.concat("PATH, set ROC to its path, or install Nix ")
@@ -470,3 +484,7 @@ expect [
 expect exit_status(ChildExited("task fail", 7)) == 7
 	and exit_status(Refused("--backend must be one of nix, guix")) == 2
 	and exit_status(PlanFailed("no lock file")) == 1
+
+# A missing linker input hints at building a checkout's platform host.
+expect unbuilt("── ✗ missing target file ──\n").contains("zig build --release")
+	and unbuilt("── TYPE MISMATCH ──\n") == ""
