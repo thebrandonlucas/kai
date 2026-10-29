@@ -928,7 +928,9 @@ NixBackend :: [].{
 
 	## Ordinary, non-fixed-output derivations keep fetching outside user Run.
 	## Runner tool paths are explicit; argv and metadata enter through JSON.
-	## PATH holds the standard-environment tools mkShell puts on a shell's PATH.
+	## PATH holds the standard-environment tools mkShell puts on a shell's PATH,
+	## and the tools are build inputs, as in mkShell, so their setup hooks set
+	## variables such as PKG_CONFIG_PATH and the compiler's library paths.
 	render_build : Model.Build, Model.Environment, Model, Str, Str -> Str
 	render_build = |build, environment, model, system, workspace| {
 		snapshot = if (workspace.is_empty()) "" else "${workspace}/snapshot"
@@ -1016,7 +1018,8 @@ NixBackend :: [].{
 				"            pkgs = sets.${quote(primary)};",
 				"            tools = [ ${Str.join_with(tools, " ")} ];",
 				"            runner = ${runner};",
-				"          in pkgs.runCommand ${quote("kai-${build.name}")} {",
+				"          in pkgs.runCommandCC ${quote("kai-${build.name}")} {",
+				"            nativeBuildInputs = tools;",
 				"            kaiSpec = builtins.toJSON {",
 				"              project = ${project};",
 				"              isolation = ${isolation};",
@@ -1944,7 +1947,8 @@ expect match single(Request.build("app")) {
 			and file.contents.contains(
 				"\"/work/build-runner\"; name = \"kai-build-runner\";",
 			)
-			and file.contents.contains("pkgs.runCommand")
+			and file.contents.contains("pkgs.runCommandCC")
+			and file.contents.contains("nativeBuildInputs = tools;")
 			and !file.contents.contains("outputHash")
 		Err(_) => False
 	}
