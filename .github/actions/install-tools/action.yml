@@ -1,0 +1,53 @@
+name: Install CI tools
+description: >-
+  Put the tools zig build test needs on PATH, from downloads pinned by SHA-256,
+  with no Nix. Replace this with a Kaifile environment of FetchLocked tools,
+  `kai shell`, once a Kai release has the direct backend. x86_64 Linux only.
+
+runs:
+  using: composite
+  steps:
+    - name: Restore the downloads
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/kai-ci-tools
+        key: ci-tools-${{ hashFiles('.github/actions/install-tools/action.yml', '.roc-downloads', '.roc-version') }}
+
+    - name: Install the tools
+      shell: bash
+      run: |
+        set -euo pipefail
+        store="$HOME/.cache/kai-ci-tools"
+        tools="$RUNNER_TEMP/tools"
+        mkdir -p "$store" "$tools/bin"
+        # Print the path of the download with this SHA-256, fetching it if need be.
+        fetch() {
+          local url="$1" sha256="$2" file="$store/$2"
+          if ! echo "$sha256  $file" | sha256sum --check --status 2>/dev/null; then
+            curl -fsSL --retry 3 --proto '=https' --tlsv1.2 -o "$file" "$url"
+            echo "$sha256  $file" | sha256sum --check --quiet >&2
+          fi
+          echo "$file"
+        }
+        unpack() {
+          mkdir -p "$tools/$1"
+          tar -xf "$(fetch "$2" "$3")" -C "$tools/$1"
+        }
+
+        read -r _ _ roc_sha256 roc_archive < <(grep '^x86_64-linux ' .roc-downloads)
+        roc_release="https://github.com/roc-lang/nightlies/releases/download/$(cat .roc-version)"
+        unpack roc "$roc_release/$roc_archive.tar.gz" "$roc_sha256"
+        ln -s "$tools/roc/$roc_archive/roc" "$tools/bin/roc"
+
+        unpack zig https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
+          70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+        ln -s "$tools/zig/zig-x86_64-linux-0.16.0/zig" "$tools/bin/zig"
+
+        unpack actionlint https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+          8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        ln -s "$tools/actionlint/actionlint" "$tools/bin/actionlint"
+
+        install -m755 "$(fetch https://github.com/NixOS/nixfmt/releases/download/v1.5.0/nixfmt \
+          aa029247ab89c897e2f3948463967553f902f86e86e3402fa28cb29c4a44f745)" "$tools/bin/nixfmt"
+
+        echo "$tools/bin" >> "$GITHUB_PATH"
