@@ -45,6 +45,16 @@ Plan := { steps : List(Step), next : Next }.{
 		),
 		InstallRunner({ destination : Str }),
 
+		## Makes each program ready in kai's store of pinned downloads and links
+		## it into `bin`, in the workspace. The Runs after it have `bin` first on
+		## PATH, until the next Realise.
+		Realise({ bin : Str, programs : List(Program) }),
+
+		## Downloads each file into the store and writes a line
+		## `<key> <sha256> <size>` for it to `result`, a generated file for a
+		## continuation to observe.
+		Measure({ files : List({ key : Str, urls : List(Str) }), result : Str }),
+
 		## kai sets the `secrets` variables from `.env` or its own environment
 		## and removes `removed_environment_variables`, except those in
 		## `kept_environment_variables`, from the child process's environment:
@@ -77,6 +87,17 @@ Plan := { steps : List(Step), next : Next }.{
 	}
 
 	File : { path : Str, contents : Str }
+
+	## A download pinned by digest and length; a later URL is a mirror of the
+	## first. `File` is the program itself. `Archive(path)` is a tar.gz or
+	## tar.xz, unpacked whole, with the program at `path` inside it.
+	Program : {
+		name : Str,
+		urls : List(Str),
+		sha256 : Str,
+		size : U64,
+		unpack : [File, Archive(Str)],
+	}
 
 	## `Quiet` shows the child's stderr only when it fails. `Remembered(files)`
 	## is Quiet, and kai skips the run once it succeeded with the same argv
@@ -160,6 +181,29 @@ expect {
 				store: "/nix/store",
 			}),
 			InstallRunner({ destination: "/w/runner" }),
+			Realise({
+				bin: "/w/bin",
+				programs: [
+					{
+						name: "tool",
+						urls: ["https://example.com/tool"],
+						sha256: "ab",
+						size: 2,
+						unpack: File,
+					},
+					{
+						name: "zipped",
+						urls: ["https://example.com/a", "https://mirror.example/a"],
+						sha256: "cd",
+						size: 3,
+						unpack: Archive("a/zipped"),
+					},
+				],
+			}),
+			Measure({
+				files: [{ key: "tool", urls: ["https://example.com/tool"] }],
+				result: "/g/measured",
+			}),
 			Run({
 				description: "shell dev",
 				argv: ["bash"],

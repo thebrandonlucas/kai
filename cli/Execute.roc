@@ -17,9 +17,11 @@ import api.Plan
 import api.Protocol
 import api.Sexpr
 
+import Load
 import Output
 import Selection
 import Snapshot
+import Store
 import Update
 import Variables
 import Workspace
@@ -339,6 +341,7 @@ Execute := [].{
 		var $index = 0
 		var $finished = ""
 		var $holding = Bool.False
+		var $path = ""
 		# The last Stage of each open MayFail, innermost last; a failure there
 		# skips the steps through that Stage.
 		var $may_fail = []
@@ -366,13 +369,17 @@ Execute := [].{
 					(snapshots, builds) = match step {
 						Snapshot(_) => (Bool.True, Bool.False)
 						Run({ output: Artifact(_), .. }) => (Bool.False, Bool.True)
+						Realise({ bin, .. }) => {
+							$path = bin
+							(Bool.False, Bool.False)
+						}
 						_ => (Bool.False, Bool.False)
 					}
 					if snapshots and !$holding {
 						Execute.hold!(guard, mode)?
 						$holding = Bool.True
 					}
-					result = Execute.step!(step, layout, mode, options, shares_stdout)
+					result = Execute.step!(step, layout, mode, options, shares_stdout, $path)
 					if $holding and (builds or result.is_err()) {
 						_ = Workspace.path(guard).delete!()
 						$holding = Bool.False
@@ -419,6 +426,15 @@ Execute := [].{
 					Err(_) => Ok({})
 				}
 		}
+	}
+
+	# The first failure of `check` on `items`.
+	each : List(a), (a -> Try({}, Str)) -> Try({}, Str)
+	each = |items, check_item| {
+		for item in items {
+			check_item(item)?
+		}
+		Ok({})
 	}
 
 	under : Str, Str -> Bool
@@ -471,6 +487,18 @@ Execute := [].{
 				}
 			# Every variable name must be valid, so a name such as `A=B`
 			# cannot smuggle a value into the child process's environment.
+			Realise({ bin, programs }) =>
+				if under(bin, layout.workspace) {
+					Execute.each(programs, Store.check)
+				} else {
+					Err("links programs outside the workspace: ${bin}")
+				}
+			Measure({ files, result }) =>
+				if under(result, layout.generated_root) {
+					Execute.each(files, |f| Store.check_urls(f.key, f.urls))
+				} else {
+					Err("writes outside the generated files: ${result}")
+				}
 			Run(run_step) => {
 				names = run_step.secrets
 					.concat(run_step.removed_environment_variables)
@@ -517,14 +545,16 @@ Execute := [].{
 	uses_workspace : Plan.Step -> Bool
 	uses_workspace = |step|
 		match step {
-			Write(_) | Snapshot(_) | InstallRunner(_) => Bool.True
+			Write(_) | Snapshot(_) | InstallRunner(_) | Realise(_) | Measure(_) =>
+				Bool.True
 			_ => Bool.False
 		}
 
 	# One step's effect. Children run from the project root; a failing child
-	# stops the plan. Its results go where `shares_stdout` leaves room for them.
-	step! : Plan.Step, Layout, Output.Mode, Options, Bool => Try({}, _)
-	step! = |step, layout, mode, options, shares_stdout| {
+	# stops the plan. Its results go where `shares_stdout` leaves room for them;
+	# `bin` is the last Realise's bin directory, or "".
+	step! : Plan.Step, Layout, Output.Mode, Options, Bool, Str => Try({}, _)
+	step! = |step, layout, mode, options, shares_stdout, bin| {
 		root = layout.project_root
 		match step {
 			Note(message) =>
@@ -555,8 +585,19 @@ Execute := [].{
 			CheckSource(path) => Workspace.safe_source!(path)
 			Snapshot(snapshot) => Snapshot.snapshot!(snapshot)
 			InstallRunner({ destination }) => Workspace.install_runner!(destination)
+			Realise(realise) => Store.expose!(Load.cache!()?, realise, mode)
+			Measure({ files, result }) => {
+				cache = Load.cache!()?
+				var $lines = []
+				for { key, urls } in files {
+					{ sha256, size } = Store.measure!(cache, key, urls, mode)?
+					$lines = $lines.append("${key} ${sha256} ${size.to_str()}\n")
+				}
+				contents = Str.join_with($lines, "")
+				Workspace.stage!([{ path: result, contents }], layout)
+			}
 			Run(run) => {
-				process_command = Execute.process_command!(run, root)?
+				process_command = Execute.process_command!(run, root, bin)?
 				{ description, output, .. } = run
 				match output {
 					Inherit => Execute.child!(process_command, description, Inherit)
@@ -713,8 +754,9 @@ Execute := [].{
 	# had none; backends such as `nix develop` replace SHELL), its secrets set
 	# and its removed environment variables, except those kept, unset. Each
 	# secret's value comes from the project's `.env`, else kai's environment,
-	# and never appears in kai's output, events or errors.
-	process_command! = |run, root| {
+	# and never appears in kai's output, events or errors. A non-empty `bin`
+	# goes first on its PATH.
+	process_command! = |run, root, bin| {
 		{ description, argv, secrets, kept_environment_variables, .. } = run
 		removed_environment_variables = run.removed_environment_variables
 		(program, args) = match argv {
@@ -755,6 +797,13 @@ Execute := [].{
 			Ok(value) => [(operator, value)]
 			Err(_) => []
 		}
+		search = if bin.is_empty() {
+			[]
+		} else {
+			inherited = Variables.read!(Variables.path) ?? ""
+			name = OsStr.from_str(Variables.path.name)
+			[(name, OsStr.from_str("${bin}:${inherited}"))]
+		}
 		Ok(
 			Cmd.new(OsStr.from_str(program))
 				.args(args.map(OsStr.from_str))
@@ -762,7 +811,8 @@ Execute := [].{
 				.clear_envs()
 				.envs(kept)
 				.envs(shell)
-				.envs($secret_values),
+				.envs($secret_values)
+				.envs(search),
 		)
 	}
 
@@ -869,6 +919,15 @@ run = |argv, secrets, removed_environment_variables, kept_environment_variables|
 		kept_environment_variables,
 	})
 
+pinned : Plan.Program
+pinned = {
+	name: "tool",
+	urls: ["https://example.com/tool"],
+	sha256: "ab".repeat(32),
+	size: 3,
+	unpack: File,
+}
+
 validated : List(Plan.Step) -> Try({}, [UnsafePlan(Str)])
 validated = |steps|
 	Execute.validate(Plan.{ steps, next: Done }, layout, ReadsLock)
@@ -892,6 +951,11 @@ expect
 			store: "/nix/store",
 		}),
 		InstallRunner({ destination: "/p/.kai/build-runner" }),
+		Realise({ bin: "/p/.kai/direct/bin", programs: [pinned] }),
+		Measure({
+			files: [{ key: "tool", urls: pinned.urls }],
+			result: "/p/.kai/generated/direct/measured",
+		}),
 		Write([{ path: "/p/.kai/generated/flake.nix", contents: "" }]),
 		run(["/bin/nix", "build"], ["TOKEN"], ["OTHER"], ["VERSION"]),
 		Note("n"),
@@ -914,6 +978,13 @@ expect [
 		store: "/nix/store",
 	}),
 	InstallRunner({ destination: "/tmp/runner" }),
+	Realise({ bin: "/tmp/bin", programs: [pinned] }),
+	Realise({ bin: "/p/.kai/bin", programs: [{ ..pinned, name: "../x" }] }),
+	Measure({ files: [], result: "/p/.kai/lock.json" }),
+	Measure({
+		files: [{ key: "tool", urls: ["http://example.com/tool"] }],
+		result: "/p/.kai/generated/measured",
+	}),
 	run([], [], [], []),
 	run([""], [], [], []),
 	run(["-c"], [], [], []),

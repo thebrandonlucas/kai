@@ -1,6 +1,7 @@
 # kai: developer environments, tasks and builds from a Kaifile.roc.
 app [main!] {
 	api: "../platform/api.roc",
+	http: "https://github.com/roc-lang/http/releases/download/1.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.26.0/GddgvsGjiNXrHFW6au5i5dUDbTs8FinQdrgE2Gqmw53t.tar.zst",
 }
 
@@ -416,6 +417,7 @@ error_code = |err|
 		ChildExited(_, _) => "child_exited"
 		MissingSecret(_, _) => "missing_secret"
 		InvalidDotenv(_) => "invalid_dotenv"
+		StoreFailed(_) => "download_failed"
 		BackendConflict(_, _) | NoEligibleBackend(_) => "no_backend"
 		RequiredBackendUnavailable(_, _) => "no_backend"
 		NoImplementation(_) => "no_implementation"
@@ -479,6 +481,7 @@ describe = |err|
 		CompilerMismatch(compiler, actual) =>
 			"`${compiler}` is ${actual}; ${needs_compiler}"
 		NixMissing => "Nix is not installed; ${needs_compiler}"
+		StoreFailed(message) => message
 		KaifileInvalid(file, releases) =>
 			"${file} did not compile; see the errors above${mixed(releases)}"
 		KaifileFailed(file, output, releases) =>
