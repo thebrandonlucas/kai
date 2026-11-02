@@ -54,6 +54,7 @@ Model := {
 					],
 				},
 			),
+			expected : List(Str),
 			on_systems : List(
 				{
 					systems : List(Str),
@@ -81,7 +82,15 @@ Model := {
 	fetches : List(
 		{
 			name : Str,
-			files : List({ system : Str, url : Str, hash : Str }),
+			files : List(
+				{
+					system : Str,
+					url : Str,
+					hash : Str,
+					mirrors : List(Str),
+					unpack : [File, Archive(Str)],
+				},
+			),
 			unavailable : List(Str),
 		},
 	),
@@ -148,6 +157,7 @@ Model := {
 		aliases : List(Alias),
 		rust_toolchain : RustToolchain,
 		package_env : List(PackageVariable),
+		expected : List(Str),
 		on_systems : List(OnSystems),
 	}
 
@@ -203,9 +213,16 @@ Model := {
 	BuildSource : { name : Str, ref : Str }
 
 	## A file per system, pinned by its SRI sha256 hash rather than the lock,
-	## except on the declared systems it is unavailable on.
+	## or with an empty hash by the lock's `direct` section, except on the
+	## declared systems it is unavailable on.
 	Fetch : { name : Str, files : List(FetchFile), unavailable : List(Str) }
-	FetchFile : { system : Str, url : Str, hash : Str }
+	FetchFile : {
+		system : Str,
+		url : Str,
+		hash : Str,
+		mirrors : List(Str),
+		unpack : [File, Archive(Str)],
+	}
 
 	## The crates a Cargo.lock's text names, vendored into one directory and
 	## pinned by the lock's checksums rather than Kai's lock.

@@ -1,6 +1,7 @@
 # std's settings are today's Kaifile settings. std declares kai's standard
-# commands (shell, run, build, workflow, update, model), the nix and guix
-# backends, and implementations planning from the settings' Kaifile model.
+# commands (shell, run, build, workflow, update, model), the nix, guix and
+# direct backends, and implementations planning from the settings' Kaifile
+# model.
 import pf.Backend
 import pf.Command
 import Config
@@ -17,6 +18,7 @@ import pf.LockFile
 import nix.Locks
 import nix.NixBackend
 import guix.GuixBackend
+import direct.DirectBackend
 import Pages
 
 Std := [].{
@@ -47,6 +49,12 @@ Std := [].{
 							id: "guix",
 							summary: "Guix shells",
 							program: "guix",
+							flag: DoubleDashVersion,
+						},
+						Backend.{
+							id: "direct",
+							summary: "Pinned downloads, with no provider",
+							program: "",
 							flag: DoubleDashVersion,
 						},
 					],
@@ -197,10 +205,14 @@ Std := [].{
 				[
 					Trailing({
 						name: "inputs",
-						help: "Inputs to update (default: all).",
-						choices: (Locks.inputs(model) ?? []).map(
-							|input| choice(input.name, "", input.ref),
-						),
+						help: "Inputs, or FetchLocked files to measure again (default: all).",
+						choices: (Locks.inputs(model) ?? [])
+							.map(|input| choice(input.name, "", input.ref))
+							.concat(
+								model.fetches
+									.keep_if(|f| Project.locked_fetch(model, f.name))
+									.map(|f| choice(f.name, "", "FetchLocked")),
+							),
 					}),
 				],
 				OwnsLock,
@@ -274,13 +286,35 @@ Std := [].{
 					},
 				},
 		)
+		direct = atomic.map(
+			|command|
+				Implementation.{
+					command,
+					backend: On("direct"),
+					fit: |args| DirectBackend.fit(model, Std.request(command, args)?),
+					plan: |ctx| {
+						wanted = Std.request(command, ctx.args).map_err(Plan.fail)?
+						Std.known(model, wanted)?
+						{ host, layout, lock, .. } = ctx
+						DirectBackend.plan(model, wanted, host.system, layout, lock)
+					},
+				},
+		)
 		nix
 			.concat(guix)
+			.concat(direct)
 			.concat([
 				Implementation.{
 					command: "update",
 					backend: On("nix"),
-					fit: |_| Std.lockable(model),
+					fit: |args| {
+						names = Command.trailing(args, "inputs")
+						if names.any(|name| Project.locked_fetch(model, name)) {
+							Err("FetchLocked files are pinned by direct; name only Nix inputs")
+						} else {
+							Std.lockable(model)
+						}
+					},
 					plan: |ctx| {
 						Std.known_inputs(model, Command.trailing(ctx.args, "inputs"))?
 						Std.update_nix(Std.revised(model, ctx), ctx).map_err(Plan.fail)
@@ -298,6 +332,25 @@ Std := [].{
 					plan: |ctx| Std.update_guix(model, ctx).map_err(Plan.fail),
 				},
 				Implementation.{
+					command: "update",
+					backend: On("direct"),
+					fit: |args| {
+						names = Command.trailing(args, "inputs")
+						if !names.all(|name| Project.locked_fetch(model, name)) {
+							Err("direct measures again only FetchLocked files; name only those")
+						} else if model.fetches.is_empty() {
+							Err("no Fetch to pin")
+						} else {
+							Ok({})
+						}
+					},
+					plan: |ctx| {
+						{ layout, lock, phase, observed, .. } = ctx
+						names = Command.trailing(ctx.args, "inputs")
+						DirectBackend.update(model, names, layout, lock, phase, observed)
+					},
+				},
+				Implementation.{
 					command: "model",
 					backend: Independent,
 					fit: |_| Ok({}),
@@ -309,11 +362,23 @@ Std := [].{
 			])
 	}
 
-	## Whether Nix can serve the requested closure; unrelated shells, tasks
-	## and builds never matter. Nix planning checks builds itself.
+	## Whether Nix can serve the requested closure, a workflow's tasks
+	## included; unrelated shells, tasks and builds never matter. Nix planning
+	## checks builds itself.
 	fit_nix : Model, Request -> Try({}, Str)
 	fit_nix = |model, wanted| {
 		environment = match wanted {
+			Request.Workflow(name) => {
+				# Planning reports an unknown workflow, with the names it may mean.
+				steps = Project.workflow_steps(model, name) ?? []
+				for step in steps {
+					match step {
+						RunTask(task, args) => Std.fit_nix(model, Request.Run(task, args))?
+						_ => {}
+					}
+				}
+				return Ok({})
+			}
 			Request.Shell(name, _) =>
 				model.shells.find_first(|s| s.name == name)
 					.map_ok(|s| s.environment)
@@ -589,7 +654,11 @@ Std := [].{
 	## Nix has nothing to lock in a project using only Guix sources.
 	lockable : Model -> Try({}, Str)
 	lockable = |model| {
-		used = model.environments.join_map(|e| e.tools.map(|t| t.source))
+		nix = model.environments.drop_if(|e| Project.direct_only(model, e))
+		if nix.is_empty() and !model.environments.is_empty() {
+			return Err("every environment needs the direct backend")
+		}
+		used = nix.join_map(|e| e.tools.map(|t| t.source))
 		guix = |name|
 			model.sources.any(
 				|s|
@@ -1011,13 +1080,55 @@ expect {
 		}
 	["shell", "run", "build", "workflow", "update"].all(
 		|command|
-			backends(command, Auto) == ["nix", "guix"]
+			backends(command, Auto) == ["nix", "guix", "direct"]
 				and backends(command, Only("nix")) == ["nix"]
-				and backends(command, Only("guix")) == ["guix"],
+				and backends(command, Only("guix")) == ["guix"]
+				and backends(command, Only("direct")) == ["direct"],
 	)
 		and [Auto, Only("nix"), Only("guix")].all(
 			|choice| backends("model", choice) == [""],
 		)
+}
+
+# direct runs a workflow of tasks, which Nix leaves to it, refuses one with a
+# build, and update with a name only for a FetchLocked file, which Nix leaves
+# to it too.
+expect {
+	settings = [
+		Name("direct"),
+		Systems(["x86_64-linux"]),
+		FetchLocked(
+			"tool",
+			[
+				{
+					system: "x86_64-linux",
+					url: "https://example.com/t",
+					mirrors: [],
+					program: File,
+				},
+			],
+		),
+		Environment("dev", [Tools(["tool#tool"])]),
+		Task("t", [Use("dev"), Run(["tool"])]),
+		Build("app", [Use("dev"), Run(["true"]), Output("out")]),
+		Workflow("tasks", [RunTask("t", [])]),
+		Workflow("all", [RunTask("t", []), BuildArtifact("app")]),
+	]
+	fits = |command, backend, args|
+		match ConfigToModel.convert(settings) {
+			Ok(model) =>
+				Std.implementations(model)
+					.find_first(|i| i.command == command and i.backend == On(backend))
+					.map_ok(|i| (i.fit)(args).is_ok())
+					?? Bool.False
+			Err(_) => Bool.False
+		}
+	inputs = |name| [{ name: "inputs", value: Many([name]) }]
+	fits("workflow", "direct", [{ name: "workflow", value: Present("tasks") }])
+		and !fits("workflow", "nix", [{ name: "workflow", value: Present("tasks") }])
+		and !fits("workflow", "direct", [{ name: "workflow", value: Present("all") }])
+		and fits("update", "direct", inputs("tool"))
+		and !fits("update", "nix", inputs("tool"))
 }
 
 # A Default build is what `kai build` builds without a name, and its help says

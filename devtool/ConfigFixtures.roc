@@ -621,6 +621,41 @@ ConfigFixtures := [].{
 				\\ Environment("dev", [Tools(["tool#tool"])])]
 		},
 		{
+			name: "FetchLocked",
+			expected: Valid,
+			body: \\config = [Name("fetch-locked"),
+				\\ FetchLocked("tool", [{ system: "x86_64-linux",
+				\\  url: "https://example.com/tool.tar.xz",
+				\\  mirrors: ["https://mirror.example.com/tool.tar.xz"],
+				\\  program: Archive("tool-1/tool") }]),
+				\\ FetchUnavailable("tool", ["aarch64-linux"]),
+				\\ Environment("dev", [Tools(["tool#tool"]), Expect(["git"])]),
+				\\ Shell("default", [Use("dev")])]
+		},
+		{
+			name: "FetchLockedPlainHttp",
+			expected: Rejected("FetchLocked tool needs HTTPS URLs"),
+			body: \\config = [Name("bad"), Systems(["x86_64-linux"]),
+				\\ FetchLocked("tool", [{ system: "x86_64-linux",
+				\\  url: "http://example.com/tool", mirrors: [], program: File }])]
+		},
+		{
+			name: "FetchLockedBuildInput",
+			expected: Rejected("build app needs a published sha256 for tool"),
+			body: \\config = [Name("bad"), Systems(["x86_64-linux"]),
+				\\ FetchLocked("tool", [{ system: "x86_64-linux",
+				\\  url: "https://example.com/tool", mirrors: [], program: File }]),
+				\\ Environment("dev", []),
+				\\ Build("app", [Use("dev"), Inputs(["tool"]), Run(["true"]),
+				\\  Output("out")])]
+		},
+		{
+			name: "DuplicateExpect",
+			expected: Rejected("DuplicateExpect: environment dev"),
+			body: \\config = [Name("bad"),
+				\\ Environment("dev", [Expect(["git"]), Expect(["gh"])])]
+		},
+		{
 			name: "FetchUnavailableNoFetch",
 			expected: Rejected("FetchUnavailable tool names no Fetch"),
 			body: \\config = [Name("bad"), FetchUnavailable("tool", ["x86_64-linux"])]

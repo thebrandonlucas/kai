@@ -132,7 +132,7 @@ std_script =
 	\\  sed -i "s|$2|$3|g" "$1"
 	\\}
 	\\replace stage/model/main.roc 'api: "../../../platform/api.roc"' "$api"
-	\\for main in stage/backends/nix/main.roc stage/backends/guix/main.roc; do
+	\\for main in stage/backends/*/main.roc; do
 	\\  replace "$main" 'api: "../../../../platform/api.roc"' "$api"
 	\\done
 	\\replace stage/main.roc '"../../platform/main.roc"' "$url"

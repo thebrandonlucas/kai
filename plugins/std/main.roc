@@ -13,6 +13,7 @@ package
 		WorkflowName,
 	]
 	{
+		direct: "backends/direct/main.roc",
 		guix: "backends/guix/main.roc",
 		model: "model/main.roc",
 		nix: "backends/nix/main.roc",
@@ -25,7 +26,9 @@ import pf.Conformance
 # Std.roc's planning tests cover every implementation.
 expect {
 	cases = ["shell", "run", "build", "workflow", "update"]
-		.join_map(|command| ["nix", "guix"].map(|backend| { command, backend }))
+		.join_map(
+			|command| ["nix", "guix", "direct"].map(|backend| { command, backend }),
+		)
 		.append({ command: "model", backend: "" })
 	Conformance.missing(Std.plugin([Name("x")]), cases) == []
 }

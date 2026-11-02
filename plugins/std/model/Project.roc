@@ -519,8 +519,23 @@ Project :: [].{
 					!(file.url.starts_with("https://") or file.url.starts_with("http://")) {
 					return Err("invalid Fetch URL: ${fetch.name}: ${file.url}")
 				}
-				if sri_sha256(file.hash) != Ok(file.hash) {
+				locked = file.hash.is_empty()
+				if !locked and sri_sha256(file.hash) != Ok(file.hash) {
 					return Err("invalid Fetch hash: ${fetch.name}")
+				}
+				https = |url| clean(url) and url.starts_with("https://")
+				if locked and !([file.url].concat(file.mirrors).all(https)) {
+					return Err("FetchLocked ${fetch.name} needs HTTPS URLs")
+				}
+				match file.unpack {
+					Archive(path) => {
+						leaves = path.starts_with("/") or path.split_on("/").contains("..")
+						if path.is_empty() or leaves {
+							name = fetch.name
+							return Err("invalid Archive in FetchLocked ${name}: ${path}")
+						}
+					}
+					File => {}
 				}
 			}
 			for system in fetch.unavailable {
@@ -721,6 +736,12 @@ Project :: [].{
 					!model.fetches.any(|f| f.name == input) and
 						!model.cargo_vendors.any(|c| c.name == input) {
 					return Err("unknown build source: ${input}")
+				}
+				if locked_fetch(model, input) {
+					return Err(
+						"build ${build.name} needs a published sha256 for ${input}: "
+							.concat("a sandbox cannot read the lock's direct pins"),
+					)
 				}
 			}
 		}
@@ -1098,6 +1119,7 @@ Project :: [].{
 						None => base.rust_toolchain
 						own => own
 					},
+					expected: unique(base.expected.concat(env.expected)),
 					# The child's own variables override the parent's on every
 					# system, as its OnSystems override them on theirs.
 					on_systems: base.on_systems
@@ -1124,6 +1146,9 @@ Project :: [].{
 		project = validate(model)?
 		env = project.environments.find_first(|e| e.name == name)
 			.map_err(|_| "unknown environment: ${name}")?
+		if direct_only(project, env) {
+			return Err("environment ${name} needs the direct backend")
+		}
 		if backend == Guix and !env.overlays.is_empty() {
 			return Err("Guix does not support overlays in environment ${name}")
 		}
@@ -1186,6 +1211,20 @@ Project :: [].{
 		}
 		Ok({})
 	}
+
+	## Whether a Fetch leaves its digests to the lock's direct section.
+	locked_fetch : Model, Str -> Bool
+	locked_fetch = |model, name|
+		model.fetches.any(
+			|f| f.name == name and f.files.any(|file| file.hash.is_empty()),
+		)
+
+	## Whether only the direct backend can serve an environment: it expects
+	## programs of the machine, or a tool only the lock's direct section pins.
+	direct_only : Model, Model.Environment -> Bool
+	direct_only = |model, environment|
+		!environment.expected.is_empty()
+			or environment_tools(environment).any(|t| locked_fetch(model, t.source))
 
 	## The tools that come from package sources, not from Fetches.
 	package_tools : List(Model.Tool), List(Model.Fetch) -> List(Model.Tool)
@@ -1282,6 +1321,7 @@ base = {
 	pure: Bool.False,
 	aliases: [],
 	rust_toolchain: None,
+	expected: [],
 	package_env: [],
 	on_systems: [],
 }
@@ -1299,6 +1339,7 @@ child = {
 	pure: Bool.False,
 	aliases: [],
 	rust_toolchain: None,
+	expected: [],
 	package_env: [],
 	on_systems: [],
 }
@@ -1318,6 +1359,7 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
 			package_env: [],
 			on_systems: [],
 		},
@@ -1337,6 +1379,7 @@ expect match Project.validate(
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
 			package_env: [],
 			on_systems: [],
 		},
@@ -1349,6 +1392,7 @@ expect match Project.validate(
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
 			package_env: [],
 			on_systems: [],
 		},
@@ -1366,6 +1410,7 @@ expect match Project.validate(
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
 			package_env: [],
 			on_systems: [],
 		},
@@ -1457,6 +1502,7 @@ expect {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
 			package_env: [],
 			on_systems: [],
 			tools: [{ source: "guix", name: "git" }],
@@ -1520,6 +1566,7 @@ build_fixture = |builds| Model.{
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
 			package_env: [],
 			on_systems: [],
 		},
@@ -1875,6 +1922,7 @@ workflow_features = |workflows, features| Model.{
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
 			package_env: [],
 			on_systems: [],
 		},
@@ -2332,7 +2380,13 @@ expect {
 # environment or build using it is refused on those systems only.
 expect {
 	hash = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
-	file = |system| { system, url: "https://example.com/tool", hash }
+	file = |system| {
+		system,
+		url: "https://example.com/tool",
+		hash,
+		mirrors: [],
+		unpack: File,
+	}
 	tooled = {
 		..base,
 		name: "tooled",

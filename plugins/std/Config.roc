@@ -40,6 +40,7 @@ Config :: [].{
 		Fetch(InputName, List(FetchFile)),
 		FetchAll(InputName, { url : Str, sha256 : Str }),
 		FetchUnavailable(InputName, List(System)),
+		FetchLocked(InputName, List(LockedFile)),
 		CargoVendor(InputName, Str),
 		Build(InputName, List(BuildSetting)),
 		Workflow(WorkflowName, List(WorkflowStep)),
@@ -72,6 +73,18 @@ Config :: [].{
 	## file for: an environment or build using it is refused there, rather
 	## than the Kaifile everywhere.
 	FetchFile : { system : System, url : Str, sha256 : Str }
+
+	## A Fetch with no published sha256: `kai update` records each file's in
+	## the lock's direct section, and only the direct backend runs it. `mirrors`
+	## are other URLs for the same bytes. `program` is `File` for the program
+	## itself, or `Archive(path)` for a tar.gz or tar.xz with the program at
+	## `path`, unpacked whole.
+	LockedFile : {
+		system : System,
+		url : Str,
+		mirrors : List(Str),
+		program : [File, Archive(Str)],
+	}
 
 	PackageSource : [Auto, From(Provider)]
 	Provider : [NixPackages(FlakeRef), GuixPackages(Str)]
@@ -107,6 +120,7 @@ Config :: [].{
 		RustToolchain(Str),
 		RustToolchainWith(Str, List(RustToolchainSetting)),
 		PackageEnv(List((Str, PackageValue))),
+		Expect(List(Str)),
 		OnSystems(List(System), List(SystemSetting)),
 	]
 

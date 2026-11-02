@@ -106,12 +106,17 @@ E2eExamples := [].{
 
 	## Run each command in order and return their stdout, apart from update's
 	## report. `update` locks only Nix, so a host with Guix too never waits for
-	## a Guix lock.
+	## a Guix lock, except in the direct example, whose tools only direct serves.
 	run_in! = |kai, project, name, lines| {
 		var $stdout = ""
 		for line in lines {
 			args = line.split_on(" ").keep_if(|arg| !arg.is_empty())
-			argv = if (args == ["update"]) ["--backend", "nix", "update"] else args
+			argv =
+				if args == ["update"] and name != "direct" {
+					["--backend", "nix", "update"]
+				} else {
+					args
+				}
 			command = Cmd.new(Path.to_os_str(kai)).args(Exec.strs(argv)).cwd(project)
 			output = match Exec.output!(command) {
 				Ok(ran) => ran

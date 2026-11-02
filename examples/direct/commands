@@ -1,0 +1,5 @@
+update
+update jq
+run version
+workflow check
+shell default -- actionlint --version

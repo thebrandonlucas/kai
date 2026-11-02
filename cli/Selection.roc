@@ -228,6 +228,16 @@ expect {
 		and chosen(only_guix) == Ok(("guix", Bool.False))
 }
 
+# A backend that needs no program is always usable, so it serves when the
+# preferred backend is not installed, and only then.
+expect {
+	direct = { ..candidate("direct", Fit), probes: [] }
+	options = [candidate("nix", Fit), direct]
+	chosen = |observed|
+		Selection.choose(Auto, options, probed(observed)).map_ok(|c| c.backend)
+	chosen(only_nix) == Ok("nix") and chosen(neither) == Ok("direct")
+}
+
 # The explanation names the backend and the reason it was chosen.
 expect {
 	generic = [candidate("nix", Fit), candidate("guix", Fit)]

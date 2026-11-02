@@ -90,6 +90,8 @@ ConfigToModel :: [].{
 						["fetches"],
 				)
 				.concat(if (acc.unavailable.is_empty()) [] else ["fetch_unavailable"])
+				.concat(if (uses_locked_fetch(acc)) ["fetch_locked"] else [])
+				.concat(if (uses_expect(acc)) ["expect"] else [])
 				.concat(if (acc.cargo_vendors.is_empty()) [] else ["cargo"])
 				.concat(if (acc.builds.is_empty()) [] else ["builds"])
 				.concat(if (acc.workflows.is_empty()) [] else ["workflows"])
@@ -229,8 +231,26 @@ ConfigToModel :: [].{
 								url: f.url,
 								hash: Project.sri_sha256(f.sha256)
 									.map_err(|_| "invalid sha256 in Fetch ${name.to_str()}")?,
+								mirrors: [],
+								unpack: File,
 							}),
 					)?,
+					unavailable: [],
+				}),
+			}
+			FetchLocked(name, files) => {
+				..acc,
+				fetches: acc.fetches.append({
+					name: name.to_str(),
+					files: files.map(
+						|f| {
+							system: f.system.to_str(),
+							url: f.url,
+							hash: "",
+							mirrors: f.mirrors,
+							unpack: f.program,
+						},
+					),
 					unavailable: [],
 				}),
 			}
@@ -338,6 +358,7 @@ ConfigToModel :: [].{
 				aliases: [],
 				toolchains: [],
 				package_envs: [],
+				expects: [],
 				on_systems: [],
 			},
 			|acc, setting|
@@ -355,6 +376,7 @@ ConfigToModel :: [].{
 					Extend(parent) => { ..acc, parents: acc.parents.append(parent.to_str()) }
 					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
 					Pure => { ..acc, pures: acc.pures + 1 }
+					Expect(programs) => { ..acc, expects: acc.expects.append(programs) }
 					Alias(alias, tool, binary) => {
 						..acc,
 						aliases: acc.aliases.append({ name: alias, tool: tool.to_ir(), binary }),
@@ -396,6 +418,9 @@ ConfigToModel :: [].{
 		if draft.pures > 1 {
 			return Err("DuplicatePure: environment ${name}")
 		}
+		if draft.expects.len() > 1 {
+			return Err("DuplicateExpect: environment ${name}")
+		}
 		Ok({
 			name,
 			parents: draft.parents,
@@ -414,6 +439,7 @@ ConfigToModel :: [].{
 				[one] => one
 				_ => return Err("DuplicatePackageEnv: environment ${name}")
 			},
+			expected: draft.expects.first() ?? [],
 			on_systems,
 		})
 	}
@@ -675,7 +701,15 @@ ConfigToModel :: [].{
 			|f| {
 				name: f.name,
 				files: systems.keep_if(|s| !unavailable_on(f.name).contains(s))
-					.map(|system| { system, url: f.url, hash: f.hash }),
+					.map(
+						|system| {
+							system,
+							url: f.url,
+							hash: f.hash,
+							mirrors: [],
+							unpack: File,
+						},
+					),
 				unavailable: [],
 			},
 		)
@@ -695,6 +729,13 @@ ConfigToModel :: [].{
 			[one] => Ok(one)
 			_ => Err("DuplicateEnv: ${declaration}")
 		}
+
+	uses_locked_fetch : Acc -> Bool
+	uses_locked_fetch = |acc|
+		acc.fetches.any(|f| f.files.any(|file| file.hash.is_empty()))
+
+	uses_expect : Acc -> Bool
+	uses_expect = |acc| acc.environments.any(|e| !e.expected.is_empty())
 
 	uses_may_fail : Acc -> Bool
 	uses_may_fail = |acc|

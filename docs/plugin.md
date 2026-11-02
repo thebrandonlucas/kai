@@ -97,7 +97,8 @@ parsed values. Only the one command that owns the lock
 
 A backend is `Backend.{ id, summary, program, flag }`: kai checks it by
 running `program --version` (or `-v`, `version`), bounded and side-effect
-free. std declares `nix` and `guix`; other plugins usually implement
+free. A backend whose `program` is `""` needs none and is always usable.
+std declares `nix`, `guix` and `direct`; other plugins usually implement
 commands on those.
 
 ```roc
@@ -139,8 +140,9 @@ closest to a mistyped one. std uses these codes:
 |---|---|
 | `missing_lock` | There is no lock, or it has no Nix section; hint `kai update`. |
 | `invalid_lock` | The lock cannot be read; hint `kai update`. |
-| `stale_lock` | The lock was made for other inputs, overlays, Guix channels or sources; hint `kai update` or `kai --backend guix update`. |
+| `stale_lock` | The lock was made for other inputs, overlays, Guix channels, sources or downloads; hint `kai update`, `kai --backend guix update` or `kai --backend direct update`. |
 | `missing_guix_lock` | The lock has no Guix pins; hint `kai --backend guix update`. |
+| `missing_direct_lock` | The lock has no direct pin for a download; hint `kai --backend direct update`. |
 | `unknown_input` | `kai update` names an input the project does not declare. |
 | `unknown_name` | The project declares no shell, task, build or workflow of that name. |
 | `plan_failed` | Any other failure. |

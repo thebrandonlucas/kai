@@ -21,6 +21,7 @@ TestData :: [].{
 		pure: Bool.False,
 		aliases: [],
 		rust_toolchain: None,
+		expected: [],
 		package_env: [],
 		on_systems: [],
 	}

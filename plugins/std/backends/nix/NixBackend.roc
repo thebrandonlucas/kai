@@ -42,6 +42,8 @@ NixBackend :: [].{
 		"build_root",
 		"on_systems",
 		"fetch_unavailable",
+		"fetch_locked",
+		"expect",
 	]
 
 	default_nixpkgs : Str
@@ -500,10 +502,14 @@ NixBackend :: [].{
 				},
 		).map(|s| s.name)
 		# An environment using a Guix source runs only as a Guix shell, which
-		# uses the installed channels, so the Nix lock leaves it out.
+		# uses the installed channels, and one only direct serves uses no Nix,
+		# so the Nix lock leaves them out.
 		nix = |name|
 			!project.environments.any(
-				|e| e.name == name and e.tools.any(|t| guix.contains(t.source)),
+				|e|
+					e.name == name
+						and (e.tools.any(|t| guix.contains(t.source))
+							or Project.direct_only(project, e)),
 			)
 		names = project.shells.map(|s| s.environment)
 			.concat(project.tasks.map(|t| t.environment))
@@ -1394,6 +1400,7 @@ sample_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
 			package_env: [],
 			on_systems: [],
 		},
@@ -1406,6 +1413,7 @@ sample_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
 			package_env: [],
 			on_systems: [],
 		},
@@ -1444,6 +1452,7 @@ full_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
 			package_env: [],
 			on_systems: [],
 		},
@@ -1456,6 +1465,7 @@ full_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
 			package_env: [],
 			on_systems: [],
 		},
@@ -1468,6 +1478,7 @@ full_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
 			package_env: [],
 			on_systems: [],
 		},
@@ -1564,6 +1575,7 @@ base = {
 	pure: Bool.False,
 	aliases: [],
 	rust_toolchain: None,
+	expected: [],
 	package_env: [],
 	on_systems: [],
 }
