@@ -56,8 +56,9 @@ kai --version
 The archive contains only the `kai` binary. Kai evaluates `Kaifile.roc` with
 the Roc compiler named in [`.roc-version`](.roc-version): one on `PATH` or set
 as `ROC=/path/to/roc`, or else one it gets with Nix from
-[roc-overlay](https://github.com/roc-lang/roc-overlay). Roc downloads the
-platform the first time it checks a `Kaifile.roc`.
+[roc-overlay](https://github.com/roc-lang/roc-overlay). Without Nix, it
+downloads the nightly, by the digests in [`.roc-downloads`](.roc-downloads),
+into its cache. Roc downloads the platform the first time it checks a `Kaifile.roc`.
 
 With Nix, you can also run or install the latest release from this
 repository's flake:

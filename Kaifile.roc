@@ -164,6 +164,7 @@ binary_files = [
 	"VERSION",
 	".roc-version",
 	".roc-overlay",
+	".roc-downloads",
 	"platform-release",
 	"plugins/std-release",
 ]

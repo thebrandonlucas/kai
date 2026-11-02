@@ -401,7 +401,7 @@ error_code = |err|
 		KaifileInvalid(_, _) | KaifileFailed(_, _, _) | PreviousHeader =>
 			"kaifile_invalid"
 		IncompatibleProtocol(_, _) => "incompatible_protocol"
-		CompilerUnavailable(_, _) | CompilerMismatch(_, _) | NixMissing =>
+		CompilerUnavailable(_, _) | CompilerMismatch(_, _) | NoRocDownload(_) =>
 			"no_compiler"
 		UnsupportedHost => "unsupported_host"
 		NoPlatformReference(_) | BundleFailed(_) => "bundle_failed"
@@ -480,7 +480,8 @@ describe = |err|
 				.concat(needs_compiler)
 		CompilerMismatch(compiler, actual) =>
 			"`${compiler}` is ${actual}; ${needs_compiler}"
-		NixMissing => "Nix is not installed; ${needs_compiler}"
+		NoRocDownload(system) =>
+			"Kai has no Roc download for ${system}; ${needs_compiler}"
 		StoreFailed(message) => message
 		KaifileInvalid(file, releases) =>
 			"${file} did not compile; see the errors above${mixed(releases)}"
@@ -570,8 +571,8 @@ unbuilt = |output|
 
 needs_compiler =
 	"kai evaluates Kaifile.roc with Roc ${Load.pinned_compiler}; put it on "
-		.concat("PATH, set ROC to its path, or install Nix ")
-		.concat("(https://nixos.org/download) for kai to get it")
+		.concat("PATH or set ROC to its path; otherwise kai gets it with Nix, ")
+		.concat("or downloads it without Nix")
 
 # --file is found where the parser reads it, and never after --.
 expect [
