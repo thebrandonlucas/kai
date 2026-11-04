@@ -347,6 +347,12 @@ PublishRelease := [].{
 
 		GitHubApi.require_repository!(api, repository, token) ? RepositoryProbeFailed
 		Exec.cmd!(Exec.cmd("zig").args(Exec.strs(["build", "build-release"])))?
+		# flake.nix packages the archives release preparation recorded.
+		recorded = Path.read_utf8!(Path.utf8(Release.checksums_file))?
+		built = Path.read_utf8!(Path.utf8("dist/SHA256SUMS"))?
+		if recorded != built {
+			return Err(ReleaseChecksumsMismatch({ built, recorded }))
+		}
 		root = Env.cwd!()?
 		artifacts = PublishRelease.artifacts!(root, release)?
 		expected_assets = artifacts.map(
