@@ -427,10 +427,17 @@ Release := [].{
 		}
 	}
 
-	# Everything SHA256SUMS covers: the CLI archives and the Roc bundles.
+	# The install script at the repository root, published with each release
+	# so that releases/latest/download/install.sh installs the latest one.
+	installer = "install.sh"
+
+	# Everything SHA256SUMS covers: the CLI archives, the Roc bundles and the
+	# install script.
 	archive_inventory : Str, List(Str), List(Str) -> List(Str)
 	archive_inventory = |version, systems, bundles|
-		systems.map(|system| Release.archive_name(version, system)).concat(bundles)
+		systems.map(|system| Release.archive_name(version, system))
+			.concat(bundles)
+			.append(Release.installer)
 
 	inventory : Str, List(Str), List(Str) -> List(Str)
 	inventory = |version, systems, bundles|
@@ -477,3 +484,9 @@ expect {
 		and !allowed(["VERSION", "RELEASE_NAME"])
 		and !allowed(["RELEASE_NAME", "README.md"])
 }
+
+# A release publishes SHA256SUMS, and the archives, bundles and install script
+# it covers.
+expect
+	Release.inventory("0.0.3", ["x86_64-linux"], ["h.tar.zst"])
+		== ["SHA256SUMS", "kai-0.0.3-x86_64-linux.tar.gz", "h.tar.zst", "install.sh"]

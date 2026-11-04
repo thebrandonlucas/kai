@@ -333,6 +333,11 @@ pub fn build(b: *std.Build) void {
     const check_actions = b.addSystemCommand(&.{"actionlint"});
     check_step.dependOn(&check_actions.step);
 
+    // The install script each release publishes, as POSIX sh.
+    const check_installer = b.addSystemCommand(&.{ "shellcheck", "--shell=sh" });
+    check_installer.addFileArg(b.path("install.sh"));
+    check_step.dependOn(&check_installer.step);
+
     const nix_fmt = addFilesCommand(
         b,
         &.{ "nixfmt", "--check" },
