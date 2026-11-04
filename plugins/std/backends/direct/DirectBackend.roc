@@ -190,24 +190,7 @@ DirectBackend := [].{
 		if programs.is_empty() {
 			[]
 		} else {
-			script =
-				\\missing=
-				\\for program; do
-				\\  command -v "$program" >/dev/null 2>&1 || missing="$missing $program"
-				\\done
-				\\[ -z "$missing" ] && exit 0
-				\\
-			why = "echo \"environment ${environment} expects on PATH:$missing\" >&2"
-			[
-				Run({
-					description: "the programs environment ${environment} expects",
-					argv: ["sh", "-c", "${script}${why}; exit 1", "sh"].concat(programs),
-					output: Quiet,
-					secrets: [],
-					removed_environment_variables: [],
-					kept_environment_variables: [],
-				}),
-			]
+			[ExpectPrograms({ description: "environment ${environment}", programs })]
 		}
 
 	## The download a tool names, by what the lock holds for this system.
@@ -454,8 +437,8 @@ code = |result|
 expect {
 	request = Request.Run("t", ["x"])
 	match planned(request, locked(both)).map_ok(|p| p.steps) {
-		Ok([Run(check), Realise({ bin, programs }), Run(run)]) =>
-			check.argv.take_last(2) == ["git", "gh"]
+		Ok([ExpectPrograms(check), Realise({ bin, programs }), Run(run)]) =>
+			check == { description: "environment dev", programs: ["git", "gh"] }
 				and bin == "/p/.kai/direct/dev/bin"
 				and programs.map(|p| (p.name, p.urls, p.unpack)) == [
 					("tool", [archive.url].concat(archive.mirrors), archive.unpack),

@@ -55,6 +55,11 @@ Plan := { steps : List(Step), next : Next }.{
 		## continuation to observe.
 		Measure({ files : List({ key : Str, urls : List(Str) }), result : Str }),
 
+		## Fails, naming every one that is not on PATH, unless the machine has
+		## all of `programs`, which `description` (such as `environment dev`)
+		## expects.
+		ExpectPrograms({ description : Str, programs : List(Str) }),
+
 		## kai sets the `secrets` variables from `.env` or its own environment
 		## and removes `removed_environment_variables`, except those in
 		## `kept_environment_variables`, from the child process's environment:
@@ -204,6 +209,7 @@ expect {
 				files: [{ key: "tool", urls: ["https://example.com/tool"] }],
 				result: "/g/measured",
 			}),
+			ExpectPrograms({ description: "environment dev", programs: ["git", "zip"] }),
 			Run({
 				description: "shell dev",
 				argv: ["bash"],

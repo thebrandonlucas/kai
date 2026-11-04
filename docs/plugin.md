@@ -162,6 +162,7 @@ A plan is a list of steps and what comes next:
 | `VerifyPath`, `CheckSource`, `Snapshot`, `InstallRunner` | std's checks and build sandbox steps |
 | `Realise({ bin, programs })` | make each `Plan.Program`, a file or tar.gz/tar.xz archive pinned by SHA-256 and size, ready in kai's store, and link it into `bin` in the workspace; the `Run`s after it have `bin` first on `PATH`, until the next `Realise` |
 | `Measure({ files, result })` | download each `{ key, urls }` into the store and write `<key> <sha256> <size>` lines to `result`, a generated file a continuation observes |
+| `ExpectPrograms({ description, programs })` | fail unless every program is on `PATH`, naming each missing one; the error is `missing_programs`, and with `--json` its `programs` lists them |
 | `PublishLock({ previous, contents })` | replace the lock, only for the lock owner |
 
 `next: Observe(paths)` asks kai to read generated files and ask again with

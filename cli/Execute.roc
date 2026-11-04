@@ -384,9 +384,16 @@ Execute := [].{
 						_ = Workspace.path(guard).delete!()
 						$holding = Bool.False
 					}
-					match (result, $may_fail.last()) {
-						(Err(ChildExited(description, code)), Ok(last)) => {
-							message = "${description} failed with code ${code.to_str()}; continuing"
+					failed = match result {
+						Err(ChildExited(description, code)) =>
+							Ok("${description} failed with code ${code.to_str()}")
+						Err(MissingPrograms(description, missing)) =>
+							Ok(Execute.missing_programs(description, missing))
+						_ => Err({})
+					}
+					match (failed, $may_fail.last()) {
+						(Ok(why), Ok(last)) => {
+							message = "${why}; continuing"
 							Output.note!(mode, "kai: ${message}", Output.event("note", message, []))?
 							$skipping = Bool.True
 							$skip_through = last
@@ -521,6 +528,7 @@ Execute := [].{
 					ReadsLock => Err("only a command that owns the lock publishes it")
 				}
 			Note(_) | Print(_) | Stage(_) | MayFail(_) | Confirm(_) => Ok({})
+			ExpectPrograms(_) => Ok({})
 		}
 	}
 
@@ -595,6 +603,21 @@ Execute := [].{
 				}
 				contents = Str.join_with($lines, "")
 				Workspace.stage!([{ path: result, contents }], layout)
+			}
+			# The shell looks for each program as it would run it, on kai's PATH.
+			ExpectPrograms({ description, programs }) => {
+				script = "for p; do command -v \"$p\" >/dev/null 2>&1 || echo \"$p\"; done"
+				found = Cmd.new(OsStr.from_str("sh"))
+					.args(["-c", script, "sh"].concat(programs).map(OsStr.from_str))
+					.run!()?
+					.require_success()?
+				missing = Str.from_utf8_lossy(found.stdout_bytes).split_on("\n")
+					.drop_if(|line| line.is_empty())
+				if missing.is_empty() {
+					Ok({})
+				} else {
+					Err(MissingPrograms(description, missing))
+				}
 			}
 			Run(run) => {
 				process_command = Execute.process_command!(run, root, bin)?
@@ -744,6 +767,12 @@ Execute := [].{
 				Err(ChildExited(description, Execute.signal_status(signal)))
 		}
 	}
+
+	# What an ExpectPrograms step that failed says.
+	missing_programs : Str, List(Str) -> Str
+	missing_programs = |description, missing|
+		"${description} expects programs that are not on PATH: "
+			.concat(Str.join_with(missing, ", "))
 
 	# The status a shell reports for a process killed by a signal: 128 plus
 	# the signal's number, such as 130 for SIGINT (2).
@@ -951,6 +980,7 @@ expect
 			store: "/nix/store",
 		}),
 		InstallRunner({ destination: "/p/.kai/build-runner" }),
+		ExpectPrograms({ description: "environment dev", programs: ["git"] }),
 		Realise({ bin: "/p/.kai/direct/bin", programs: [pinned] }),
 		Measure({
 			files: [{ key: "tool", urls: pinned.urls }],

@@ -434,6 +434,7 @@ runs them), and `error` is one of these codes:
 | `confirmation_required` | A step needs confirmation (exit code 6). |
 | `declined` | A confirmation was answered no. |
 | `child_exited` | A shell, task or build failed. |
+| `missing_programs` | Programs an environment `Expect`s are not on `PATH`; `programs` lists them. |
 | `missing_secret` | A secret is not set. |
 | `invalid_dotenv` | `.env` has an invalid line. |
 | `no_backend` | No backend can serve the request. |

@@ -64,6 +64,7 @@ main! = |args| {
 							exit_code: 2,
 							hint: "",
 							suggestions: usage_suggestions(message),
+							programs: [],
 						}),
 					)
 			}
@@ -82,6 +83,7 @@ main! = |args| {
 							exit_code,
 							hint: hint(err),
 							suggestions: plan_suggestions(err),
+							programs: missing_programs(err),
 						}),
 					)
 			}
@@ -415,6 +417,7 @@ error_code = |err|
 		ConfirmationRequired(_) => "confirmation_required"
 		Declined(_) => "declined"
 		ChildExited(_, _) => "child_exited"
+		MissingPrograms(_, _) => "missing_programs"
 		MissingSecret(_, _) => "missing_secret"
 		InvalidDotenv(_) => "invalid_dotenv"
 		StoreFailed(_) => "download_failed"
@@ -442,6 +445,13 @@ hint = |err|
 plan_suggestions = |err|
 	match err {
 		PlanFailed(failure) => failure.suggestions
+		_ => []
+	}
+
+# The programs a failed ExpectPrograms step found missing.
+missing_programs = |err|
+	match err {
+		MissingPrograms(_, missing) => missing
 		_ => []
 	}
 
@@ -514,6 +524,8 @@ describe = |err|
 			"${prompt} needs confirmation; pass --yes to accept"
 		Declined(prompt) => "not confirmed: ${prompt}"
 		SnapshotFailed(message) => message
+		MissingPrograms(description, missing) =>
+			Execute.missing_programs(description, missing)
 		ChildExited(description, code) =>
 			"${description} exited with code ${code.to_str()}"
 		MissingSecret(description, name) =>
