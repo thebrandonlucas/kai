@@ -212,6 +212,9 @@ Std := [].{
 								model.fetches
 									.keep_if(|f| Project.locked_fetch(model, f.name))
 									.map(|f| choice(f.name, "", "FetchLocked")),
+							)
+							.concat(
+								model.cargo_vendors.map(|c| choice(c.name, "", "CargoVendor")),
 							),
 					}),
 				],
@@ -413,7 +416,8 @@ Std := [].{
 	## Inputs `kai update` was asked to move that the project does not declare.
 	known_inputs : Model, List(Str) -> Try({}, Plan.Failure)
 	known_inputs = |model, names| {
-		declared = Locks.inputs(model).map_err(Plan.fail)?.map(|input| input.name)
+		inputs = Locks.inputs(model).map_err(Plan.fail)?.map(|input| input.name)
+		declared = inputs.concat(model.cargo_vendors.map(|c| c.name))
 		unknown = names.drop_if(|name| declared.contains(name))
 		if unknown.is_empty() {
 			Ok({})
@@ -686,7 +690,18 @@ Std := [].{
 			0 => {
 				files = NixBackend.update_files(model, target, layout)?
 				locals = NixBackend.local_checks(model, target, layout)?
-				names = Command.trailing(ctx.args, "inputs")
+				requested = Command.trailing(ctx.args, "inputs")
+				# Cargo.lock, not the lock, pins a CargoVendor's crates.
+				vendors = model.cargo_vendors.map(|c| c.name)
+				vendored = requested.keep_if(|name| vendors.contains(name))
+				names = requested.drop_if(|name| vendored.contains(name))
+				notes = vendored.map(
+					|name|
+						Note("Cargo.lock pins CargoVendor ${name}; `cargo update` moves it"),
+				)
+				if names.is_empty() and !vendored.is_empty() {
+					return Ok(Plan.{ steps: notes, next: Done })
+				}
 				# Replacing a stale lock by rename, rather than letting Nix follow
 				# a hard-link alias, before resolving a fresh input graph, or the
 				# locked one when only the named inputs move.
@@ -701,8 +716,8 @@ Std := [].{
 				}
 				Ok(
 					Plan.{
-						steps: locals
-							.map(|local| CheckSource(local))
+						steps: notes
+							.concat(locals.map(|local| CheckSource(local)))
 							.append(
 								Write(files.append({ path: backend_lock, contents: starting_lock })),
 							)
@@ -903,6 +918,27 @@ expect {
 					== "unknown_input"
 		Absent => Bool.False
 	}
+}
+
+# Cargo.lock pins a CargoVendor, so `kai update` accepts its name and, given
+# it, only says so; other names it is given still move.
+expect {
+	updated = |names| {
+		vendored = planning.append(CargoVendor("crates", ""))
+		model = ConfigToModel.convert(vendored).map_err(Plan.fail)?
+		update = Std.implementations(model)
+			.find_first(|i| i.command == "update" and i.backend == On("nix"))
+			.map_err(|_| Plan.fail("no update"))?
+		args = [{ name: "inputs", value: Many(names) }]
+		(update.plan)({ ..context, args }).map_ok(|plan| plan.steps)
+	}
+	note = Note("Cargo.lock pins CargoVendor crates; `cargo update` moves it")
+	updated(["crates"]) == Ok([note])
+		and match updated(["default", "crates"]) {
+			Ok([first, .., Run({ argv, .. })]) =>
+				first == note and argv.last() == Ok("default")
+			_ => Bool.False
+		}
 }
 
 # Guix update resolves the channels with guix repl, then publishes the
