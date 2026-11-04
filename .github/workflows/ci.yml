@@ -29,12 +29,12 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.event.pull_request.draft }}
   cancel-in-progress: true
 
-# Every job but ci restores the Nix store GitHub's cache holds for master. Only
-# master runs save it, since a pull request's cache is visible to that pull
-# request alone: pushes save the dev shell (nix-fast), the nightly suite also
-# kai's own builds (nix-ci), each keyed by what the dev shell depends on.
-# Garbage collection before saving trims the store to 6 GB, under the
-# repository's 10 GB cache limit.
+# Every job that uses Nix restores the Nix store GitHub's cache holds for
+# master. Only master runs save it, since a pull request's cache is visible to
+# that pull request alone: pushes save the dev shell (nix-fast), the nightly
+# suite also kai's own builds (nix-ci), each keyed by what the dev shell
+# depends on. Garbage collection before saving trims the store to 6 GB, under
+# the repository's 10 GB cache limit.
 jobs:
   # Every branch push: static checks and unit tests.
   fast:
@@ -113,16 +113,14 @@ jobs:
         if: steps.changes.outputs.code == 'true'
         run: zig build test
 
-  # The end-to-end tests and configuration fixtures against real Nix, beside
-  # the required check: they report on pull requests without blocking them.
-  # This job builds kai once and uploads it, then checks the fixtures, which
-  # need no kai; the e2e-suites jobs run the suites against that binary, and
-  # the e2e job reports them all as one check.
-  e2e-build:
-    name: e2e (build kai)
+  # The end-to-end tests and configuration fixtures, beside the required
+  # check: they report on pull requests without blocking them. The fixtures
+  # and the kai the suites run need no Nix: they use ci's pinned tools.
+  e2e-changes:
+    name: e2e (changes)
     if: github.event_name != 'push' && github.event_name != 'schedule' && github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 5
     outputs:
       code: ${{ steps.changes.outputs.code }}
 
@@ -144,18 +142,103 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
           fi
 
+  # The bare static musl kai the suites run, built by roc outside Kai's
+  # sandbox so Roc's and Zig's caches serve it. Nightly and release keep
+  # building it with kai build.
+  e2e-build:
+    name: e2e (build kai)
+    needs: e2e-changes
+    if: needs.e2e-changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the tools
+        uses: ./.github/actions/install-tools
+
+      # Keyed by what the build reads, so an unchanged kai saves nothing new.
+      - name: Restore Zig and Roc build output
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/roc
+            ~/.cache/zig
+            .zig-cache
+          key: e2e-kai-${{ hashFiles('.roc-version', 'build.zig', 'build.zig.zon') }}-${{ hashFiles('cli/**', 'platform/*.roc', 'VERSION', 'platform-release', 'plugins/std-release') }}
+          restore-keys: e2e-kai-${{ hashFiles('.roc-version', 'build.zig', 'build.zig.zon') }}-
+
+      - name: Build kai
+        run: |
+          zig build kai
+          zig-out/bin/kai --version
+
+      - name: Upload kai
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kai
+          path: zig-out/bin/kai
+          if-no-files-found: error
+          retention-days: 1
+
+  # Compile-time checks of Kaifile.roc configurations: only Roc and the
+  # platform host, so no Nix. It reads ci's build output without saving its own.
+  e2e-config-fixtures:
+    name: e2e (config fixtures)
+    needs: e2e-changes
+    if: needs.e2e-changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the tools
+        uses: ./.github/actions/install-tools
+
+      - name: Restore Zig and Roc build output
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/roc
+            ~/.cache/zig
+            .zig-cache
+          key: ci-build-${{ hashFiles('.roc-version', 'build.zig', 'build.zig.zon', 'platform/build.zig', 'platform/build.zig.zon') }}-${{ github.sha }}
+          restore-keys: ci-build-${{ hashFiles('.roc-version', 'build.zig', 'build.zig.zon', 'platform/build.zig', 'platform/build.zig.zon') }}-
+
+      # The devtool looks for roc as a regular file on PATH, not a link.
+      - name: Check the configuration fixtures
+        run: |
+          PATH="$(dirname "$(readlink -f "$(command -v roc)")"):$PATH"
+          zig build config-fixtures
+
+  # The bundle suite checks that a plugin kai bundle-plugin bundles names the
+  # platform and std URLs this checkout would release, which only kai build
+  # writes into kai: it runs the sandboxed kai, built here from the bundles
+  # the suite builds anyway, so it starts without waiting for e2e-build.
+  e2e-bundle:
+    name: e2e (bundle)
+    needs: e2e-changes
+    if: needs.e2e-changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Install Nix
-        if: steps.changes.outputs.code == 'true'
         uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Kai
-        if: steps.changes.outputs.code == 'true'
         uses: ./.github/actions/install-kai
 
       - name: Restore the Nix store
-        if: steps.changes.outputs.code == 'true'
         uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
           primary-key: nix-ci-${{ runner.arch }}-${{ hashFiles('Kaifile.roc', '.kai/lock.json', '.roc-version', '.roc-overlay') }}
@@ -164,49 +247,42 @@ jobs:
             nix-fast-${{ runner.arch }}-
           save: false
 
-      # The bare binary a release archive holds, as zig build e2e builds it.
       - name: Build kai
-        if: steps.changes.outputs.code == 'true'
         run: |
           set -euo pipefail
           path="$(kai build kai-x64musl | tail -n 1)"
           mkdir dist
           install -m 755 "$path/kai" dist/kai
 
-      # Uploaded before the fixtures, so the suites start without waiting.
-      - name: Upload kai
-        if: steps.changes.outputs.code == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: kai
-          path: dist/kai
-          if-no-files-found: error
-          retention-days: 1
-
       # A step of its own, so the log shows what entering the shell costs.
       - name: Realise the dev shell
-        if: steps.changes.outputs.code == 'true'
         run: kai shell default -- true
 
-      - name: Check the configuration fixtures
-        if: steps.changes.outputs.code == 'true'
-        run: kai shell default -- zig build config-fixtures
+      - name: Run the end-to-end tests
+        run: kai shell default -- zig build e2e-bundle -Dkai="$PWD/dist/kai" -- --nix
 
-  # The end-to-end suites in groups of about the same length, side by side,
-  # each against the kai e2e-build uploaded. Every group runs to the end, so
-  # one failure does not hide another.
+  # The other suites in groups of about the same length, side by side, each
+  # against the kai e2e-build uploaded; examples runs in shards
+  # (KAI_E2E_SHARD), each still checking every feature has an example. Every
+  # group runs to the end, so one failure does not hide another.
   e2e-suites:
     name: e2e (${{ matrix.group }})
     needs: e2e-build
-    if: needs.e2e-build.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - group: examples
+          - group: examples 1/3
             steps: e2e-examples
-          - group: bundle, help, plugins
-            steps: e2e-bundle e2e-help e2e-plugins
+            shard: 1/3
+          - group: examples 2/3
+            steps: e2e-examples
+            shard: 2/3
+          - group: examples 3/3
+            steps: e2e-examples
+            shard: 3/3
+          - group: help, plugins
+            steps: e2e-help e2e-plugins
           - group: run, build
             steps: e2e-run e2e-build
           - group: workflow, update, overlays
@@ -250,17 +326,18 @@ jobs:
       - name: Run the end-to-end tests
         env:
           STEPS: ${{ matrix.steps }}
+          KAI_E2E_SHARD: ${{ matrix.shard }}
         run: |
           chmod +x dist/kai
           # shellcheck disable=SC2086 # STEPS lists several zig steps
           kai shell default -- zig build $STEPS -Dkai="$PWD/dist/kai" -- --nix
 
-  # The e2e check: green when kai built, the fixtures held and every group
-  # passed, or when a pull request changes only docs.
+  # The e2e check: green when every end-to-end job passed, or when a pull
+  # request changes only docs and they are skipped.
   e2e:
     name: e2e
     if: always() && github.event_name != 'push' && github.event_name != 'schedule' && github.event.pull_request.draft != true
-    needs: [e2e-build, e2e-suites]
+    needs: [e2e-changes, e2e-build, e2e-config-fixtures, e2e-bundle, e2e-suites]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
 

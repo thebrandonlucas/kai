@@ -30,18 +30,29 @@ E2eExamples := [].{
 		var $commands = []
 		var $sources = []
 		var $offered = []
-		for name in E2eExamples.names!(examples)? {
+		names = E2eExamples.names!(examples)?
+		# Every example counts towards the check below, though a shard runs some.
+		for name in names {
 			dir = Path.join(examples, name)
-			lines = Path.read_utf8!(Path.join(dir, "commands"))?
-				.split_on("\n")
-				.keep_if(|line| !line.trim().is_empty())
+			lines = E2eExamples.commands!(dir)?
+			$commands = $commands.concat(lines.map(E2eExamples.command_name))
+			(source, _) = E2e.kaifile_dirs(dir, dir, E2eExamples.kaifile_dir!(dir)?)
+			for file in Path.list!(source)? {
+				if Path.display(file).ends_with(".roc") {
+					$sources = $sources.append(Path.read_utf8!(file)?)
+				}
+			}
+		}
+		for name in E2eExamples.shard(names, Env.var_str!("KAI_E2E_SHARD") ?? "")? {
+			dir = Path.join(examples, name)
+			lines = E2eExamples.commands!(dir)?
 			entries = Path.list!(dir)?
 				.map(|path| Path.display(Path.filename(path) ?? path))
 				.keep_if(|entry| !E2eExamples.metadata.contains(entry))
 			kaifile_dir = E2eExamples.kaifile_dir!(dir)?
 			(kai, copy) =
 				E2e.nix_copy_tree!(binary, "examples/${name}", entries, kaifile_dir)?
-			(source, project) = E2e.kaifile_dirs(dir, copy, kaifile_dir)
+			(_, project) = E2e.kaifile_dirs(dir, copy, kaifile_dir)
 			result = E2eExamples.run_in!(kai, project, name, lines)
 			match result {
 				Ok(_) if $offered.is_empty() => {
@@ -54,12 +65,6 @@ E2eExamples := [].{
 			expected = Path.join(dir, "stdout")
 			if Path.exists!(expected)? and Path.read_utf8!(expected)? != stdout {
 				return Err(WrongExampleOutput({ example: name, stdout }))
-			}
-			$commands = $commands.concat(lines.map(E2eExamples.command_name))
-			for file in Path.list!(source)? {
-				if Path.display(file).ends_with(".roc") {
-					$sources = $sources.append(Path.read_utf8!(file)?)
-				}
 			}
 			Stdout.line!("example ${name} ran")?
 		}
@@ -92,6 +97,51 @@ E2eExamples := [].{
 					}
 		}
 		Ok($names)
+	}
+
+	## The command lines an example's commands file holds.
+	commands! = |dir|
+		Ok(
+			Path.read_utf8!(Path.join(dir, "commands"))?
+				.split_on("\n")
+				.keep_if(|line| !line.trim().is_empty()),
+		)
+
+	## The examples to run: all, or for a shard `i/n` (KAI_E2E_SHARD), every
+	## n-th in byte order from the i-th, so CI can split them across jobs.
+	shard : List(Str), Str -> Try(List(Str), [BadShard(Str)])
+	shard = |names, spec| {
+		if spec.is_empty() {
+			return Ok(names)
+		}
+		(index, count) = match spec.split_on("/").map(U64.from_str) {
+			[Ok(i), Ok(n)] if i >= 1 and i <= n => (i, n)
+			_ => return Err(BadShard(spec))
+		}
+		var $kept = []
+		var $position = 0
+		for name in names.sort_with(E2eExamples.byte_order) {
+			if $position % count == index - 1 {
+				$kept = $kept.append(name)
+			}
+			$position = $position + 1
+		}
+		Ok($kept)
+	}
+
+	## Byte order of two names, for sorting.
+	byte_order : Str, Str -> [Before, Same, After]
+	byte_order = |left, right| {
+		(a, b) = (left.to_utf8(), right.to_utf8())
+		var $index = 0
+		while $index < a.len() and $index < b.len() {
+			(x, y) = (a.get($index) ?? 0, b.get($index) ?? 0)
+			if x != y {
+				return if (x < y) Before else After
+			}
+			$index = $index + 1
+		}
+		a.len().order_relative_to(b.len())
 	}
 
 	## The subdirectory an example's project file names, empty without one.
@@ -281,3 +331,15 @@ expect
 expect
 	E2eExamples.top_level("Use(EnvName), Env(List((Str, Str))), Run(List(Str))")
 		== ["Use(EnvName)", "Env(List((Str, Str)))", "Run(List(Str))"]
+
+# A shard runs every n-th example in byte order.
+expect E2eExamples.shard(["c", "a", "b"], "2/2") == Ok(["b"])
+
+# A shorter name sorts before a longer one it begins.
+expect E2eExamples.shard(["c", "ab", "a"], "1/2") == Ok(["a", "c"])
+
+# With no shard, every example runs.
+expect E2eExamples.shard(["b", "a"], "") == Ok(["b", "a"])
+
+# A shard past the count is refused.
+expect E2eExamples.shard(["a"], "3/2") == Err(BadShard("3/2"))

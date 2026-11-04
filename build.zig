@@ -464,12 +464,24 @@ pub fn build(b: *std.Build) void {
 
     // Integration steps run the kai that ships, not a --opt=dev build: the
     // bare binary a release archive holds. Kai decides what to rebuild, so
-    // this always runs. CI builds it once and hands it to its end-to-end
-    // jobs with -Dkai, which skips the build and the checks it waits on.
-    const native_kai = switch (b.graph.host.result.cpu.arch) {
-        .aarch64 => "kai-arm64musl",
-        else => "kai-x64musl",
+    // this always runs. CI hands its end-to-end jobs a kai with -Dkai, which
+    // skips the build and the checks it waits on.
+    const native_target = switch (b.graph.host.result.cpu.arch) {
+        .aarch64 => "arm64musl",
+        else => "x64musl",
     };
+    const native_kai = b.fmt("kai-{s}", .{native_target});
+
+    // The same static musl kai, built by roc outside Kai's sandbox so Roc's
+    // cache can serve it: what CI's end-to-end jobs run. It embeds the
+    // committed platform-release and plugins/std-release rather than the
+    // URLs of this checkout's bundles that `kai build` writes in.
+    const kai_step = b.step("kai", "Build the bare kai with roc, outside Kai's sandbox, into zig-out/bin");
+    const build_kai = b.addSystemCommand(&.{ "roc", "build", "cli/main.roc", "--opt=size" });
+    build_kai.addArg(b.fmt("--target={s}", .{native_target}));
+    build_kai.has_side_effects = true;
+    const unsandboxed_kai = build_kai.addPrefixedOutputFileArg("--output=", "kai");
+    kai_step.dependOn(&b.addInstallBinFile(unsandboxed_kai, "kai").step);
     const prebuilt_kai = b.option(
         []const u8,
         "kai",
