@@ -17,6 +17,7 @@ import "../platform-release" as platform_release : Str
 
 import Output
 import Variables
+import Workspace
 
 Load := [].{
 	# The configuration file and the directory commands resolve paths against.
@@ -278,17 +279,39 @@ Load := [].{
 
 	# Ask the compiled Kaifile one question, with the request on stdin. roc
 	# exits 2 after a complete run when any source has warnings, and 1 on
-	# errors even though it still runs the app.
-	ask! : Location, Protocol.Request => Try(Protocol.Body, _)
-	ask! = |project, request| {
+	# errors even though it still runs the app. With a `cache` directory, a
+	# program compiled from the same inputs answers instead, in milliseconds
+	# rather than the seconds roc takes to compile; if anything there fails,
+	# roc answers and reports it as before.
+	ask! : Location, Protocol.Request, Try(Str, [NoCache]) => Try(Protocol.Body, _)
+	ask! = |project, request, cache| {
 		_ = Load.system!()?
 		text = Load.text!(project)
 		Load.current(project.file, text)?
 		header_releases = Load.releases(text)
-		output = Cmd.new(OsStr.from_str(Load.compiler!()?))
+		compiler = Load.compiler!()?
+		question = Sexpr.to_str(request).to_utf8()
+		program = match cache {
+			Ok(directory) => Load.compiled!(project, compiler, directory)
+			Err(NoCache) => Err(NoCache)
+		}
+		answered = match program {
+			Ok(compiled) =>
+				Cmd.new(OsStr.from_str(compiled))
+					.cwd(Load.path(project.root))
+					.stdin(Bytes(question))
+					.run!()
+			Err(_) => Err(NotCompiled)
+		}
+		match answered {
+			Ok(ran) if ran.status == Exited(0) =>
+				return Load.answer(Str.from_utf8_lossy(ran.stdout_bytes))
+			_ => {}
+		}
+		output = Cmd.new(OsStr.from_str(compiler))
 			.arg(OsStr.from_str(project.file))
 			.cwd(Load.path(project.root))
-			.stdin(Bytes(Sexpr.to_str(request).to_utf8()))
+			.stdin(Bytes(question))
 			.run!()
 		match output {
 			Ok(ran) if ran.status == Exited(0) =>
@@ -314,6 +337,159 @@ Load := [].{
 				}
 			}
 			Err(_) => Err(KaifileInvalid(project.file, header_releases))
+		}
+	}
+
+	# The Kaifile compiled to a program in `directory`, compiled again only
+	# when its inputs changed. A record beside it names the program and the
+	# inputs it was compiled from; publishing the record last keeps a
+	# concurrent kai from pairing a program with another's inputs.
+	compiled! : Location, Str, Str => Try(Str, _)
+	compiled! = |project, compiler, directory| {
+		Workspace.safe_path!(directory)?
+		inputs = Load.inputs!(project, compiler)?
+		record = "${directory}/${project.file}.inputs"
+		stored = Path.read_utf8!(Load.path(record)) ?? ""
+		match Load.compiled_from(stored, inputs) {
+			Ok(name) if Load.path("${directory}/${name}").is_file!() ?? Bool.False =>
+				return Ok("${directory}/${name}")
+			_ => {}
+		}
+		Load.path(directory).create_all!()?
+		name = "${project.file}-${Random.seed_u64!()?.to_str()}"
+		program = "${directory}/${name}"
+		built = Cmd.new(OsStr.from_str(compiler))
+			.args(["build", "--opt=dev", OsStr.from_str("--output=${program}")])
+			.arg(OsStr.from_str(project.file))
+			.cwd(Load.path(project.root))
+			.run!()?
+		if !(built.status == Exited(0) or built.status == Exited(2)) {
+			_ = Load.path(program).delete!()
+			return Err(CompileFailed)
+		}
+		Workspace.atomic_write!(record, "program ${name}\n${inputs}")?
+		# A program still answering another kai keeps running once deleted.
+		for entry in Load.path(directory).list!()? {
+			entry_name = Load.split_file(entry.to_str()?).file
+			if entry_name.starts_with("${project.file}-") and entry_name != name {
+				_ = entry.delete!()
+			}
+		}
+		Ok(program)
+	}
+
+	# What the compiled Kaifile depends on, one per line: the compiler, the
+	# host, the packages `roc deps` lists (a remote one by the hash of its
+	# contents), and every local file roc reads, by size and modification
+	# time as make judges them: each local package's modules, the files they
+	# import, and a local platform's host libraries.
+	inputs! : Location, Str => Try(Str, _)
+	inputs! = |project, compiler| {
+		tree = Cmd.new(OsStr.from_str(compiler))
+			.args(["deps", OsStr.from_str(project.file)])
+			.cwd(Load.path(project.root))
+			.stderr(Null)
+			.capture!()?
+		var $files = []
+		for dependency in Load.dependencies(tree) {
+			directory = Load.split_file(dependency.file).root
+			for entry in Load.path(directory).list!()? {
+				source = entry.to_str()?
+				if source.ends_with(".roc") and !$files.contains(source) {
+					imported = Load.imported_files(Path.read_utf8!(entry) ?? "")
+						.map(|file| Workspace.normalize(Load.resolve(directory, file)))
+					$files = $files.append(source).concat(imported)
+				}
+			}
+			if dependency.is_platform {
+				$files = $files.concat(Load.files_under!("${directory}/targets"))
+			}
+		}
+		system = Load.system!()?
+		var $lines = ["roc ${Load.pinned_compiler} ${compiler}", "system ${system}"]
+			.concat(tree.split_on("\n"))
+		# A package several others import is in the tree once for each.
+		for file in $files {
+			stamp = Load.stamp!(file)
+			if !$lines.contains(stamp) {
+				$lines = $lines.append(stamp)
+			}
+		}
+		Ok(Str.join_with($lines, "\n"))
+	}
+
+	# The local files in `roc deps` output, by absolute path, and whether each
+	# is a platform.
+	dependencies : Str -> List({ file : Str, is_platform : Bool })
+	dependencies = |tree|
+		tree.split_on("\n").keep_oks(
+			|line|
+				match line.split_first(" (/") {
+					Ok({ after, .. }) => {
+						file = "/${Str.join_with(after.split_on(")").drop_last(1), ")")}"
+						Ok({ file, is_platform: line.contains(") [platform]") })
+					}
+					Err(_) => Err({})
+				},
+		)
+
+	# The files a module embeds with `import "file" as name : Str`.
+	imported_files : Str -> List(Str)
+	imported_files = |text|
+		text.split_on("\n").keep_oks(
+			|line|
+				if line.trim().starts_with("import \"") {
+					line.split_on("\"").get(1)
+				} else {
+					Err(OutOfBounds)
+				},
+		)
+
+	files_under! : Str => List(Str)
+	files_under! = |directory| {
+		var $found = []
+		for entry in Load.path(directory).list!() ?? [] {
+			name = entry.to_str() ?? ""
+			$found = if entry.is_dir!() ?? Bool.False {
+				$found.concat(Load.files_under!(name))
+			} else {
+				$found.append(name)
+			}
+		}
+		$found
+	}
+
+	stamp! : Str => Str
+	stamp! = |file| {
+		size = Load.path(file).size_in_bytes!()
+		modified = Load.path(file).time_modified!()
+		match (size, modified) {
+			(Ok(bytes), Ok(time)) =>
+				"${file} ${bytes.to_str()} ${time.to_nanos_since_epoch().to_str()}"
+			_ => "${file} missing"
+		}
+	}
+
+	# The program a stored record names, if it was compiled from exactly
+	# these inputs, in any order.
+	compiled_from : Str, Str -> Try(Str, [Stale])
+	compiled_from = |stored, inputs| {
+		(first, rest) = match stored.split_first("\n") {
+			Ok({ before, after }) => (before, after.split_on("\n"))
+			Err(_) => return Err(Stale)
+		}
+		current_lines = inputs.split_on("\n")
+		name = first.drop_prefix("program ")
+		same = rest.len() == current_lines.len()
+			and rest.all(|line| current_lines.contains(line))
+			and current_lines.all(|line| rest.contains(line))
+		named = first.starts_with("program ")
+			and !name.is_empty()
+			and !name.contains("/")
+		if same and named {
+			Ok(name)
+		} else {
+			Err(Stale)
 		}
 	}
 
@@ -385,3 +561,47 @@ expect Load.current("K", "app [config] { pf: platform \"p\" }")
 	and Load.current("K", "Kaifile := [].{}\n") == Err(NotAnApp("K"))
 	and Load.current("K", "") == Ok({})
 	and Load.current("K", "app [kaifile] {\n\tpf: platform \"p\",\n}\n") == Ok({})
+
+# `roc deps` names each local package by its absolute path, after the path
+# Kaifile.roc gives; a remote package has no local file.
+expect
+	Load.dependencies(
+		\\Kaifile.roc (/p/Kaifile.roc) [app]
+		\\├── ../k (1)/platform/main.roc (/k (1)/platform/main.roc) [platform]
+		\\│   └── https://example.com/7j6K.tar.zst
+		\\└── std/main.roc (/p/std/main.roc)
+		\\    └── ../platform/main.roc (/k (1)/platform/main.roc) [platform] [shared]
+	)
+		== [
+			{ file: "/p/Kaifile.roc", is_platform: Bool.False },
+			{ file: "/k (1)/platform/main.roc", is_platform: Bool.True },
+			{ file: "/p/std/main.roc", is_platform: Bool.False },
+			{ file: "/k (1)/platform/main.roc", is_platform: Bool.True },
+		]
+
+# A module's embedded files are read along with it.
+expect
+	Load.imported_files(
+		\\import Output
+		\\import "../VERSION" as version : Str
+		\\	import "data/a b.txt" as data : Str
+	)
+		== ["../VERSION", "data/a b.txt"]
+
+# The stored program answers only for exactly the inputs it was compiled
+# from, listed in any order.
+expect {
+	inputs = "roc v1\n/p/Kaifile.roc 10 5\n/p/Tasks.roc 3 7"
+	reordered = "roc v1\n/p/Tasks.roc 3 7\n/p/Kaifile.roc 10 5"
+	stored = "program Kaifile.roc-1\n${inputs}"
+	changed = [
+		"roc v1\n/p/Kaifile.roc 10 6\n/p/Tasks.roc 3 7",
+		"roc v2\n/p/Kaifile.roc 10 5\n/p/Tasks.roc 3 7",
+		"roc v1\n/p/Kaifile.roc 10 5",
+		"${inputs}\n/p/New.roc 1 1",
+	]
+	Load.compiled_from(stored, reordered) == Ok("Kaifile.roc-1")
+		and changed.all(|other| Load.compiled_from(stored, other) == Err(Stale))
+		and Load.compiled_from("", inputs) == Err(Stale)
+		and Load.compiled_from("program ../x\n${inputs}", inputs) == Err(Stale)
+}
