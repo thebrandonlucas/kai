@@ -219,10 +219,12 @@ replaces them.
 
 A Rust build reads its crates from a `CargoVendor` in its inputs through the
 cargo configuration in the vendored directory, which replaces crates.io and
-each git dependency with it, as [examples/cargo-vendor](examples/cargo-vendor)
-does:
+each git dependency with it. Cargo then reads the crates under
+`$KAI_INPUTS/crates`, so remapping that path keeps them out of the
+artifact's closure, as [examples/cargo-vendor](examples/cargo-vendor) does:
 
 ```sh
+export RUSTFLAGS="--remap-path-prefix=$KAI_INPUTS/crates=/crates"
 cargo build --offline --locked --config "$KAI_INPUTS/crates/.cargo/config.toml"
 ```
 

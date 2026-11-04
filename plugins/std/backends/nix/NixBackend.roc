@@ -1013,13 +1013,15 @@ NixBackend :: [].{
 		tools = path_packages(environment, model.fetches)
 		# Cargo.lock's checksums pin a vendor's crates, and its commits its git
 		# checkouts, which Nix fetches. Builds refuse symlinks in inputs, so the
-		# vendored directory is copied whole, and its cargo config names the copy.
+		# vendored directory is copied whole. Its cargo config names the crates
+		# `.`, the directory above the config's, so rustc reads them under
+		# $KAI_INPUTS/<name>, the path a build remaps, rather than the copy's.
 		inputs = build.inputs.map(
 			|name| {
 				fetched = model.fetches.find_first(|f| f.name == name)
 				vendored = model.cargo_vendors.find_first(|c| c.name == name)
 				copy = "cp -rL $vendor $out && chmod -R u+w $out && substituteInPlace "
-					.concat("$out/.cargo/config.toml --replace-fail cargo-vendor-dir $out")
+					.concat("$out/.cargo/config.toml --replace-fail cargo-vendor-dir .")
 				path = match (fetched, vendored) {
 					(Ok(fetch), _) => "pkgs.fetchurl ${fetch_file(fetch)}"
 					(_, Ok(vendor)) =>
