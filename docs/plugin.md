@@ -160,7 +160,7 @@ A plan is a list of steps and what comes next:
 | `Write(files)` | write generated files, only beneath the generated root |
 | `Run({ description, argv, output, secrets, removed_environment_variables, kept_environment_variables })` | run exact argv from the project root, never through a shell; `output` is `Inherit`, `Quiet` (stderr shown only on failure), `Artifact`, or `Remembered(files)`: quiet, and skipped once it succeeded with the same argv and the same contents of those generated files |
 | `VerifyPath`, `CheckSource`, `Snapshot`, `InstallRunner` | std's checks and build sandbox steps |
-| `Realise({ bin, programs })` | make each `Plan.Program`, a file or tar.gz/tar.xz archive pinned by SHA-256 and size, ready in kai's store, and link it into `bin` in the workspace; the `Run`s after it have `bin` first on `PATH`, until the next `Realise` |
+| `Realise({ bin, programs })` | make each `Plan.Program`, a file or tar.gz/tar.xz archive pinned by SHA-256 and size, ready in kai's store, and link it into `bin` in the workspace; the `Run`s after it have `bin` first on `PATH`, until the next `Realise` or `Stage` |
 | `Measure({ files, result })` | download each `{ key, urls }` into the store and write `<key> <sha256> <size>` lines to `result`, a generated file a continuation observes |
 | `ExpectPrograms({ description, programs })` | fail unless every program is on `PATH`, naming each missing one; the error is `missing_programs`, and with `--json` its `programs` lists them |
 | `PublishLock({ previous, contents })` | replace the lock, only for the lock owner |

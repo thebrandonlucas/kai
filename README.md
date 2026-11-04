@@ -147,7 +147,7 @@ garbage collection.
 | `Env([(name, value), ...])` | Environment variables, in an `Environment` for its shells, tasks and builds (overriding its parent's by name), or in a `Task` or `Build` overriding its environment's. |
 | `PackageEnv([(name, value), ...])` | In an `Environment` (Nix only), environment variables set to paths in packages, which Kai computes: `LibraryPath([...])` and `BinPath([...])` join the tools' `lib` or `bin` directories with `:`, and `PackagePath(tool)` is the tool's own path, e.g. `("LD_LIBRARY_PATH", LibraryPath(["wayland"]))`. Like `Env`, they override the parent's by name, and a task's or build's `Env` overrides them. |
 | `OnSystems([...], [...])` | In an `Environment`, `Tools([...])` and `Env([...])` for the named systems only, which must be declared: e.g. `OnSystems(["x86_64-linux", "aarch64-linux"], [Tools(["wayland"])])` gives one shell name a tool with no macOS build. Its tools come after the environment's own and its variables override the environment's; an extending environment's own `Env` overrides them in turn. On Nix the generated flake defines the environment for each system apart, so Nix evaluates only the host's; Guix uses the host's system. |
-| `Expect([...])` | In an `Environment`, programs the machine must have, for the [direct backend](#running-without-nix-or-guix): all are looked for on `PATH` before anything runs, and every missing one is named. Nix and Guix do not serve such an environment. |
+| `Expect([...])` | In an `Environment`, programs the machine must have, for the [direct backend](#running-without-nix-or-guix): all are looked for on `PATH` before anything runs, and every missing one is named. Nix checks them too, before a shell or task enters; Guix does not serve such an environment, and a build cannot use it. |
 | `Pure` | In an `Environment`, and those extending it, starts its shells and tasks from a clean environment, so a task can check it needs nothing undeclared. Only HOME, USER, TERM, Kai's own variables and the `Env`, `Secrets` and `OptionalEnvironmentVariables` declared reach them. On Nix this is `nix develop --ignore-environment`; Guix shells are always pure, so it changes nothing there. |
 | `Description(text)` | In a `Shell`, `Task`, `Build` or `Workflow`, its summary in help, in place of its environment, command, output or steps, which its own page (e.g. `kai run test --help`) still shows after it. |
 | `Shell(name, [Use(environment)])` | A shell for `kai shell`. |
@@ -156,7 +156,7 @@ garbage collection.
 | `Fetch(name, [{ system, url, sha256 }, ...])` | A file pinned by its published sha256 (hex or SRI), one per system; the host's system picks it, and it needs no lock entry. Builds read it in `Inputs([...])`, and the tool `"name#binary"` puts it on `PATH` as the executable `binary`. |
 | `FetchAll(name, { url, sha256 })` | A `Fetch` of one file for every system, such as a data archive or a source tarball. |
 | `FetchUnavailable(name, [...])` | The declared systems a `Fetch` or `FetchAll` has no file for, such as a tool with no macOS build. On them, Kai refuses only the shells, tasks and builds that use it, saying why, rather than the whole Kaifile; `OnSystems` can leave the tool out there instead. |
-| `FetchLocked(name, [{ system, url, mirrors, program }, ...])` | A `Fetch` with no published sha256: `kai update` records each file's SHA-256 and size in the lock's `direct` section, and only the [direct backend](#running-without-nix-or-guix) runs it. `program` is `File`, or `Archive(path)` for a tar.gz or tar.xz with the program at `path`; `mirrors` are other URLs for the same bytes. |
+| `FetchLocked(name, [{ system, url, mirrors, program }, ...])` | A `Fetch` with no published sha256: `kai update` records each file's SHA-256 and size in the lock's `direct` section, and the [direct backend](#running-without-nix-or-guix) runs it, as does Nix beside package-source tools; a build cannot use it. `program` is `File`, or `Archive(path)` for a tar.gz or tar.xz with the program at `path`; `mirrors` are other URLs for the same bytes. |
 | `CargoVendor(name, text)` | The crates a `Cargo.lock` names, vendored into one directory that builds can read, pinned by the lock's checksums with no lock entry, so `kai update <name>` only says so (`cargo update` moves them). Pass the text with `import "Cargo.lock" as cargo_lock : Str`. A git dependency is fetched at the commit the lock records. |
 | `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, fetches and cargo vendors, in `$KAI_INPUTS/<name>`), `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`), `Revision` (the project's revision, below) and `Default`, which makes it the build `kai build` builds when given no name (at most one build). |
 | `BuildRoot(path)` | The directory builds copy, when it is above the project's, as `..` segments: `BuildRoot("../..")` lets an app whose Kaifile sits in `apps/web` build against a library at the repository root. Builds copy that directory instead of the project's, and their `Files`, `Run` and `Output` work from it; `.kai` stays out of the copy. |
@@ -334,6 +334,17 @@ binaries: a program needing the machine's shared libraries is only as
 reproducible as the machine. A workflow of tasks runs; `kai build`, and a
 workflow with a build, need Nix for its sandbox, as do tools from package sources, `Overlays`, `Alias`, `PackageEnv`,
 `RustToolchain` and `Pure`.
+
+One environment can mix tools from package sources with `FetchLocked`
+downloads and `Expect`, such as a nightly compiler pinned by URL beside
+`zip` from nixpkgs. Nix then serves its shells and tasks: it checks the
+`Expect` programs, makes the downloads ready in the same store, and runs
+inside the environment with them first on `PATH` (a shell with no command
+starts the shell Kai was started from). `kai update` pins both. The direct
+backend refuses such an environment, naming the tools that are not
+downloads, and a build cannot use it, as its sandbox sees neither the
+lock's direct pins nor the machine's programs. See
+[examples/mixed](examples/mixed).
 
 ## The `.kai` directory
 

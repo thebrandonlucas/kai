@@ -126,9 +126,11 @@ DirectBackend := [].{
 		Project.check_fetches_on(declared, [name], [], system).map_err(Plan.fail)?
 		environment = project.environments.find_first(|e| e.name == name)
 			.map_err(|_| Plan.fail("unknown environment: ${name}"))?
-		pins = DirectBackend.pins(lock)?
-		programs = environment.tools.map_try(
-			|tool| DirectBackend.program(project, tool, system, pins),
+		entering = DirectBackend.entering(
+			{ project, environment, tools: environment.tools },
+			system,
+			layout,
+			lock,
 		)?
 		variables = Project.merge_env(
 			Project.merge_env(
@@ -143,8 +145,6 @@ DirectBackend := [].{
 			_ => Err(NotFound)
 		}
 		dir = task.map_ok(|t| t.dir) ?? ""
-		bin = "${layout.workspace}/direct/${name}/bin"
-		expected = DirectBackend.expected(name, environment.expected)
 		run = Run({
 			description,
 			argv: Project.env_command(dir, variables).concat(command),
@@ -157,7 +157,7 @@ DirectBackend := [].{
 				.map_ok(|t| t.optional_environment_variables)
 				?? [],
 		})
-		steps = expected.concat([Realise({ bin, programs }), run])
+		steps = entering.append(run)
 		Ok(Plan.{ steps, next: Done })
 	}
 
@@ -183,15 +183,33 @@ DirectBackend := [].{
 	login : List(Str)
 	login = ["sh", "-c", "exec \"\${KAI_OPERATOR_SHELL:-/bin/sh}\""]
 
-	## A step finding every program the environment expects on the machine,
-	## and failing naming all that are missing, before anything is downloaded.
-	expected : Str, List(Str) -> List(Plan.Step)
-	expected = |environment, programs|
-		if programs.is_empty() {
-			[]
-		} else {
-			[ExpectPrograms({ description: "environment ${environment}", programs })]
-		}
+	## A validated project, as it is on a system, one of its environments, and
+	## the tools of the environment that are downloads.
+	Entering : {
+		project : Model,
+		environment : Model.Environment,
+		tools : List(Model.Tool),
+	}
+
+	## What runs before a shell or task enters a validated environment of the
+	## project, as it is on `system`: a step finding every program it expects
+	## on the machine, failing naming all that are missing, before anything is
+	## downloaded, then `tools`, its downloads, made ready first on PATH.
+	entering : Entering, Str, Layout, Lock -> Try(List(Plan.Step), Plan.Failure)
+	entering = |{ project, environment, tools }, system, layout, lock| {
+		{ name, expected, .. } = environment
+		pins = if (tools.is_empty()) [] else DirectBackend.pins(lock)?
+		programs = tools.map_try(
+			|tool| DirectBackend.program(project, tool, system, pins),
+		)?
+		bin = Project.downloads_bin(layout.workspace, name)
+		description = "environment ${name}"
+		check = ExpectPrograms({ description, programs: expected })
+		Ok(
+			(if (expected.is_empty()) [] else [check])
+				.concat(if (programs.is_empty()) [] else [Realise({ bin, programs })]),
+		)
+	}
 
 	## The download a tool names, by what the lock holds for this system.
 	program :

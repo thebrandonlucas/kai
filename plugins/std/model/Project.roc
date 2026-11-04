@@ -712,8 +712,20 @@ Project :: [].{
 			return Err("several builds are Default: ${Str.join_with(defaults, ", ")}")
 		}
 		for build in model.builds {
-			if !$environments.any(|e| e.name == build.environment) {
-				return Err("unknown environment: ${build.environment}")
+			environment = $environments.find_first(|e| e.name == build.environment)
+				.map_err(|_| "unknown environment: ${build.environment}")?
+			# A build's sandbox has only its environment's Nix tools.
+			sandboxed = "build ${build.name} cannot use environment ${environment.name}"
+			tools = environment_tools(environment)
+			match tools.find_first(|t| locked_fetch(model, t.source)) {
+				Ok(t) => return Err(
+					"${sandboxed}: FetchLocked ${t.source} needs a published sha256, "
+						.concat("as a sandbox cannot read the lock's direct pins"),
+				)
+				Err(_) => {}
+			}
+			if !environment.expected.is_empty() {
+				return Err("${sandboxed}: a sandbox has none of the programs it Expects")
 			}
 			check_argv(build.run, build.name)?
 			check_env(build.env, "build ${build.name}")?
@@ -1149,6 +1161,18 @@ Project :: [].{
 		if direct_only(project, env) {
 			return Err("environment ${name} needs the direct backend")
 		}
+		if backend == Guix and !env.expected.is_empty() {
+			return Err("Expect needs Nix or the direct backend: environment ${name}")
+		}
+		# Nix makes a FetchLocked tool ready only for PATH.
+		named = env.aliases.map(|a| a.tool)
+			.concat(env.package_env.join_map(|v| package_tools_of(v.value)))
+		match named.find_first(|t| locked_fetch(project, t.source)) {
+			Ok(t) => return Err(
+				"an Alias or PackageEnv names FetchLocked ${t.source}: environment ${name}",
+			)
+			Err(_) => {}
+		}
 		if backend == Guix and !env.overlays.is_empty() {
 			return Err("Guix does not support overlays in environment ${name}")
 		}
@@ -1219,12 +1243,29 @@ Project :: [].{
 			|f| f.name == name and f.files.any(|file| file.hash.is_empty()),
 		)
 
-	## Whether only the direct backend can serve an environment: it expects
-	## programs of the machine, or a tool only the lock's direct section pins.
-	direct_only : Model, Model.Environment -> Bool
-	direct_only = |model, environment|
+	## Whether an environment expects programs of the machine, or has a tool
+	## only the lock's direct section pins.
+	needs_direct : Model, Model.Environment -> Bool
+	needs_direct = |model, environment|
 		!environment.expected.is_empty()
 			or environment_tools(environment).any(|t| locked_fetch(model, t.source))
+
+	## Whether only the direct backend serves an environment: it needs direct,
+	## and nothing only a provider gives, such as a package-source tool. Nix
+	## serves the others, making their downloads ready as direct does.
+	direct_only : Model, Model.Environment -> Bool
+	direct_only = |model, environment|
+		needs_direct(model, environment)
+			and package_tools(environment_tools(environment), model.fetches).is_empty()
+			and environment.overlays.is_empty()
+			and environment.rust_toolchain == None
+			and !environment.pure
+
+	## Where the direct backend, and Nix beside package tools, link an
+	## environment's downloads.
+	downloads_bin : Str, Str -> Str
+	downloads_bin = |workspace, environment|
+		"${workspace}/direct/${environment}/bin"
 
 	## The tools that come from package sources, not from Fetches.
 	package_tools : List(Model.Tool), List(Model.Fetch) -> List(Model.Tool)

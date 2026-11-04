@@ -47,7 +47,7 @@ Plan := { steps : List(Step), next : Next }.{
 
 		## Makes each program ready in kai's store of pinned downloads and links
 		## it into `bin`, in the workspace. The Runs after it have `bin` first on
-		## PATH, until the next Realise.
+		## PATH, until the next Realise or Stage.
 		Realise({ bin : Str, programs : List(Program) }),
 
 		## Downloads each file into the store and writes a line

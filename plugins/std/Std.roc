@@ -456,8 +456,43 @@ Std := [].{
 		if !stale.is_empty() {
 			return Err(lock_failure("stale_lock", stale))
 		}
-		NixBackend.plan(model, wanted, target, layout, locks).map_err(rendering)
+		# As on direct, the machine's Expect programs are checked, and the
+		# FetchLocked tools made ready, before a shell or task enters.
+		validated = Project.validate(model).map_err(Plan.fail)?
+		project = Project.for_system(validated, target)
+		entering = Std.entered(model, wanted).map_try(
+			|name| {
+				environment = project.environments.find_first(|e| e.name == name)
+					.map_err(|_| Plan.fail("unknown environment: ${name}"))?
+				tools = environment.tools
+					.keep_if(|t| Project.locked_fetch(project, t.source))
+				downloads = { project, environment, tools }
+				steps = DirectBackend.entering(downloads, target, layout, ctx.lock)?
+				Ok({ environment: name, steps })
+			},
+		)?
+		NixBackend.plan_entering(model, wanted, target, layout, locks, entering)
+			.map_err(rendering)
 	}
+
+	## The environments a request's shells and tasks enter.
+	entered : Model, Request -> List(Str)
+	entered = |model, wanted|
+		match wanted {
+			Request.Shell(name, _) =>
+				model.shells.keep_if(|s| s.name == name).map(|s| s.environment)
+			Request.Run(name, _) =>
+				model.tasks.keep_if(|t| t.name == name).map(|t| t.environment)
+			Request.Workflow(name) =>
+				(Project.workflow_steps(model, name) ?? []).join_map(
+					|step|
+						match step {
+							RunTask(task, args) => Std.entered(model, Request.Run(task, args))
+							_ => []
+						},
+				)
+			Request.Build(_, _) => []
+		}
 
 	Run : { environment : Str, argv : List(Str), description : Str }
 
@@ -1126,6 +1161,58 @@ expect {
 		)
 }
 
+# On Nix, a task whose environment mixes a package tool with a FetchLocked
+# download and an Expect checks the machine's programs and makes the
+# download ready before it enters, and sh puts it first on PATH there; the
+# lock must pin it. Direct refuses the package tool, naming it, and a build
+# cannot use the environment.
+expect {
+	file = {
+		system: "x86_64-linux",
+		url: "https://example.com/t",
+		mirrors: [],
+		program: File,
+	}
+	settings = planning.concat([
+		FetchLocked("tool", [file]),
+		Environment("mixed", [Tools(["hello", "tool#tool"]), Expect(["git"])]),
+		Task("both", [Use("mixed"), Run(["tool"])]),
+	])
+	sha256 = "ab".repeat(32)
+	tool_pin = { key: "tool/x86_64-linux", url: file.url, sha256, size: 3 }
+	section = DirectBackend.section([tool_pin])
+	pinned = Present(LockFile.splice(nix_lock, "direct", section) ?? "")
+	bin = "/work/direct/mixed/bin"
+	entering = ["sh", "-c", "PATH=\"$0:$PATH\" && exec \"$@\"", bin, "tool"]
+	built = Build("b", [Use("mixed"), Run(["true"]), Output("o")])
+	sandboxed = match ConfigToModel.convert(settings.append(built)) {
+		Ok(model) => Project.validate(model).is_err()
+		Err(why) => why.contains("b cannot use environment mixed: FetchLocked")
+	}
+	match ConfigToModel.convert(settings) {
+		Ok(model) => {
+			both = Request.Run("both", [])
+			planned_with = |lock| Std.plan_nix(model, both, { ..context, lock })
+			entered = match planned_with(pinned).map_ok(|p| p.steps) {
+				Ok([.., ExpectPrograms(check), Realise(realise), Run(task)]) =>
+					check.programs == ["git"]
+						and realise.bin == bin
+						and realise.programs.map(|p| (p.name, p.sha256))
+							== [("tool", sha256)]
+						and task.argv.take_last(entering.len()) == entering
+				_ => Bool.False
+			}
+			not_downloads = "environment mixed has tools that are not downloads: "
+			entered
+				and failed(planned_with(nix_lock)) == "missing_direct_lock"
+				and DirectBackend.fit(model, both)
+					== Err("${not_downloads}default#hello")
+				and sandboxed
+		}
+		Err(_) => Bool.False
+	}
+}
+
 # direct runs a workflow of tasks, which Nix leaves to it, refuses one with a
 # build, and update with a name only for a FetchLocked file, which Nix leaves
 # to it too.
@@ -1146,7 +1233,8 @@ expect {
 		),
 		Environment("dev", [Tools(["tool#tool"])]),
 		Task("t", [Use("dev"), Run(["tool"])]),
-		Build("app", [Use("dev"), Run(["true"]), Output("out")]),
+		Environment("make", [Tools(["gnumake"])]),
+		Build("app", [Use("make"), Run(["true"]), Output("out")]),
 		Workflow("tasks", [RunTask("t", [])]),
 		Workflow("all", [RunTask("t", []), BuildArtifact("app")]),
 	]

@@ -355,6 +355,7 @@ Execute := [].{
 					$may_fail = $may_fail.keep_if(|last| last >= $index)
 					$skipping = $skipping and $index <= $skip_through
 					$finished = ""
+					$path = ""
 					if !$skipping {
 						progress = Output.step(workflow, $index, count, label)
 						Output.note!(mode, progress.human, progress.started)?
