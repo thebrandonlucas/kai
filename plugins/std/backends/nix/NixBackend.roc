@@ -35,7 +35,15 @@ NixBackend :: [].{
 		"pure",
 		"aliases",
 		"rust-toolchain",
+		"rust_toolchain_with",
 		"follows",
+		"package_env",
+		"task_dir",
+		"build_root",
+		"on_systems",
+		"fetch_unavailable",
+		"fetch_locked",
+		"expect",
 	]
 
 	default_nixpkgs : Str
@@ -64,8 +72,8 @@ NixBackend :: [].{
 
 	## One atomic request: its rendered flake, the argv that runs it, how the
 	## run reports (a build's artifact), its workflow stage and the variables
-	## its process receives, is denied and keeps, and the files its
-	## snapshot copies. `reads` names the inputs it reads. `needs_build`
+	## its process receives, is denied and keeps, and the directory and files
+	## its snapshot copies. `reads` names the inputs it reads. `needs_build`
 	## builds a task's Needs before it runs. `evaluate` evaluates a shell's or
 	## task's environment first, so a failure to evaluate it is not reported
 	## as the command's.
@@ -83,6 +91,7 @@ NixBackend :: [].{
 		stage : Str,
 		output : Plan.Output,
 		snapshot_files : [All, Only(List(Str))],
+		snapshot_root : Str,
 		may_fail : List(U64),
 	}
 
@@ -277,7 +286,7 @@ NixBackend :: [].{
 					argv: develop(environment_shell(task.environment), isolation)
 						.append("--command")
 						# Overrides the environment's Env, which kai-env-* sets.
-						.concat(Project.env_command(task.env.concat(artifacts)))
+						.concat(Project.env_command(task.dir, task.env.concat(artifacts)))
 						.concat(command),
 					output: Inherit,
 					secrets: task.secrets,
@@ -314,6 +323,7 @@ NixBackend :: [].{
 				"workflow must expand into atomic requests",
 			)
 		}
+		Project.check_fetches_on(project, selected.names, selected.builds, target)?
 		inputs = Locks.inputs(project)?
 		remaining = charge_rendered(
 			budget,
@@ -343,6 +353,7 @@ NixBackend :: [].{
 			stage: selected.stage,
 			output: selected.output,
 			snapshot_files: Project.snapshot_files(selected.builds),
+			snapshot_root: Project.snapshot_root(project, layout.project_root)?,
 			may_fail: [],
 		})
 	}
@@ -413,7 +424,7 @@ NixBackend :: [].{
 				.concat(local)
 			[
 				Snapshot({
-					root: layout.project_root,
+					root: selected.snapshot_root,
 					destination: "${layout.workspace}/snapshot",
 					exclude,
 					files: selected.snapshot_files,
@@ -491,10 +502,14 @@ NixBackend :: [].{
 				},
 		).map(|s| s.name)
 		# An environment using a Guix source runs only as a Guix shell, which
-		# uses the installed channels, so the Nix lock leaves it out.
+		# uses the installed channels, and one only direct serves uses no Nix,
+		# so the Nix lock leaves them out.
 		nix = |name|
 			!project.environments.any(
-				|e| e.name == name and e.tools.any(|t| guix.contains(t.source)),
+				|e|
+					e.name == name
+						and (e.tools.any(|t| guix.contains(t.source))
+							or Project.direct_only(project, e)),
 			)
 		names = project.shells.map(|s| s.environment)
 			.concat(project.tasks.map(|t| t.environment))
@@ -665,7 +680,7 @@ NixBackend :: [].{
 		shells = model.shells.keep_if(|s| names.contains(s.environment))
 		# Validate all Raw declarations, even aliases outside this request.
 		# Only selected aliases are emitted; flake-level data is always retained.
-		{ flake_raw, shell_raw } = raw_values(model)?
+		{ flake_raw, shell_raw, environment_raw } = raw_values(model)?
 		if model.shells.any(|shell| shell.name.starts_with("kai-env-")) {
 			return Err("shell prefix kai-env- is reserved")
 		}
@@ -753,7 +768,12 @@ NixBackend :: [].{
 		for environment in environments {
 			$rendered = append_rendered(
 				$rendered,
-				render_environment_definition(environment, model.fetches),
+				render_environment_systems(
+					environment,
+					model.systems,
+					model.fetches,
+					environment_attrs(environment_raw, environment.name),
+				),
 			)?
 		}
 		$rendered = append_rendered(
@@ -806,7 +826,13 @@ NixBackend :: [].{
 						.map_err(|_| "unknown build environment")?
 					$rendered = append_rendered(
 						$rendered,
-						render_build(build, env, model, system, workspace),
+						render_build(
+							build,
+							Project.on_system(env, system),
+							model,
+							system,
+							workspace,
+						),
 					)?
 				}
 				$rendered = append_rendered(
@@ -881,21 +907,59 @@ NixBackend :: [].{
 		tools = environment.tools.map(reference).concat(aliases)
 		match environment.rust_toolchain {
 			None => tools
-			Toml(text) => {
+			Toml({ text, components, target_triples }) => {
 				declaration = "RustToolchain in environment ${environment.name}"
 				no_overlay = "${declaration} needs an Overlay providing rust-bin, "
 					.concat("such as github:oxalica/rust-overlay")
 				no_table = "${declaration} has no [toolchain] table"
 				rust_bin = "(sets.${primary}.rust-bin or (throw ${quote(no_overlay)}))"
-				table = "((builtins.fromTOML ${quote(text)}).toolchain "
+				pinned = "((builtins.fromTOML ${quote(text)}).toolchain "
 					.concat("or (throw ${quote(no_table)}))")
+				# fromRustupToolchain passes the table's lists to rust-overlay's
+				# override as extensions and targets; overriding its result
+				# instead would replace the file's lists rather than add to them.
+				added = |field, list|
+					"${field} = (table.${field} or [ ]) ++ "
+						.concat("[ ${Str.join_with(list.map(quote), " ")} ]; ")
+				table = if components.is_empty() and target_triples.is_empty() {
+					pinned
+				} else {
+					"(let table = ${pinned}; in table // { "
+						.concat(added("components", components))
+						.concat(added("targets", target_triples))
+						.concat("})")
+				}
 				tools.append("(${rust_bin}.fromRustupToolchain ${table})")
 			}
 		}
 	}
 
-	render_environment_definition : Model.Environment, List(Model.Fetch) -> Str
-	render_environment_definition = |environment, fetches| {
+	## An environment with OnSystems is defined for each system apart, under
+	## the system's name, and selected by `system`, so Nix evaluates only the
+	## host's tools.
+	render_environment_systems :
+		Model.Environment, List(Str), List(Model.Fetch), RawAttrs -> Str
+	render_environment_systems = |environment, systems, fetches, raw|
+		if environment.on_systems.is_empty() {
+			render_environment_definition(environment, fetches, raw)
+		} else {
+			definitions = systems.map(
+				|system|
+					render_environment_definition(
+						{ ..Project.on_system(environment, system), name: system },
+						fetches,
+						raw,
+					),
+			)
+			"        ${quote(environment.name)} = {\n"
+				.concat(Str.join_with(definitions, ""))
+				.concat("        }.\${system};\n")
+		}
+
+	## Raw attributes `raw` go before a shell's own, which `extra` holds.
+	render_environment_definition :
+		Model.Environment, List(Model.Fetch), RawAttrs -> Str
+	render_environment_definition = |environment, fetches, raw| {
 		sources = source_names(environment, fetches)
 		primary = sources.first() ?? "default"
 		overlays = environment.overlays.map(
@@ -907,12 +971,12 @@ NixBackend :: [].{
 					.concat("{ inherit system overlays; };"),
 		)
 		tools = path_packages(environment, fetches).map(|tool| "            ${tool}")
+		own = if (raw.is_empty()) "" else " // ${value_to_nix(Value.Attrs(raw))}"
 		# mkShell exports `env` to its shells, and to tasks through kai-env-*.
-		env = if environment.env.is_empty() {
-			[]
-		} else {
-			["          env = ${env_attrs(environment.env)};"]
-		}
+		computed = package_env_attrs(environment, fetches).concat(
+			system_attrs(environment, [], "sets.${quote(primary)}"),
+		)
+		env = ["          env = ${env_attrs(environment.env, computed)};"]
 		lines([
 			"        ${quote(environment.name)} = let",
 			"          overlays = [ ${Str.join_with(overlays, " ")} ];",
@@ -924,13 +988,15 @@ NixBackend :: [].{
 				"          packages = [",
 			]),
 		).concat(lines(tools)).concat(
-			lines(["          ];"].concat(env).concat(["        } // extra);"])),
+			lines(["          ];"].concat(env).concat(["        }${own} // extra);"])),
 		)
 	}
 
 	## Ordinary, non-fixed-output derivations keep fetching outside user Run.
 	## Runner tool paths are explicit; argv and metadata enter through JSON.
-	## PATH holds the standard-environment tools mkShell puts on a shell's PATH.
+	## PATH holds the standard-environment tools mkShell puts on a shell's PATH,
+	## and the tools are build inputs, as in mkShell, so their setup hooks set
+	## variables such as PKG_CONFIG_PATH and the compiler's library paths.
 	render_build : Model.Build, Model.Environment, Model, Str, Str -> Str
 	render_build = |build, environment, model, system, workspace| {
 		snapshot = if (workspace.is_empty()) "" else "${workspace}/snapshot"
@@ -945,19 +1011,23 @@ NixBackend :: [].{
 					.concat("{ inherit system overlays; };"),
 		)
 		tools = path_packages(environment, model.fetches)
-		# Cargo.lock's checksums pin a vendor's crates, which Nix fetches. Builds
-		# refuse symlinks in inputs, so the vendored directory is copied whole.
+		# Cargo.lock's checksums pin a vendor's crates, and its commits its git
+		# checkouts, which Nix fetches. Builds refuse symlinks in inputs, so the
+		# vendored directory is copied whole, and its cargo config names the copy.
 		inputs = build.inputs.map(
 			|name| {
 				fetched = model.fetches.find_first(|f| f.name == name)
 				vendored = model.cargo_vendors.find_first(|c| c.name == name)
+				copy = "cp -rL $vendor $out && chmod -R u+w $out && substituteInPlace "
+					.concat("$out/.cargo/config.toml --replace-fail cargo-vendor-dir $out")
 				path = match (fetched, vendored) {
 					(Ok(fetch), _) => "pkgs.fetchurl ${fetch_file(fetch)}"
 					(_, Ok(vendor)) =>
 						"pkgs.runCommand ${quote("kai-cargo-vendor-${name}")} { "
 							.concat("vendor = pkgs.rustPlatform.importCargoLock { ")
 							.concat("lockFile = builtins.toFile \"Cargo.lock\" ")
-							.concat("${quote(vendor.lock)}; }; } \"cp -rL $vendor $out\"")
+							.concat("${quote(vendor.lock)}; allowBuiltinFetchGit = true; }; } ")
+							.concat(quote(copy))
 					_ => "inputs.${quote(name)}"
 				}
 				"{ name = ${quote(name)}; path = ${path}; }"
@@ -997,6 +1067,16 @@ NixBackend :: [].{
 		}
 		argv = Str.join_with(build.run.map(quote), " ")
 		build_env = Project.merge_env(environment.env, build.env)
+		# A build's own Env overrides its environment's PackageEnv by name.
+		computed = package_env_attrs(
+			{
+				..environment,
+				package_env: environment.package_env.keep_if(
+					|v| !build.env.any(|own| own.name == v.name),
+				),
+			},
+			model.fetches,
+		).concat(system_attrs(environment, build.env, "pkgs"))
 		lines([
 			"          ${quote(build.name)} = let",
 			"            system = ${quote(system)};",
@@ -1008,13 +1088,14 @@ NixBackend :: [].{
 				"            pkgs = sets.${quote(primary)};",
 				"            tools = [ ${Str.join_with(tools, " ")} ];",
 				"            runner = ${runner};",
-				"          in pkgs.runCommand ${quote("kai-${build.name}")} {",
+				"          in pkgs.runCommandCC ${quote("kai-${build.name}")} {",
+				"            nativeBuildInputs = tools;",
 				"            kaiSpec = builtins.toJSON {",
 				"              project = ${project};",
 				"              isolation = ${isolation};",
 				"              argv = [ ${argv} ];",
 				"              output = ${quote(build.output)};",
-				"              env = ${env_attrs(build_env)};",
+				"              env = ${env_attrs(build_env, computed)};",
 				"              path = pkgs.lib.makeBinPath (tools ++ "
 					.concat("builtins.filter pkgs.lib.isDerivation ")
 					.concat("pkgs.stdenv.defaultNativeBuildInputs ++ ")
@@ -1076,18 +1157,21 @@ NixBackend :: [].{
 		_ => Err("raw nix value for \"${r.target}\" must be Attrs")
 	}
 
-	## The Nix Raw attributes of the flake and of each shell, or why a Nix Raw
-	## is one this backend does not accept; std reports that at compile time.
+	## The Nix Raw attributes of the flake, of each shell and of each
+	## environment, or why a Nix Raw is one this backend does not accept; std
+	## reports that at compile time.
 	raw_values : Model -> Try(
 		{
 			flake_raw : List({ name : Str, value : Value }),
 			shell_raw : List({ shell : Str, attr : { name : Str, value : Value } }),
+			environment_raw : EnvironmentRaw,
 		},
 		Str,
 	)
 	raw_values = |model| {
 		var $shell_raw = []
 		var $flake_raw = []
+		var $environment_raw = []
 		for r in model.raw.keep_if(|r| r.backend == "nix") {
 			if r.target == "flake" {
 				$flake_raw = $flake_raw.concat(raw_attrs(r)?)
@@ -1099,10 +1183,18 @@ NixBackend :: [].{
 				$shell_raw = $shell_raw.concat(
 					raw_attrs(r)?.map(|a| { shell: name, attr: a }),
 				)
+			} else if r.target.starts_with("environment:") {
+				name = r.target.drop_prefix("environment:")
+				if !model.environments.any(|e| e.name == name) {
+					return Err("raw nix target \"${r.target}\" names no environment")
+				}
+				$environment_raw = $environment_raw.concat(
+					raw_attrs(r)?.map(|a| { environment: name, attr: a }),
+				)
 			} else {
 				return Err(
-					"unknown raw nix target \"${r.target}\"; "
-						.concat("expected \"flake\" or \"shell:<name>\""),
+					"unknown raw nix target \"${r.target}\"; expected \"flake\", "
+						.concat("\"shell:<name>\" or \"environment:<name>\""),
 				)
 			}
 		}
@@ -1120,8 +1212,33 @@ NixBackend :: [].{
 				["packages"],
 			)?
 		}
-		Ok({ flake_raw: $flake_raw, shell_raw: $shell_raw })
+		for environment in model.environments {
+			check_attr_names(
+				"the raw attributes of environment \"${environment.name}\"",
+				environment_attrs($environment_raw, environment.name).map(|a| a.name),
+				["packages", "env"],
+			)?
+		}
+		Ok({
+			flake_raw: $flake_raw,
+			shell_raw: $shell_raw,
+			environment_raw: $environment_raw,
+		})
 	}
+
+	## Raw data rendered as Nix attributes.
+	RawAttrs : List({ name : Str, value : Value })
+
+	## Raw attributes, each for the environment it names.
+	EnvironmentRaw : List(
+		{ environment : Str, attr : { name : Str, value : Value } },
+	)
+
+	## The Raw attributes of environment `name`.
+	environment_attrs :
+		EnvironmentRaw, Str -> RawAttrs
+	environment_attrs = |environment_raw, name|
+		environment_raw.keep_if(|x| x.environment == name).map(|x| x.attr)
 
 	check_attr_names : Str, List(Str), List(Str) -> Try({}, Str)
 	check_attr_names = |what, names, reserved| {
@@ -1192,10 +1309,54 @@ NixBackend :: [].{
 		"({ ${Str.join_with(files, "")}}.\${system} or (throw (${missing} + system)))"
 	}
 
-	env_attrs : List(Model.Variable) -> Str
-	env_attrs = |variables| {
+	## KAI_SYSTEM, the evaluating Nix system, and, with a RustToolchain,
+	## KAI_RUST_TARGET, its Rust target triple from the package set `pkgs`,
+	## as Nix attributes. The environment's own variables, and the build's
+	## `own`, override them.
+	system_attrs : Model.Environment, List(Model.Variable), Str -> List(Str)
+	system_attrs = |environment, own, pkgs| {
+		rust_target = "${pkgs}.stdenv.hostPlatform.rust.rustcTarget"
+		set = environment.env.concat(own).map(|v| v.name)
+			.concat(environment.package_env.map(|v| v.name))
+		[("KAI_SYSTEM", "system")]
+			.concat(
+				if (environment.rust_toolchain == None)
+					[]
+				else
+					[("KAI_RUST_TARGET", rust_target)],
+			)
+			.keep_if(|(name, _)| !set.contains(name))
+			.map(|(name, value)| "${quote(name)} = ${value}; ")
+	}
+
+	## Variables as Nix attributes, followed by `computed` ones.
+	env_attrs : List(Model.Variable), List(Str) -> Str
+	env_attrs = |variables, computed| {
 		attrs = variables.map(|v| "${quote(v.name)} = ${quote(v.value)}; ")
-		"{ ${Str.join_with(attrs, "")}}"
+		"{ ${Str.join_with(attrs.concat(computed), "")}}"
+	}
+
+	## An environment's PackageEnv as Nix attributes, its paths computed from
+	## the packages of the environment's sets.
+	package_env_attrs : Model.Environment, List(Model.Fetch) -> List(Str)
+	package_env_attrs = |environment, fetches| {
+		primary = source_names(environment, fetches).first() ?? "default"
+		references = |tools|
+			Str.join_with(
+				tools.map(|tool| tool_reference(tool, environment, fetches, primary)),
+				" ",
+			)
+		lib = "sets.${quote(primary)}.lib"
+		environment.package_env.map(
+			|variable| {
+				value = match variable.value {
+					LibraryPath(tools) => "${lib}.makeLibraryPath [ ${references(tools)} ]"
+					BinPath(tools) => "${lib}.makeBinPath [ ${references(tools)} ]"
+					PackagePath(tool) => "\"\${${references([tool])}}\""
+				}
+				"${quote(variable.name)} = ${value}; "
+			},
+		)
 	}
 
 	lines : List(Str) -> Str
@@ -1239,6 +1400,9 @@ sample_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
+			package_env: [],
+			on_systems: [],
 		},
 		{
 			name: "dev",
@@ -1249,6 +1413,9 @@ sample_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
+			package_env: [],
+			on_systems: [],
 		},
 	],
 	shells: [
@@ -1285,6 +1452,9 @@ full_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
+			package_env: [],
+			on_systems: [],
 		},
 		{
 			name: "empty",
@@ -1295,6 +1465,9 @@ full_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
+			package_env: [],
+			on_systems: [],
 		},
 		{
 			name: "headless",
@@ -1305,6 +1478,9 @@ full_model = {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
+			package_env: [],
+			on_systems: [],
 		},
 	],
 	shells: [
@@ -1321,6 +1497,7 @@ full_model = {
 			optional_environment_variables: [],
 			needs: [],
 			description: "",
+			dir: "",
 		},
 	],
 	raw: [
@@ -1398,6 +1575,9 @@ base = {
 	pure: Bool.False,
 	aliases: [],
 	rust_toolchain: None,
+	expected: [],
+	package_env: [],
+	on_systems: [],
 }
 
 simple : TestIr
@@ -1428,6 +1608,7 @@ mk = |t| Model.{
 	build_sources: [],
 	fetches: [],
 	cargo_vendors: [],
+	build_root: "",
 	builds: [],
 	workflows: [],
 	requires_: t.requires_,
@@ -1478,6 +1659,7 @@ expect match NixBackend.render(
 				optional_environment_variables: [],
 				needs: [],
 				description: "",
+				dir: "",
 			},
 		],
 	}),
@@ -1693,6 +1875,42 @@ expect {
 	rejects({ ..simple, raw: [raw, raw] }, "more than once")
 }
 
+# Environment Raw applies to the environment's shells and tasks, before a
+# shell's own; it names a declared environment and never sets env.
+expect {
+	hook = |target, text| {
+		backend: "nix",
+		target,
+		value: Value.Attrs([{ name: "shellHook", value: Value.Str(text) }]),
+	}
+	raw = [hook("environment:dev", "env"), hook("shell:default", "shell")]
+	match NixBackend.render(mk({ ..simple, raw })) {
+		Ok(text) =>
+			text.contains("        } // { \"shellHook\" = \"env\"; } // extra);")
+				and text.contains(
+					"\"default\" = environments.\"dev\" { \"shellHook\" = \"shell\"; };",
+				)
+				and text.contains("\"kai-env-dev\" = environments.\"dev\" { };")
+				and rejects(
+					{ ..simple, raw: [hook("environment:nope", "")] },
+					"names no environment",
+				)
+				and rejects(
+					{
+						..simple,
+						raw: [
+							{
+								backend: "nix",
+								target: "environment:dev",
+								value: Value.Attrs([{ name: "env", value: Value.Attrs([]) }]),
+							},
+						],
+					},
+					"set \"env\"",
+				)
+		Err(_) => Bool.False
+	}
+}
 # Shell aliases cannot collide with stable task environment output names.
 expect NixBackend.render(
 	mk({
@@ -1907,6 +2125,34 @@ expect match single(Request.build("app")) {
 	_ => False
 }
 
+# A BuildRoot snapshots the project's ancestor; one reaching / is refused.
+expect {
+	snapshot_root = |build_root, project_root| {
+		layout = Layout.{
+			project_root,
+			workspace: "/work",
+			generated_root: "/generated",
+			lock_path: "/authority/inputs.lock",
+		}
+		project = TestData.project(TestData.data)
+		requires_ = project.requires_.append("build_root")
+		model = { ..project, build_root, requires_ }
+		# The fixture's lock records its local source under /project.
+		lock = native_lock.replace_each("\"/project/", "\"${project_root}/")
+		locks = Locks.from_nix(model, layout, lock)?
+		request = Request.build("app")
+		planned = NixBackend.plan(model, request, "x86_64-linux", layout, locks)?
+		match planned.steps.find_first(is_snapshot) {
+			Ok(Snapshot({ root, .. })) => Ok(root)
+			_ => Err("no snapshot")
+		}
+	}
+	snapshot_root("..", "/repo/app") == Ok("/repo")
+		and snapshot_root("", "/repo/app") == Ok("/repo/app")
+		and snapshot_root("../..", "/repo/app")
+			== Err("BuildRoot ../.. reaches the filesystem root from /repo/app")
+}
+
 # User argv is data; source/dependency views are immutable store farms.
 expect match single(Request.build("app")) {
 	Ok(step) => match step.files.first() {
@@ -1922,7 +2168,8 @@ expect match single(Request.build("app")) {
 			and file.contents.contains(
 				"\"/work/build-runner\"; name = \"kai-build-runner\";",
 			)
-			and file.contents.contains("pkgs.runCommand")
+			and file.contents.contains("pkgs.runCommandCC")
+			and file.contents.contains("nativeBuildInputs = tools;")
 			and !file.contents.contains("outputHash")
 		Err(_) => False
 	}
@@ -2306,6 +2553,7 @@ expect {
 					optional_environment_variables: [],
 					needs: [],
 					description: "",
+					dir: "",
 				},
 			],
 		}),
@@ -2756,6 +3004,7 @@ expect {
 			optional_environment_variables: [],
 			needs: [],
 			description: "",
+			dir: "",
 		}),
 		workflows: TestData.workflow_data.workflows.concat([
 			{
@@ -3014,6 +3263,7 @@ expect {
 					optional_environment_variables: [],
 					needs: [],
 					description: "",
+					dir: "",
 				},
 			],
 		},
@@ -3130,4 +3380,121 @@ expect {
 			).is_err()
 		},
 	)
+}
+
+# PackageEnv computes its paths from the environment's packages, beside Env.
+expect {
+	zlib = { source: "default", name: "zlib" }
+	browsers = { source: "default", name: "playwright-driver.browsers" }
+	environment = {
+		..base,
+		env: [{ name: "GREETING", value: "moo" }],
+		package_env: [
+			{ name: "LD_LIBRARY_PATH", value: LibraryPath([zlib]) },
+			{ name: "BROWSERS", value: PackagePath(browsers) },
+		],
+	}
+	match NixBackend.render(mk({ ..simple, environments: [environment] })) {
+		Ok(text) =>
+			text.contains(
+				"env = { \"GREETING\" = \"moo\"; \"LD_LIBRARY_PATH\" = sets.\"default\""
+					.concat(".lib.makeLibraryPath [ (sets.\"default\".\"zlib\" or "),
+			)
+				and text.contains(
+					"\"BROWSERS\" = \"\${(sets.\"default\""
+						.concat(".\"playwright-driver\".\"browsers\" or "),
+				)
+		Err(_) => Bool.False
+	}
+}
+
+# OnSystems defines the environment for each system apart, selected by the
+# system, each with only its own tools and variables.
+expect {
+	cowsay = { source: "default", name: "cowsay" }
+	wayland = { source: "default", name: "wayland" }
+	environment = {
+		..base,
+		tools: [cowsay],
+		on_systems: [
+			{
+				systems: ["x86_64-linux"],
+				tools: [wayland],
+				env: [{ name: "GPU", value: "on" }],
+			},
+		],
+	}
+	systems = ["x86_64-linux", "aarch64-darwin"]
+	count = |text, part| text.split_on(part).len() - 1
+	model = mk({ ..simple, systems, environments: [environment] })
+	match NixBackend.render(model) {
+		Ok(text) =>
+			text.contains("        \"dev\" = {\n        \"x86_64-linux\" = let")
+				and text.contains("        \"aarch64-darwin\" = let")
+				and text.contains("        }.\${system};\n")
+				and count(text, "\"cowsay\" or") == 2
+				and count(text, "\"wayland\" or") == 1
+				and count(text, "env = { \"GPU\" = \"on\"; \"KAI_SYSTEM\" = system; };")
+					== 1
+		Err(_) => Bool.False
+	}
+}
+
+# RustToolchainWith adds its components and targets to the file's lists, and
+# a plain RustToolchain passes the file's table unchanged.
+expect {
+	toolchain = |components, target_triples|
+		Toml({ text: "[toolchain]\nchannel = \"1.90\"", components, target_triples })
+	render = |rust_toolchain| {
+		environments = [{ ..base, rust_toolchain }]
+		NixBackend.render(mk({ ..simple, environments }))
+	}
+	added = "table // { components = (table.components or [ ]) ++ "
+		.concat("[ \"llvm-tools-preview\" ]; targets = (table.targets or [ ]) ++ ")
+		.concat("[ \"wasm32-unknown-unknown\" ]; })")
+	extended = toolchain(["llvm-tools-preview"], ["wasm32-unknown-unknown"])
+	match (render(extended), render(toolchain([], []))) {
+		(Ok(added_text), Ok(plain)) =>
+			added_text.contains(added)
+				and plain.contains(".fromRustupToolchain ((builtins.fromTOML")
+				and !plain.contains("table //")
+		_ => Bool.False
+	}
+}
+
+# Shells, tasks and builds get KAI_SYSTEM, and with a RustToolchain
+# KAI_RUST_TARGET, unless their own variables set them.
+expect {
+	toolchain = Toml({ text: "[toolchain]", components: [], target_triples: [] })
+	render = |environment|
+		NixBackend.render(mk({ ..simple, environments: [environment] }))
+	own = |name| [{ name, value: "mine" }]
+	target = |pkgs|
+		"\"KAI_RUST_TARGET\" = ${pkgs}.stdenv.hostPlatform.rust.rustcTarget; "
+	rust_target = target("sets.\"default\"")
+	data = {
+		..TestData.data,
+		environments: [{ ..TestData.builder, rust_toolchain: toolchain }],
+		builds: [
+			TestData.application,
+			{ ..TestData.library, env: own("KAI_RUST_TARGET") },
+		],
+	}
+	rendered = (
+		render({ ..base, rust_toolchain: toolchain }),
+		render({ ..base, env: own("KAI_SYSTEM") }),
+		NixBackend.render(TestData.project(data)),
+	)
+	match rendered {
+		(Ok(rust), Ok(set), Ok(builds)) =>
+			rust.contains("env = { \"KAI_SYSTEM\" = system; ${rust_target}};")
+				and set.contains("env = { \"KAI_SYSTEM\" = \"mine\"; };")
+				and builds.contains(
+					"env = { \"KAI_SYSTEM\" = system; ${target("pkgs")}};",
+				)
+				and builds.contains(
+					"env = { \"KAI_RUST_TARGET\" = \"mine\"; \"KAI_SYSTEM\" = system; };",
+				)
+		_ => Bool.False
+	}
 }

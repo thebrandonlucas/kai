@@ -40,6 +40,11 @@ Variables := [].{
 		description: "Your shell, for KAI_OPERATOR_SHELL in shells and tasks.",
 	}
 
+	path = {
+		name: "PATH",
+		description: "Where programs are found, after a plan's pinned downloads.",
+	}
+
 	kai_platform_bundle = {
 		name: "KAI_PLATFORM_BUNDLE",
 		description: "An unpacked platform bundle to seed Roc's cache with.",
@@ -69,6 +74,7 @@ Variables := [].{
 		Variables.xdg_cache_home,
 		Variables.home,
 		Variables.shell,
+		Variables.path,
 		Variables.kai_platform_bundle,
 		Variables.kai_std_bundle,
 		Variables.kai_roc_packages,

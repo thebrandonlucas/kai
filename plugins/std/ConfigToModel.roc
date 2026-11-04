@@ -1,5 +1,6 @@
 # Authoring cardinality checks feed the shared whole-project validator.
 import Config
+import System
 import Val
 import model.Value
 import model.Model
@@ -12,6 +13,7 @@ ConfigToModel :: [].{
 	Acc : {
 		names : List(Str),
 		systems : List(List(Str)),
+		build_roots : List(Str),
 		sources : List(Model.Source),
 		guix_channels : List(Model.GuixChannel),
 		inputs : List(Model.Input),
@@ -21,6 +23,8 @@ ConfigToModel :: [].{
 		tasks : List(Model.Task),
 		build_sources : List(Model.BuildSource),
 		fetches : List(Model.Fetch),
+		fetch_alls : List({ name : Str, url : Str, hash : Str }),
+		unavailable : List((Str, List(Str))),
 		cargo_vendors : List(Model.CargoVendor),
 		builds : List(Model.Build),
 		workflows : List(Model.Workflow),
@@ -46,6 +50,7 @@ ConfigToModel :: [].{
 		initial = {
 			names: [],
 			systems: [],
+			build_roots: [],
 			sources: [],
 			guix_channels: [],
 			inputs: [],
@@ -55,6 +60,8 @@ ConfigToModel :: [].{
 			tasks: [],
 			build_sources: [],
 			fetches: [],
+			fetch_alls: [],
+			unavailable: [],
 			cargo_vendors: [],
 			builds: [],
 			workflows: [],
@@ -76,7 +83,15 @@ ConfigToModel :: [].{
 			(if (acc.extensions.is_empty()) [] else ["extensions"])
 				.concat(if (acc.raw.is_empty()) [] else ["raw"])
 				.concat(if (acc.build_sources.is_empty()) [] else ["sources"])
-				.concat(if (acc.fetches.is_empty()) [] else ["fetches"])
+				.concat(
+					if (acc.fetches.is_empty() and acc.fetch_alls.is_empty())
+						[]
+					else
+						["fetches"],
+				)
+				.concat(if (acc.unavailable.is_empty()) [] else ["fetch_unavailable"])
+				.concat(if (uses_locked_fetch(acc)) ["fetch_locked"] else [])
+				.concat(if (uses_expect(acc)) ["expect"] else [])
 				.concat(if (acc.cargo_vendors.is_empty()) [] else ["cargo"])
 				.concat(if (acc.builds.is_empty()) [] else ["builds"])
 				.concat(if (acc.workflows.is_empty()) [] else ["workflows"])
@@ -95,7 +110,17 @@ ConfigToModel :: [].{
 				.concat(if (acc.environments.any(|e| e.pure)) ["pure"] else [])
 				.concat(if (uses_aliases(acc)) ["aliases"] else [])
 				.concat(if (uses_rust_toolchain(acc)) ["rust-toolchain"] else [])
+				.concat(if (uses_rust_toolchain_with(acc)) ["rust_toolchain_with"] else [])
 				.concat(if (acc.follows.is_empty()) [] else ["follows"])
+				.concat(if (uses_package_env(acc)) ["package_env"] else [])
+				.concat(if (acc.tasks.all(|t| t.dir.is_empty())) [] else ["task_dir"])
+				.concat(if (acc.build_roots.is_empty()) [] else ["build_root"])
+				.concat(
+					if (acc.environments.all(|e| e.on_systems.is_empty()))
+						[]
+					else
+						["on_systems"],
+				)
 		Project.validate(
 			Model.{
 				format: Model.current_format,
@@ -110,8 +135,13 @@ ConfigToModel :: [].{
 				shells: acc.shells,
 				tasks: acc.tasks,
 				build_sources: acc.build_sources,
-				fetches: acc.fetches,
+				fetches: fetches(acc, systems)?,
 				cargo_vendors: acc.cargo_vendors,
+				build_root: match acc.build_roots {
+					[] => ""
+					[one] => one
+					_ => return Err("DuplicateBuildRoot: declare BuildRoot at most once")
+				},
 				builds: acc.builds,
 				workflows: acc.workflows,
 				extensions: acc.extensions,
@@ -128,6 +158,7 @@ ConfigToModel :: [].{
 				..acc,
 				systems: acc.systems.append(systems.map(|s| s.to_str())),
 			}
+			BuildRoot(path) => { ..acc, build_roots: acc.build_roots.append(path) }
 			Packages(name, source) => {
 				..acc,
 				sources: acc.sources.append({
@@ -200,9 +231,43 @@ ConfigToModel :: [].{
 								url: f.url,
 								hash: Project.sri_sha256(f.sha256)
 									.map_err(|_| "invalid sha256 in Fetch ${name.to_str()}")?,
+								mirrors: [],
+								unpack: File,
 							}),
 					)?,
+					unavailable: [],
 				}),
+			}
+			FetchLocked(name, files) => {
+				..acc,
+				fetches: acc.fetches.append({
+					name: name.to_str(),
+					files: files.map(
+						|f| {
+							system: f.system.to_str(),
+							url: f.url,
+							hash: "",
+							mirrors: f.mirrors,
+							unpack: f.program,
+						},
+					),
+					unavailable: [],
+				}),
+			}
+			FetchAll(name, { url, sha256 }) => {
+				..acc,
+				fetch_alls: acc.fetch_alls.append({
+					name: name.to_str(),
+					url,
+					hash: Project.sri_sha256(sha256)
+						.map_err(|_| "invalid sha256 in FetchAll ${name.to_str()}")?,
+				}),
+			}
+			FetchUnavailable(name, systems) => {
+				..acc,
+				unavailable: acc.unavailable.append(
+					(name.to_str(), systems.map(|s| s.to_str())),
+				),
 			}
 			CargoVendor(name, lock) => {
 				..acc,
@@ -292,6 +357,9 @@ ConfigToModel :: [].{
 				pures: 0.U64,
 				aliases: [],
 				toolchains: [],
+				package_envs: [],
+				expects: [],
+				on_systems: [],
 			},
 			|acc, setting|
 				match setting {
@@ -308,22 +376,39 @@ ConfigToModel :: [].{
 					Extend(parent) => { ..acc, parents: acc.parents.append(parent.to_str()) }
 					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
 					Pure => { ..acc, pures: acc.pures + 1 }
+					Expect(programs) => { ..acc, expects: acc.expects.append(programs) }
 					Alias(alias, tool, binary) => {
 						..acc,
 						aliases: acc.aliases.append({ name: alias, tool: tool.to_ir(), binary }),
 					}
 					RustToolchain(text) => {
 						..acc,
-						toolchains: acc.toolchains.append(Toml(text)),
+						toolchains: acc.toolchains.append((text, [])),
+					}
+					RustToolchainWith(text, settings) => {
+						..acc,
+						toolchains: acc.toolchains.append((text, settings)),
+					}
+					PackageEnv(pairs) => {
+						..acc,
+						package_envs: acc.package_envs.append(
+							pairs.map(
+								|(variable, value)| { name: variable, value: package_value(value) },
+							),
+						),
+					}
+					OnSystems(systems, settings) => {
+						..acc,
+						on_systems: acc.on_systems.append((systems, settings)),
 					}
 				},
 		)
 		if draft.tools.len() > 1 {
 			return Err("DuplicateTools: environment ${name}")
 		}
-		if draft.toolchains.len() > 1 {
-			return Err("DuplicateRustToolchain: environment ${name}")
-		}
+		on_systems = draft.on_systems.map_try(
+			|(systems, settings)| on_systems_setting(name, systems, settings),
+		)?
 		if draft.overlays.len() > 1 {
 			return Err("DuplicateOverlays: environment ${name}")
 		}
@@ -333,6 +418,9 @@ ConfigToModel :: [].{
 		if draft.pures > 1 {
 			return Err("DuplicatePure: environment ${name}")
 		}
+		if draft.expects.len() > 1 {
+			return Err("DuplicateExpect: environment ${name}")
+		}
 		Ok({
 			name,
 			parents: draft.parents,
@@ -341,7 +429,69 @@ ConfigToModel :: [].{
 			env: single_env(draft.envs, "environment ${name}")?,
 			pure: draft.pures == 1,
 			aliases: draft.aliases,
-			rust_toolchain: draft.toolchains.first() ?? None,
+			rust_toolchain: match draft.toolchains {
+				[] => None
+				[(text, settings)] => rust_toolchain(name, text, settings)?
+				_ => return Err("DuplicateRustToolchain: environment ${name}")
+			},
+			package_env: match draft.package_envs {
+				[] => []
+				[one] => one
+				_ => return Err("DuplicatePackageEnv: environment ${name}")
+			},
+			expected: draft.expects.first() ?? [],
+			on_systems,
+		})
+	}
+
+	## The toolchain a RustToolchain or RustToolchainWith in environment `name`
+	## declares, with the components and targets `settings` add.
+	rust_toolchain :
+		Str, Str, List(Config.RustToolchainSetting) -> Try(Model.RustToolchain, Str)
+	rust_toolchain = |name, text, settings| {
+		(components, target_triples) = settings.fold(
+			([], []),
+			|(components_so_far, triples_so_far), setting|
+				match setting {
+					Components(list) => (components_so_far.append(list), triples_so_far)
+					Targets(list) => (components_so_far, triples_so_far.append(list))
+				},
+		)
+		declaration = "RustToolchainWith in environment ${name}"
+		if components.len() > 1 {
+			return Err("DuplicateComponents: ${declaration}")
+		}
+		if target_triples.len() > 1 {
+			return Err("DuplicateTargets: ${declaration}")
+		}
+		Ok(
+			Toml({
+				text,
+				components: components.first() ?? [],
+				target_triples: target_triples.first() ?? [],
+			}),
+		)
+	}
+
+	## One OnSystems setting of environment `name`.
+	on_systems_setting :
+		Str, List(System), List(Config.SystemSetting) -> Try(Model.OnSystems, Str)
+	on_systems_setting = |name, systems, settings| {
+		(tools, envs) = settings.fold(
+			([], []),
+			|(tools_so_far, envs_so_far), setting|
+				match setting {
+					Tools(list) => (tools_so_far.append(list.map(|t| t.to_ir())), envs_so_far)
+					Env(pairs) => (tools_so_far, envs_so_far.append(variables(pairs)))
+				},
+		)
+		if tools.len() > 1 {
+			return Err("DuplicateTools: OnSystems in environment ${name}")
+		}
+		Ok({
+			systems: systems.map(|s| s.to_str()),
+			tools: tools.first() ?? [],
+			env: single_env(envs, "OnSystems in environment ${name}")?,
 		})
 	}
 
@@ -378,6 +528,7 @@ ConfigToModel :: [].{
 				optional_environment_variables: [],
 				needs: [],
 				descriptions: [],
+				dirs: [],
 			},
 			|acc, setting|
 				match setting {
@@ -395,6 +546,7 @@ ConfigToModel :: [].{
 						needs: acc.needs.append(needs.map(|need| need.to_str())),
 					}
 					Description(text) => { ..acc, descriptions: acc.descriptions.append(text) }
+					Dir(path) => { ..acc, dirs: acc.dirs.append(path) }
 				},
 		)
 		environment_name = match draft.environments {
@@ -429,6 +581,11 @@ ConfigToModel :: [].{
 			optional_environment_variables,
 			needs: draft.needs.first() ?? [],
 			description: single_description(draft.descriptions, "task ${name}")?,
+			dir: match draft.dirs {
+				[] => ""
+				[one] => one
+				_ => return Err("DuplicateDir: task ${name}")
+			},
 		})
 	}
 
@@ -444,6 +601,7 @@ ConfigToModel :: [].{
 				files: [],
 				envs: [],
 				revisions: 0.U64,
+				defaults: 0.U64,
 				descriptions: [],
 			},
 			|acc, setting|
@@ -462,6 +620,7 @@ ConfigToModel :: [].{
 					Files(paths) => { ..acc, files: acc.files.append(paths) }
 					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
 					Revision => { ..acc, revisions: acc.revisions + 1 }
+					Default => { ..acc, defaults: acc.defaults + 1 }
 					Description(text) => { ..acc, descriptions: acc.descriptions.append(text) }
 				},
 		)
@@ -486,6 +645,9 @@ ConfigToModel :: [].{
 		if draft.needs.len() > 1 {
 			return Err("DuplicateNeeds: build ${name}")
 		}
+		if draft.defaults > 1 {
+			return Err("DuplicateDefault: build ${name}")
+		}
 		if draft.revisions > 1 {
 			return Err("DuplicateRevision: build ${name}")
 		}
@@ -504,12 +666,61 @@ ConfigToModel :: [].{
 			files,
 			env: single_env(draft.envs, "build ${name}")?,
 			revision: draft.revisions == 1,
+			default: draft.defaults == 1,
 			description: single_description(draft.descriptions, "build ${name}")?,
 		})
 	}
 
+	package_value : Config.PackageValue -> Model.PackageValue
+	package_value = |value|
+		match value {
+			LibraryPath(tools) => LibraryPath(tools.map(|tool| tool.to_ir()))
+			BinPath(tools) => BinPath(tools.map(|tool| tool.to_ir()))
+			PackagePath(tool) => PackagePath(tool.to_ir())
+		}
+
 	variables : List((Str, Str)) -> List(Model.Variable)
 	variables = |pairs| pairs.map(|(name, value)| { name, value })
+
+	## Every Fetch, a FetchAll with one file for each of `systems` it is
+	## available on, and each marked with the systems FetchUnavailable names.
+	fetches : Acc, List(Str) -> Try(List(Model.Fetch), Str)
+	fetches = |acc, systems| {
+		var $named = []
+		for (name, _) in acc.unavailable {
+			if $named.contains(name) {
+				return Err("DuplicateFetchUnavailable: ${name}")
+			}
+			$named = $named.append(name)
+		}
+		unavailable_on = |name|
+			acc.unavailable.find_first(|(named, _)| named == name)
+				.map_ok(|(_, on)| on)
+				?? []
+		every_system = acc.fetch_alls.map(
+			|f| {
+				name: f.name,
+				files: systems.keep_if(|s| !unavailable_on(f.name).contains(s))
+					.map(
+						|system| {
+							system,
+							url: f.url,
+							hash: f.hash,
+							mirrors: [],
+							unpack: File,
+						},
+					),
+				unavailable: [],
+			},
+		)
+		all = acc.fetches.concat(every_system)
+		for name in $named {
+			if !all.any(|f| f.name == name) {
+				return Err("FetchUnavailable ${name} names no Fetch")
+			}
+		}
+		Ok(all.map(|f| { ..f, unavailable: unavailable_on(f.name) }))
+	}
 
 	single_env : List(List(Model.Variable)), Str -> Try(List(Model.Variable), Str)
 	single_env = |envs, declaration|
@@ -518,6 +729,13 @@ ConfigToModel :: [].{
 			[one] => Ok(one)
 			_ => Err("DuplicateEnv: ${declaration}")
 		}
+
+	uses_locked_fetch : Acc -> Bool
+	uses_locked_fetch = |acc|
+		acc.fetches.any(|f| f.files.any(|file| file.hash.is_empty()))
+
+	uses_expect : Acc -> Bool
+	uses_expect = |acc| acc.environments.any(|e| !e.expected.is_empty())
 
 	uses_may_fail : Acc -> Bool
 	uses_may_fail = |acc|
@@ -546,6 +764,20 @@ ConfigToModel :: [].{
 
 	uses_aliases : Acc -> Bool
 	uses_aliases = |acc| acc.environments.any(|e| !e.aliases.is_empty())
+
+	uses_package_env : Acc -> Bool
+	uses_package_env = |acc| acc.environments.any(|e| !e.package_env.is_empty())
+
+	uses_rust_toolchain_with : Acc -> Bool
+	uses_rust_toolchain_with = |acc|
+		acc.environments.any(
+			|e|
+				match e.rust_toolchain {
+					Toml({ components, target_triples, .. }) =>
+						!components.is_empty() or !target_triples.is_empty()
+					None => False
+				},
+		)
 
 	uses_rust_toolchain : Acc -> Bool
 	uses_rust_toolchain = |acc|

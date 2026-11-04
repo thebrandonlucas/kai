@@ -2,9 +2,10 @@
 # publish the caller's namespace witness beside it, replacing the previous
 # snapshot only once the new one is completely staged. What the project's
 # .gitignore files ignore is left out, and so is what the build's files leave
-# out. Symbolic links into the store, such as out-links, are left out; other
-# links and special files are refused, never followed. Callers hold the
-# workspace's build lock and must not mutate the project concurrently.
+# out. Symbolic links into the store, such as out-links, are left out; links
+# that resolve inside the project are copied as links; other links and special
+# files are refused, never followed. Callers hold the workspace's build lock
+# and must not mutate the project concurrently.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -38,6 +39,14 @@ Snapshot := [].{
 				or (child.take_first(parent.len()) == parent
 					and child.get(parent.len()) == Ok('/'))
 		}
+
+	# A link stays in its tree when it resolves, as the canonical path
+	# `resolved`, inside the canonical `root` or one of `stores`.
+	link_kept : List(U8), List(List(U8)), List(U8) -> Bool
+	link_kept = |root, stores, resolved|
+		!resolved.is_empty()
+			and (Snapshot.within(root, resolved)
+				or stores.any(|store| Snapshot.within(store, resolved)))
 
 	excluded : Snapshot.Exclusions, List(U8), List(U8) -> Bool
 	excluded = |exclusions, entry, name|
@@ -253,6 +262,7 @@ Snapshot := [].{
 	copy_tree! : Snapshot.Walk, Path, Snapshot.Exclusions => Try({}, _)
 	copy_tree! = |{ root, files, store }, staged, exclusions| {
 		(source_root, target_root) = (root.to_utf8(), Snapshot.bytes(staged))
+		project = Snapshot.bytes(Path.unix_bytes(source_root).canonicalize!()?)
 		var $pending = [[]]
 		var $files = []
 		while !$pending.is_empty() {
@@ -280,8 +290,12 @@ Snapshot := [].{
 						}
 						IsSymLink => {
 							target = Snapshot.bytes(entry.read_link!()?)
+							resolved = entry.canonicalize!().map_ok(Snapshot.bytes) ?? []
 							if !Snapshot.within(store.to_utf8(), target) {
-								return Err(Snapshot.refused(Symlink, entry))
+								if !Snapshot.link_kept(project, [], resolved) {
+									return Err(Snapshot.refused(Symlink, entry))
+								}
+								$names = $names.append(name)
 							}
 						}
 						IsOther => return Err(Snapshot.refused(Special, entry))
@@ -431,3 +445,19 @@ expect [("", "a", "a"), ("a", "", "a"), ("/p", "a/b", "/p/a/b")].all(
 	|(base, relative, joined)|
 		Snapshot.join(base.to_utf8(), relative.to_utf8()) == joined.to_utf8(),
 )
+
+# A link stays in its tree when it resolves inside the root or a store, and
+# never when it dangles.
+expect {
+	root = "/p".to_utf8()
+	stores = ["/nix/store".to_utf8()]
+	kept = |resolved| Snapshot.link_kept(root, stores, resolved.to_utf8())
+	[
+		("/p/scripts/moo.sh", Bool.True),
+		("/p", Bool.True),
+		("/nix/store/abc-cowsay/bin/cowsay", Bool.True),
+		("/pa/moo.sh", Bool.False),
+		("/etc/passwd", Bool.False),
+		("", Bool.False),
+	].all(|(resolved, expected)| kept(resolved) == expected)
+}

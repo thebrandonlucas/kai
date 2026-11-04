@@ -100,6 +100,7 @@ E2eBundle := [].{
 			("model", "../../../platform/api.roc"),
 			("backends/nix", "../../../../platform/api.roc"),
 			("backends/guix", "../../../../platform/api.roc"),
+			("backends/direct", "../../../../platform/api.roc"),
 		]
 		for (dir, api) in nested {
 			fuzz = Path.join(source, "${dir}/fuzz")

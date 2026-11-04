@@ -4,6 +4,7 @@
 # kai init: it writes a Kaifile.roc whose shell works, and never replaces one.
 import pf.Cmd
 import pf.Env
+import pf.OsStr
 import pf.Path
 import pf.Stdout
 
@@ -88,6 +89,17 @@ E2eHelp := [].{
 		names = E2eHelp.commands(top)
 		if names.is_empty() {
 			return Err(NoCommandsInHelp(top))
+		}
+		# At a terminal, which `script` gives kai, help is colored unless
+		# NO_COLOR asks for plain text.
+		colored! = |no_color| {
+			line = "'${Path.display(kai)}' --help"
+			script = Exec.cmd("script").args(Exec.strs(["-qec", line, "/dev/null"]))
+			command = script.env(OsStr.from_str("NO_COLOR"), OsStr.from_str(no_color))
+			Ok(Exec.output!(command.cwd(project))?.stdout_utf8.contains("\u(001b)"))
+		}
+		if !colored!("")? or colored!("1")? {
+			return Err(WrongColorAtTerminal)
 		}
 		var $examples = E2eHelp.section(top, "Examples:")
 		var $settings = E2eHelp.section(top, "Kaifile.roc (inside Std.kaifile):")

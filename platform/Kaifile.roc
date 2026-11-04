@@ -61,7 +61,7 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 				Ok({}) =>
 					match (implementation.plan)(ctx) {
 						Ok(plan) => Planned(plan)
-						Err(message) => Failed(message)
+						Err(failure) => Failure(failure)
 					}
 			}
 			{ backend, plugin, probes, outcome }
@@ -90,7 +90,14 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 								.keep_if(|(_, i)| i.backend == On(b.id))
 								.map(
 									|found|
-										option(found, b.id, [{ program: b.program, flag: b.flag }]),
+										option(
+											found,
+											b.id,
+											if (b.program.is_empty())
+												[]
+											else
+												[{ program: b.program, flag: b.flag }],
+										),
 								),
 					)
 		}
@@ -170,7 +177,7 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 			symbol = |b| ['.', '_', '+', '-'].contains(b)
 			program = backend.program
 			allowed = |b| word(b) or symbol(b)
-			program_ok = !program.is_empty() and program.to_utf8().all(allowed)
+			program_ok = program.to_utf8().all(allowed)
 			if !program_ok {
 				id = backend.id
 				return Err("${plugin}: backend ${id} probes an invalid program")
@@ -272,7 +279,7 @@ toy = {
 			implementations: [
 				on("shell", "nix", Ok({}), planned("nix shell")),
 				on("shell", "guix", Err("uses overlays"), planned("unused")),
-				on("build", "nix", Ok({}), Err("no lock")),
+				on("build", "nix", Ok({}), Err(Plan.fail("no lock"))),
 				Implementation.{
 					command: "ir",
 					backend: Independent,
@@ -319,7 +326,7 @@ expect {
 		and outcomes("shell", Only("apt"))
 			== Err("--backend must be one of nix, guix")
 		and outcomes("ir", Only("guix")) == Ok([("", note("ir"))])
-		and outcomes("build", Auto) == Ok([("nix", Failed("no lock"))])
+		and outcomes("build", Auto) == Ok([("nix", Failure(Plan.fail("no lock")))])
 }
 
 command = |name, lock|
@@ -336,7 +343,7 @@ implementing = |name, backend|
 		command: name,
 		backend,
 		fit: |_| Ok({}),
-		plan: |_| Err("unused"),
+		plan: |_| Err(Plan.fail("unused")),
 	}
 
 plugin = |name, commands, backends, implementations|

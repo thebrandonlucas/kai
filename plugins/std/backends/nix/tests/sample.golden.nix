@@ -19,6 +19,7 @@
           packages = [
             (sets."nixpkgs"."git" or (throw "tool git not found in source nixpkgs of environment base"))
           ];
+          env = { "KAI_SYSTEM" = system; };
         } // extra);
         "dev" = let
           overlays = [ inputs."roc".overlays.default ];
@@ -30,6 +31,7 @@
             (sets."nixpkgs"."git" or (throw "tool git not found in source nixpkgs of environment dev"))
             (sets."nixpkgs"."llvmPackages"."bintools" or (throw "tool llvmPackages.bintools not found in source nixpkgs of environment dev"))
           ];
+          env = { "KAI_SYSTEM" = system; };
         } // extra);
       };
     in

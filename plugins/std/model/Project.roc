@@ -287,18 +287,89 @@ Project :: [].{
 		Ok({})
 	}
 
-	## The tools an environment's packages come from, its aliases' included.
+	## The tools an environment's packages come from, its aliases',
+	## PackageEnv's and those it adds on some systems included.
 	environment_tools : Model.Environment -> List(Model.Tool)
 	environment_tools = |environment|
-		unique(environment.tools.concat(environment.aliases.map(|alias| alias.tool)))
+		unique(
+			environment.tools
+				.concat(environment.aliases.map(|alias| alias.tool))
+				.concat(environment.package_env.join_map(|v| package_tools_of(v.value)))
+				.concat(environment.on_systems.join_map(|o| o.tools)),
+		)
 
-	## The `env` argv prefix that sets `variables` for the command after it.
-	env_command : List(Model.Variable) -> List(Str)
-	env_command = |variables|
-		if variables.is_empty() {
+	## OnSystems names only declared systems, at least one, and sets variables
+	## as Env does.
+	check_on_systems : Model.Environment, List(Str) -> Try({}, Str)
+	check_on_systems = |environment, systems| {
+		declaration = "OnSystems in environment ${environment.name}"
+		for on in environment.on_systems {
+			if on.systems.is_empty() {
+				return Err("${declaration} names no system")
+			}
+			for system in on.systems {
+				if !systems.contains(system) {
+					return Err("${declaration} names undeclared system ${system}")
+				}
+			}
+			check_env(on.env, declaration)?
+		}
+		Ok({})
+	}
+
+	## An environment as it is on `system`: what its OnSystems add there, the
+	## tools after its own and the variables overriding its own, in order.
+	on_system : Model.Environment, Str -> Model.Environment
+	on_system = |environment, system| {
+		chosen = environment.on_systems.keep_if(|on| on.systems.contains(system))
+		{
+			..environment,
+			tools: unique(environment.tools.concat(chosen.join_map(|on| on.tools))),
+			env: chosen.fold(environment.env, |env, on| merge_env(env, on.env)),
+			on_systems: [],
+		}
+	}
+
+	## The model as it is on `system`, for a backend that plans for the host.
+	for_system : Model, Str -> Model
+	for_system = |model, system| {
+		..model,
+		environments: model.environments.map(|e| on_system(e, system)),
+	}
+
+	## The tools a PackageEnv value names.
+	package_tools_of : Model.PackageValue -> List(Model.Tool)
+	package_tools_of = |value|
+		match value {
+			LibraryPath(tools) | BinPath(tools) => tools
+			PackagePath(one) => [one]
+		}
+
+	## The variables an environment's PackageEnv sets, checked like Env's, and
+	## never one its Env sets too.
+	check_package_env : Model.Environment -> Try({}, Str)
+	check_package_env = |environment| {
+		declaration = "environment ${environment.name}"
+		names = environment.package_env.map(|v| { name: v.name, value: "" })
+		check_env(names, declaration)?
+		for variable in environment.package_env {
+			if environment.env.any(|v| v.name == variable.name) {
+				return Err("Env and PackageEnv both set ${variable.name} in ${declaration}")
+			}
+		}
+		Ok({})
+	}
+
+	## The `env` argv prefix that runs the command after it in the
+	## project-relative directory `dir`, unless it is empty, with `variables`
+	## set.
+	env_command : Str, List(Model.Variable) -> List(Str)
+	env_command = |dir, variables|
+		if dir.is_empty() and variables.is_empty() {
 			[]
 		} else {
-			["env"].concat(variables.map(|v| "${v.name}=${v.value}"))
+			chdir = if (dir.is_empty()) [] else ["--chdir=${dir}"]
+			["env"].concat(chdir).concat(variables.map(|v| "${v.name}=${v.value}"))
 		}
 
 	## The secrets other tasks declare, which a task's process never receives
@@ -365,6 +436,10 @@ Project :: [].{
 			|count, build| count + build.needs.len() + build.inputs.len(),
 		) > 8192 {
 			return Err("build graph exceeds 8192 references")
+		}
+		if !model.build_root.is_empty()
+			and !model.build_root.split_on("/").all(|part| part == "..") {
+			return Err("invalid BuildRoot: ${model.build_root}: use only .. segments")
 		}
 		if model.workflows.len() > 1024 {
 			return Err("workflows exceed 1024 declarations")
@@ -444,12 +519,39 @@ Project :: [].{
 					!(file.url.starts_with("https://") or file.url.starts_with("http://")) {
 					return Err("invalid Fetch URL: ${fetch.name}: ${file.url}")
 				}
-				if sri_sha256(file.hash) != Ok(file.hash) {
+				locked = file.hash.is_empty()
+				if !locked and sri_sha256(file.hash) != Ok(file.hash) {
 					return Err("invalid Fetch hash: ${fetch.name}")
+				}
+				https = |url| clean(url) and url.starts_with("https://")
+				if locked and !([file.url].concat(file.mirrors).all(https)) {
+					return Err("FetchLocked ${fetch.name} needs HTTPS URLs")
+				}
+				match file.unpack {
+					Archive(path) => {
+						leaves = path.starts_with("/") or path.split_on("/").contains("..")
+						if path.is_empty() or leaves {
+							name = fetch.name
+							return Err("invalid Archive in FetchLocked ${name}: ${path}")
+						}
+					}
+					File => {}
+				}
+			}
+			for system in fetch.unavailable {
+				if !model.systems.contains(system) {
+					return Err(
+						"Fetch ${fetch.name} is unavailable on undeclared system ${system}",
+					)
+				}
+				if $systems.contains(system) {
+					return Err(
+						"Fetch ${fetch.name} has a file for unavailable system ${system}",
+					)
 				}
 			}
 			for system in model.systems {
-				if !$systems.contains(system) {
+				if !$systems.contains(system) and !fetch.unavailable.contains(system) {
 					return Err("Fetch ${fetch.name} has no file for system ${system}")
 				}
 			}
@@ -465,9 +567,13 @@ Project :: [].{
 						model.fetches.any(|f| f.name == vendor.name) {
 				return Err("DuplicateInput: ${vendor.name}")
 			}
-			# Git checkouts have no checksum in Cargo.lock to pin them.
-			if vendor.lock.contains("source = \"git+") {
-				return Err("CargoVendor ${vendor.name}: git dependencies are not supported")
+			# Cargo.lock pins a git checkout by the commit after its source's `#`.
+			for line in vendor.lock.split_on("\n").map(|l| l.trim()) {
+				commit = line.drop_suffix("\"").split_on("#").last() ?? ""
+				if line.starts_with("source = \"git+")
+					and !(line.ends_with("\"") and forty_hex_digits(commit)) {
+					return Err("CargoVendor ${vendor.name}: a git source names no commit")
+				}
 			}
 		}
 		if !model.cargo_vendors.is_empty() and !model.requires_.contains("cargo") {
@@ -509,12 +615,31 @@ Project :: [].{
 		var $environments = []
 		for env in model.environments {
 			check_env(env.env, "environment ${env.name}")?
+			check_package_env(env)?
 			match env.rust_toolchain {
-				Toml(text) if text.is_empty() or text.to_utf8().contains(0) =>
+				Toml({ text, .. }) if text.is_empty() or text.to_utf8().contains(0) =>
 					return Err("invalid RustToolchain in environment ${env.name}")
-				_ => {}
+				# Components and targets are rustup names, such as
+				# llvm-tools-preview or x86_64-unknown-linux-gnu.
+				Toml({ components, target_triples, .. }) =>
+					for name in components.concat(target_triples) {
+						if !valid_task_name(name) {
+							return Err(
+								"invalid RustToolchainWith name in environment ${env.name}: ${name}",
+							)
+						}
+					}
+				None => {}
 			}
+			check_on_systems(env, model.systems)?
 			resolved = resolve(model.environments, env.name, [])?
+			for variable in resolved.on_systems.join_map(|o| o.env) {
+				if resolved.package_env.any(|v| v.name == variable.name) {
+					return Err(
+						"Env and PackageEnv both set ${variable.name} in environment ${env.name}",
+					)
+				}
+			}
 			check_aliases(resolved.aliases, env.name)?
 			for t in environment_tools(resolved) {
 				parsed = tool("${t.source}#${t.name}")?
@@ -554,6 +679,9 @@ Project :: [].{
 			}
 			check_argv(task.run, task.name)?
 			check_env(task.env, "task ${task.name}")?
+			if !task.dir.is_empty() and !valid_output(task.dir) {
+				return Err("invalid Dir in task ${task.name}: ${task.dir}")
+			}
 			for secret in task.secrets {
 				if !valid_variable_name(secret) {
 					return Err("invalid secret name in task ${task.name}")
@@ -578,6 +706,10 @@ Project :: [].{
 					return Err("unknown build: ${need}")
 				}
 			}
+		}
+		defaults = model.builds.keep_if(|b| b.default).map(|b| b.name)
+		if defaults.len() > 1 {
+			return Err("several builds are Default: ${Str.join_with(defaults, ", ")}")
 		}
 		for build in model.builds {
 			if !$environments.any(|e| e.name == build.environment) {
@@ -604,6 +736,12 @@ Project :: [].{
 					!model.fetches.any(|f| f.name == input) and
 						!model.cargo_vendors.any(|c| c.name == input) {
 					return Err("unknown build source: ${input}")
+				}
+				if locked_fetch(model, input) {
+					return Err(
+						"build ${build.name} needs a published sha256 for ${input}: "
+							.concat("a sandbox cannot read the lock's direct pins"),
+					)
 				}
 			}
 		}
@@ -644,6 +782,7 @@ Project :: [].{
 				build_sources: model.build_sources,
 				fetches: model.fetches,
 				cargo_vendors: model.cargo_vendors,
+				build_root: model.build_root,
 				builds: model.builds,
 				workflows: model.workflows,
 				extensions: model.extensions,
@@ -855,6 +994,24 @@ Project :: [].{
 		Ok($done.map(|entry| entry.build))
 	}
 
+	## The directory builds copy: the project root, or its ancestor the
+	## model's BuildRoot names, which must lie below the filesystem root.
+	snapshot_root : Model, Str -> Try(Str, Str)
+	snapshot_root = |model, project_root| {
+		if model.build_root.is_empty() {
+			return Ok(project_root)
+		}
+		parts = project_root.split_on("/").drop_first(1)
+		up = model.build_root.split_on("/").len()
+		if up >= parts.len() {
+			return Err(
+				"BuildRoot ${model.build_root} reaches the filesystem root "
+					.concat("from ${project_root}"),
+			)
+		}
+		Ok("/".concat(Str.join_with(parts.drop_last(up), "/")))
+	}
+
 	## What a closure's shared snapshot holds: the files each build selects.
 	snapshot_files : List(Model.Build) -> [All, Only(List(Str))]
 	snapshot_files = |builds|
@@ -946,13 +1103,36 @@ Project :: [].{
 					parents: [],
 					tools: unique(base.tools.concat(env.tools)),
 					overlays: unique(base.overlays.concat(env.overlays)),
-					env: merge_env(base.env, env.env),
+					env: merge_env(
+						base.env.keep_if(|b| !env.package_env.any(|o| o.name == b.name)),
+						env.env,
+					),
+					package_env: base.package_env
+						.keep_if(
+							|b| !env.env.any(|o| o.name == b.name)
+								and !env.package_env.any(|o| o.name == b.name),
+						)
+						.concat(env.package_env),
 					pure: base.pure or env.pure,
 					aliases: unique(base.aliases.concat(env.aliases)),
 					rust_toolchain: match env.rust_toolchain {
 						None => base.rust_toolchain
 						own => own
 					},
+					expected: unique(base.expected.concat(env.expected)),
+					# The child's own variables override the parent's on every
+					# system, as its OnSystems override them on theirs.
+					on_systems: base.on_systems
+						.map(
+							|on| {
+								..on,
+								env: on.env.keep_if(
+									|b| !env.env.any(|o| o.name == b.name)
+										and !env.package_env.any(|o| o.name == b.name),
+								),
+							},
+						)
+						.concat(env.on_systems),
 				})
 			}
 			_ => Err("environment ${name} has several parents")
@@ -966,6 +1146,9 @@ Project :: [].{
 		project = validate(model)?
 		env = project.environments.find_first(|e| e.name == name)
 			.map_err(|_| "unknown environment: ${name}")?
+		if direct_only(project, env) {
+			return Err("environment ${name} needs the direct backend")
+		}
 		if backend == Guix and !env.overlays.is_empty() {
 			return Err("Guix does not support overlays in environment ${name}")
 		}
@@ -974,6 +1157,9 @@ Project :: [].{
 		}
 		if backend == Guix and env.rust_toolchain != None {
 			return Err("RustToolchain needs Nix: environment ${name}")
+		}
+		if backend == Guix and !env.package_env.is_empty() {
+			return Err("PackageEnv needs Nix: environment ${name}")
 		}
 		every_tool = environment_tools(env)
 		tools = package_tools(every_tool, project.fetches)
@@ -1002,6 +1188,43 @@ Project :: [].{
 		}
 		Ok({})
 	}
+
+	## Refuses environments and builds that use a Fetch unavailable on
+	## `system`, the host's: tools the environment has there, and inputs.
+	check_fetches_on : Model, List(Str), List(Model.Build), Str -> Try({}, Str)
+	check_fetches_on = |model, environments, builds, system| {
+		for fetch in model.fetches.keep_if(|f| f.unavailable.contains(system)) {
+			why = "unavailable on ${system}: it uses Fetch ${fetch.name}, "
+				.concat("which has no file there")
+			for environment in model.environments {
+				on = on_system(environment, system)
+				if environments.contains(environment.name)
+					and environment_tools(on).any(|t| t.source == fetch.name) {
+					return Err("environment ${environment.name} is ${why}")
+				}
+			}
+			for build in builds {
+				if build.inputs.contains(fetch.name) {
+					return Err("build ${build.name} is ${why}")
+				}
+			}
+		}
+		Ok({})
+	}
+
+	## Whether a Fetch leaves its digests to the lock's direct section.
+	locked_fetch : Model, Str -> Bool
+	locked_fetch = |model, name|
+		model.fetches.any(
+			|f| f.name == name and f.files.any(|file| file.hash.is_empty()),
+		)
+
+	## Whether only the direct backend can serve an environment: it expects
+	## programs of the machine, or a tool only the lock's direct section pins.
+	direct_only : Model, Model.Environment -> Bool
+	direct_only = |model, environment|
+		!environment.expected.is_empty()
+			or environment_tools(environment).any(|t| locked_fetch(model, t.source))
 
 	## The tools that come from package sources, not from Fetches.
 	package_tools : List(Model.Tool), List(Model.Fetch) -> List(Model.Tool)
@@ -1081,6 +1304,7 @@ fixture = |environments| Model.{
 	build_sources: [],
 	fetches: [],
 	cargo_vendors: [],
+	build_root: "",
 	builds: [],
 	workflows: [],
 	extensions: [],
@@ -1097,6 +1321,9 @@ base = {
 	pure: Bool.False,
 	aliases: [],
 	rust_toolchain: None,
+	expected: [],
+	package_env: [],
+	on_systems: [],
 }
 
 child : Model.Environment
@@ -1112,6 +1339,9 @@ child = {
 	pure: Bool.False,
 	aliases: [],
 	rust_toolchain: None,
+	expected: [],
+	package_env: [],
+	on_systems: [],
 }
 
 # Declaration order is irrelevant; inheritance order is not. First wins.
@@ -1129,6 +1359,9 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
+			package_env: [],
+			on_systems: [],
 		},
 		base,
 	]),
@@ -1146,6 +1379,9 @@ expect match Project.validate(
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
+			package_env: [],
+			on_systems: [],
 		},
 		{
 			name: "empty",
@@ -1156,6 +1392,9 @@ expect match Project.validate(
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
+			package_env: [],
+			on_systems: [],
 		},
 	]),
 ) {
@@ -1171,6 +1410,9 @@ expect match Project.validate(
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
+			package_env: [],
+			on_systems: [],
 		},
 	]
 	Err(_) => False
@@ -1260,6 +1502,9 @@ expect {
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
+			package_env: [],
+			on_systems: [],
 			tools: [{ source: "guix", name: "git" }],
 		},
 	])
@@ -1321,6 +1566,9 @@ build_fixture = |builds| Model.{
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
+			package_env: [],
+			on_systems: [],
 		},
 	],
 	shells: [],
@@ -1328,6 +1576,7 @@ build_fixture = |builds| Model.{
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
 	fetches: [],
 	cargo_vendors: [],
+	build_root: "",
 	builds,
 	workflows: [],
 	extensions: [],
@@ -1354,6 +1603,7 @@ library = {
 	description: "",
 	env: [],
 	revision: Bool.False,
+	default: Bool.False,
 }
 
 application : Model.Build
@@ -1523,6 +1773,7 @@ build_source_fixture = |build_sources, requires_| {
 		build_sources,
 		fetches: [],
 		cargo_vendors: [],
+		build_root: model.build_root,
 		builds: model.builds,
 		workflows: model.workflows,
 		extensions: model.extensions,
@@ -1671,6 +1922,9 @@ workflow_features = |workflows, features| Model.{
 			pure: Bool.False,
 			aliases: [],
 			rust_toolchain: None,
+			expected: [],
+			package_env: [],
+			on_systems: [],
 		},
 	],
 	shells: [],
@@ -1684,11 +1938,13 @@ workflow_features = |workflows, features| Model.{
 			optional_environment_variables: [],
 			needs: [],
 			description: "",
+			dir: "",
 		},
 	],
 	build_sources: [{ name: "assets", ref: "path:./assets" }],
 	fetches: [],
 	cargo_vendors: [],
+	build_root: "",
 	builds: [library],
 	workflows,
 	extensions: [],
@@ -1985,4 +2241,208 @@ expect {
 			},
 		]),
 	) == Err("workflow expansion exceeds 1 MiB argv bytes")
+}
+
+# A child's Env and PackageEnv override its parent's variables by name, either
+# way. One environment may not set a variable with both, and Guix refuses
+# PackageEnv.
+expect {
+	zlib = { source: "default", name: "zlib" }
+	libraries = { name: "LIBS", value: LibraryPath([zlib]) }
+	git = { source: "default", name: "git" }
+	git_path = { name: "A", value: PackagePath(git) }
+	parent = {
+		..base,
+		overlays: [],
+		env: [{ name: "A", value: "1" }],
+		package_env: [libraries],
+	}
+	dev = {
+		..child,
+		overlays: [],
+		env: [{ name: "LIBS", value: "/x" }],
+		package_env: [git_path],
+	}
+	resolved = match Project.validate(fixture([parent, dev])) {
+		Ok(model) => model.environments.keep_if(|e| e.name == "dev")
+			.map(|e| (e.env, e.package_env))
+		Err(_) => []
+	}
+	both = { ..parent, env: [{ name: "LIBS", value: "/x" }] }
+	resolved == [([{ name: "LIBS", value: "/x" }], [git_path])]
+		and Project.validate(fixture([both]))
+			== Err("Env and PackageEnv both set LIBS in environment base")
+		and Project.check_environment(fixture([parent]), Guix, "base")
+			== Err("PackageEnv needs Nix: environment base")
+		and Project.check_environment(fixture([parent]), Nix, "base") == Ok({})
+}
+
+# CargoVendor takes git sources pinned by the commit Cargo.lock records.
+expect {
+	commit = "02237f8751db162e9ed0f5bd3e7135d1b256822e"
+	source = "source = \"git+https://github.com/dtolnay/ryu?tag=1.0.20"
+	vendor = |lock| Project.validate({
+		..fixture([]),
+		requires_: ["cargo"],
+		cargo_vendors: [{ name: "crates", lock }],
+	})
+	vendor("${source}#${commit}\"\n").is_ok()
+		and vendor("  ${source}#${commit}\"").is_ok()
+		and vendor("${source}\"")
+			== Err("CargoVendor crates: a git source names no commit")
+		and vendor("${source}#${commit.drop_suffix("e")}\"").is_err()
+}
+
+# A BuildRoot names an ancestor with .. segments only, below the filesystem
+# root.
+expect {
+	model = |build_root| { ..fixture([base]), build_root }
+	root = |build_root| Project.snapshot_root(model(build_root), "/repo/apps/web")
+	root("") == Ok("/repo/apps/web")
+		and root("..") == Ok("/repo/apps")
+		and root("../..") == Ok("/repo")
+		and root("../../..").is_err()
+		and Project.validate(model("../..")).is_ok()
+		and ["../apps", "/repo", ".", "../", "..//.."].all(
+			|bad|
+				Project.validate(model(bad))
+					== Err("invalid BuildRoot: ${bad}: use only .. segments"),
+		)
+}
+
+# A task with a Dir runs through env --chdir; Dir stays inside the project.
+expect {
+	variables = [{ name: "A", value: "1" }]
+	task = {
+		name: "test",
+		environment: "base",
+		run: ["true"],
+		env: [],
+		secrets: [],
+		optional_environment_variables: [],
+		needs: [],
+		description: "",
+		dir: "apps/web",
+	}
+	in_dir = |dir|
+		Project.validate({ ..fixture([base]), tasks: [{ ..task, dir }] })
+	Project.env_command("apps/web", variables)
+		== ["env", "--chdir=apps/web", "A=1"]
+		and Project.env_command("", variables) == ["env", "A=1"]
+		and Project.env_command("", []) == []
+		and in_dir("apps/web").is_ok()
+		and in_dir("").is_ok()
+		and ["../web", "/abs", "apps/../..", "."].all(
+			|dir| in_dir(dir) == Err("invalid Dir in task test: ${dir}"),
+		)
+}
+
+# OnSystems adds tools and variables on its systems only, after and over the
+# environment's own; a child's own variables override its parent's on every
+# system. It names only declared systems.
+expect {
+	wayland = { source: "default", name: "wayland" }
+	on = |name, value| {
+		systems: ["x86_64-linux"],
+		tools: [wayland],
+		env: [{ name, value }],
+	}
+	parent = {
+		..base,
+		env: [{ name: "A", value: "base" }],
+		on_systems: [on("A", "linux")],
+	}
+	env_on = |dev, system|
+		match Project.validate(fixture([parent, dev])) {
+			Ok(model) =>
+				model.environments.keep_if(|e| e.name == "dev")
+					.map(|e| Project.on_system(e, system).env)
+			Err(_) => []
+		}
+	own = { ..child, env: [{ name: "B", value: "dev" }] }
+	overriding = { ..child, env: [{ name: "A", value: "dev" }] }
+	undeclared = {
+		..child,
+		on_systems: [{ ..on("B", "x"), systems: ["aarch64-darwin"] }],
+	}
+	Project.on_system(parent, "x86_64-linux").tools == base.tools.append(wayland)
+		and Project.on_system(parent, "aarch64-linux").tools == base.tools
+		and env_on(own, "x86_64-linux")
+			== [[{ name: "B", value: "dev" }, { name: "A", value: "linux" }]]
+		and env_on(own, "aarch64-linux")
+			== [[{ name: "A", value: "base" }, { name: "B", value: "dev" }]]
+		and env_on(overriding, "x86_64-linux") == [[{ name: "A", value: "dev" }]]
+		and Project.validate(fixture([parent, undeclared]))
+			== Err("OnSystems in environment dev names undeclared system aarch64-darwin")
+}
+
+# A Fetch may be unavailable on declared systems it has no file for; an
+# environment or build using it is refused on those systems only.
+expect {
+	hash = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+	file = |system| {
+		system,
+		url: "https://example.com/tool",
+		hash,
+		mirrors: [],
+		unpack: File,
+	}
+	tooled = {
+		..base,
+		name: "tooled",
+		tools: [{ source: "tool", name: "tool" }],
+		overlays: [],
+	}
+	model = |files, unavailable| {
+		..fixture([tooled]),
+		systems: ["x86_64-linux", "aarch64-darwin"],
+		requires_: ["fetches"],
+		fetches: [{ name: "tool", files, unavailable }],
+	}
+	linux_only = model([file("x86_64-linux")], ["aarch64-darwin"])
+	on = |system| Project.check_fetches_on(linux_only, ["tooled"], [], system)
+	Project.validate(linux_only).is_ok()
+		and Project.validate(model([file("x86_64-linux")], []))
+			== Err("Fetch tool has no file for system aarch64-darwin")
+		and Project.validate(
+			model([file("x86_64-linux"), file("aarch64-darwin")], ["aarch64-darwin"]),
+		)
+			== Err("Fetch tool has a file for unavailable system aarch64-darwin")
+		and on("x86_64-linux") == Ok({})
+		and on("aarch64-darwin")
+			== Err(
+				"environment tooled is unavailable on aarch64-darwin: "
+					.concat("it uses Fetch tool, which has no file there"),
+			)
+}
+
+# RustToolchainWith adds rustup names only; a child's toolchain, with its
+# additions, replaces the parent's.
+expect {
+	toolchain = |components|
+		Toml({ text: "[toolchain]", components, target_triples: [] })
+	rust_parent = {
+		..base,
+		name: "parent",
+		rust_toolchain: toolchain(["rust-src"]),
+	}
+	rust_child = {
+		..base,
+		name: "child",
+		parents: ["parent"],
+		rust_toolchain: toolchain(["llvm-tools-preview"]),
+	}
+	validate = |components|
+		Project.validate(fixture([{ ..base, rust_toolchain: toolchain(components) }]))
+	resolved = Project.validate(fixture([rust_parent, rust_child]))
+		.map_ok(
+			|project|
+				project.environments
+					.keep_if(|e| e.name == "child")
+					.map(|e| e.rust_toolchain),
+		)
+	resolved == Ok([toolchain(["llvm-tools-preview"])])
+		and validate(["rust-src", "x86_64-unknown-linux-gnu"]).is_ok()
+		and validate(["rust src"])
+			== Err("invalid RustToolchainWith name in environment base: rust src")
 }

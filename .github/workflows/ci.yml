@@ -29,7 +29,7 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.event.pull_request.draft }}
   cancel-in-progress: true
 
-# Every job restores the Nix store GitHub's cache holds for master. Only
+# Every job but ci restores the Nix store GitHub's cache holds for master. Only
 # master runs save it, since a pull request's cache is visible to that pull
 # request alone: pushes save the dev shell (nix-fast), the nightly suite also
 # kai's own builds (nix-ci), each keyed by what the dev shell depends on.
@@ -66,9 +66,10 @@ jobs:
       - name: Check and run unit tests
         run: kai shell default -- zig build test
 
-  # The required check: static checks and unit tests. A pull request that
-  # changes only Markdown, docs/ or LICENSE needs no build; the job still
-  # succeeds, so the check passes.
+  # The required check: static checks and unit tests, with no Nix: its tools
+  # are pinned downloads, and Zig's and Roc's build output is cached. A pull
+  # request that changes only Markdown, docs/ or LICENSE needs no build; the
+  # job still succeeds, so the check passes.
   ci:
     name: ci
     if: github.event_name != 'push' && github.event_name != 'schedule' && github.event.pull_request.draft != true
@@ -93,27 +94,24 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install Nix
+      - name: Install the tools
         if: steps.changes.outputs.code == 'true'
-        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/install-tools
 
-      - name: Install Kai
+      - name: Restore Zig and Roc build output
         if: steps.changes.outputs.code == 'true'
-        uses: ./.github/actions/install-kai
-
-      - name: Restore the Nix store
-        if: steps.changes.outputs.code == 'true'
-        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          primary-key: nix-fast-${{ runner.arch }}-${{ hashFiles('Kaifile.roc', '.kai/lock.json', '.roc-version', '.roc-overlay') }}
-          restore-prefixes-first-match: nix-fast-${{ runner.arch }}-
-          save: false
+          path: |
+            ~/.cache/roc
+            ~/.cache/zig
+            .zig-cache
+          key: ci-build-${{ hashFiles('.roc-version', 'build.zig', 'build.zig.zon', 'platform/build.zig', 'platform/build.zig.zon') }}-${{ github.sha }}
+          restore-keys: ci-build-${{ hashFiles('.roc-version', 'build.zig', 'build.zig.zon', 'platform/build.zig', 'platform/build.zig.zon') }}-
 
       - name: Check and run unit tests
         if: steps.changes.outputs.code == 'true'
-        run: kai shell default -- zig build test
+        run: zig build test
 
   # The end-to-end tests and configuration fixtures against real Nix, beside
   # the required check: they report on pull requests without blocking them.

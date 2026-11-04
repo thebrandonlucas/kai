@@ -119,12 +119,16 @@ E2eBuild := [].{
 		Path.write_bytes!(heading, original)?
 		# Ordinary project files, even new ones, reach the next build.
 		Path.write_utf8!(file("src/message.txt"), "second revision\n")?
+		link! = |target|
+			Exec.output!(
+				Exec.cmd("ln").args(Exec.strs(["-s", target, "link"])).cwd(project),
+			)
+		# A link that stays in the project is copied; one leaving it is refused.
+		_ = link!("src/message.txt")?
 		built!("library", "SECOND REVISION\n")?
+		Path.delete!(file("link"))?
 		witness = Path.read_bytes!(file(".kai/snapshot.isolation.json"))?
-		_ = Exec.output!(
-			Exec.cmd("ln").args(Exec.strs(["-s", "src/message.txt", "link"]))
-				.cwd(project),
-		)?
+		_ = link!("..")?
 		stderr = refused!("library", "snapshot refuses symlink: ")?
 		if stderr.contains("building ") {
 			return Err(BuiltPastSymlink(stderr))

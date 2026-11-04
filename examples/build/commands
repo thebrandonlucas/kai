@@ -1,2 +1,4 @@
 update
-build wisecow
+build
+build zlib-flags
+build links

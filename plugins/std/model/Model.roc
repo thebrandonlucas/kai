@@ -8,11 +8,14 @@ import Value
 ## Parents are resolved by Project.validate, parent first with first-occurrence
 ## deduplication. Shells and tasks refer directly to environment identities.
 ## Consumers must reject unknown required features before deriving effects.
+## Build root is the directory builds copy, as `..` segments from the
+## project's directory, empty for that directory itself.
 Model := {
 	format : { major : U64, minor : U64 },
 	name : Str,
 	requires_ : List(Str),
 	systems : List(Str),
+	build_root : Str,
 	sources : List(
 		{ name : Str, provider : [Auto, NixPackages(Str), GuixPackages(Str)] },
 	),
@@ -37,7 +40,28 @@ Model := {
 			aliases : List(
 				{ name : Str, tool : { source : Str, name : Str }, binary : Str },
 			),
-			rust_toolchain : [None, Toml(Str)],
+			rust_toolchain : [
+				None,
+				Toml({ text : Str, components : List(Str), target_triples : List(Str) }),
+			],
+			package_env : List(
+				{
+					name : Str,
+					value : [
+						LibraryPath(List({ source : Str, name : Str })),
+						BinPath(List({ source : Str, name : Str })),
+						PackagePath({ source : Str, name : Str }),
+					],
+				},
+			),
+			expected : List(Str),
+			on_systems : List(
+				{
+					systems : List(Str),
+					tools : List({ source : Str, name : Str }),
+					env : List({ name : Str, value : Str }),
+				},
+			),
 		},
 	),
 	shells : List({ name : Str, environment : Str, description : Str }),
@@ -51,11 +75,24 @@ Model := {
 			optional_environment_variables : List(Str),
 			needs : List(Str),
 			description : Str,
+			dir : Str,
 		},
 	),
 	build_sources : List({ name : Str, ref : Str }),
 	fetches : List(
-		{ name : Str, files : List({ system : Str, url : Str, hash : Str }) },
+		{
+			name : Str,
+			files : List(
+				{
+					system : Str,
+					url : Str,
+					hash : Str,
+					mirrors : List(Str),
+					unpack : [File, Archive(Str)],
+				},
+			),
+			unavailable : List(Str),
+		},
 	),
 	cargo_vendors : List({ name : Str, lock : Str }),
 	builds : List(
@@ -69,6 +106,7 @@ Model := {
 			files : [All, Only(List(Str))],
 			env : List({ name : Str, value : Str }),
 			revision : Bool,
+			default : Bool,
 			description : Str,
 		},
 	),
@@ -118,11 +156,30 @@ Model := {
 		pure : Bool,
 		aliases : List(Alias),
 		rust_toolchain : RustToolchain,
+		package_env : List(PackageVariable),
+		expected : List(Str),
+		on_systems : List(OnSystems),
 	}
 
+	## Tools and variables an environment adds on `systems` only: the tools
+	## after its own, the variables overriding its own.
+	OnSystems : { systems : List(Str), tools : List(Tool), env : List(Variable) }
+
 	## The text of a rust-toolchain.toml, whose [toolchain] table the backend
-	## reads.
-	RustToolchain : [None, Toml(Str)]
+	## reads, and the components and targets added to those it pins.
+	RustToolchain : [
+		None,
+		Toml({ text : Str, components : List(Str), target_triples : List(Str) }),
+	]
+
+	## A variable whose value is a path in packages, which the backend computes:
+	## tools' `lib` or `bin` directories joined with `:`, or one tool's path.
+	PackageVariable : { name : Str, value : PackageValue }
+	PackageValue : [
+		LibraryPath(List(Tool)),
+		BinPath(List(Tool)),
+		PackagePath(Tool),
+	]
 
 	## A command `name` on the environment's PATH that runs `binary` from
 	## `tool`'s bin directory.
@@ -135,6 +192,7 @@ Model := {
 	## task receives, never values; it receives an optional one only when kai's
 	## environment sets it.
 	## Needs names the builds whose artifacts it reads in `$KAI_ARTIFACTS`.
+	## Dir is the project-relative directory it runs in, empty for the root.
 	Task : {
 		name : Str,
 		environment : Str,
@@ -144,6 +202,7 @@ Model := {
 		optional_environment_variables : List(Str),
 		needs : List(Str),
 		description : Str,
+		dir : Str,
 	}
 
 	## An environment variable. A task's or build's own override its
@@ -153,9 +212,17 @@ Model := {
 	## Non-flake locked inputs, distinct from package-provider sources.
 	BuildSource : { name : Str, ref : Str }
 
-	## A file per system, pinned by its SRI sha256 hash rather than the lock.
-	Fetch : { name : Str, files : List(FetchFile) }
-	FetchFile : { system : Str, url : Str, hash : Str }
+	## A file per system, pinned by its SRI sha256 hash rather than the lock,
+	## or with an empty hash by the lock's `direct` section, except on the
+	## declared systems it is unavailable on.
+	Fetch : { name : Str, files : List(FetchFile), unavailable : List(Str) }
+	FetchFile : {
+		system : Str,
+		url : Str,
+		hash : Str,
+		mirrors : List(Str),
+		unpack : [File, Archive(Str)],
+	}
 
 	## The crates a Cargo.lock's text names, vendored into one directory and
 	## pinned by the lock's checksums rather than Kai's lock.
@@ -164,6 +231,7 @@ Model := {
 	## Run is exact argv. Output is a relative file or directory path; dependencies
 	## expose only that artifact, separately from the writable project snapshot.
 	## A revision build receives the project's revision in its environment.
+	## The default build is the one `kai build` builds when given no name.
 	Build : {
 		name : Str,
 		environment : Str,
@@ -174,6 +242,7 @@ Model := {
 		files : [All, Only(List(Str))],
 		env : List(Variable),
 		revision : Bool,
+		default : Bool,
 		description : Str,
 	}
 
@@ -196,7 +265,7 @@ Model := {
 	Raw : { backend : Str, target : Str, value : Value }
 
 	current_format : Format
-	current_format = { major: 2, minor: 4 }
+	current_format = { major: 2, minor: 5 }
 
 	empty : Str -> Model
 	empty = |name| Model.{
@@ -204,6 +273,7 @@ Model := {
 		name,
 		requires_: [],
 		systems: [],
+		build_root: "",
 		sources: [],
 		guix_channels: [],
 		inputs: [],

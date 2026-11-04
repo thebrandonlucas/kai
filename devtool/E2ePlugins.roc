@@ -103,7 +103,7 @@ E2ePlugins := [].{
 		described = kai!(["describe"])?.stdout_utf8
 		expected = "plugins: std, deploy 0.1.0, quiet 1\n"
 			.concat("commands: shell, run, build, workflow, update, model, deploy\n")
-			.concat("backends: nix, guix\n")
+			.concat("backends: nix, guix, direct\n")
 		if described != expected {
 			return Err(WrongDescribe(described))
 		}
@@ -119,8 +119,8 @@ E2ePlugins := [].{
 		failed!(["deploy", "nope"], 2, "nope")?
 		_ = kai!(["update"])?
 		lock = Path.read_bytes!(Path.join(project, ".kai/lock.json"))?
-		failed!(["--json", "deploy", "web"], 1, "confirmation_required")?
-		failed!(["deploy", "web"], 1, "pass --yes to accept")?
+		failed!(["--json", "deploy", "web"], 6, "confirmation_required")?
+		failed!(["deploy", "web"], 6, "pass --yes to accept")?
 		dry = kai!(["--dry-run", "deploy", "web"])?.stdout_utf8
 		if !dry.contains("(Confirm ") or !dry.contains("\"nixos-rebuild\"") {
 			return Err(DryRunWithoutPlan(dry))

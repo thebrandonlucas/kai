@@ -2,10 +2,11 @@
 # run in order, a failing step stops the rest and keeps its exit code,
 # repeated steps repeat, each build snapshots the project afresh, a changed
 # locked source stops a workflow before its first effect, and the lock is
-# never written. In JSON mode kai's stdout is whole JSON objects without
-# terminal escapes. On Guix, on a copy of the channels fixture with Nix off
-# PATH: a workflow runs its task, then its build, and a failing step stops
-# the rest and keeps its exit code.
+# never written. In JSON mode kai's events are whole JSON lines without
+# terminal escapes: progress and errors on stderr, and results on stdout
+# unless a task runs. On Guix, on a copy of the channels fixture with Nix off
+# PATH: a workflow runs its task, then its build, and a failing step stops the
+# rest and keeps its exit code.
 import pf.Cmd
 import pf.Path
 import pf.Stdout
@@ -50,19 +51,17 @@ E2eWorkflow := [].{
 		\\		BuildArtifact("app")]),
 		\\	Workflow("stale", [RunTask("mark", ["one"]), BuildArtifact("app")]),
 
-	# Kai's stdout in JSON mode: whole lines, each a JSON object with a string
-	# type, and no terminal escapes.
+	# Kai's events in JSON mode: the lines that start with `{`, each a JSON
+	# object with a string type and no terminal escapes. A child's own output,
+	# such as a build's log, shares the stream.
 	events : List(U8) -> Try(List(LockJson), Str)
 	events = |bytes| {
-		if bytes.contains(27) {
-			return Err("escape byte in JSON output")
-		}
 		utf8 = Str.from_utf8(bytes).map_err(|_| "JSON output is not UTF-8")?
-		if !utf8.ends_with("\n") {
-			return Err("JSON output does not end with a newline")
-		}
 		var $parsed = []
-		for line in utf8.drop_suffix("\n").split_on("\n") {
+		for line in utf8.split_on("\n").keep_if(|l| l.starts_with("{")) {
+			if line.contains("\u(001b)") {
+				return Err("escape byte in a JSON event")
+			}
 			value = LockJson.decode(line)?
 			_ = LockJson.string(LockJson.field(value, "type")?)?
 			$parsed = $parsed.append(value)
@@ -85,16 +84,22 @@ E2eWorkflow := [].{
 		file = |relative| Path.join(project, relative)
 		kai! = |args| Cmd.new(Path.to_os_str(kai)).args(Exec.strs(args)).cwd(project)
 			.run!()
-		# Runs kai with --json, expecting its exit code and event types.
-		json! = |args, code, types| {
+		# Runs kai with --json, expecting its exit code, the types of its events
+		# on stderr and those of its results on stdout.
+		json! = |args, code, types, results| {
 			output = kai!(["--json"].concat(args))?
-			parsed = E2eWorkflow.events(output.stdout_bytes)
-				.map_err(|message| BadJson(args, message, E2eWorkflow.show(output)))?
-			found = parsed.map(|event| E2eWorkflow.text(event, "type"))
-			if output.status != Exited(code) or found != types {
+			parse = |bytes|
+				E2eWorkflow.events(bytes)
+					.map_err(|message| BadJson(args, message, E2eWorkflow.show(output)))
+			progress = parse(output.stderr_bytes)?
+			resulted = parse(output.stdout_bytes)?
+			typed = |parsed| parsed.map(|event| E2eWorkflow.text(event, "type"))
+			found = typed(progress)
+			unexpected = found != types or typed(resulted) != results
+			if output.status != Exited(code) or unexpected {
 				return Err(UnexpectedEvents(args, found, E2eWorkflow.show(output)))
 			}
-			Ok(parsed)
+			Ok(progress.concat(resulted))
 		}
 		markers = file("markers.txt")
 		marked! = |expected| {
@@ -116,12 +121,13 @@ E2eWorkflow := [].{
 			}
 			if ($actual != expected) Err(WrongArtifacts($actual)) else Ok({})
 		}
-		_ = json!(["check"], 0, ["check"])?
+		_ = json!(["check"], 0, [], ["check"])?
 		# One note per input the update added: nixpkgs and the assets source.
 		_ = json!(
 			["--backend", "nix", "update"],
 			0,
-			["backend", "update", "note", "note"],
+			["backend", "note", "note"],
+			["update"],
 		)?
 		lock = file(".kai/lock.json")
 		published = Path.read_bytes!(lock)?
@@ -134,6 +140,7 @@ E2eWorkflow := [].{
 			["backend"].concat(step)
 				.concat(["step_started", "artifact", "step_finished"])
 				.concat(step),
+			[],
 		)?
 		marked!("one\ntwo\n")?
 		built!(ordered, [library])?
@@ -142,6 +149,7 @@ E2eWorkflow := [].{
 			["workflow", "stops"],
 			7,
 			["backend"].concat(step).concat(["step_started", "error"]),
+			[],
 		)?
 		marked!("first\n")?
 		failure = stopped.last() ?? LockJson.Null
@@ -151,8 +159,8 @@ E2eWorkflow := [].{
 				{
 					return Err(WrongError(LockJson.encode(failure)))
 				}
-		_ = json!(["run", "fail"], 7, ["backend", "error"])?
-		_ = json!(["workflow", "missing"], 2, ["error"])?
+		_ = json!(["run", "fail"], 7, ["backend", "error"], [])?
+		_ = json!(["workflow", "missing"], 2, ["error"], [])?
 		# Repeated steps are repeated effects, reported on stderr for people.
 		repeated = kai!(["workflow", "repeat"])?
 		second = "kai: workflow repeat step 2/2: run mark"
@@ -172,10 +180,13 @@ E2eWorkflow := [].{
 			["workflow", "stale"],
 			1,
 			["backend"].concat(step).concat(["step_started", "error"]),
+			[],
 		)?
+		stale = locked.last() ?? LockJson.Null
 		if
-			!E2eWorkflow.text(locked.last() ?? LockJson.Null, "message")
-				.contains("run `kai update assets`")
+			!E2eWorkflow.text(stale, "message").contains("run `kai update assets`")
+				or E2eWorkflow.text(stale, "error") != "stale_lock"
+				or E2eWorkflow.text(stale, "hint") != "kai update assets"
 				{
 					return Err(LockedSourceIgnored(locked.map(LockJson.encode)))
 				}
@@ -188,10 +199,11 @@ E2eWorkflow := [].{
 			["backend", "step_started", "artifact", "step_finished"]
 				.concat(step)
 				.concat(["step_started", "artifact", "step_finished"]),
+			[],
 		)?
 		edited = "EDITED REVISION\n"
 		built!(fresh, [library, "Artifact example\n${edited}"])?
-		rebuilt = json!(["build", "library"], 0, ["backend", "artifact"])?
+		rebuilt = json!(["build", "library"], 0, ["backend"], ["artifact"])?
 		built!(rebuilt, [edited])?
 		# People get the task's output and the store path on stdout.
 		ci = kai!(["workflow", "ci"])?
@@ -263,11 +275,12 @@ E2eWorkflow := [].{
 	}
 }
 
-# Only whole JSON object lines with a type, and no escapes, are JSON output.
+# Lines that start with `{` are events: JSON objects with a type and no escapes.
+# Other lines are a child's.
 expect [
 	("{\"type\":\"check\"}\n{\"type\":\"error\",\"exit_code\":2}\n", Bool.True),
-	("{\"type\":\"check\"}", Bool.False),
-	("source checked\n{\"type\":\"check\"}\n", Bool.False),
+	("building\n{\"type\":\"check\"}", Bool.True),
+	("{\"type\":", Bool.False),
 	("{\"message\":\"no type\"}\n", Bool.False),
 	("{\"type\":\"note\",\"message\":\"\u(001b)[31m\"}\n", Bool.False),
 ].all(|(text, ok)| E2eWorkflow.events(text.to_utf8()).is_ok() == ok)

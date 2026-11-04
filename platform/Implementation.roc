@@ -9,7 +9,7 @@ Implementation := {
 	command : Str,
 	backend : [On(Str), Independent],
 	fit : Command.Args -> Try({}, Str),
-	plan : Context -> Try(Plan, Str),
+	plan : Context -> Try(Plan, Plan.Failure),
 }.{
 
 	## What a plan may depend on besides the plugin's own settings. `phase`

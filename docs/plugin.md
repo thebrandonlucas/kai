@@ -97,7 +97,8 @@ parsed values. Only the one command that owns the lock
 
 A backend is `Backend.{ id, summary, program, flag }`: kai checks it by
 running `program --version` (or `-v`, `version`), bounded and side-effect
-free. std declares `nix` and `guix`; other plugins usually implement
+free. A backend whose `program` is `""` needs none and is always usable.
+std declares `nix`, `guix` and `direct`; other plugins usually implement
 commands on those.
 
 ```roc
@@ -105,7 +106,7 @@ Implementation.{
 	command: "deploy",
 	backend: On("nix"),          # or Independent: no backend, no --backend
 	fit: |args| ...,             # Err(why) when this backend cannot serve it
-	plan: |ctx| ...,             # Ok(Plan) or Err(message)
+	plan: |ctx| ...,             # Ok(Plan) or Err(Plan.Failure)
 }
 ```
 
@@ -120,17 +121,47 @@ the `layout` of the project and its `.kai` workspace, the project's git
 `revision` (`describe` and `commit_date`, empty outside git), the `lock`
 text, and, for continued plans, `phase` and the `observed` files.
 
+A plan that fails says why as a `Plan.Failure`:
+
+```roc
+Err({ code: "missing_lock", message: "no lock file at …", hint: "kai update", suggestions: [] })
+```
+
+`code` is stable, for scripts to match; `message` says what went wrong;
+`hint` is the command that fixes it, or `""`; `suggestions` are names the
+request may have meant. kai prints the message, then "run `hint`" and "did
+you mean …?", and with `--json` its `error` event carries `code` as
+`error`, `hint` and `suggestions`. `Plan.fail(message)` is a failure with
+no code of its own, `plan_failed`, so a plugin's string errors map with
+`.map_err(Plan.fail)`, and `Plan.closest(given, names)` finds the names
+closest to a mistyped one. std uses these codes:
+
+| Code | Meaning |
+|---|---|
+| `missing_lock` | There is no lock, or it has no Nix section; hint `kai update`. |
+| `invalid_lock` | The lock cannot be read; hint `kai update`. |
+| `stale_lock` | The lock was made for other inputs, overlays, Guix channels, sources or downloads; hint `kai update`, `kai --backend guix update` or `kai --backend direct update`. |
+| `missing_guix_lock` | The lock has no Guix pins; hint `kai --backend guix update`. |
+| `missing_direct_lock` | The lock has no direct pin for a download; hint `kai --backend direct update`. |
+| `unknown_input` | `kai update` names an input the project does not declare. |
+| `unknown_name` | The project declares no shell, task, build or workflow of that name. |
+| `plan_failed` | Any other failure. |
+
+A plugin may use these codes for the same meaning, or its own.
+
 ## Plans
 
 A plan is a list of steps and what comes next:
 
 | Step | Effect |
 |---|---|
-| `Note(text)`, `Print(text)` | a note on stderr, a result on stdout (JSON events with `--json`) |
+| `Note(text)`, `Print(text)` | a note on stderr, a result on stdout (JSON events with `--json`; a result goes to stderr when the plan also runs an `Inherit` command) |
 | `Confirm(prompt)` | ask before anything runs; refused without `--yes` unless a person is at a terminal |
 | `Write(files)` | write generated files, only beneath the generated root |
 | `Run({ description, argv, output, secrets, removed_environment_variables, kept_environment_variables })` | run exact argv from the project root, never through a shell; `output` is `Inherit`, `Quiet` (stderr shown only on failure), `Artifact`, or `Remembered(files)`: quiet, and skipped once it succeeded with the same argv and the same contents of those generated files |
 | `VerifyPath`, `CheckSource`, `Snapshot`, `InstallRunner` | std's checks and build sandbox steps |
+| `Realise({ bin, programs })` | make each `Plan.Program`, a file or tar.gz/tar.xz archive pinned by SHA-256 and size, ready in kai's store, and link it into `bin` in the workspace; the `Run`s after it have `bin` first on `PATH`, until the next `Realise` |
+| `Measure({ files, result })` | download each `{ key, urls }` into the store and write `<key> <sha256> <size>` lines to `result`, a generated file a continuation observes |
 | `PublishLock({ previous, contents })` | replace the lock, only for the lock owner |
 
 `next: Observe(paths)` asks kai to read generated files and ask again with

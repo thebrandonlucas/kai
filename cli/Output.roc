@@ -1,14 +1,17 @@
-# Where kai's own messages go. For people, results go to stdout and progress
-# and diagnostics to stderr. With --json, each one is instead a JSON object on
-# its own stdout line, with its type and a readable message first. Children
-# (tasks, shells and their commands) keep inheriting stdout and stderr in both
-# modes: their bytes are the user's program output, which kai must neither
-# rewrite, buffer nor detach from a terminal. Kai writes an event only
-# between children, so its events stay whole lines.
+# Where kai's own messages go: results to stdout, and progress and diagnostics
+# to stderr. With --json, each one is instead a JSON object on its own line of
+# the same stream, with its type and a readable message first; a result goes
+# to stderr instead when the plan also runs a task's or shell's program, so
+# stdout is only that program's. Children (tasks, shells and their commands)
+# keep inheriting stdout and stderr in both modes: their bytes are the user's
+# program output, which kai must neither rewrite, buffer nor detach from a
+# terminal. Kai writes an event only between children, so its events stay
+# whole lines.
 import pf.Stderr
 import pf.Stdout
 
 import api.LockJson
+import api.Plan
 
 Output := [].{
 	Mode : [Human, Json]
@@ -40,12 +43,22 @@ Output := [].{
 			Json => Stdout.line!(machine)
 		}
 
-	# Progress or a note: stderr for people, an event on stdout for machines.
+	# A plan step's result: as `result!`, except that with --json it is an event
+	# on stderr when the plan also runs a program that inherits stdout.
+	step_result! : Output.Mode, Bool, Str, Str => Try({}, _)
+	step_result! = |mode, shares_stdout, human, machine|
+		if mode == Json and shares_stdout {
+			Stderr.line!(machine)
+		} else {
+			Output.result!(mode, human, machine)
+		}
+
+	# Progress or a note: stderr, as text for people or an event for machines.
 	note! : Output.Mode, Str, Str => Try({}, _)
 	note! = |mode, human, machine|
 		match mode {
 			Human => Stderr.line!(human)
-			Json => Stdout.line!(machine)
+			Json => Stderr.line!(machine)
 		}
 
 	# An event only machines need.
@@ -53,36 +66,29 @@ Output := [].{
 	json! = |mode, machine|
 		match mode {
 			Human => Ok({})
-			Json => Stdout.line!(machine)
+			Json => Stderr.line!(machine)
 		}
 
-	# A tag's name in snake case, from how Str.inspect shows the value.
-	kind : Str -> Str
-	kind = |inspected| {
-		name = (inspected.split_on("(").first() ?? inspected).to_utf8()
-		upper = |b| b >= 'A' and b <= 'Z'
-		var $bytes = []
-		var $lower = Bool.False
-		for b in name {
-			if upper(b) and $lower {
-				$bytes = $bytes.append('_')
-			}
-			$bytes = $bytes.append(if (upper(b)) b + 32 else b)
-			$lower = !upper(b)
-		}
-		Str.from_utf8_lossy($bytes)
-	}
-
-	error : Str, Str, I32 -> Str
-	error = |inspected, message, exit_code|
+	# An error with its documented code and kai's exit code, then the fix
+	# when kai knows one, and the names the request may have meant.
+	error :
+		{
+			code : Str,
+			message : Str,
+			exit_code : I32,
+			hint : Str,
+			suggestions : List(Str),
+		} -> Str
+	error = |{ code, message, exit_code, hint, suggestions }| {
+		close = LockJson.Array(suggestions.map(Output.text))
 		Output.event(
 			"error",
 			message,
-			[
-				("error", LockJson.String(Output.kind(inspected))),
-				("exit_code", Output.number(exit_code)),
-			],
+			[("error", Output.text(code)), ("exit_code", Output.number(exit_code))]
+				.concat(if (hint.is_empty()) [] else [("hint", Output.text(hint))])
+				.concat(if (suggestions.is_empty()) [] else [("suggestions", close)]),
 		)
+	}
 
 	# One workflow step, numbered from 1. Its label is what it runs: a verb,
 	# then the name it acts on ("build app").
@@ -130,23 +136,20 @@ expect {
 		and line.contains("é 😀")
 }
 
-# Errors carry a stable kind, the readable message and kai's exit code.
+# Errors carry their code, the readable message, kai's exit code and, when
+# kai knows them, the fix and the names the request may have meant.
 expect {
-	line = Output.error("ChildExited(Run(\"t\"), 7)", "task t exited", 7)
-	line
-		== "{\"type\":\"error\",\"message\":\"task t exited\",".concat(
-			"\"error\":\"child_exited\",\"exit_code\":7}",
+	error = |hint, suggestions|
+		Output.error(
+			{ code: "stale_lock", message: "changed", exit_code: 1, hint, suggestions },
 		)
+	error("", [])
+		== "{\"type\":\"error\",\"message\":\"changed\",".concat(
+			"\"error\":\"stale_lock\",\"exit_code\":1}",
+		)
+		and error("kai update", []).ends_with(",\"hint\":\"kai update\"}")
+		and error("", ["run"]).ends_with(",\"suggestions\":[\"run\"]}")
 }
-
-# Error kinds are snake case, including acronyms and payload-free tags.
-expect [
-	("ChildExited(Run(\"x\"), 7.0)", "child_exited"),
-	("UnsupportedHost", "unsupported_host"),
-	("IO(NotFound)", "io"),
-	("BadIr(Bad)", "bad_ir"),
-	("InvalidUsage", "invalid_usage"),
-].all(|(inspected, expected)| Output.kind(inspected) == expected)
 
 # Workflow steps say which step of how many runs what, for both audiences.
 expect {

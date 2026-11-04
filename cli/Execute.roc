@@ -17,9 +17,11 @@ import api.Plan
 import api.Protocol
 import api.Sexpr
 
+import Load
 import Output
 import Selection
 import Snapshot
+import Store
 import Update
 import Variables
 import Workspace
@@ -138,17 +140,18 @@ Execute := [].{
 		match answer {
 			Candidates({ options: [only], .. }) => Execute.planned(only.outcome)
 			Refused(why) => Err(Refused(why))
-			_ => Err(PlanFailed("the Kaifile did not continue the plan"))
+			_ => Err(PlanFailed(Plan.fail("the Kaifile did not continue the plan")))
 		}
 	}
 
-	Outcome : [Unfit(Str), Planned(Plan), Failed(Str)]
+	Outcome : [Unfit(Str), Planned(Plan), Failed(Str), Failure(Plan.Failure)]
 
-	planned : Outcome -> Try(Plan, [PlanFailed(Str)])
+	planned : Outcome -> Try(Plan, [PlanFailed(Plan.Failure)])
 	planned = |outcome|
 		match outcome {
 			Planned(plan) => Ok(plan)
-			Failed(message) | Unfit(message) => Err(PlanFailed(message))
+			Failure(failure) => Err(PlanFailed(failure))
+			Failed(message) | Unfit(message) => Err(PlanFailed(Plan.fail(message)))
 		}
 
 	lookup : List((Str, Selection.Probe)) -> (Str -> Selection.Probe)
@@ -327,10 +330,18 @@ Execute := [].{
 				_ => Bool.False
 			},
 		)
+		# A task's or shell's program inherits stdout, which is then only its own.
+		shares_stdout = plan.steps.any(
+			|step| match step {
+				Run({ output: Inherit, .. }) => Bool.True
+				_ => Bool.False
+			},
+		)
 		guard = "${layout.workspace}/build.lock"
 		var $index = 0
 		var $finished = ""
 		var $holding = Bool.False
+		var $path = ""
 		# The last Stage of each open MayFail, innermost last; a failure there
 		# skips the steps through that Stage.
 		var $may_fail = []
@@ -358,13 +369,17 @@ Execute := [].{
 					(snapshots, builds) = match step {
 						Snapshot(_) => (Bool.True, Bool.False)
 						Run({ output: Artifact(_), .. }) => (Bool.False, Bool.True)
+						Realise({ bin, .. }) => {
+							$path = bin
+							(Bool.False, Bool.False)
+						}
 						_ => (Bool.False, Bool.False)
 					}
 					if snapshots and !$holding {
 						Execute.hold!(guard, mode)?
 						$holding = Bool.True
 					}
-					result = Execute.step!(step, layout, mode, options)
+					result = Execute.step!(step, layout, mode, options, shares_stdout, $path)
 					if $holding and (builds or result.is_err()) {
 						_ = Workspace.path(guard).delete!()
 						$holding = Bool.False
@@ -411,6 +426,15 @@ Execute := [].{
 					Err(_) => Ok({})
 				}
 		}
+	}
+
+	# The first failure of `check` on `items`.
+	each : List(a), (a -> Try({}, Str)) -> Try({}, Str)
+	each = |items, check_item| {
+		for item in items {
+			check_item(item)?
+		}
+		Ok({})
 	}
 
 	under : Str, Str -> Bool
@@ -463,6 +487,18 @@ Execute := [].{
 				}
 			# Every variable name must be valid, so a name such as `A=B`
 			# cannot smuggle a value into the child process's environment.
+			Realise({ bin, programs }) =>
+				if under(bin, layout.workspace) {
+					Execute.each(programs, Store.check)
+				} else {
+					Err("links programs outside the workspace: ${bin}")
+				}
+			Measure({ files, result }) =>
+				if under(result, layout.generated_root) {
+					Execute.each(files, |f| Store.check_urls(f.key, f.urls))
+				} else {
+					Err("writes outside the generated files: ${result}")
+				}
 			Run(run_step) => {
 				names = run_step.secrets
 					.concat(run_step.removed_environment_variables)
@@ -509,20 +545,24 @@ Execute := [].{
 	uses_workspace : Plan.Step -> Bool
 	uses_workspace = |step|
 		match step {
-			Write(_) | Snapshot(_) | InstallRunner(_) => Bool.True
+			Write(_) | Snapshot(_) | InstallRunner(_) | Realise(_) | Measure(_) =>
+				Bool.True
 			_ => Bool.False
 		}
 
 	# One step's effect. Children run from the project root; a failing child
-	# stops the plan.
-	step! : Plan.Step, Layout, Output.Mode, Options => Try({}, _)
-	step! = |step, layout, mode, options| {
+	# stops the plan. Its results go where `shares_stdout` leaves room for them;
+	# `bin` is the last Realise's bin directory, or "".
+	step! : Plan.Step, Layout, Output.Mode, Options, Bool, Str => Try({}, _)
+	step! = |step, layout, mode, options, shares_stdout, bin| {
 		root = layout.project_root
 		match step {
 			Note(message) =>
 				Output.note!(mode, "kai: ${message}", Output.event("note", message, []))
-			Print(text) =>
-				Output.result!(mode, text, Output.event("result", text, []))
+			Print(text) => {
+				event = Output.event("result", text, [])
+				Output.step_result!(mode, shares_stdout, text, event)
+			}
 			Stage(_) | MayFail(_) => Ok({})
 			Write(files) => Workspace.stage!(files, layout)
 			VerifyPath({ path, argv, stdout, update }) => {
@@ -545,8 +585,19 @@ Execute := [].{
 			CheckSource(path) => Workspace.safe_source!(path)
 			Snapshot(snapshot) => Snapshot.snapshot!(snapshot)
 			InstallRunner({ destination }) => Workspace.install_runner!(destination)
+			Realise(realise) => Store.expose!(Load.cache!()?, realise, mode)
+			Measure({ files, result }) => {
+				cache = Load.cache!()?
+				var $lines = []
+				for { key, urls } in files {
+					{ sha256, size } = Store.measure!(cache, key, urls, mode)?
+					$lines = $lines.append("${key} ${sha256} ${size.to_str()}\n")
+				}
+				contents = Str.join_with($lines, "")
+				Workspace.stage!([{ path: result, contents }], layout)
+			}
 			Run(run) => {
-				process_command = Execute.process_command!(run, root)?
+				process_command = Execute.process_command!(run, root, bin)?
 				{ description, output, .. } = run
 				match output {
 					Inherit => Execute.child!(process_command, description, Inherit)
@@ -554,7 +605,13 @@ Execute := [].{
 					Remembered(files) =>
 						Execute.remembered!(process_command, run, files, layout)
 					Artifact(artifact) =>
-						Execute.build!(process_command, description, artifact, mode)
+						Execute.build!(
+							process_command,
+							description,
+							artifact,
+							mode,
+							shares_stdout,
+						)
 				}
 			}
 			Confirm(prompt) =>
@@ -580,17 +637,21 @@ Execute := [].{
 				}
 				updated = "updated ${layout.lock_path}"
 				fields = [("lock", Output.text(layout.lock_path))]
-				Output.result!(mode, updated, Output.event("update", updated, fields))
+				event = Output.event("update", updated, fields)
+				Output.step_result!(mode, shares_stdout, updated, event)
 			}
 		}
 	}
 
 	# Resolve the requested artifact with the planned command: its store path
 	# on stdout, only after success.
-	build! : Cmd.Command, Str, Plan.Artifact, Output.Mode => Try({}, _)
-	build! = |process_command, description, artifact, mode| {
+	build! : Cmd.Command, Str, Plan.Artifact, Output.Mode, Bool => Try({}, _)
+	build! = |process_command, description, artifact, mode, shares_stdout| {
 		{ name, label, output: declared } = artifact
-		Stderr.line!("building ${name}: ${label} (output ${declared})")?
+		# With --json, the artifact event says what was built.
+		if mode == Human {
+			Stderr.line!("building ${name}: ${label} (output ${declared})")?
+		}
 		output = process_command.stderr(Tee).run!()?
 		match output.status {
 			Exited(0) => {
@@ -607,7 +668,10 @@ Execute := [].{
 						Stdout.write_bytes!(output.stdout_bytes)?
 						Stderr.line!(built)
 					}
-					Json => Stdout.line!(Output.event("artifact", built, fields))
+					Json => {
+						event = Output.event("artifact", built, fields)
+						Output.step_result!(mode, shares_stdout, built, event)
+					}
 				}
 			}
 			Exited(code) => {
@@ -690,8 +754,9 @@ Execute := [].{
 	# had none; backends such as `nix develop` replace SHELL), its secrets set
 	# and its removed environment variables, except those kept, unset. Each
 	# secret's value comes from the project's `.env`, else kai's environment,
-	# and never appears in kai's output, events or errors.
-	process_command! = |run, root| {
+	# and never appears in kai's output, events or errors. A non-empty `bin`
+	# goes first on its PATH.
+	process_command! = |run, root, bin| {
 		{ description, argv, secrets, kept_environment_variables, .. } = run
 		removed_environment_variables = run.removed_environment_variables
 		(program, args) = match argv {
@@ -732,6 +797,13 @@ Execute := [].{
 			Ok(value) => [(operator, value)]
 			Err(_) => []
 		}
+		search = if bin.is_empty() {
+			[]
+		} else {
+			inherited = Variables.read!(Variables.path) ?? ""
+			name = OsStr.from_str(Variables.path.name)
+			[(name, OsStr.from_str("${bin}:${inherited}"))]
+		}
 		Ok(
 			Cmd.new(OsStr.from_str(program))
 				.args(args.map(OsStr.from_str))
@@ -739,7 +811,8 @@ Execute := [].{
 				.clear_envs()
 				.envs(kept)
 				.envs(shell)
-				.envs($secret_values),
+				.envs($secret_values)
+				.envs(search),
 		)
 	}
 
@@ -846,6 +919,15 @@ run = |argv, secrets, removed_environment_variables, kept_environment_variables|
 		kept_environment_variables,
 	})
 
+pinned : Plan.Program
+pinned = {
+	name: "tool",
+	urls: ["https://example.com/tool"],
+	sha256: "ab".repeat(32),
+	size: 3,
+	unpack: File,
+}
+
 validated : List(Plan.Step) -> Try({}, [UnsafePlan(Str)])
 validated = |steps|
 	Execute.validate(Plan.{ steps, next: Done }, layout, ReadsLock)
@@ -869,6 +951,11 @@ expect
 			store: "/nix/store",
 		}),
 		InstallRunner({ destination: "/p/.kai/build-runner" }),
+		Realise({ bin: "/p/.kai/direct/bin", programs: [pinned] }),
+		Measure({
+			files: [{ key: "tool", urls: pinned.urls }],
+			result: "/p/.kai/generated/direct/measured",
+		}),
 		Write([{ path: "/p/.kai/generated/flake.nix", contents: "" }]),
 		run(["/bin/nix", "build"], ["TOKEN"], ["OTHER"], ["VERSION"]),
 		Note("n"),
@@ -891,6 +978,13 @@ expect [
 		store: "/nix/store",
 	}),
 	InstallRunner({ destination: "/tmp/runner" }),
+	Realise({ bin: "/tmp/bin", programs: [pinned] }),
+	Realise({ bin: "/p/.kai/bin", programs: [{ ..pinned, name: "../x" }] }),
+	Measure({ files: [], result: "/p/.kai/lock.json" }),
+	Measure({
+		files: [{ key: "tool", urls: ["http://example.com/tool"] }],
+		result: "/p/.kai/generated/measured",
+	}),
 	run([], [], [], []),
 	run([""], [], [], []),
 	run(["-c"], [], [], []),

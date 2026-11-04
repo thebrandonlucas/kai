@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 itoa = "1"
+ryu = { git = "https://github.com/dtolnay/ryu", tag = "1.0.20" }

@@ -21,6 +21,9 @@ TestData :: [].{
 		pure: Bool.False,
 		aliases: [],
 		rust_toolchain: None,
+		expected: [],
+		package_env: [],
+		on_systems: [],
 	}
 
 	library : Model.Build
@@ -35,6 +38,7 @@ TestData :: [].{
 		description: "",
 		env: [],
 		revision: Bool.False,
+		default: Bool.False,
 	}
 
 	application : Model.Build
@@ -47,6 +51,7 @@ TestData :: [].{
 		description: "",
 		env: [],
 		revision: Bool.False,
+		default: Bool.False,
 		run: ["python3", "build.py", "", "two words", "line\nbreak", "$HOME"],
 	}
 
@@ -82,6 +87,7 @@ TestData :: [].{
 				optional_environment_variables: [],
 				needs: [],
 				description: "",
+				dir: "",
 			},
 		],
 		build_sources: [{ name: "assets", ref: "path:./assets" }],
@@ -141,6 +147,7 @@ TestData :: [].{
 		build_sources: t.build_sources,
 		fetches: [],
 		cargo_vendors: [],
+		build_root: "",
 		builds: t.builds,
 		workflows: t.workflows,
 		requires_: t.requires_,

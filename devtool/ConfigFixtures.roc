@@ -104,6 +104,7 @@ ConfigFixtures := [].{
 			body: \\import pf.Command
 				\\import pf.Implementation
 				\\import pf.Kaifile
+				\\import pf.Plan
 				\\import pf.Plugin
 				\\import std.Config
 				\\import std.Std
@@ -111,7 +112,7 @@ ConfigFixtures := [].{
 				\\page = { description: "", examples: [], config: [] }
 				\\cmd = |id, lock|
 				\\	Command.{ name: id, summary: "", help: page, args: [], lock }
-				\\unused = |_| Err("unused")
+				\\unused = |_| Err(Plan.fail("unused"))
 				\\free = |id|
 				\\	Implementation.{
 				\\		command: id,
@@ -600,6 +601,66 @@ ConfigFixtures := [].{
 				\\  sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" }])]
 		},
 		{
+			name: "FetchAll",
+			expected: Valid,
+			body: \\config = [Name("fetch-all"),
+				\\ FetchAll("data", { url: "https://example.com/data.tar.gz",
+				\\  sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" }),
+				\\ Environment("dev", []),
+				\\ Build("app", [Use("dev"), Inputs(["data"]), Run(["true"]),
+				\\  Output("out")])]
+		},
+		{
+			name: "FetchUnavailable",
+			expected: Valid,
+			body: \\config = [Name("fetch-unavailable"),
+				\\ Fetch("tool", [{ system: "x86_64-linux",
+				\\  url: "https://example.com/tool",
+				\\  sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" }]),
+				\\ FetchUnavailable("tool", ["aarch64-linux"]),
+				\\ Environment("dev", [Tools(["tool#tool"])])]
+		},
+		{
+			name: "FetchLocked",
+			expected: Valid,
+			body: \\config = [Name("fetch-locked"),
+				\\ FetchLocked("tool", [{ system: "x86_64-linux",
+				\\  url: "https://example.com/tool.tar.xz",
+				\\  mirrors: ["https://mirror.example.com/tool.tar.xz"],
+				\\  program: Archive("tool-1/tool") }]),
+				\\ FetchUnavailable("tool", ["aarch64-linux"]),
+				\\ Environment("dev", [Tools(["tool#tool"]), Expect(["git"])]),
+				\\ Shell("default", [Use("dev")])]
+		},
+		{
+			name: "FetchLockedPlainHttp",
+			expected: Rejected("FetchLocked tool needs HTTPS URLs"),
+			body: \\config = [Name("bad"), Systems(["x86_64-linux"]),
+				\\ FetchLocked("tool", [{ system: "x86_64-linux",
+				\\  url: "http://example.com/tool", mirrors: [], program: File }])]
+		},
+		{
+			name: "FetchLockedBuildInput",
+			expected: Rejected("build app needs a published sha256 for tool"),
+			body: \\config = [Name("bad"), Systems(["x86_64-linux"]),
+				\\ FetchLocked("tool", [{ system: "x86_64-linux",
+				\\  url: "https://example.com/tool", mirrors: [], program: File }]),
+				\\ Environment("dev", []),
+				\\ Build("app", [Use("dev"), Inputs(["tool"]), Run(["true"]),
+				\\  Output("out")])]
+		},
+		{
+			name: "DuplicateExpect",
+			expected: Rejected("DuplicateExpect: environment dev"),
+			body: \\config = [Name("bad"),
+				\\ Environment("dev", [Expect(["git"]), Expect(["gh"])])]
+		},
+		{
+			name: "FetchUnavailableNoFetch",
+			expected: Rejected("FetchUnavailable tool names no Fetch"),
+			body: \\config = [Name("bad"), FetchUnavailable("tool", ["x86_64-linux"])]
+		},
+		{
 			name: "TaskIsNotBuildDependency",
 			expected: Rejected("unknown build"),
 			body: \\config = [Name("bad"), Environment("builder", []),
@@ -836,6 +897,168 @@ ConfigFixtures := [].{
 				\\ Overlay("tools", "github:example/tools"),
 				\\ Environment("dev", [Tools(["git"]), Overlays(["tools"])])]
 		},
+		{
+			name: "PackageEnv",
+			expected: Valid,
+			body: \\config = [Name("package-env"),
+				\\ Environment("base", [PackageEnv([("LIBS", LibraryPath(["zlib"]))])]),
+				\\ Environment("dev", [Extend("base"), Env([("LIBS", "/x")]),
+				\\  PackageEnv([("BINS", BinPath(["git", "zlib"])),
+				\\   ("GIT", PackagePath("git"))])])]
+		},
+		{
+			name: "PackageEnvAndEnv",
+			expected: Rejected("Env and PackageEnv both set LIBS in environment dev"),
+			body: \\config = [Name("bad"), Environment("dev", [Env([("LIBS", "/x")]),
+				\\ PackageEnv([("LIBS", LibraryPath(["zlib"]))])])]
+		},
+		{
+			name: "PackageEnvReservedName",
+			expected: Rejected("invalid Env name in environment dev: PATH"),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [PackageEnv([("PATH", BinPath(["git"]))])])]
+		},
+		{
+			name: "DuplicatePackageEnv",
+			expected: Rejected("DuplicatePackageEnv: environment dev"),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [PackageEnv([]), PackageEnv([])])]
+		},
+		{
+			name: "RustToolchainWith",
+			expected: Valid,
+			body: \\config = [Name("rust"),
+				\\ Overlay("rust", "github:oxalica/rust-overlay"),
+				\\ Environment("dev", [Overlays(["rust"]),
+				\\  RustToolchainWith("[toolchain]\\nchannel = \\"1.90.0\\"",
+				\\   [Components(["llvm-tools-preview"]),
+				\\    Targets(["wasm32-unknown-unknown"])])])]
+		},
+		{
+			name: "RustToolchainWithBadName",
+			expected: Rejected(
+				"invalid RustToolchainWith name in environment dev: rust src",
+			),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [RustToolchainWith("[toolchain]", [Components(["rust src"])])])]
+		},
+		{
+			name: "DuplicateComponents",
+			expected: Rejected(
+				"DuplicateComponents: RustToolchainWith in environment dev",
+			),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [RustToolchainWith("[toolchain]",
+				\\  [Components(["clippy"]), Components(["rust-src"])])])]
+		},
+		{
+			name: "RustToolchainAndRustToolchainWith",
+			expected: Rejected("DuplicateRustToolchain: environment dev"),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [RustToolchain("[toolchain]"), RustToolchainWith("[toolchain]", [])])]
+		},
+		{
+			name: "CargoVendorGit",
+			expected: Valid,
+			body: \\config = [Name("cargo-git"), CargoVendor("crates",
+				\\ "source = \\"git+https://github.com/dtolnay/ryu?tag=1.0.20#"
+				\\  .concat("02237f8751db162e9ed0f5bd3e7135d1b256822e\\"\\n"))]
+		},
+		{
+			name: "CargoVendorGitWithoutCommit",
+			expected: Rejected("CargoVendor crates: a git source names no commit"),
+			body: \\config = [Name("bad"), CargoVendor("crates",
+				\\ "source = \\"git+https://github.com/dtolnay/ryu?tag=1.0.20\\"\\n")]
+		},
+		{
+			name: "TaskDir",
+			expected: Valid,
+			body: \\config = [Name("task-dir"), Environment("dev", []),
+				\\ Task("test", [Use("dev"), Dir("apps/web"), Run(["true"])])]
+		},
+		{
+			name: "TaskDirEscape",
+			expected: Rejected("invalid Dir in task test: ../web"),
+			body: \\config = [Name("bad"), Environment("dev", []),
+				\\ Task("test", [Use("dev"), Dir("../web"), Run(["true"])])]
+		},
+		{
+			name: "DuplicateTaskDir",
+			expected: Rejected("DuplicateDir: task test"),
+			body: \\config = [Name("bad"), Environment("dev", []),
+				\\ Task("test", [Use("dev"), Dir("a"), Dir("b"), Run(["true"])])]
+		},
+		{
+			name: "DefaultBuild",
+			expected: Valid,
+			body: \\config = [Name("default-build"), Environment("dev", []),
+				\\ Build("app", [Use("dev"), Default, Run(["true"]), Output("out")]),
+				\\ Build("docs", [Use("dev"), Run(["true"]), Output("out")])]
+		},
+		{
+			name: "SeveralDefaultBuilds",
+			expected: Rejected("several builds are Default: app, docs"),
+			body: \\config = [Name("bad"), Environment("dev", []),
+				\\ Build("app", [Use("dev"), Default, Run(["true"]), Output("out")]),
+				\\ Build("docs", [Use("dev"), Default, Run(["true"]), Output("out")])]
+		},
+		{
+			name: "BuildRoot",
+			expected: Valid,
+			body: \\config = [Name("build-root"), BuildRoot("../.."),
+				\\ Environment("dev", []),
+				\\ Build("app", [Use("dev"), Run(["true"]), Output("apps/app/out")])]
+		},
+		{
+			name: "BuildRootNotAncestor",
+			expected: Rejected("invalid BuildRoot: ../lib: use only .. segments"),
+			body: \\config = [Name("bad"), BuildRoot("../lib")]
+		},
+		{
+			name: "DuplicateBuildRoot",
+			expected: Rejected("DuplicateBuildRoot: declare BuildRoot at most once"),
+			body: \\config = [Name("bad"), BuildRoot(".."), BuildRoot("../..")]
+		},
+		{
+			name: "OnSystems",
+			expected: Valid,
+			body: \\config = [Name("on-systems"),
+				\\ Systems(["x86_64-linux", "aarch64-darwin"]),
+				\\ Environment("dev", [Tools(["cowsay"]),
+				\\  OnSystems(["x86_64-linux"],
+				\\   [Tools(["wayland"]), Env([("GPU", "on")])]),
+				\\  OnSystems(["aarch64-darwin"], [Env([("GPU", "off")])])])]
+		},
+		{
+			name: "OnSystemsUndeclared",
+			expected: Rejected(
+				"OnSystems in environment dev names undeclared system aarch64-darwin",
+			),
+			body: \\config = [Name("bad"),
+				\\ Environment("dev", [OnSystems(["aarch64-darwin"], [Tools(["hello"])])])]
+		},
+		{
+			name: "DuplicateOnSystemsTools",
+			expected: Rejected("DuplicateTools: OnSystems in environment dev"),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [OnSystems(["x86_64-linux"], [Tools(["a"]), Tools(["b"])])])]
+		},
+		{
+			name: "RawEnvironment",
+			expected: Valid,
+			body: \\config = [Name("raw-environment"), Environment("dev", []),
+				\\ Task("test", [Use("dev"), Run(["true"])]),
+				\\ Raw("nix", "environment:dev",
+				\\  Attrs([("shellHook", Str("export MOO=moo"))]))]
+		},
+		{
+			name: "RawEnvironmentUnknown",
+			expected: Rejected(
+				"raw nix target \"environment:nope\" names no environment",
+			),
+			body: \\config = [Name("bad"), Environment("dev", []),
+				\\ Raw("nix", "environment:nope", Attrs([]))]
+		},
 	].concat(ConfigFixtures.bad_outputs).concat(ConfigFixtures.bad_sources)
 
 	bad_outputs : List(Fixture)
@@ -937,7 +1160,7 @@ ConfigFixtures := [].{
 		{
 			name: "Builds",
 			texts: [
-				"(minor 4)",
+				"(minor 5)",
 				"(requires (\"sources\" \"builds\"))",
 				"(build_sources ",
 				"(builds ",
@@ -946,7 +1169,7 @@ ConfigFixtures := [].{
 		{
 			name: "Workflows",
 			texts: [
-				"(minor 4)",
+				"(minor 5)",
 				"(requires (\"builds\" \"workflows\"))",
 				"(workflows ",
 				"(RunTask \"check.all\" ${ConfigFixtures.workflow_argv_ir})",

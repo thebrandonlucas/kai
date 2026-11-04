@@ -21,9 +21,13 @@ Config :: [].{
 	## GuixChannel adds a channel beside Guix's own: its name, git URL, branch
 	## and introduction (first signed commit, signer's OpenPGP fingerprint).
 	## `Custom` and `Raw` retain consumer-specific extension data.
+	## BuildRoot names, as `..` segments such as "../..", the directory above
+	## the project that builds copy instead of the project's own; their Files,
+	## Output and working directory are then relative to it.
 	Setting : [
 		Name(Str),
 		Systems(List(System)),
+		BuildRoot(Str),
 		Packages(InputName, PackageSource),
 		Input(InputName, FlakeRef),
 		Overlay(InputName, FlakeRef),
@@ -34,6 +38,9 @@ Config :: [].{
 		Task(TaskName, List(TaskSetting)),
 		Source(InputName, FlakeRef),
 		Fetch(InputName, List(FetchFile)),
+		FetchAll(InputName, { url : Str, sha256 : Str }),
+		FetchUnavailable(InputName, List(System)),
+		FetchLocked(InputName, List(LockedFile)),
 		CargoVendor(InputName, Str),
 		Build(InputName, List(BuildSetting)),
 		Workflow(WorkflowName, List(WorkflowStep)),
@@ -61,22 +68,48 @@ Config :: [].{
 	## A file pinned by its published sha256 (hex or SRI) for each system it
 	## exists for; the host's system picks one. A build lists it in Inputs, and
 	## a tool "<name>#<binary>" puts it on PATH as the executable <binary>.
+	## FetchAll is one file for every system, such as a data archive.
+	## FetchUnavailable names the declared systems a Fetch or FetchAll has no
+	## file for: an environment or build using it is refused there, rather
+	## than the Kaifile everywhere.
 	FetchFile : { system : System, url : Str, sha256 : Str }
+
+	## A Fetch with no published sha256: `kai update` records each file's in
+	## the lock's direct section, and only the direct backend runs it. `mirrors`
+	## are other URLs for the same bytes. `program` is `File` for the program
+	## itself, or `Archive(path)` for a tar.gz or tar.xz with the program at
+	## `path`, unpacked whole.
+	LockedFile : {
+		system : System,
+		url : Str,
+		mirrors : List(Str),
+		program : [File, Archive(Str)],
+	}
 
 	PackageSource : [Auto, From(Provider)]
 	Provider : [NixPackages(FlakeRef), GuixPackages(Str)]
 
-	## Each setting but Alias occurs at most once. Extend inherits tools,
-	## overlays and aliases parent first; an omitted or empty list does not clear
-	## inherited values. Env sets variables in the environment's shells, tasks
-	## and builds. They override the parent's by name, and a task's or build's
-	## Env overrides them. Pure starts its shells and tasks from a clean
-	## environment, as does Extend of a Pure environment. Alias(name, tool,
-	## binary) puts a command `name` on PATH that runs the tool's
-	## `bin/<binary>`, without the tool's other binaries; it needs Nix.
+	## Each setting but Alias and OnSystems occurs at most once. Extend
+	## inherits tools, overlays and aliases parent first; an omitted or empty
+	## list does not clear inherited values. Env sets variables in the
+	## environment's shells, tasks and builds. They override the parent's by
+	## name, and a task's or build's Env overrides them. Pure starts its
+	## shells and tasks from a clean environment, as does Extend of a Pure
+	## environment. Alias(name, tool, binary) puts a command `name` on PATH
+	## that runs the tool's `bin/<binary>`, without the tool's other
+	## binaries; it needs Nix.
 	## RustToolchain takes a rust-toolchain.toml's text and adds the toolchain
 	## its [toolchain] table pins, overriding the parent's; it needs Nix and an
-	## Overlay providing rust-bin, such as rust-overlay.
+	## Overlay providing rust-bin, such as rust-overlay. RustToolchainWith
+	## takes the same text and adds, to what the file pins, the components
+	## and targets its settings name.
+	## PackageEnv sets variables to paths in packages, which the backend
+	## computes. Like Env, they override the parent's variables by name, and a
+	## task's or build's Env overrides them. It needs Nix.
+	## OnSystems(systems, settings) adds tools and variables on the named
+	## declared systems only: its Tools after the environment's own, its Env
+	## overriding the environment's. Nix evaluates only the host's; Guix plans
+	## for the host's system.
 	EnvironmentSetting : [
 		Tools(List(Tool)),
 		Overlays(List(InputName)),
@@ -85,6 +118,25 @@ Config :: [].{
 		Pure,
 		Alias(Str, Tool, Str),
 		RustToolchain(Str),
+		RustToolchainWith(Str, List(RustToolchainSetting)),
+		PackageEnv(List((Str, PackageValue))),
+		Expect(List(Str)),
+		OnSystems(List(System), List(SystemSetting)),
+	]
+
+	## What RustToolchainWith adds: rustup components, such as
+	## "llvm-tools-preview", and target triples, such as
+	## "wasm32-unknown-unknown". Each occurs at most once.
+	RustToolchainSetting : [Components(List(Str)), Targets(List(Str))]
+
+	## What OnSystems adds; each occurs at most once.
+	SystemSetting : [Tools(List(Tool)), Env(List((Str, Str)))]
+
+	## Tools' `lib` or `bin` directories joined with `:`, or one tool's path.
+	PackageValue : [
+		LibraryPath(List(Tool)),
+		BinPath(List(Tool)),
+		PackagePath(Tool),
 	]
 
 	## A shell is an alias for exactly one environment. A Description, in a
@@ -96,7 +148,8 @@ Config :: [].{
 	## it runs; their values never enter the Kaifile, plan or store.
 	## OptionalEnvironmentVariables names those it receives from kai's
 	## environment only when set there. Needs names builds kai builds first,
-	## for the task in `$KAI_ARTIFACTS/<name>`.
+	## for the task in `$KAI_ARTIFACTS/<name>`. Dir is the project-relative
+	## directory the task runs in, in place of the project root.
 	TaskSetting : [
 		Use(EnvName),
 		Run(List(Str)),
@@ -105,6 +158,7 @@ Config :: [].{
 		Needs(List(InputName)),
 		OptionalEnvironmentVariables(List(Str)),
 		Description(Str),
+		Dir(Str),
 	]
 
 	## Builds require Use, Run and one relative Output. Optional Inputs select
@@ -115,6 +169,8 @@ Config :: [].{
 	## Revision sets KAI_REVISION, the project's `git describe --tags --always
 	## --dirty`, and KAI_COMMIT_DATE, its last commit's date, both empty outside
 	## git. It is opt-in, since the build then changes with every commit.
+	## Default makes it the build `kai build` builds when given no name; at
+	## most one build is Default.
 	BuildSetting : [
 		Use(EnvName),
 		Inputs(List(InputName)),
@@ -124,6 +180,7 @@ Config :: [].{
 		Files(List(Str)),
 		Env(List((Str, Str))),
 		Revision,
+		Default,
 		Description(Str),
 	]
 }

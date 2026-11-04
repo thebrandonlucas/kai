@@ -29,20 +29,20 @@ E2e := [].{
 	## its Kaifile.roc, with a header naming this checkout's platform and std,
 	## and the listed files or directories (symlinks preserved), plus the
 	## absolute kai binary.
-	copy! = |binary, dir, entries| {
+	copy! = |binary, dir, entries| E2e.copy_tree!(binary, dir, entries, "")
+
+	## `copy!` of a tree whose Kaifile.roc lies in its subdirectory
+	## `kaifile_dir`, or at its top when that is empty. The copy's root is
+	## returned, not the Kaifile's directory.
+	copy_tree! = |binary, dir, entries, kaifile_dir| {
 		root = Path.canonicalize!(Env.cwd!()?)?
 		kai = Path.canonicalize!(Path.utf8(binary))?
 		temporary = Env.create_temp_dir_with_prefix!("kai-fixture-")?
-		project = Path.canonicalize!(temporary)?
+		copy = Path.canonicalize!(temporary)?
 		source = Path.join(root, dir)
-		kaifile = Path.read_utf8!(Path.join(source, "Kaifile.roc"))?
-		header = ConfigFixtures.header(root, project)
-		parts = ConfigFixtures.header_parts(kaifile)?
-		body = "${parts.before}${header}${parts.after}"
-		Path.write_utf8!(Path.join(project, "Kaifile.roc"), body)?
 		for entry in entries {
 			from = Path.join(source, entry)
-			to = Path.join(project, entry)
+			to = Path.join(copy, entry)
 			if Path.is_dir!(from)? {
 				options = { symlinks: Preserve, destination: RequireNew }
 				Path.copy_dir_with!(from, to, options)?
@@ -50,8 +50,22 @@ E2e := [].{
 				Path.copy!(from, to)?
 			}
 		}
-		Ok((kai, project))
+		(from, project) = E2e.kaifile_dirs(source, copy, kaifile_dir)
+		kaifile = Path.read_utf8!(Path.join(from, "Kaifile.roc"))?
+		header = ConfigFixtures.header(root, project)
+		parts = ConfigFixtures.header_parts(kaifile)?
+		body = "${parts.before}${header}${parts.after}"
+		Path.write_utf8!(Path.join(project, "Kaifile.roc"), body)?
+		Ok((kai, copy))
 	}
+
+	## The directories holding the Kaifile in the source and in its copy.
+	kaifile_dirs = |source, copy, kaifile_dir|
+		if kaifile_dir.is_empty() {
+			(source, copy)
+		} else {
+			(Path.join(source, kaifile_dir), Path.join(copy, kaifile_dir))
+		}
 
 	## `fixture!` for a Nix half; see `nix_copy!`.
 	nix_fixture! = |binary, name, entries|
@@ -59,13 +73,17 @@ E2e := [].{
 
 	## `copy!` for a Nix half: the copy's default package source is pinned to
 	## the nixpkgs Kai's own lock holds, unless the project names its own.
-	nix_copy! = |binary, dir, entries| {
-		(kai, project) = E2e.copy!(binary, dir, entries)?
+	nix_copy! = |binary, dir, entries| E2e.nix_copy_tree!(binary, dir, entries, "")
+
+	## `copy_tree!` for a Nix half, pinned as `nix_copy!` pins.
+	nix_copy_tree! = |binary, dir, entries, kaifile_dir| {
+		(kai, copy) = E2e.copy_tree!(binary, dir, entries, kaifile_dir)?
+		(_, project) = E2e.kaifile_dirs(copy, copy, kaifile_dir)
 		kaifile = Path.join(project, "Kaifile.roc")
 		root = Path.canonicalize!(Env.cwd!()?)?
 		pinned = E2e.pin_nixpkgs(Path.read_utf8!(kaifile)?, E2e.nixpkgs!(root)?)
 		Path.write_utf8!(kaifile, pinned)?
-		Ok((kai, project))
+		Ok((kai, copy))
 	}
 
 	## The nixpkgs revision Kai's own .kai/lock.json locks for its default

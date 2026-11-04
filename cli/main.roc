@@ -1,6 +1,7 @@
 # kai: developer environments, tasks and builds from a Kaifile.roc.
 app [main!] {
 	api: "../platform/api.roc",
+	http: "https://github.com/roc-lang/http/releases/download/1.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.26.0/GddgvsGjiNXrHFW6au5i5dUDbTs8FinQdrgE2Gqmw53t.tar.zst",
 }
 
@@ -11,6 +12,7 @@ import pf.Stderr
 import pf.Stdout
 import api.Layout
 import api.LockJson
+import api.Plan
 import api.Protocol
 
 import BuildRunner
@@ -28,11 +30,16 @@ import "../VERSION" as canonical_version : Str
 
 version = canonical_version.trim()
 
-is_terminal! = |descriptor|
-	match Cmd.new("test").args(["-t", OsStr.from_str(descriptor)]).run!() {
+# Whether kai's own stdin ("0"), stdout ("1") or stderr ("2") is a terminal.
+# `test` inherits kai's streams: by default Cmd.run! gives it a null stdin and
+# captures its stdout and stderr, so it never saw a terminal.
+is_terminal! = |descriptor| {
+	test = Cmd.new("test").args(["-t", OsStr.from_str(descriptor)])
+	match test.inherit_stdio().run!() {
 		Ok(output) => output.status == Exited(0)
 		Err(_) => Bool.False
 	}
+}
 
 main! : List(OsStr) => Try({}, [Exit(I32)])
 main! = |args| {
@@ -49,17 +56,36 @@ main! = |args| {
 		Err(Usage(message)) => {
 			_ = match mode {
 				Human => Stderr.line!(message)
-				Json => Stdout.line!(Output.error("InvalidUsage", message, 2))
+				Json =>
+					Stderr.line!(
+						Output.error({
+							code: "invalid_usage",
+							message,
+							exit_code: 2,
+							hint: "",
+							suggestions: usage_suggestions(message),
+						}),
+					)
 			}
 			Err(Exit(2))
 		}
 		Err(err) => {
-			code = exit_status(err)
+			exit_code = exit_status(err)
+			message = describe(err)
 			_ = match mode {
-				Human => Stderr.line!("kai: ${describe(err)}")
-				Json => Stdout.line!(Output.error(Str.inspect(err), describe(err), code))
+				Human => Stderr.line!("kai: ${message}")
+				Json =>
+					Stderr.line!(
+						Output.error({
+							code: error_code(err),
+							message,
+							exit_code,
+							hint: hint(err),
+							suggestions: plan_suggestions(err),
+						}),
+					)
 			}
-			Err(Exit(code))
+			Err(Exit(exit_code))
 		}
 	}
 }
@@ -70,6 +96,14 @@ run! = |shown, mode| {
 	if requests(shown, "--version") or requests(shown, "-V") {
 		return Stdout.line!(version)
 	}
+	# Without a command, a person at a terminal gets concise help and a
+	# script a usage error, whether or not there is a Kaifile.roc.
+	if command_word(shown).is_err() and !asks_help(shown) {
+		if mode == Human and is_terminal!("1") {
+			return Stdout.line!(Help.concise(version))
+		}
+		return Err(Usage(Help.needs_command))
+	}
 	if command_word(shown) == Ok("init") and !asks_help(shown) {
 		return init!(requested_file(shown), mode)
 	}
@@ -79,7 +113,7 @@ run! = |shown, mode| {
 		}
 		return bundle_plugin!(bundle_arguments(shown, [], Err(NoValue))?, mode)
 	}
-	located = Load.project!(requested_file(shown))
+	located = Load.project!(requested_file(shown), mode)
 	if command_word(shown) == Ok("check") and !asks_help(shown) {
 		project = located?
 		Load.check!(project, mode)?
@@ -236,7 +270,7 @@ revision! = |root| {
 # Help without a Kaifile to ask is kai's generic help.
 asks_help : List(Str) -> Bool
 asks_help = |args|
-	args.is_empty() or requests(args, "--help") or requests(args, "-h")
+	requests(args, "--help") or requests(args, "-h")
 
 # The first word that is not one of kai's options, and the one after it.
 command_word : List(Str) -> Try(Str, [NoCommand])
@@ -346,11 +380,81 @@ requests = |args, flag|
 		[arg, .. as rest] => arg == flag or requests(rest, flag)
 	}
 
+# kai's exit codes, as the README's Exit codes lists them: a failing child's
+# status, 2 for a usage error, 6 when a step needs confirmation, else 1.
 exit_status = |err|
 	match err {
 		ChildExited(_, code) => Execute.exit_code(code)
 		Refused(_) => 2
+		ConfirmationRequired(_) => 6
 		_ => 1
+	}
+
+# The `error` of a --json error, as the README's Exit codes lists them. They
+# are kai's interface, so they never follow a rename in the code.
+error_code = |err|
+	match err {
+		Refused(_) => "refused"
+		NoKaifile(_) => "no_kaifile"
+		NotAnApp(_) => "not_a_kaifile"
+		KaifileExists(_) => "kaifile_exists"
+		KaifileInvalid(_, _) | KaifileFailed(_, _, _) | PreviousHeader =>
+			"kaifile_invalid"
+		IncompatibleProtocol(_, _) => "incompatible_protocol"
+		CompilerUnavailable(_, _) | CompilerMismatch(_, _) | NoRocDownload(_) =>
+			"no_compiler"
+		UnsupportedHost => "unsupported_host"
+		NoPlatformReference(_) | BundleFailed(_) => "bundle_failed"
+		BadResponse(_) | AnswerTooLarge(_) => "bad_response"
+		InvalidProject(_) | InvalidWorkspace(_) => "invalid_project"
+		UnsafeWorkspace(_) | UnsafePath(_) | UnsafePlan(_) => "unsafe"
+		MissingSource(_) => "missing_source"
+		LocalChanged(_, _) => "stale_lock"
+		LockFailed(_) => "lock_failed"
+		UpdateLocked(_) | AuthorityChanged => "update_conflict"
+		ConfirmationRequired(_) => "confirmation_required"
+		Declined(_) => "declined"
+		ChildExited(_, _) => "child_exited"
+		MissingSecret(_, _) => "missing_secret"
+		InvalidDotenv(_) => "invalid_dotenv"
+		StoreFailed(_) => "download_failed"
+		BackendConflict(_, _) | NoEligibleBackend(_) => "no_backend"
+		RequiredBackendUnavailable(_, _) => "no_backend"
+		NoImplementation(_) => "no_implementation"
+		PlanFailed(failure) => failure.code
+		RenderFailed(_) | SnapshotFailed(_) => "plan_failed"
+		_ => "failed"
+	}
+
+# The fix for a --json error, when kai knows one: usually a command to run.
+hint = |err|
+	match err {
+		NoKaifile(_) => "kai init"
+		KaifileFailed(_, _, _) => "kai check"
+		LocalChanged(_, update) => update
+		AuthorityChanged => "kai update"
+		ConfirmationRequired(_) => "pass --yes"
+		PlanFailed(failure) => failure.hint
+		_ => ""
+	}
+
+# The names a plan's failure says the request may have meant.
+plan_suggestions = |err|
+	match err {
+		PlanFailed(failure) => failure.suggestions
+		_ => []
+	}
+
+# The names a usage error suggests for a mistyped one, as it words them:
+# "did you mean `a` or `b`?".
+usage_suggestions : Str -> List(Str)
+usage_suggestions = |message|
+	match message.split_first("did you mean ") {
+		Ok({ after, .. }) =>
+			(after.split_first("?").map_ok(|found| found.before) ?? "")
+				.split_on("`")
+				.drop_if(|part| part.is_empty() or part.starts_with(" "))
+		Err(_) => []
 	}
 
 describe : _ -> Str
@@ -376,14 +480,21 @@ describe = |err|
 				.concat(needs_compiler)
 		CompilerMismatch(compiler, actual) =>
 			"`${compiler}` is ${actual}; ${needs_compiler}"
-		NixMissing => "Nix is not installed; ${needs_compiler}"
+		NoRocDownload(system) =>
+			"Kai has no Roc download for ${system}; ${needs_compiler}"
+		StoreFailed(message) => message
 		KaifileInvalid(file, releases) =>
 			"${file} did not compile; see the errors above${mixed(releases)}"
 		KaifileFailed(file, output, releases) =>
 			"${file} did not compile:\n${output}${mixed(releases)}${unbuilt(output)}"
-		IncompatibleProtocol(major, minor) =>
-			"Kaifile.roc uses platform protocol ${major.to_str()}.${minor.to_str()}; "
-				.concat("this kai speaks ${Protocol.current.major.to_str()}.x")
+		IncompatibleProtocol(major, minor) => {
+			theirs = "${major.to_str()}.${minor.to_str()}"
+			own = Protocol.current.major.to_str()
+			ours = "${own}.0 to ${own}.${Protocol.current.minor.to_str()}"
+			"Kaifile.roc's platform speaks protocol ${theirs}, and this kai ${ours}; "
+				.concat("use a kai of that platform's release, or this kai's platform ")
+				.concat("and std (${Load.release}), as `kai --help` shows")
+		}
 		BadResponse(reason) => "could not read the Kaifile's answer: ${reason}"
 		AnswerTooLarge(size) =>
 			"the Kaifile's answer is ${(size // 1048576).to_str()} MiB, over kai's "
@@ -420,11 +531,21 @@ describe = |err|
 		RequiredBackendUnavailable(backend, probe) =>
 			"this request needs ${backend}, which "
 				.concat(Selection.probe_text(probe))
-		PlanFailed(message) => message
+		PlanFailed(failure) => explained(failure)
 		NoImplementation("") => "no plugin implements this command"
 		NoImplementation(backend) => "no plugin implements this command on ${backend}"
 		other => Str.inspect(other)
 	}
+
+# A plan's failure as kai says it: the plugin's message, then the command
+# that fixes it and the names the request may have meant.
+explained : Plan.Failure -> Str
+explained = |{ message, hint: command, suggestions, .. }| {
+	fix = if (command.is_empty()) "" else "; run `${command}`"
+	quoted = Str.join_with(suggestions.map(|name| "`${name}`"), " or ")
+	close = if (quoted.is_empty()) "" else "; did you mean ${quoted}?"
+	"${message}${fix}${close}"
+}
 
 # What to do about bundles from releases other than this kai's.
 mixed : List(Str) -> Str
@@ -450,8 +571,8 @@ unbuilt = |output|
 
 needs_compiler =
 	"kai evaluates Kaifile.roc with Roc ${Load.pinned_compiler}; put it on "
-		.concat("PATH, set ROC to its path, or install Nix ")
-		.concat("(https://nixos.org/download) for kai to get it")
+		.concat("PATH or set ROC to its path; otherwise kai gets it with Nix, ")
+		.concat("or downloads it without Nix")
 
 # --file is found where the parser reads it, and never after --.
 expect [
@@ -492,12 +613,34 @@ expect [
 	(["bundle-plugin", "--yes"], Err(Usage(Help.bundle_plugin))),
 ].all(|(args, expected)| bundle_arguments(args, [], Err(NoValue)) == expected)
 
-# A failing child's status becomes kai's, a refusal is a usage error, and
-# every other failure is 1.
+# A failing child's status becomes kai's, a refusal is a usage error, a
+# needed confirmation is 6, and every other failure is 1.
 expect exit_status(ChildExited("task fail", 7)) == 7
 	and exit_status(Refused("--backend must be one of nix, guix")) == 2
-	and exit_status(PlanFailed("no lock file")) == 1
+	and exit_status(ConfirmationRequired("deploy?")) == 6
+	and exit_status(PlanFailed(Plan.fail("no lock file"))) == 1
+
+# A plan's failure names its fix and the names it suggests after its message.
+expect {
+	lock = {
+		code: "missing_lock",
+		message: "no lock file",
+		hint: "kai update",
+		suggestions: [],
+	}
+	explained(lock) == "no lock file; run `kai update`"
+		and explained({ ..lock, hint: "", suggestions: ["a", "b"] })
+			== "no lock file; did you mean `a` or `b`?"
+		and explained(Plan.fail("no plan")) == "no plan"
+}
 
 # A missing linker input hints at building a checkout's platform host.
 expect unbuilt("── ✗ missing target file ──\n").contains("zig build --release")
 	and unbuilt("── TYPE MISMATCH ──\n") == ""
+
+# A usage error's suggestions are the names it asks about.
+expect [
+	("no task named mo; available tasks: moo; did you mean `moo`?", ["moo"]),
+	("no task a; available tasks: b, c; did you mean `b` or `c`?", ["b", "c"]),
+	("no task named zzz; available tasks: moo", []),
+].all(|(message, expected)| usage_suggestions(message) == expected)

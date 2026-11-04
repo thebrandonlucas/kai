@@ -8,14 +8,17 @@ import pf.Random
 import pf.Stderr
 import pf.System
 
+import api.Plan
 import api.Protocol
 import api.Sexpr
 
+import "../.roc-downloads" as roc_downloads : Str
 import "../.roc-version" as compiler_version : Str
 import "../.roc-overlay" as roc_overlay : Str
 import "../platform-release" as platform_release : Str
 
 import Output
+import Store
 import Variables
 import Workspace
 
@@ -26,16 +29,55 @@ Load := [].{
 	default_file = "Kaifile.roc"
 
 	# A --file path is relative to the invocation directory; its containing
-	# directory becomes the project root.
-	project! : Try(Str, [NoValue]) => Try(Location, _)
-	project! = |requested| {
+	# directory becomes the project root. Without one, kai uses the nearest
+	# Kaifile.roc, and notes which when it is not in that directory.
+	project! : Try(Str, [NoValue]), Output.Mode => Try(Location, _)
+	project! = |requested, mode| {
 		cwd = Env.cwd!()?.to_str()?
-		location = Load.resolve(cwd, requested ?? Load.default_file)
+		location = match requested {
+			Ok(file) => Load.resolve(cwd, file)
+			Err(NoValue) => Load.nearest!(cwd)
+		}
 		if !(Load.path(location).exists!() ?? Bool.False) {
 			return Err(NoKaifile(location))
 		}
+		if requested.is_err() and location != Load.resolve(cwd, Load.default_file) {
+			message = "using ${location}"
+			event = Output.event("note", message, [("file", Output.text(location))])
+			Output.note!(mode, "kai: ${message}", event)?
+		}
 		canonical = Load.path(location).canonicalize!()?.to_str()?
 		Ok(Load.split_file(canonical))
+	}
+
+	# The first Kaifile.roc in `cwd` or above it, up to the git repository's
+	# root (the first directory holding .git) or the filesystem root; the one
+	# in `cwd` when there is none, which is then missing.
+	nearest! : Str => Str
+	nearest! = |cwd| {
+		for directory in Load.ancestors(cwd) {
+			file = Load.resolve(directory, Load.default_file)
+			if Load.path(file).exists!() ?? Bool.False {
+				return file
+			}
+			if Load.path(Load.resolve(directory, ".git")).exists!() ?? Bool.False {
+				return Load.resolve(cwd, Load.default_file)
+			}
+		}
+		Load.resolve(cwd, Load.default_file)
+	}
+
+	# A directory and those above it, nearest first. The filesystem root is
+	# the empty string, so that `resolve` gives it "/Kaifile.roc".
+	ancestors : Str -> List(Str)
+	ancestors = |directory| {
+		var $above = [""]
+		var $prefix = ""
+		for part in directory.split_on("/").keep_if(|part| !part.is_empty()) {
+			$prefix = "${$prefix}/${part}"
+			$above = [$prefix].concat($above)
+		}
+		$above
 	}
 
 	resolve : Str, Str -> Str
@@ -53,7 +95,8 @@ Load := [].{
 	# Choose the Roc compiler that evaluates Kaifile.roc. It must be the version
 	# .roc-version pins. If the ROC environment variable is set, kai uses only
 	# that compiler. Otherwise it uses the `roc` on PATH if that is the pinned
-	# version, or else has Nix download the pinned version (see `fetched!`).
+	# version, or else gets the pinned version with Nix or without it (see
+	# `fetched!`).
 	compiler! : () => Try(Str, _)
 	compiler! = || {
 		bundle_variables = [
@@ -104,13 +147,27 @@ Load := [].{
 
 	# The pinned compiler, which Nix downloads from roc-overlay at the revision
 	# .roc-overlay pins. Kai keeps a link to it in its cache, so Nix downloads
-	# it only once and its garbage collection leaves it in place.
+	# it only once and its garbage collection leaves it in place. Without Nix,
+	# or once it has, Kai downloads the nightly .roc-downloads pins into its
+	# store and uses it from there.
 	fetched! : () => Try(Str, _)
 	fetched! = || {
-		link = "${Load.cache!()?}/kai/roc/${Load.pinned_compiler}"
+		cache = Load.cache!()?
+		link = "${cache}/kai/roc/${Load.pinned_compiler}"
 		compiler = "${link}/bin/roc"
 		if Load.pinned!(compiler).is_ok() {
 			return Ok(compiler)
+		}
+		nightly = Load.nightly(Load.system!()?)
+		stored = match nightly {
+			Ok(program) =>
+				Load.path("${Store.under(cache, "artifacts")}/${program.sha256}")
+					.is_file!()
+					?? Bool.False
+			Err(_) => Bool.False
+		}
+		if stored {
+			return Load.downloaded!(cache, nightly?)
 		}
 		Stderr.line!("kai: getting Roc ${Load.pinned_compiler} with Nix")?
 		installable = "${roc_overlay.trim()}#${Load.pinned_compiler}"
@@ -122,11 +179,42 @@ Load := [].{
 		match built {
 			Ok(output) if output.status == Exited(0) => {}
 			Ok(_) => return Err(CompilerUnavailable(installable, "nix build failed"))
-			Err(CmdErr(StartFailed(NotFound, _))) => return Err(NixMissing)
+			Err(CmdErr(StartFailed(NotFound, _))) =>
+				return Load.downloaded!(cache, nightly?)
 			Err(err) => return Err(CompilerUnavailable(installable, Load.why(err)))
 		}
 		Load.pinned!(compiler)?
 		Ok(compiler)
+	}
+
+	# The downloaded compiler, verified again, and checked to be the pinned one.
+	downloaded! : Str, Plan.Program => Try(Str, _)
+	downloaded! = |cache, program| {
+		compiler = Store.realise!(cache, program, Human)?
+		Load.pinned!(compiler)?
+		Ok(compiler)
+	}
+
+	# The Roc nightly for a system, from a line of .roc-downloads: the system,
+	# the archive's size and SHA-256 as roc-lang/nightlies publishes them, and
+	# its name, which is also the directory `roc` lies in.
+	nightly : Str -> Try(Plan.Program, [NoRocDownload(Str)])
+	nightly = |system| {
+		releases = "https://github.com/roc-lang/nightlies/releases/download"
+		for line in roc_downloads.split_on("\n") {
+			match line.split_on(" ") {
+				[named, size, sha256, archive] if named == system =>
+					return Ok({
+						name: "roc",
+						urls: ["${releases}/${Load.pinned_compiler}/${archive}.tar.gz"],
+						sha256,
+						size: U64.from_str(size) ?? 0,
+						unpack: Archive("${archive}/roc"),
+					})
+				_ => {}
+			}
+		}
+		Err(NoRocDownload(system))
 	}
 
 	# XDG_CACHE_HOME, or ~/.cache.
@@ -525,6 +613,22 @@ Load := [].{
 	path = |p| Path.from_os_str(OsStr.from_str(p))
 }
 
+# Each system's nightly is the one .roc-version pins, so bumping one without
+# the other fails here, and is one kai can check and download.
+expect {
+	date = Load.pinned_compiler.drop_prefix("nightly-")
+	["x86_64-linux", "aarch64-linux", "aarch64-darwin"].all(
+		|system|
+			match Load.nightly(system) {
+				Ok(program) =>
+					Store.check(program) == Ok({})
+						and program.urls.all(|url| url.contains(date))
+				Err(_) => Bool.False
+			},
+	)
+		and Load.nightly("riscv64-linux") == Err(NoRocDownload("riscv64-linux"))
+}
+
 # A relative --file resolves against the invocation directory.
 expect Load.resolve("/work", "../project/Kaifile.roc")
 	== "/work/../project/Kaifile.roc"
@@ -605,3 +709,9 @@ expect {
 		and Load.compiled_from("", inputs) == Err(Stale)
 		and Load.compiled_from("program ../x\n${inputs}", inputs) == Err(Stale)
 }
+
+# The search for a Kaifile.roc goes up from the invocation directory to the
+# filesystem root, written as the empty string.
+expect Load.ancestors("/srv/app") == ["/srv/app", "/srv", ""]
+	and Load.ancestors("/") == [""]
+	and Load.resolve("", Load.default_file) == "/Kaifile.roc"

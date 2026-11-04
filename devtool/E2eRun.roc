@@ -168,7 +168,7 @@ E2eRun := [].{
 		command = ["hello", "--greeting", "two words"]
 		match kai!(["shell", "default", "--"].concat(command)) {
 			Err(NonZeroExitCode({ exit_code, stderr_utf8_lossy, .. })) if exit_code == 1
-				and stderr_utf8_lossy.contains("run kai --backend guix update") => {}
+				and stderr_utf8_lossy.contains("run `kai --backend guix update`") => {}
 			other => return Err(GuixRanUnlocked(Str.inspect(other)))
 		}
 		E2e.pin!(project)?

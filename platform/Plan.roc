@@ -45,6 +45,16 @@ Plan := { steps : List(Step), next : Next }.{
 		),
 		InstallRunner({ destination : Str }),
 
+		## Makes each program ready in kai's store of pinned downloads and links
+		## it into `bin`, in the workspace. The Runs after it have `bin` first on
+		## PATH, until the next Realise.
+		Realise({ bin : Str, programs : List(Program) }),
+
+		## Downloads each file into the store and writes a line
+		## `<key> <sha256> <size>` for it to `result`, a generated file for a
+		## continuation to observe.
+		Measure({ files : List({ key : Str, urls : List(Str) }), result : Str }),
+
 		## kai sets the `secrets` variables from `.env` or its own environment
 		## and removes `removed_environment_variables`, except those in
 		## `kept_environment_variables`, from the child process's environment:
@@ -78,6 +88,17 @@ Plan := { steps : List(Step), next : Next }.{
 
 	File : { path : Str, contents : Str }
 
+	## A download pinned by digest and length; a later URL is a mirror of the
+	## first. `File` is the program itself. `Archive(path)` is a tar.gz or
+	## tar.xz, unpacked whole, with the program at `path` inside it.
+	Program : {
+		name : Str,
+		urls : List(Str),
+		sha256 : Str,
+		size : U64,
+		unpack : [File, Archive(Str)],
+	}
+
 	## `Quiet` shows the child's stderr only when it fails. `Remembered(files)`
 	## is Quiet, and kai skips the run once it succeeded with the same argv
 	## and the same contents of `files`, which lie in the generated root.
@@ -86,6 +107,54 @@ Plan := { steps : List(Step), next : Next }.{
 	## `output` is the declared output name; the store path is the child's
 	## last stdout line (`nix build --print-out-paths`, `guix build`).
 	Artifact : { name : Str, label : Str, output : Str }
+
+	## Why there is no plan: a stable `code` scripts can match, as
+	## docs/plugin.md lists them, what went wrong, the command that fixes it
+	## ("" when none) and the names the request may have meant.
+	Failure : { code : Str, message : Str, hint : Str, suggestions : List(Str) }
+
+	## A failure with no code of its own: `plan_failed`.
+	fail : Str -> Failure
+	fail = |message| { code: "plan_failed", message, hint: "", suggestions: [] }
+
+	## The names closest to a mistyped `given`: at most two edits away, and
+	## fewer edits than it has letters.
+	closest : Str, List(Str) -> List(Str)
+	closest = |given, names| {
+		scored = names.map(|name| (name, Plan.distance(given, name)))
+		best = scored.fold(3, |lowest, (_, edits)| lowest.min(edits))
+		limit = given.count_utf8_bytes().min(3)
+		scored.keep_if(|(_, edits)| edits == best and edits < limit)
+			.map(|(name, _)| name)
+	}
+
+	## How many one-byte insertions, deletions or replacements turn `a` into
+	## `b` (Levenshtein distance).
+	distance : Str, Str -> U64
+	distance = |a, b| {
+		right = b.to_utf8()
+		var $previous = []
+		var $count = 0
+		for _ in [0].concat(right) {
+			$previous = $previous.append($count)
+			$count = $count + 1
+		}
+		var $row_number = 0
+		for x in a.to_utf8() {
+			$row_number = $row_number + 1
+			var $row = [$row_number]
+			var $j = 0
+			for y in right {
+				deleted = ($previous.get($j + 1) ?? 0) + 1
+				inserted = ($row.get($j) ?? 0) + 1
+				replaced = ($previous.get($j) ?? 0) + (if (x == y) 0 else 1)
+				$row = $row.append(deleted.min(inserted).min(replaced))
+				$j = $j + 1
+			}
+			$previous = $row
+		}
+		$previous.last() ?? 0
+	}
 }
 
 # Every step kind survives an S-expression round trip.
@@ -112,6 +181,29 @@ expect {
 				store: "/nix/store",
 			}),
 			InstallRunner({ destination: "/w/runner" }),
+			Realise({
+				bin: "/w/bin",
+				programs: [
+					{
+						name: "tool",
+						urls: ["https://example.com/tool"],
+						sha256: "ab",
+						size: 2,
+						unpack: File,
+					},
+					{
+						name: "zipped",
+						urls: ["https://example.com/a", "https://mirror.example/a"],
+						sha256: "cd",
+						size: 3,
+						unpack: Archive("a/zipped"),
+					},
+				],
+			}),
+			Measure({
+				files: [{ key: "tool", urls: ["https://example.com/tool"] }],
+				result: "/g/measured",
+			}),
 			Run({
 				description: "shell dev",
 				argv: ["bash"],
@@ -159,3 +251,13 @@ expect {
 	}
 	Sexpr.parse(Sexpr.to_str(plan)) == Ok(plan)
 }
+
+# The closest names are at most two edits away, and fewer than the word has.
+expect [
+	("rn", ["run", "shell", "build"], ["run"]),
+	("moo2", ["moo", "say", "moon"], ["moo", "moon"]),
+	("frobnicate", ["run", "shell"], []),
+	("x", ["a", "b"], []),
+	("bild", ["build", "build-all"], ["build"]),
+].all(|(given, names, expected)| Plan.closest(given, names) == expected)
+	and Plan.distance("kitten", "sitting") == 3

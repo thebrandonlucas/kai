@@ -44,7 +44,7 @@ LockFile := [].{
 				Absent => Ok(Absent)
 			}
 		var $sections = []
-		for name in ["guix", "nix"] {
+		for name in ["direct", "guix", "nix"] {
 			found = if (name == backend) Present(contents) else kept(name)?
 			match found {
 				Present(value) => {
