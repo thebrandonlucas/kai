@@ -28,6 +28,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [build](build) | A sandboxed build and its output, a default build, symbolic links in a build, and a build finding a library with pkg-config | `kai build wisecow` |
 | [needs](needs) | A build, and a task, reading another build's artifact | `kai build loud` |
 | [direct](direct) | Tools from pinned downloads, a file and an archive, run with no provider in tasks and a workflow of tasks, and a program the machine must have | `kai workflow check` |
+| [mixed](mixed) | One environment with a tool from nixpkgs, a pinned download first on `PATH` and a program the machine must have, on Nix | `kai run greet` |
 | [revision](revision) | A build stamped with the project's git revision | `kai build version` |
 | [source-build](source-build) | A build reading a locked source | `kai build moofasa` |
 | [path-source](path-source) | A build reading a locked project directory | `kai build kai` |

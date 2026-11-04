@@ -70,7 +70,8 @@ Output := [].{
 		}
 
 	# An error with its documented code and kai's exit code, then the fix
-	# when kai knows one, and the names the request may have meant.
+	# when kai knows one, the names the request may have meant, and the
+	# programs the machine lacks.
 	error :
 		{
 			code : Str,
@@ -78,15 +79,22 @@ Output := [].{
 			exit_code : I32,
 			hint : Str,
 			suggestions : List(Str),
+			programs : List(Str),
 		} -> Str
-	error = |{ code, message, exit_code, hint, suggestions }| {
-		close = LockJson.Array(suggestions.map(Output.text))
+	error = |{ code, message, exit_code, hint, suggestions, programs }| {
+		listed = |name, names|
+			if names.is_empty() {
+				[]
+			} else {
+				[(name, LockJson.Array(names.map(Output.text)))]
+			}
 		Output.event(
 			"error",
 			message,
 			[("error", Output.text(code)), ("exit_code", Output.number(exit_code))]
 				.concat(if (hint.is_empty()) [] else [("hint", Output.text(hint))])
-				.concat(if (suggestions.is_empty()) [] else [("suggestions", close)]),
+				.concat(listed("suggestions", suggestions))
+				.concat(listed("programs", programs)),
 		)
 	}
 
@@ -137,18 +145,25 @@ expect {
 }
 
 # Errors carry their code, the readable message, kai's exit code and, when
-# kai knows them, the fix and the names the request may have meant.
+# kai knows them, the fix, the names the request may have meant and the
+# programs the machine lacks.
 expect {
-	error = |hint, suggestions|
-		Output.error(
-			{ code: "stale_lock", message: "changed", exit_code: 1, hint, suggestions },
-		)
-	error("", [])
+	error = |hint, suggestions, programs|
+		Output.error({
+			code: "stale_lock",
+			message: "changed",
+			exit_code: 1,
+			hint,
+			suggestions,
+			programs,
+		})
+	error("", [], [])
 		== "{\"type\":\"error\",\"message\":\"changed\",".concat(
 			"\"error\":\"stale_lock\",\"exit_code\":1}",
 		)
-		and error("kai update", []).ends_with(",\"hint\":\"kai update\"}")
-		and error("", ["run"]).ends_with(",\"suggestions\":[\"run\"]}")
+		and error("kai update", [], []).ends_with(",\"hint\":\"kai update\"}")
+		and error("", ["run"], []).ends_with(",\"suggestions\":[\"run\"]}")
+		and error("", [], ["zip"]).ends_with(",\"programs\":[\"zip\"]}")
 }
 
 # Workflow steps say which step of how many runs what, for both audiences.

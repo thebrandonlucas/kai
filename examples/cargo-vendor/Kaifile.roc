@@ -2,7 +2,8 @@
 # and, for the git dependency ryu, by the commit it records, with no lock
 # entry. So `kai build count` compiles this crate offline in the sandbox:
 # cargo reads the crates from $KAI_INPUTS/crates through the configuration
-# vendored with them.
+# vendored with them, and remapping that path keeps them out of what the
+# build's output refers to.
 app [kaifile] {
 	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",
@@ -24,7 +25,8 @@ kaifile = Std.kaifile([
 			Run([
 				"sh",
 				"-c",
-				"cargo build --release --offline --locked "
+				"RUSTFLAGS=\"--remap-path-prefix=$KAI_INPUTS/crates=/crates\" "
+					.concat("cargo build --release --offline --locked ")
 					.concat("--config \"$KAI_INPUTS/crates/.cargo/config.toml\" ")
 					.concat("&& target/release/count > count.txt"),
 			]),

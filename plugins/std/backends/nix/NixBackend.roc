@@ -76,7 +76,7 @@ NixBackend :: [].{
 	## its snapshot copies. `reads` names the inputs it reads. `needs_build`
 	## builds a task's Needs before it runs. `evaluate` evaluates a shell's or
 	## task's environment first, so a failure to evaluate it is not reported
-	## as the command's.
+	## as the command's. `environment` is the shell's or task's, "" for a build.
 	Prepared : {
 		inputs : List(Locks.Input),
 		reads : List(Str),
@@ -93,6 +93,7 @@ NixBackend :: [].{
 		snapshot_files : [All, Only(List(Str))],
 		snapshot_root : Str,
 		may_fail : List(U64),
+		environment : Str,
 	}
 
 	## Expand only semantic requests. Every atomic request shares this selection
@@ -212,15 +213,19 @@ NixBackend :: [].{
 					.map_err(|_| "unknown shell: ${name}")?
 				isolation = pure_flags(project, shell.environment, [])
 				# A command runs noninteractively inside the shell.
-				argv = if command.is_empty() {
+				if !command.is_empty() {
+					Project.check_argv(command, name)?
+				}
+				entered = first_on_path(project, shell.environment, target, layout, command)
+				argv = if entered.is_empty() {
 					develop(name, isolation)
 				} else {
-					Project.check_argv(command, name)?
-					develop(name, isolation).append("--command").concat(command)
+					develop(name, isolation).append("--command").concat(entered)
 				}
 				{
 					description: "shell ${name}",
 					stage: "shell ${name}",
+					environment: shell.environment,
 					names: [shell.environment],
 					builds: [],
 					needs: [],
@@ -272,9 +277,13 @@ NixBackend :: [].{
 				)
 				received = task.secrets.concat(task.optional_environment_variables)
 				isolation = pure_flags(project, task.environment, received)
+				# Overrides the environment's Env, which kai-env-* sets.
+				task_command = Project.env_command(task.dir, task.env.concat(artifacts))
+					.concat(command)
 				{
 					description: "task ${name}",
 					stage: "run ${name}",
+					environment: task.environment,
 					names: [task.environment].concat(builds.map(|b| b.environment)),
 					builds,
 					needs: task.needs,
@@ -285,9 +294,9 @@ NixBackend :: [].{
 					),
 					argv: develop(environment_shell(task.environment), isolation)
 						.append("--command")
-						# Overrides the environment's Env, which kai-env-* sets.
-						.concat(Project.env_command(task.dir, task.env.concat(artifacts)))
-						.concat(command),
+						.concat(
+							first_on_path(project, task.environment, target, layout, task_command),
+						),
 					output: Inherit,
 					secrets: task.secrets,
 					removed_environment_variables: Project.other_tasks_secrets(project, task),
@@ -307,6 +316,7 @@ NixBackend :: [].{
 				{
 					description: "build ${name}",
 					stage: "build ${name}",
+					environment: "",
 					names: builds.map(|b| b.environment),
 					builds,
 					needs: [],
@@ -355,7 +365,29 @@ NixBackend :: [].{
 			snapshot_files: Project.snapshot_files(selected.builds),
 			snapshot_root: Project.snapshot_root(project, layout.project_root)?,
 			may_fail: [],
+			environment: selected.environment,
 		})
+	}
+
+	## A command run inside environment `name` with its FetchLocked tools on
+	## `system`, which kai's store holds and a Realise links into the
+	## workspace, first on PATH, before the environment's own: sh puts them
+	## there. With no command, the shell kai was started from starts, as on
+	## direct. Without such tools, it is `command` unchanged.
+	first_on_path : Model, Str, Str, Layout, List(Str) -> List(Str)
+	first_on_path = |project, name, system, layout, command| {
+		tools = project.environments.keep_if(|e| e.name == name)
+			.join_map(|e| Project.on_system(e, system).tools)
+		if !tools.any(|t| Project.locked_fetch(project, t.source)) {
+			return command
+		}
+		bin = Project.downloads_bin(layout.workspace, name)
+		first = "PATH=\"$0:$PATH\" && exec "
+		if command.is_empty() {
+			["sh", "-c", "${first}\"\${KAI_OPERATOR_SHELL:-/bin/sh}\"", bin]
+		} else {
+			["sh", "-c", "${first}\"$@\"", bin].concat(command)
+		}
 	}
 
 	## A Pure environment's shells and tasks start from a clean environment,
@@ -379,7 +411,17 @@ NixBackend :: [].{
 	## capability, target, caller layout and authoritative lock checks. No
 	## effects occur here. A workflow marks each of its steps with a Stage.
 	plan : Model, Request, Str, Layout, Locks -> Try(Plan, Str)
-	plan = |model, request, target, layout, locks| {
+	plan = |model, request, target, layout, locks|
+		plan_entering(model, request, target, layout, locks, [])
+
+	## What runs just before a shell or task enters an environment, such as
+	## the direct backend's check of its Expect programs and its downloads.
+	Entering : List({ environment : Str, steps : List(Plan.Step) })
+
+	## `plan`, with the steps `entering` gives an environment before each
+	## shell or task enters it.
+	plan_entering : Model, Request, Str, Layout, Locks, Entering -> Try(Plan, Str)
+	plan_entering = |model, request, target, layout, locks, entering| {
 		prepared = prepare(model, request, target, layout)?
 		derived = Locks.derive(locks, Project.validate(model)?, layout)?
 		workflow = match request {
@@ -392,16 +434,20 @@ NixBackend :: [].{
 				$steps = $steps.concat(selected.may_fail.map(|count| MayFail(count)))
 				$steps = $steps.append(Stage(selected.stage))
 			}
-			$steps = $steps.concat(materialize(selected, layout, derived))
+			entry = entering.find_first(|e| e.environment == selected.environment)
+				.map_ok(|e| e.steps) ?? []
+			$steps = $steps.concat(materialize(selected, layout, derived, entry))
 		}
 		Ok(Plan.{ steps: $steps, next: Done })
 	}
 
 	## Every step rechecks the local pins it reads, including after
-	## source-editing tasks, then writes its files and runs. Every build, and
-	## every task with Needs, snapshots afresh and installs Kai as its runner.
-	materialize : Prepared, Layout, Locks.Derived -> List(Plan.Step)
-	materialize = |selected, layout, derived| {
+	## source-editing tasks, then writes its files, runs `entry`, which
+	## readies the environment, and runs. Every build, and every task with
+	## Needs, snapshots afresh and installs Kai as its runner.
+	materialize :
+		Prepared, Layout, Locks.Derived, List(Plan.Step) -> List(Plan.Step)
+	materialize = |selected, layout, derived, entry| {
 		{ inputs, reads, argv, contents, description, output, .. } = selected
 		{ secrets, kept_environment_variables, needs_build, evaluate, .. } = selected
 		removed_environment_variables = selected.removed_environment_variables
@@ -453,6 +499,7 @@ NixBackend :: [].{
 			.append(Write(files))
 			.concat(evaluate)
 			.concat(needs_build)
+			.concat(entry)
 			.append(
 				Run({
 					description,
@@ -904,7 +951,12 @@ NixBackend :: [].{
 				"(sets.${primary}.linkFarm \"kai-alias\" [ ${link} ])"
 			},
 		)
-		tools = environment.tools.map(reference).concat(aliases)
+		# kai's store, not Nix, holds FetchLocked tools; see `first_on_path`.
+		locked = |tool|
+			fetches.any(
+				|f| f.name == tool.source and f.files.any(|file| file.hash.is_empty()),
+			)
+		tools = environment.tools.drop_if(locked).map(reference).concat(aliases)
 		match environment.rust_toolchain {
 			None => tools
 			Toml({ text, components, target_triples }) => {
@@ -1013,13 +1065,15 @@ NixBackend :: [].{
 		tools = path_packages(environment, model.fetches)
 		# Cargo.lock's checksums pin a vendor's crates, and its commits its git
 		# checkouts, which Nix fetches. Builds refuse symlinks in inputs, so the
-		# vendored directory is copied whole, and its cargo config names the copy.
+		# vendored directory is copied whole. Its cargo config names the crates
+		# `.`, the directory above the config's, so rustc reads them under
+		# $KAI_INPUTS/<name>, the path a build remaps, rather than the copy's.
 		inputs = build.inputs.map(
 			|name| {
 				fetched = model.fetches.find_first(|f| f.name == name)
 				vendored = model.cargo_vendors.find_first(|c| c.name == name)
 				copy = "cp -rL $vendor $out && chmod -R u+w $out && substituteInPlace "
-					.concat("$out/.cargo/config.toml --replace-fail cargo-vendor-dir $out")
+					.concat("$out/.cargo/config.toml --replace-fail cargo-vendor-dir .")
 				path = match (fetched, vendored) {
 					(Ok(fetch), _) => "pkgs.fetchurl ${fetch_file(fetch)}"
 					(_, Ok(vendor)) =>

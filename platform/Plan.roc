@@ -47,13 +47,18 @@ Plan := { steps : List(Step), next : Next }.{
 
 		## Makes each program ready in kai's store of pinned downloads and links
 		## it into `bin`, in the workspace. The Runs after it have `bin` first on
-		## PATH, until the next Realise.
+		## PATH, until the next Realise or Stage.
 		Realise({ bin : Str, programs : List(Program) }),
 
 		## Downloads each file into the store and writes a line
 		## `<key> <sha256> <size>` for it to `result`, a generated file for a
 		## continuation to observe.
 		Measure({ files : List({ key : Str, urls : List(Str) }), result : Str }),
+
+		## Fails, naming every one that is not on PATH, unless the machine has
+		## all of `programs`, which `description` (such as `environment dev`)
+		## expects.
+		ExpectPrograms({ description : Str, programs : List(Str) }),
 
 		## kai sets the `secrets` variables from `.env` or its own environment
 		## and removes `removed_environment_variables`, except those in
@@ -204,6 +209,7 @@ expect {
 				files: [{ key: "tool", urls: ["https://example.com/tool"] }],
 				result: "/g/measured",
 			}),
+			ExpectPrograms({ description: "environment dev", programs: ["git", "zip"] }),
 			Run({
 				description: "shell dev",
 				argv: ["bash"],

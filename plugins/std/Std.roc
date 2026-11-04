@@ -212,6 +212,9 @@ Std := [].{
 								model.fetches
 									.keep_if(|f| Project.locked_fetch(model, f.name))
 									.map(|f| choice(f.name, "", "FetchLocked")),
+							)
+							.concat(
+								model.cargo_vendors.map(|c| choice(c.name, "", "CargoVendor")),
 							),
 					}),
 				],
@@ -413,7 +416,8 @@ Std := [].{
 	## Inputs `kai update` was asked to move that the project does not declare.
 	known_inputs : Model, List(Str) -> Try({}, Plan.Failure)
 	known_inputs = |model, names| {
-		declared = Locks.inputs(model).map_err(Plan.fail)?.map(|input| input.name)
+		inputs = Locks.inputs(model).map_err(Plan.fail)?.map(|input| input.name)
+		declared = inputs.concat(model.cargo_vendors.map(|c| c.name))
 		unknown = names.drop_if(|name| declared.contains(name))
 		if unknown.is_empty() {
 			Ok({})
@@ -452,8 +456,43 @@ Std := [].{
 		if !stale.is_empty() {
 			return Err(lock_failure("stale_lock", stale))
 		}
-		NixBackend.plan(model, wanted, target, layout, locks).map_err(rendering)
+		# As on direct, the machine's Expect programs are checked, and the
+		# FetchLocked tools made ready, before a shell or task enters.
+		validated = Project.validate(model).map_err(Plan.fail)?
+		project = Project.for_system(validated, target)
+		entering = Std.entered(model, wanted).map_try(
+			|name| {
+				environment = project.environments.find_first(|e| e.name == name)
+					.map_err(|_| Plan.fail("unknown environment: ${name}"))?
+				tools = environment.tools
+					.keep_if(|t| Project.locked_fetch(project, t.source))
+				downloads = { project, environment, tools }
+				steps = DirectBackend.entering(downloads, target, layout, ctx.lock)?
+				Ok({ environment: name, steps })
+			},
+		)?
+		NixBackend.plan_entering(model, wanted, target, layout, locks, entering)
+			.map_err(rendering)
 	}
+
+	## The environments a request's shells and tasks enter.
+	entered : Model, Request -> List(Str)
+	entered = |model, wanted|
+		match wanted {
+			Request.Shell(name, _) =>
+				model.shells.keep_if(|s| s.name == name).map(|s| s.environment)
+			Request.Run(name, _) =>
+				model.tasks.keep_if(|t| t.name == name).map(|t| t.environment)
+			Request.Workflow(name) =>
+				(Project.workflow_steps(model, name) ?? []).join_map(
+					|step|
+						match step {
+							RunTask(task, args) => Std.entered(model, Request.Run(task, args))
+							_ => []
+						},
+				)
+			Request.Build(_, _) => []
+		}
 
 	Run : { environment : Str, argv : List(Str), description : Str }
 
@@ -686,7 +725,18 @@ Std := [].{
 			0 => {
 				files = NixBackend.update_files(model, target, layout)?
 				locals = NixBackend.local_checks(model, target, layout)?
-				names = Command.trailing(ctx.args, "inputs")
+				requested = Command.trailing(ctx.args, "inputs")
+				# Cargo.lock, not the lock, pins a CargoVendor's crates.
+				vendors = model.cargo_vendors.map(|c| c.name)
+				vendored = requested.keep_if(|name| vendors.contains(name))
+				names = requested.drop_if(|name| vendored.contains(name))
+				notes = vendored.map(
+					|name|
+						Note("Cargo.lock pins CargoVendor ${name}; `cargo update` moves it"),
+				)
+				if names.is_empty() and !vendored.is_empty() {
+					return Ok(Plan.{ steps: notes, next: Done })
+				}
 				# Replacing a stale lock by rename, rather than letting Nix follow
 				# a hard-link alias, before resolving a fresh input graph, or the
 				# locked one when only the named inputs move.
@@ -701,8 +751,8 @@ Std := [].{
 				}
 				Ok(
 					Plan.{
-						steps: locals
-							.map(|local| CheckSource(local))
+						steps: notes
+							.concat(locals.map(|local| CheckSource(local)))
 							.append(
 								Write(files.append({ path: backend_lock, contents: starting_lock })),
 							)
@@ -905,6 +955,27 @@ expect {
 	}
 }
 
+# Cargo.lock pins a CargoVendor, so `kai update` accepts its name and, given
+# it, only says so; other names it is given still move.
+expect {
+	updated = |names| {
+		vendored = planning.append(CargoVendor("crates", ""))
+		model = ConfigToModel.convert(vendored).map_err(Plan.fail)?
+		update = Std.implementations(model)
+			.find_first(|i| i.command == "update" and i.backend == On("nix"))
+			.map_err(|_| Plan.fail("no update"))?
+		args = [{ name: "inputs", value: Many(names) }]
+		(update.plan)({ ..context, args }).map_ok(|plan| plan.steps)
+	}
+	note = Note("Cargo.lock pins CargoVendor crates; `cargo update` moves it")
+	updated(["crates"]) == Ok([note])
+		and match updated(["default", "crates"]) {
+			Ok([first, .., Run({ argv, .. })]) =>
+				first == note and argv.last() == Ok("default")
+			_ => Bool.False
+		}
+}
+
 # Guix update resolves the channels with guix repl, then publishes the
 # observed pins as the lock's Guix section.
 expect {
@@ -1090,6 +1161,58 @@ expect {
 		)
 }
 
+# On Nix, a task whose environment mixes a package tool with a FetchLocked
+# download and an Expect checks the machine's programs and makes the
+# download ready before it enters, and sh puts it first on PATH there; the
+# lock must pin it. Direct refuses the package tool, naming it, and a build
+# cannot use the environment.
+expect {
+	file = {
+		system: "x86_64-linux",
+		url: "https://example.com/t",
+		mirrors: [],
+		program: File,
+	}
+	settings = planning.concat([
+		FetchLocked("tool", [file]),
+		Environment("mixed", [Tools(["hello", "tool#tool"]), Expect(["git"])]),
+		Task("both", [Use("mixed"), Run(["tool"])]),
+	])
+	sha256 = "ab".repeat(32)
+	tool_pin = { key: "tool/x86_64-linux", url: file.url, sha256, size: 3 }
+	section = DirectBackend.section([tool_pin])
+	pinned = Present(LockFile.splice(nix_lock, "direct", section) ?? "")
+	bin = "/work/direct/mixed/bin"
+	entering = ["sh", "-c", "PATH=\"$0:$PATH\" && exec \"$@\"", bin, "tool"]
+	built = Build("b", [Use("mixed"), Run(["true"]), Output("o")])
+	sandboxed = match ConfigToModel.convert(settings.append(built)) {
+		Ok(model) => Project.validate(model).is_err()
+		Err(why) => why.contains("b cannot use environment mixed: FetchLocked")
+	}
+	match ConfigToModel.convert(settings) {
+		Ok(model) => {
+			both = Request.Run("both", [])
+			planned_with = |lock| Std.plan_nix(model, both, { ..context, lock })
+			entered = match planned_with(pinned).map_ok(|p| p.steps) {
+				Ok([.., ExpectPrograms(check), Realise(realise), Run(task)]) =>
+					check.programs == ["git"]
+						and realise.bin == bin
+						and realise.programs.map(|p| (p.name, p.sha256))
+							== [("tool", sha256)]
+						and task.argv.take_last(entering.len()) == entering
+				_ => Bool.False
+			}
+			not_downloads = "environment mixed has tools that are not downloads: "
+			entered
+				and failed(planned_with(nix_lock)) == "missing_direct_lock"
+				and DirectBackend.fit(model, both)
+					== Err("${not_downloads}default#hello")
+				and sandboxed
+		}
+		Err(_) => Bool.False
+	}
+}
+
 # direct runs a workflow of tasks, which Nix leaves to it, refuses one with a
 # build, and update with a name only for a FetchLocked file, which Nix leaves
 # to it too.
@@ -1110,7 +1233,8 @@ expect {
 		),
 		Environment("dev", [Tools(["tool#tool"])]),
 		Task("t", [Use("dev"), Run(["tool"])]),
-		Build("app", [Use("dev"), Run(["true"]), Output("out")]),
+		Environment("make", [Tools(["gnumake"])]),
+		Build("app", [Use("make"), Run(["true"]), Output("out")]),
 		Workflow("tasks", [RunTask("t", [])]),
 		Workflow("all", [RunTask("t", []), BuildArtifact("app")]),
 	]
