@@ -24,6 +24,15 @@ Pages := [].{
 		config: [],
 	}
 
+	spec : Command.Page
+	spec = {
+		description: "Print the project's environments and their tools, package "
+			.concat("sources, fetches, builds, tasks, shells and workflows as ")
+			.concat("versioned JSON, for tools such as SBOM generators."),
+		examples: ["kai spec"],
+		config: [Pages.environment],
+	}
+
 	update : Command.Page
 	update = {
 		description: "Pin the package sources Kaifile.roc uses in the lock file, "

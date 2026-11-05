@@ -30,5 +30,6 @@ expect {
 			|command| ["nix", "guix", "direct"].map(|backend| { command, backend }),
 		)
 		.append({ command: "model", backend: "" })
+		.append({ command: "spec", backend: "" })
 	Conformance.missing(Std.plugin([Name("x")]), cases) == []
 }

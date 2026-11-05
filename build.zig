@@ -501,7 +501,7 @@ pub fn build(b: *std.Build) void {
         "examples/source-build", "examples/task",    "examples/workflow",
     };
     for (examples) |example| {
-        for ([_][]const u8{ "check", "model" }) |command| {
+        for ([_][]const u8{ "check", "model", "spec" }) |command| {
             const smoke = std.Build.Step.Run.create(
                 b,
                 b.fmt("kai {s} {s}", .{ command, example }),
