@@ -220,6 +220,14 @@ triple, such as `x86_64-unknown-linux-gnu`, for paths like
 `target/$KAI_RUST_TARGET/release`. A variable of the same name in an `Env`
 replaces them.
 
+So that a build can say what made it, such as in an SBOM it writes, a Nix
+build also gets `KAI_TOOLS`, a directory linking each tool of its
+environment, by the name the Kaifile gives it, to the tool's store path, and
+`$KAI_INPUTS/.kai-inputs.json`, a record of each of its inputs and needs:
+its name, kind, URL, revision and hash, as [`kai lock`](docs/lock.md)
+reports them. Neither adds to an artifact's closure unless the artifact
+names a store path; see [docs/evidence.md](docs/evidence.md).
+
 A Rust build reads its crates from a `CargoVendor` in its inputs through the
 cargo configuration in the vendored directory, which replaces crates.io and
 each git dependency with it. Cargo then reads the crates under

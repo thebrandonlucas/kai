@@ -30,7 +30,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [direct](direct) | Tools from pinned downloads, a file and an archive, run with no provider in tasks and a workflow of tasks, and a program the machine must have | `kai workflow check` |
 | [mixed](mixed) | One environment with a tool from nixpkgs, a pinned download first on `PATH` and a program the machine must have, on Nix | `kai run greet` |
 | [revision](revision) | A build stamped with the project's git revision | `kai build version` |
-| [source-build](source-build) | A build reading a locked source | `kai build moofasa` |
+| [source-build](source-build) | A build reading a locked source, and a build recording its tools and inputs | `kai build moofasa` |
 | [path-source](path-source) | A build reading a locked project directory | `kai build kai` |
 | [workspace](workspace) | An app whose Kaifile sits in a subdirectory, building against a module at the workspace root with `BuildRoot` | `kai build greeting` in `apps/greeter` |
 | [fetch](fetch) | A file pinned by its sha256, run as a tool and read by a build, one file for every system, and a system a file is unavailable on | `kai run version` |

@@ -1068,23 +1068,52 @@ NixBackend :: [].{
 		# vendored directory is copied whole. Its cargo config names the crates
 		# `.`, the directory above the config's, so rustc reads them under
 		# $KAI_INPUTS/<name>, the path a build remaps, rather than the copy's.
-		inputs = build.inputs.map(
+		#
+		# Each input also gets a record for $KAI_INPUTS/.kai-inputs.json, a
+		# name no input can have, with `kai lock`'s names and hash shape and
+		# no store paths, so an artifact can copy it without growing its
+		# closure. A cargo vendor's hash is its Cargo.lock's.
+		sha256 = |of, encoding, value|
+			"{ algorithm = \"sha256\"; of = \"${of}\"; "
+				.concat("encoding = \"${encoding}\"; value = ${value}; }")
+		record = |name, kind, url, revision, hashed|
+			"{ name = ${quote(name)}; kind = \"${kind}\"; url = ${url}; "
+				.concat("revision = ${revision}; hash = ${hashed}; }")
+		entries = build.inputs.map(
 			|name| {
 				fetched = model.fetches.find_first(|f| f.name == name)
 				vendored = model.cargo_vendors.find_first(|c| c.name == name)
 				copy = "cp -rL $vendor $out && chmod -R u+w $out && substituteInPlace "
 					.concat("$out/.cargo/config.toml --replace-fail cargo-vendor-dir .")
-				path = match (fetched, vendored) {
-					(Ok(fetch), _) => "pkgs.fetchurl ${fetch_file(fetch)}"
-					(_, Ok(vendor)) =>
-						"pkgs.runCommand ${quote("kai-cargo-vendor-${name}")} { "
-							.concat("vendor = pkgs.rustPlatform.importCargoLock { ")
-							.concat("lockFile = builtins.toFile \"Cargo.lock\" ")
-							.concat("${quote(vendor.lock)}; allowBuiltinFetchGit = true; }; } ")
-							.concat(quote(copy))
-					_ => "inputs.${quote(name)}"
+				source = "inputs.${quote(name)}"
+				(path, recorded) = match (fetched, vendored) {
+					(Ok(fetch), _) => {
+						file = sha256("file", "sri", "file.hash")
+						(
+							"pkgs.fetchurl ${fetch_file(fetch)}",
+							"(let file = ${fetch_file(fetch)}; in "
+								.concat("${record(name, "fetch", "file.url", "null", file)})"),
+						)
+					}
+					(_, Ok(_)) => {
+						lock_file = "cargoLocks.${quote(name)}"
+						lock = sha256("file", "hex", "builtins.hashFile \"sha256\" ${lock_file}")
+						(
+							"pkgs.runCommand ${quote("kai-cargo-vendor-${name}")} { "
+								.concat("vendor = pkgs.rustPlatform.importCargoLock { ")
+								.concat("lockFile = ${lock_file}; allowBuiltinFetchGit = true; }; } ")
+								.concat(quote(copy)),
+							record(name, "cargo_vendor", "null", "null", lock),
+						)
+					}
+					_ => {
+						declared = model.build_sources.find_first(|s| s.name == name)
+							.map_ok(|s| quote(s.ref)) ?? "null"
+						nar = sha256("nar", "sri", "${source}.narHash")
+						(source, record(name, "source", declared, "${source}.rev or null", nar))
+					}
 				}
-				"{ name = ${quote(name)}; path = ${path}; }"
+				{ link: "{ name = ${quote(name)}; path = ${path}; }", recorded }
 			},
 		)
 		roc_packages = model.build_sources.keep_if(|s| build.inputs.contains(s.name))
@@ -1097,6 +1126,33 @@ NixBackend :: [].{
 		dependencies = build.needs.map(
 			|name|
 				"{ name = ${quote(name)}; path = artifacts.${quote(name)}; }",
+		)
+		artifact = |name| record(name, "artifact", "null", "null", "null")
+		records = entries.map(|e| e.recorded).concat(build.needs.map(artifact))
+		inputs = entries.map(|e| e.link).append(
+			"{ name = \".kai-inputs.json\"; path = builtins.toFile \"kai-inputs.json\" "
+				.concat("(builtins.toJSON { schema_version = 1; ")
+				.concat("inputs = [ ${Str.join_with(records, " ")} ]; }); }"),
+		)
+		vendors = model.cargo_vendors.keep_if(|c| build.inputs.contains(c.name))
+		cargo_locks = vendors.map(
+			|c| "${quote(c.name)} = builtins.toFile \"Cargo.lock\" ${quote(c.lock)}; ",
+		)
+		# $KAI_TOOLS links each tool by the name the Kaifile writes, and the
+		# RustToolchain, which path_packages lists last. The build's closure
+		# holds them already, and an artifact only those it references.
+		written = |tool|
+			if (tool.source == "default") tool.name else "${tool.source}#${tool.name}"
+		tool_links = environment.tools.map(
+			|tool| {
+				path = tool_reference(tool, environment, model.fetches, primary)
+				"{ name = ${quote(written(tool))}; path = ${path}; }"
+			},
+		).concat(
+			if (environment.rust_toolchain == None)
+				[]
+			else
+				["{ name = \"rust-toolchain\"; path = pkgs.lib.last tools; }"],
 		)
 		project = if snapshot.is_empty() {
 			"builtins.throw \"build execution requires NixBackend.plan "
@@ -1131,6 +1187,7 @@ NixBackend :: [].{
 			},
 			model.fetches,
 		).concat(system_attrs(environment, build.env, "pkgs"))
+			.append("\"KAI_TOOLS\" = toolLinks; ")
 		lines([
 			"          ${quote(build.name)} = let",
 			"            system = ${quote(system)};",
@@ -1141,6 +1198,10 @@ NixBackend :: [].{
 				"            };",
 				"            pkgs = sets.${quote(primary)};",
 				"            tools = [ ${Str.join_with(tools, " ")} ];",
+				"            toolLinks = pkgs.linkFarm "
+					.concat(quote("kai-tools-${build.name}"))
+					.concat(" [ ${Str.join_with(tool_links, " ")} ];"),
+				"            cargoLocks = { ${Str.join_with(cargo_locks, "")}};",
 				"            runner = ${runner};",
 				"          in pkgs.runCommandCC ${quote("kai-${build.name}")} {",
 				"            nativeBuildInputs = tools;",
@@ -3526,6 +3587,7 @@ expect {
 	target = |pkgs|
 		"\"KAI_RUST_TARGET\" = ${pkgs}.stdenv.hostPlatform.rust.rustcTarget; "
 	rust_target = target("sets.\"default\"")
+	tools = "\"KAI_TOOLS\" = toolLinks; "
 	data = {
 		..TestData.data,
 		environments: [{ ..TestData.builder, rust_toolchain: toolchain }],
@@ -3544,11 +3606,74 @@ expect {
 			rust.contains("env = { \"KAI_SYSTEM\" = system; ${rust_target}};")
 				and set.contains("env = { \"KAI_SYSTEM\" = \"mine\"; };")
 				and builds.contains(
-					"env = { \"KAI_SYSTEM\" = system; ${target("pkgs")}};",
+					"env = { \"KAI_SYSTEM\" = system; ${target("pkgs")}${tools}};",
 				)
 				and builds.contains(
-					"env = { \"KAI_RUST_TARGET\" = \"mine\"; \"KAI_SYSTEM\" = system; };",
+					"env = { \"KAI_RUST_TARGET\" = \"mine\"; \"KAI_SYSTEM\" = system; "
+						.concat("${tools}};"),
 				)
 		_ => Bool.False
 	}
+}
+
+# Builds get $KAI_TOOLS, linking each tool by its written name, and
+# $KAI_INPUTS/.kai-inputs.json, recording each input and need; no Env sets
+# KAI_TOOLS.
+expect {
+	sri = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+	jq = {
+		system: "x86_64-linux",
+		url: "https://example.com/jq",
+		hash: sri,
+		mirrors: [],
+		unpack: File,
+	}
+	builder = {
+		..TestData.builder,
+		tools: TestData.builder.tools.append({ source: "jq", name: "jq" }),
+		rust_toolchain: Toml(
+			{ text: "[toolchain]", components: [], target_triples: [] },
+		),
+	}
+	library = { ..TestData.library, inputs: ["assets", "jq", "crates"] }
+	builds = [TestData.application, library]
+	data = { ..TestData.data, environments: [builder], builds }
+	project = TestData.project(data)
+	model = {
+		..project,
+		requires_: project.requires_.concat(["fetches", "cargo"]),
+		fetches: [{ name: "jq", files: [jq], unavailable: [] }],
+		cargo_vendors: [{ name: "crates", lock: "version = 4\n" }],
+	}
+	sha256 = |of, encoding, value|
+		"hash = { algorithm = \"sha256\"; of = \"${of}\"; "
+			.concat("encoding = \"${encoding}\"; value = ${value}; }; }")
+	vendored = "builtins.hashFile \"sha256\" cargoLocks.\"crates\""
+	parts = [
+		"toolLinks = pkgs.linkFarm \"kai-tools-library\" [ { name = \"python3\"; ",
+		"{ name = \"jq#jq\"; path = (sets.\"default\".runCommand \"jq\" ",
+		"{ name = \"rust-toolchain\"; path = pkgs.lib.last tools; } ];",
+		"cargoLocks = { \"crates\" = builtins.toFile \"Cargo.lock\" "
+			.concat("\"version = 4\\n\"; };"),
+		"cargoLocks = { };",
+		"lockFile = cargoLocks.\"crates\"; allowBuiltinFetchGit = true;",
+		"{ name = \".kai-inputs.json\"; path = builtins.toFile \"kai-inputs.json\" "
+			.concat("(builtins.toJSON { schema_version = 1; inputs = [ "),
+		"{ name = \"assets\"; kind = \"source\"; url = \"path:./assets\"; "
+			.concat("revision = inputs.\"assets\".rev or null; ")
+			.concat(sha256("nar", "sri", "inputs.\"assets\".narHash")),
+		"in { name = \"jq\"; kind = \"fetch\"; url = file.url; revision = null; "
+			.concat(sha256("file", "sri", "file.hash")).concat(")"),
+		"{ name = \"crates\"; kind = \"cargo_vendor\"; url = null; revision = null; "
+			.concat(sha256("file", "hex", vendored)),
+		"{ name = \"library\"; kind = \"artifact\"; url = null; "
+			.concat("revision = null; hash = null; }"),
+		"\"KAI_TOOLS\" = toolLinks; };",
+	]
+	own_tools = [{ ..base, env: [{ name: "KAI_TOOLS", value: "mine" }] }]
+	match NixBackend.render(model) {
+		Ok(text) => parts.all(|part| text.contains(part))
+		Err(_) => Bool.False
+	}
+		and rejects({ ..simple, environments: own_tools }, "invalid Env name")
 }

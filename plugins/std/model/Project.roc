@@ -247,7 +247,7 @@ Project :: [].{
 	## Portable shell names, none that Kai or the Nix builder sets itself.
 	check_env : List(Model.Variable), Str -> Try({}, Str)
 	check_env = |variables, declaration| {
-		reserved = ["PATH", "HOME", "KAI_INPUTS", "KAI_ARTIFACTS", "out"]
+		reserved = ["PATH", "HOME", "KAI_INPUTS", "KAI_ARTIFACTS", "KAI_TOOLS", "out"]
 		var $seen = []
 		for variable in variables {
 			if !valid_variable_name(variable.name) or reserved.contains(variable.name) {
