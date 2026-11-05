@@ -210,7 +210,8 @@ The sandbox has no `.git` either, so a build that stamps a version declares
 outside git or when git is not installed. Its inputs then change with every
 commit, which is why it is opt-in.
 
-Every shell, task and build also gets `KAI_SYSTEM`, the system it runs on,
+On Nix and the direct backend, every shell, task and build also gets
+`KAI_SYSTEM`, the system it runs on,
 such as `x86_64-linux` or `aarch64-darwin`, and, when its environment has a
 `RustToolchain` (Nix only), `KAI_RUST_TARGET`, that system's Rust target
 triple, such as `x86_64-unknown-linux-gnu`, for paths like
