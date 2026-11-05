@@ -113,6 +113,7 @@ kai run hello -- again            # arguments after -- are appended
 kai build greeting                # sandboxed build; prints the store path
 kai workflow ci                   # run steps in order, stop at a failure
 kai spec                          # print the project as JSON (docs/spec.md)
+kai lock                          # print what the lock pins as JSON (docs/lock.md)
 kai bundle-plugin plugins/deploy  # bundle a plugin package for hosting
 ```
 

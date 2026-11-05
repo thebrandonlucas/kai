@@ -39,7 +39,8 @@ values.
 
 Names are identifiers that other reports share: package sources, overlays,
 flake inputs and sources by `name`, Guix channels by `name`, and fetched
-files by `key`, as `.kai/lock.json` pins them.
+files by `key`, as `.kai/lock.json` pins them and [`kai lock`](lock.md)
+reports them.
 
 ## Example
 

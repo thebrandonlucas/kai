@@ -33,6 +33,15 @@ Pages := [].{
 		config: [Pages.environment],
 	}
 
+	lock : Command.Page
+	lock = {
+		description: "Print every input the lock pins, in its Nix, Guix and direct "
+			.concat("sections, with its revision, hash and size, as versioned JSON ")
+			.concat("for tools such as SBOM generators."),
+		examples: ["kai update", "kai lock"],
+		config: [Pages.environment],
+	}
+
 	update : Command.Page
 	update = {
 		description: "Pin the package sources Kaifile.roc uses in the lock file, "

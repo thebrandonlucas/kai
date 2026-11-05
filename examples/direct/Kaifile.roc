@@ -4,7 +4,8 @@
 # lock, and `kai update jq` measures jq's again. Expect names programs the
 # machine must have, all checked before anything runs. Kai prefers Nix where
 # it fits; these tools only direct can serve, so `kai run version` and the
-# workflow of tasks `kai workflow check` need no provider at all.
+# workflow of tasks `kai workflow check` need no provider at all. `kai lock`
+# prints the pins as JSON.
 app [kaifile] {
 	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",

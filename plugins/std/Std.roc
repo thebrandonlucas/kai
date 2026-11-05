@@ -1,7 +1,7 @@
 # std's settings are today's Kaifile settings. std declares kai's standard
-# commands (shell, run, build, workflow, update, model, spec), the nix, guix and
-# direct backends, and implementations planning from the settings' Kaifile
-# model.
+# commands (shell, run, build, workflow, update, model, spec, lock), the nix,
+# guix and direct backends, and implementations planning from the settings'
+# Kaifile model.
 import pf.Backend
 import pf.Command
 import Config
@@ -19,6 +19,7 @@ import nix.Locks
 import nix.NixBackend
 import guix.GuixBackend
 import direct.DirectBackend
+import LockReport
 import Pages
 import Spec
 
@@ -223,6 +224,7 @@ Std := [].{
 			),
 			command("model", Pages.model, [], ReadsLock),
 			command("spec", Pages.spec, [], ReadsLock),
+			command("lock", Pages.lock, [], ReadsLock),
 		]
 	}
 
@@ -369,6 +371,12 @@ Std := [].{
 					backend: Independent,
 					fit: |_| Ok({}),
 					plan: |_| Ok(Plan.{ steps: [Print(Spec.json(model))], next: Done }),
+				},
+				Implementation.{
+					command: "lock",
+					backend: Independent,
+					fit: |_| Ok({}),
+					plan: LockReport.plan,
 				},
 			])
 	}
@@ -1133,7 +1141,7 @@ expect {
 
 # The candidates cli/Selection.roc's std test assumes: shell, run, build,
 # workflow and update on each backend --backend allows, in preference
-# order; model and spec on no backend, whatever --backend says.
+# order; model, spec and lock on no backend, whatever --backend says.
 expect {
 	context_for = |backend| {
 		args: [],
@@ -1163,7 +1171,7 @@ expect {
 				and backends(command, Only("direct")) == ["direct"],
 	)
 		and [Auto, Only("nix"), Only("guix")].all(
-			|choice| ["model", "spec"].all(|c| backends(c, choice) == [""]),
+			|choice| ["model", "spec", "lock"].all(|c| backends(c, choice) == [""]),
 		)
 }
 

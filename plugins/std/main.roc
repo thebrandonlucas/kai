@@ -31,5 +31,6 @@ expect {
 		)
 		.append({ command: "model", backend: "" })
 		.append({ command: "spec", backend: "" })
+		.append({ command: "lock", backend: "" })
 	Conformance.missing(Std.plugin([Name("x")]), cases) == []
 }
