@@ -68,6 +68,28 @@ nix run github:thebrandonlucas/kai -- --version
 nix profile install github:thebrandonlucas/kai
 ```
 
+### Use Kai in GitHub Actions
+
+The [setup-kai](.github/actions/setup-kai/action.yml) action installs Nix and
+a Kai release with the install script, and caches Kai's downloads:
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: thebrandonlucas/kai/.github/actions/setup-kai@COMMIT
+    with:
+      version: 0.0.11
+  - run: kai run test
+```
+
+Pin the action by a full commit SHA, or by a release tag from 0.0.12 on.
+`version` is required, so that a run installs the same kai until the workflow
+changes it. `cache` (default `true`) caches `~/.cache/kai`, the direct
+backend's store and the Roc compiler Kai downloads, by the version, the
+runner's OS and architecture, and `.kai/lock.json`. `nix` (default `true`)
+installs Nix unless it is on `PATH`; set it to `false` for a project whose
+environments are all [pinned downloads](#running-without-nix-or-guix).
+
 ## Getting started
 
 A project is configured by `Kaifile.roc`, an ordinary
