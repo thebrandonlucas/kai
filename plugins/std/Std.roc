@@ -73,10 +73,13 @@ Std := [].{
 		nix_systems = NixBackend.supported_systems
 		for system in model.systems {
 			guix_supports = GuixBackend.check_system(system).is_ok()
-			if !nix_systems.contains(system) and !guix_supports {
+			if DirectBackend.only_systems.contains(system) {
+				DirectBackend.check_system(model, system)?
+			} else if !nix_systems.contains(system) and !guix_supports {
 				return Err(
 					"unsupported system ${system}; Nix supports "
-						.concat("${Str.join_with(nix_systems, ", ")} and Guix any Linux"),
+						.concat("${Str.join_with(nix_systems, ", ")}, Guix any Linux and ")
+						.concat("direct also ${Str.join_with(DirectBackend.only_systems, ", ")}"),
 				)
 			}
 		}
@@ -341,7 +344,8 @@ Std := [].{
 					},
 					plan: |ctx| {
 						Std.known_inputs(model, Command.trailing(ctx.args, "inputs"))?
-						Std.update_nix(Std.revised(model, ctx), ctx).map_err(Plan.fail)
+						nix_model = Std.revised(Std.on_nix(model), ctx)
+						Std.update_nix(nix_model, ctx).map_err(Plan.fail)
 					},
 				},
 				Implementation.{
@@ -465,7 +469,7 @@ Std := [].{
 	## Nix plans read the lock authority; its absence is a planning failure.
 	plan_nix : Model, Request, Implementation.Context -> Try(Plan, Plan.Failure)
 	plan_nix = |declared, wanted, ctx| {
-		model = Std.revised(declared, ctx)
+		model = Std.revised(Std.on_nix(declared), ctx)
 		layout = Std.nix_layout(ctx.layout)
 		path = ctx.layout.lock_path
 		lock_failure = |code, message|
@@ -581,6 +585,13 @@ Std := [].{
 				other => other
 			}
 		Ok(Plan.{ steps: planned.steps.map(named), next: planned.next })
+	}
+
+	## The model as Nix sees it: its flake names no system only direct serves.
+	on_nix : Model -> Model
+	on_nix = |model| {
+		..model,
+		systems: model.systems.drop_if(|s| DirectBackend.only_systems.contains(s)),
 	}
 
 	## A build declaring Revision receives the project's revision in its
@@ -1319,4 +1330,26 @@ expect {
 				.append(Build("other", [Use("dev"), Default, Run(["make"]), Output("o")])),
 		)
 			== Err("several builds are Default: main, other")
+}
+
+# A system only direct serves needs every environment to be downloads there,
+# and Nix's flake leaves it out.
+expect {
+	both = Systems(["x86_64-linux", "x86_64-windows"])
+	linux_hello = OnSystems(["x86_64-linux"], [Tools(["hello"])])
+	nix_only = Environment("dev", [Tools(["hello"])])
+	mixed = [Name("mixed"), both, Environment("dev", [linux_hello])]
+	refused = "x86_64-windows has no Nix or Guix: environment dev has tools "
+		.concat("that are not downloads: default#hello")
+	update = |model|
+		Std.implementations(model)
+			.keep_if(|i| i.command == "update" and i.backend == On("nix"))
+			.map(|i| (i.plan)(context).is_ok())
+	match Std.checked_model(mixed) {
+		Ok(model) =>
+			Std.on_nix(model).systems == ["x86_64-linux"]
+				and update(model) == [Bool.True]
+				and Std.checked_model([both, Name("bad"), nix_only]) == Err(refused)
+		Err(_) => Bool.False
+	}
 }

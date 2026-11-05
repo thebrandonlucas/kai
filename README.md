@@ -164,7 +164,7 @@ garbage collection.
 | Setting | Purpose |
 | --- | --- |
 | `Name(name)` | Project name. Required. |
-| `Systems([...])` | Systems the generated flake declares. Optional (default `x86_64-linux` and `aarch64-linux`); must include the system of the host Kai runs on. |
+| `Systems([...])` | Systems the generated flake declares. Optional (default `x86_64-linux` and `aarch64-linux`); must include the system of the host Kai runs on. `x86_64-darwin` and `x86_64-windows`, which neither Nix nor Guix serves, take only environments the [direct backend](#running-without-nix-or-guix) serves there: `kai check` refuses any other, naming it, unless `OnSystems` leaves its package tools to other systems. The generated flake leaves them out. |
 | `Packages(name, source)` | A package source: `Auto`, `From(NixPackages(flakeRef))` or `From(GuixPackages(...))`. Tools use the `default` source (`Auto`: nixpkgs unstable on Nix, the installed channels on Guix) unless written `"source#tool"`. |
 | `Overlay(name, flakeRef)` | A Nix overlay, applied only where an environment selects it. |
 | `Follows(overlay, input, source)` | Makes an overlay's own flake input, such as `nixpkgs`, the project's Nix package source `source` (`default` unless declared), so it is neither downloaded nor locked separately. |
@@ -182,7 +182,7 @@ garbage collection.
 | `Fetch(name, [{ system, url, sha256 }, ...])` | A file pinned by its published sha256 (hex or SRI), one per system; the host's system picks it, and it needs no lock entry. Builds read it in `Inputs([...])`, and the tool `"name#binary"` puts it on `PATH` as the executable `binary`. |
 | `FetchAll(name, { url, sha256 })` | A `Fetch` of one file for every system, such as a data archive or a source tarball. |
 | `FetchUnavailable(name, [...])` | The declared systems a `Fetch` or `FetchAll` has no file for, such as a tool with no macOS build. On them, Kai refuses only the shells, tasks and builds that use it, saying why, rather than the whole Kaifile; `OnSystems` can leave the tool out there instead. |
-| `FetchLocked(name, [{ system, url, mirrors, program }, ...])` | A `Fetch` with no published sha256: `kai update` records each file's SHA-256 and size in the lock's `direct` section, and the [direct backend](#running-without-nix-or-guix) runs it, as does Nix beside package-source tools; a build cannot use it. `program` is `File`, or `Archive(path)` for a tar.gz or tar.xz with the program at `path`; `mirrors` are other URLs for the same bytes. |
+| `FetchLocked(name, [{ system, url, mirrors, program }, ...])` | A `Fetch` with no published sha256: `kai update` records each file's SHA-256 and size in the lock's `direct` section, and the [direct backend](#running-without-nix-or-guix) runs it, as does Nix beside package-source tools; a build cannot use it. `program` is `File`, or `Archive(path)` for a tar.gz, tar.xz or zip with the program at `path`; `mirrors` are other URLs for the same bytes. |
 | `CargoVendor(name, text)` | The crates a `Cargo.lock` names, vendored into one directory that builds can read, pinned by the lock's checksums with no lock entry, so `kai update <name>` only says so (`cargo update` moves them). Pass the text with `import "Cargo.lock" as cargo_lock : Str`. A git dependency is fetched at the commit the lock records. |
 | `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, fetches and cargo vendors, in `$KAI_INPUTS/<name>`), `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`), `Revision` (the project's revision, below) and `Default`, which makes it the build `kai build` builds when given no name (at most one build). |
 | `BuildRoot(path)` | The directory builds copy, when it is above the project's, as `..` segments: `BuildRoot("../..")` lets an app whose Kaifile sits in `apps/web` build against a library at the repository root. Builds copy that directory instead of the project's, and their `Files`, `Run` and `Output` work from it; `.kai` stays out of the copy. |
@@ -333,7 +333,8 @@ long time. Overlays, `Fetch` and build inputs (`Inputs([...])`) other than
 The direct backend runs shells and tasks from pinned downloads, for tools
 built on Kai whose users cannot be assumed to have Nix. It serves an
 environment whose tools are all `Fetch` or `FetchLocked` files, and needs only
-`tar`, `chmod`, `sh` and `env` on the machine (and `xz` for a tar.xz):
+`tar`, `chmod`, `sh` and `env` on the machine (and `xz` for a tar.xz, and
+`unzip`, or a `tar` that is bsdtar as on macOS, for a zip):
 
 ```roc
 kaifile = Std.kaifile([
@@ -363,9 +364,15 @@ runs the task with them first on `PATH`.
 
 Downloads go over HTTPS with no credentials into `kai/v1` in the cache
 directory, named by SHA-256, and are hashed again before every use. An archive
-is unpacked whole, after listing it: one with an absolute name, a `..` or a
-link out of the tree is refused, and its files are made read-only. The store may be deleted at any time. See
+is unpacked whole, after listing it: one with an absolute name, a `..`, a
+backslash or a link out of the tree (any link, for a zip unzip lists) is
+refused, and its files are made read-only. The store may be deleted at any time. See
 [examples/direct](examples/direct).
+
+It is the only backend for `x86_64-darwin` and `x86_64-windows`, so a project
+can declare them for its CI legs there: `kai update` on Linux pins their files
+too. Kai itself does not run on them yet. On Windows the downloads are copied
+into the environment's `bin` directory, with their `.exe`, instead of linked.
 
 A pinned download pins one file, not a dependency tree, so this suits static
 binaries: a program needing the machine's shared libraries is only as

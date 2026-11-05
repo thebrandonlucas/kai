@@ -77,7 +77,7 @@ Config :: [].{
 	## A Fetch with no published sha256: `kai update` records each file's in
 	## the lock's direct section, and only the direct backend runs it. `mirrors`
 	## are other URLs for the same bytes. `program` is `File` for the program
-	## itself, or `Archive(path)` for a tar.gz or tar.xz with the program at
+	## itself, or `Archive(path)` for a tar.gz, tar.xz or zip with the program at
 	## `path`, unpacked whole.
 	LockedFile : {
 		system : System,

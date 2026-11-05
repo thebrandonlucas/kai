@@ -227,6 +227,7 @@ kaifile = Std.kaifile(
 						"nixfmt",
 						"shellcheck",
 						"sops",
+						"unzip",
 					]),
 				),
 			],

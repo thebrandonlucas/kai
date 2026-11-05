@@ -25,6 +25,24 @@ DirectBackend := [].{
 	builds_need_nix = "the direct backend runs shells, tasks and workflows of "
 		.concat("tasks: builds need Nix, for its sandbox")
 
+	## The systems only direct serves, as neither Nix nor Guix runs there.
+	only_systems : List(Str)
+	only_systems = ["x86_64-darwin", "x86_64-windows"]
+
+	## Whether direct serves every environment on `system`, one of
+	## `only_systems`, but those a Fetch unavailable there leaves out.
+	check_system : Model, Str -> Try({}, Str)
+	check_system = |model, system| {
+		project = Project.for_system(model, system)
+		for { name, .. } in project.environments {
+			if Project.check_fetches_on(project, [name], [], system).is_ok() {
+				DirectBackend.check_environment(project, name)
+					.map_err(|why| "${system} has no Nix or Guix: ${why}")?
+			}
+		}
+		Ok({})
+	}
+
 	## Whether every tool of the environment can come from a pinned download.
 	check_environment : Model, Str -> Try({}, Str)
 	check_environment = |model, name| {
@@ -568,4 +586,28 @@ expect {
 	observed = [{ path: result, contents: Text(line) }]
 	lock = locked(both.drop_last(1))
 	DirectBackend.update(model, [], layout, lock, 1, observed).is_err()
+}
+
+# On a system only direct serves, every environment must be downloads, but
+# those leaving their package tools to other systems.
+expect {
+	on_windows = |f| {
+		windows_file = { ..(f.files.first() ?? archive), system: "x86_64-windows" }
+		{ ..f, files: f.files.append(windows_file) }
+	}
+	two_systems = {
+		..model,
+		systems: ["x86_64-linux", "x86_64-windows"],
+		fetches: model.fetches.map(on_windows),
+	}
+	hello = [{ source: "default", name: "hello" }]
+	linux_only = { systems: ["x86_64-linux"], tools: hello, env: [] }
+	having = |changed| { ..two_systems, environments: [changed] }
+	checked = |changed|
+		DirectBackend.check_system(having(changed), "x86_64-windows")
+	refused = "x86_64-windows has no Nix or Guix: environment dev has tools "
+		.concat("that are not downloads: default#hello")
+	checked(environment) == Ok({})
+		and checked({ ..environment, tools: hello }) == Err(refused)
+		and checked({ ..environment, on_systems: [linux_only] }) == Ok({})
 }

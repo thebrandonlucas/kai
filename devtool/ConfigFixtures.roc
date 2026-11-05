@@ -281,8 +281,8 @@ ConfigFixtures := [].{
 		},
 		{
 			name: "UnsupportedSystem",
-			expected: Rejected("unsupported system x86_64-darwin"),
-			body: "config = [Name(\"invalid\"), Systems([\"x86_64-darwin\"])]",
+			expected: Rejected("unsupported system x86_64-freebsd"),
+			body: "config = [Name(\"invalid\"), Systems([\"x86_64-freebsd\"])]",
 		},
 		{
 			name: "NoSystems",
@@ -648,6 +648,30 @@ ConfigFixtures := [].{
 				\\ Environment("dev", []),
 				\\ Build("app", [Use("dev"), Inputs(["tool"]), Run(["true"]),
 				\\  Output("out")])]
+		},
+		{
+			name: "DirectOnlySystems",
+			expected: Valid,
+			body: \\config = [Name("direct-systems"),
+				\\ Systems(["x86_64-linux", "x86_64-darwin", "x86_64-windows"]),
+				\\ FetchLocked("tool", [
+				\\  { system: "x86_64-linux", url: "https://example.com/tool-linux",
+				\\   mirrors: [], program: File },
+				\\  { system: "x86_64-darwin", url: "https://example.com/tool-macos",
+				\\   mirrors: [], program: File },
+				\\  { system: "x86_64-windows", url: "https://example.com/tool.zip",
+				\\   mirrors: [], program: Archive("tool/tool.exe") }]),
+				\\ Environment("dev", [Tools(["tool#tool"]), Expect(["git"]),
+				\\  OnSystems(["x86_64-linux"], [Tools(["hello"])])]),
+				\\ Shell("default", [Use("dev")])]
+		},
+		{
+			name: "DirectOnlySystemNeedsNix",
+			expected: Rejected(
+				"x86_64-windows has no Nix or Guix: environment dev has tools",
+			),
+			body: \\config = [Name("bad"), Systems(["x86_64-linux", "x86_64-windows"]),
+				\\ Environment("dev", [Tools(["hello"])])]
 		},
 		{
 			name: "DuplicateExpect",
