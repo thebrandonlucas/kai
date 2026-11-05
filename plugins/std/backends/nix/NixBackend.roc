@@ -769,7 +769,7 @@ NixBackend :: [].{
 			|seen, name| if (seen.contains(name)) seen else seen.append(name),
 		)
 		for name in selected_names {
-			Project.check_environment(model, Nix, name)?
+			Project.check_environment(model, name)?
 		}
 		environments = model.environments.keep_if(|e| names.contains(e.name))
 		shells = model.shells.keep_if(|s| names.contains(s.environment))
@@ -1785,7 +1785,6 @@ mk = |t| Model.{
 	name: "test",
 	systems: t.systems,
 	sources: t.sources,
-	guix_channels: [],
 	inputs: t.inputs,
 	follows: [],
 	environments: t.environments,

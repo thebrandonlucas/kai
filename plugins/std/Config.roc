@@ -18,8 +18,6 @@ Config :: [].{
 	## `Follows(overlay, input, source)` makes the overlay's own flake input
 	## `input` the project's Nix package source `source`, so it is not locked
 	## separately.
-	## GuixChannel adds a channel beside Guix's own: its name, git URL, branch
-	## and introduction (first signed commit, signer's OpenPGP fingerprint).
 	## `Custom` and `Raw` retain consumer-specific extension data.
 	## BuildRoot names, as `..` segments such as "../..", the directory above
 	## the project that builds copy instead of the project's own; their Files,
@@ -32,7 +30,6 @@ Config :: [].{
 		Input(InputName, FlakeRef),
 		Overlay(InputName, FlakeRef),
 		Follows(InputName, Str, InputName),
-		GuixChannel(InputName, Str, Str, [Introduction(Str, Str)]),
 		Environment(EnvName, List(EnvironmentSetting)),
 		Shell(EnvName, List(ShellSetting)),
 		Task(TaskName, List(TaskSetting)),
@@ -86,6 +83,8 @@ Config :: [].{
 		program : [File, Archive(Str)],
 	}
 
+	## GuixPackages is a source of Guix packages: the guix plugin serves its
+	## tools, and Nix refuses an environment using it.
 	PackageSource : [Auto, From(Provider)]
 	Provider : [NixPackages(FlakeRef), GuixPackages(Str)]
 
@@ -108,8 +107,7 @@ Config :: [].{
 	## task's or build's Env overrides them. It needs Nix.
 	## OnSystems(systems, settings) adds tools and variables on the named
 	## declared systems only: its Tools after the environment's own, its Env
-	## overriding the environment's. Nix evaluates only the host's; Guix plans
-	## for the host's system.
+	## overriding the environment's. Nix evaluates only the host's.
 	EnvironmentSetting : [
 		Tools(List(Tool)),
 		Overlays(List(InputName)),

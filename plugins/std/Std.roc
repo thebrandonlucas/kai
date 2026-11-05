@@ -1,6 +1,6 @@
 # std's settings are today's Kaifile settings. std declares kai's standard
-# commands (shell, run, build, workflow, update, model, spec, lock), the nix,
-# guix and direct backends, and implementations planning from the settings'
+# commands (shell, run, build, workflow, update, model, spec, lock), the nix
+# and direct backends, and implementations planning from the settings'
 # Kaifile model.
 import pf.Backend
 import pf.Command
@@ -17,7 +17,6 @@ import model.Request
 import pf.LockFile
 import nix.Locks
 import nix.NixBackend
-import guix.GuixBackend
 import direct.DirectBackend
 import LockReport
 import Pages
@@ -49,12 +48,6 @@ Std := [].{
 							flag: DoubleDashVersion,
 						},
 						Backend.{
-							id: "guix",
-							summary: "Guix shells",
-							program: "guix",
-							flag: DoubleDashVersion,
-						},
-						Backend.{
 							id: "direct",
 							summary: "Pinned downloads, with no provider",
 							program: "",
@@ -73,13 +66,12 @@ Std := [].{
 		model = ConfigToModel.convert(settings)?
 		nix_systems = NixBackend.supported_systems
 		for system in model.systems {
-			guix_supports = GuixBackend.check_system(system).is_ok()
 			if DirectBackend.only_systems.contains(system) {
 				DirectBackend.check_system(model, system)?
-			} else if !nix_systems.contains(system) and !guix_supports {
+			} else if !nix_systems.contains(system) {
 				return Err(
 					"unsupported system ${system}; Nix supports "
-						.concat("${Str.join_with(nix_systems, ", ")}, Guix any Linux and ")
+						.concat("${Str.join_with(nix_systems, ", ")} and ")
 						.concat("direct also ${Str.join_with(DirectBackend.only_systems, ", ")}"),
 				)
 			}
@@ -266,26 +258,6 @@ Std := [].{
 					},
 				},
 		)
-		guix = atomic.map(
-			|command|
-				Implementation.{
-					command,
-					backend: On("guix"),
-					fit: |args| GuixBackend.fit(model, StdModel.request(command, args)?),
-					plan: |ctx| {
-						GuixBackend.check_system(ctx.host.system).map_err(Plan.fail)?
-						wanted = StdModel.request(command, ctx.args).map_err(Plan.fail)?
-						StdModel.known(model, wanted)?
-						locked = Std.guix_pins(model, ctx)?
-						# Guix plans for the host, so it takes the host's OnSystems.
-						system = ctx.host.system
-						host = Project.for_system(model, system)
-						revised = StdModel.revised(host, ctx)
-						GuixBackend.request_steps(revised, wanted, ctx.layout, locked)
-							.map_err(|why| Std.guix_failure(command, why))
-					},
-				},
-		)
 		direct = atomic.map(
 			|command|
 				Implementation.{
@@ -301,7 +273,6 @@ Std := [].{
 				},
 		)
 		nix
-			.concat(guix)
 			.concat(direct)
 			.concat([
 				Implementation.{
@@ -320,17 +291,6 @@ Std := [].{
 						nix_model = StdModel.revised(Std.on_nix(model), ctx)
 						Std.update_nix(nix_model, ctx).map_err(Plan.fail)
 					},
-				},
-				Implementation.{
-					command: "update",
-					backend: On("guix"),
-					fit: |args|
-						if Command.trailing(args, "inputs").is_empty() {
-							Std.guix_lockable(model)
-						} else {
-							Err("Guix updates all its pins together; name no inputs")
-						},
-					plan: |ctx| Std.update_guix(model, ctx).map_err(Plan.fail),
 				},
 				Implementation.{
 					command: "update",
@@ -402,7 +362,7 @@ Std := [].{
 					.map_err(|_| "unknown task: ${name}")?
 			_ => return Ok({})
 		}
-		Project.check_environment(model, Nix, environment)
+		Project.check_environment(model, environment)
 	}
 
 	## Inputs `kai update` was asked to move that the project does not declare.
@@ -508,7 +468,6 @@ Std := [].{
 			requires_: model.requires_,
 			systems: model.systems,
 			sources: model.sources,
-			guix_channels: model.guix_channels,
 			inputs: model.inputs,
 			follows: model.follows,
 			environments: model.environments,
@@ -550,7 +509,7 @@ Std := [].{
 	}
 
 	## Nix's generated files live in their own directory beneath kai's
-	## generated root; Guix's beside them.
+	## generated root.
 	nix_layout : Layout -> Layout
 	nix_layout = |layout|
 		Layout.{
@@ -559,104 +518,6 @@ Std := [].{
 			generated_root: "${layout.generated_root}/nix",
 			lock_path: layout.lock_path,
 		}
-
-	## The Guix pins in the lock, or why they are missing or stale.
-	guix_pins :
-		Model, Implementation.Context -> Try(GuixBackend.Locked, Plan.Failure)
-	guix_pins = |model, ctx| {
-		absent = "the lock has no Guix pins"
-		missing = Std.guix_lock_failure("missing_guix_lock", absent)
-		stale = "the Guix pins in the lock do not match the project's channels"
-		section = match ctx.lock {
-			Present(text) =>
-				match LockFile.section(text, "guix").map_err(Plan.fail)? {
-					Present(found) => found
-					Absent => return Err(missing)
-				}
-			Absent => return Err(missing)
-		}
-		GuixBackend.read_lock(GuixBackend.project_channels(model), section)
-			.map_err(|_| Std.guix_lock_failure("stale_lock", stale))
-	}
-
-	## A lock problem that updating the Guix pins fixes.
-	guix_lock_failure : Str, Str -> Plan.Failure
-	guix_lock_failure = |code, message|
-		{ code, message, hint: "kai --backend guix update", suggestions: [] }
-
-	## Why a Guix plan failed: a source the lock has no hash for, or `why`.
-	guix_failure : Str, Str -> Plan.Failure
-	guix_failure = |command, why|
-		if why == GuixBackend.stale_lock {
-			Std.guix_lock_failure("stale_lock", why)
-		} else {
-			Plan.fail("cannot plan the Guix ${command}: ${why}")
-		}
-
-	## Guix has something to lock when any environment can run on it.
-	guix_lockable : Model -> Try({}, Str)
-	guix_lockable = |model| {
-		guix = |e| Project.check_environment(model, Guix, e.name).is_ok()
-		if model.environments.any(guix) {
-			Ok({})
-		} else {
-			Err("no environment can run on Guix")
-		}
-	}
-
-	## Phase 0 resolves the channels and hashes the path: sources with the
-	## installed `guix repl` and asks kai for the result; phase 1 validates it
-	## and publishes the lock's guix section, keeping the others.
-	update_guix : Model, Implementation.Context -> Try(Plan, Str)
-	update_guix = |model, ctx| {
-		GuixBackend.check_system(ctx.host.system)?
-		dir = "${ctx.layout.generated_root}/guix"
-		result = "${dir}/lock-result.json"
-		channels = GuixBackend.project_channels(model)
-		trees = GuixBackend.source_trees(model)
-		match ctx.phase {
-			0 => {
-				unpinned = "${dir}/channels-unpinned.scm"
-				script = "${dir}/lock.scm"
-				entries = channels.map(|channel| { channel, commit: Unpinned })
-				# The empty result keeps a stale one from being observed.
-				files = [
-					{ path: unpinned, contents: GuixBackend.channels_scm(entries) },
-					{ path: script, contents: GuixBackend.lock_script },
-					{ path: result, contents: "" },
-				]
-				path = |t| "${ctx.layout.project_root}/${t.path}"
-				argv = ["guix", "repl", "-q", "--", script, result, unpinned]
-					.concat(trees.join_map(|t| [t.name, path(t)]))
-				lock = Run({
-					description: "guix lock",
-					argv,
-					output: Inherit,
-					secrets: [],
-					removed_environment_variables: [],
-					kept_environment_variables: [],
-				})
-				Ok(
-					Plan.{
-						steps: trees.map(|t| CheckSource(path(t))).concat([Write(files), lock]),
-						next: Observe([result]),
-					},
-				)
-			}
-			_ => {
-				text = match ctx.observed.find_first(|o| o.path == result) {
-					Ok({ contents: Text(found), .. }) => found
-					_ => return Err("Guix produced no ${result}")
-				}
-				pinned = GuixBackend.pins(channels, text)?
-				hashed = GuixBackend.hashes(trees, text)?
-				locked = GuixBackend.section(pinned, hashed)
-				contents = LockFile.splice(ctx.lock, "guix", locked)?
-				publish = PublishLock({ previous: ctx.lock, contents })
-				Ok(Plan.{ steps: [publish], next: Done })
-			}
-		}
-	}
 
 	## Nix has nothing to lock in a project using only Guix sources.
 	lockable : Model -> Try({}, Str)
@@ -779,8 +640,8 @@ expect {
 
 import "backends/nix/tests/local.nix-lock.json" as native_lock : Str
 
-# A shell, task, build and workflow on one environment both backends serve;
-# the unused build source matches the Nix lock fixture.
+# A shell, task, build and workflow on one environment; the unused build
+# source matches the Nix lock fixture.
 planning : List(Config.Setting)
 planning = [
 	Name("planning"),
@@ -877,19 +738,6 @@ published = |ctx, path, text| {
 
 nix_lock = published(context, "/generated/nix/flake.lock", native_lock)
 
-guix = { ..context, backend: "guix" }
-
-pin = "0123456789abcdef0123456789abcdef01234567"
-
-assets_hash = "0123456789abcdfghijklmnpqrsvwxyz0123456789abcdfghijk"
-
-guix_lock = published(
-	guix,
-	"/generated/guix/lock-result.json",
-	"{\"channels\":[{\"name\":\"guix\",\"commit\":\"${pin}\"}],"
-		.concat("\"sources\":[{\"name\":\"assets\",\"hash\":\"${assets_hash}\"}]}"),
-)
-
 develop = [
 	"nix",
 	"develop",
@@ -904,8 +752,6 @@ evaluating = |what, installable| {
 	argv: ["nix", "eval", "--raw", "--no-update-lock-file", "--no-write-lock-file"]
 		.concat([installable, "--apply", "shell: builtins.seq shell.drvPath \"\""]),
 }
-
-time_machine = ["guix", "time-machine", "-C", "/generated/guix/channels.scm"]
 
 # Nix update resolves the generated flake, then publishes the observed lock
 # as the lock's Nix section; it refuses to move an input the project lacks.
@@ -942,23 +788,6 @@ expect {
 				first == note and argv.last() == Ok("default")
 			_ => Bool.False
 		}
-}
-
-# Guix update resolves the channels with guix repl, then publishes the
-# observed pins as the lock's Guix section.
-expect {
-	dir = "/generated/guix"
-	script = ["${dir}/lock.scm", "${dir}/lock-result.json"]
-	argv = ["guix", "repl", "-q", "--"]
-		.concat(script)
-		.append("${dir}/channels-unpinned.scm")
-		.concat(["assets", "/project/assets"])
-	runs(planned("update", guix)) == Ok([{ description: "guix lock", argv }])
-		and Std.guix_pins(Model.empty("x"), { ..guix, lock: guix_lock })
-			== Ok({
-				channels: [{ channel: GuixBackend.default_channel, commit: pin }],
-				sources: [{ name: "assets", path: "assets", hash: assets_hash }],
-			})
 }
 
 # Help lists a task's Description, else its command, and the task's own page
@@ -1042,50 +871,10 @@ expect {
 			== "unknown_name"
 }
 
-# A Guix shell runs guix shell at the locked channels; without the Guix
-# section it is refused.
-expect {
-	shell = { ..guix, args: in_shell("default"), lock: guix_lock }
-	argv = time_machine
-		.concat(["--", "shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"])
-		.append("hello")
-	runs(planned("shell", shell)) == Ok([{ description: "shell default", argv }])
-		and failed(planned("shell", { ..shell, lock: nix_lock }))
-			== "missing_guix_lock"
-}
-
-# A Guix task runs its command and trailing arguments in guix shell.
-expect {
-	args = [
-		{ name: "task", value: Present("greet") },
-		{ name: "args", value: Many(["a b"]) },
-	]
-	command = ["--", "hello", "-g", "hi", "a b"]
-	argv = time_machine
-		.concat(["--", "shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"])
-		.append("hello")
-		.concat(command)
-	runs(planned("run", { ..guix, args, lock: guix_lock }))
-		== Ok([{ description: "task greet", argv }])
-}
-
-# A Guix build builds its generated file at the locked channels.
-expect {
-	build = { ..guix, args: named("build", "app"), lock: guix_lock }
-	scm = "/generated/guix/build-app.scm"
-	argv = time_machine.concat(["--", "build", "-f", scm])
-	runs(planned("build", build)) == Ok([{ description: "build app", argv }])
-}
-
-# A Guix workflow stages each step in order.
-expect {
-	ci = { ..guix, args: named("workflow", "ci"), lock: guix_lock }
-	stages(planned("workflow", ci)) == Ok(["run greet", "build app"])
-}
-
 # The model command prints the model, whatever the backend.
 expect {
-	match planned("model", guix).map_ok(|plan| plan.steps) {
+	direct = { ..context, backend: "direct" }
+	match planned("model", direct).map_ok(|plan| plan.steps) {
 		Ok([Print(text)]) => text.contains("(name \"planning\")")
 		_ => Bool.False
 	}
@@ -1117,12 +906,11 @@ expect {
 		}
 	["shell", "run", "build", "workflow", "update"].all(
 		|command|
-			backends(command, Auto) == ["nix", "guix", "direct"]
+			backends(command, Auto) == ["nix", "direct"]
 				and backends(command, Only("nix")) == ["nix"]
-				and backends(command, Only("guix")) == ["guix"]
 				and backends(command, Only("direct")) == ["direct"],
 	)
-		and [Auto, Only("nix"), Only("guix")].all(
+		and [Auto, Only("nix"), Only("direct")].all(
 			|choice| ["model", "spec", "lock"].all(|c| backends(c, choice) == [""]),
 		)
 }

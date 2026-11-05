@@ -104,7 +104,7 @@ E2ePlugins := [].{
 		expected = "plugins: std, deploy 0.1.0, quiet 1\n"
 			.concat("commands: shell, run, build, workflow, update, model, spec, ")
 			.concat("lock, deploy\n")
-			.concat("backends: nix, guix, direct\n")
+			.concat("backends: nix, direct\n")
 		if described != expected {
 			return Err(WrongDescribe(described))
 		}
@@ -113,9 +113,9 @@ E2ePlugins := [].{
 			return Err(ShellNotReplaced(shell))
 		}
 		failed!(
-			["--backend", "guix", "deploy", "web"],
+			["--backend", "direct", "deploy", "web"],
 			1,
-			"no plugin implements this command on guix",
+			"no plugin implements this command on direct",
 		)?
 		failed!(["deploy", "nope"], 2, "nope")?
 		_ = kai!(["update"])?

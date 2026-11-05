@@ -40,7 +40,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [raw](raw) | Passing Nix-specific data through with `Raw`, to a shell and to an environment's shells and tasks | `kai run moo` |
 | [overlay](overlay) | An overlay adding a package, seen only where selected, following the project's nixpkgs | `kai run moo` |
 | [modules](modules) | Settings shared through an ordinary Roc module | `kai run moo` |
-| [guix](guix) | Packages from a Guix channel beside the default source | `kai shell guix` |
+| [guix](guix) | The guix plugin: packages from a Guix channel beside the default source | `kai shell guix` |
 | [agenix](agenix) | A tool from another flake's overlay, encrypting and decrypting a secret | `kai run round-trip` |
 | [rust-toolchain](rust-toolchain) | A Rust toolchain pinned by `rust-toolchain.toml`, plus a component and a target it does not pin, and the host's target triple | `kai shell`, `kai run wasm-target`, `kai run host-target` |
 | [plugins/deploy](plugins/deploy) | A third-party plugin adding `kai deploy` | see [plugin.md](../docs/plugin.md) |

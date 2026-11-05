@@ -172,16 +172,6 @@ Spec := [].{
 			}
 			with_name(s.name, [("provider", text(provider)), ("ref", ref)])
 		}
-		channel = |c|
-			with_name(
-				c.name,
-				[
-					("url", text(c.url)),
-					("branch", text(c.branch)),
-					("introduction_commit", text(c.introduction.commit)),
-					("introduction_signer", text(c.introduction.signer)),
-				],
-			)
 		follows = |overlay|
 			model.follows.keep_if(|f| f.overlay == overlay).map(
 				|f| object([("input", text(f.input)), ("source", text(f.source))]),
@@ -215,7 +205,6 @@ Spec := [].{
 				("systems", texts(model.systems)),
 				("build_root", text(model.build_root)),
 				("package_sources", Array(model.sources.map(package_source))),
-				("guix_channels", Array(model.guix_channels.map(channel))),
 				(
 					"overlays",
 					Array(model.inputs.keep_if(|i| i.kind == Overlay).map(overlay)),

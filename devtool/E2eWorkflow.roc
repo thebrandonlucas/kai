@@ -244,9 +244,11 @@ E2eWorkflow := [].{
 
 	guix_in! = |kai, project, path| {
 		kaifile = Path.join(project, "Kaifile.roc")
-		config = match Path.read_utf8!(kaifile)?.split_on("\n])\n") {
-			[body, ""] => "${body}\n${E2eWorkflow.stops}\n])\n"
-			_ => return Err(UnexpectedKaifileEnd)
+		# The fixture's settings end before the plugins that take them.
+		end = "\n]\n\nkaifile = "
+		config = match Path.read_utf8!(kaifile)?.split_first(end) {
+			Ok({ before, after }) => "${before}\n${E2eWorkflow.stops}${end}${after}"
+			Err(_) => return Err(UnexpectedKaifileEnd)
 		}
 		# Guix shells have no sh unless a tool provides it.
 		with_sh = config.replace_each(

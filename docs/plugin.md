@@ -98,8 +98,8 @@ parsed values. Only the one command that owns the lock
 A backend is `Backend.{ id, summary, program, flag }`: kai checks it by
 running `program --version` (or `-v`, `version`), bounded and side-effect
 free. A backend whose `program` is `""` needs none and is always usable.
-std declares `nix`, `guix` and `direct`; other plugins usually implement
-commands on those.
+std declares `nix` and `direct`, and the guix plugin `guix`; other
+plugins usually implement commands on those.
 
 ```roc
 Implementation.{
@@ -140,14 +140,16 @@ closest to a mistyped one. std uses these codes:
 |---|---|
 | `missing_lock` | There is no lock, or it has no Nix section; hint `kai update`. |
 | `invalid_lock` | The lock cannot be read; hint `kai update`. |
-| `stale_lock` | The lock was made for other inputs, overlays, Guix channels, sources or downloads; hint `kai update`, `kai --backend guix update` or `kai --backend direct update`. |
-| `missing_guix_lock` | The lock has no Guix pins; hint `kai --backend guix update`. |
+| `stale_lock` | The lock was made for other inputs, overlays, sources or downloads; hint `kai update` or `kai --backend direct update`. |
 | `missing_direct_lock` | The lock has no direct pin for a download; hint `kai --backend direct update`. |
 | `unknown_input` | `kai update` names an input the project does not declare. |
 | `unknown_name` | The project declares no shell, task, build or workflow of that name. |
 | `plan_failed` | Any other failure. |
 
-A plugin may use these codes for the same meaning, or its own.
+A plugin may use these codes for the same meaning, or its own: the guix
+plugin reports `missing_guix_lock` when the lock has no Guix pins, and
+`stale_lock` when they are for other channels or sources, both with hint
+`kai --backend guix update`.
 
 ## Plans
 
@@ -199,6 +201,7 @@ stable surface for backends; its other modules may change between
 releases. Such a plugin keeps its pins in its own section of the lock
 through `pf.LockFile` (`section` reads it; `splice` replaces it and keeps
 the others) and publishes them from its own `update` implementation.
+`plugins/guix`, Kai's Guix backend, is such a plugin.
 
 ## Combining plugins
 

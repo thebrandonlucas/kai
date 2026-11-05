@@ -35,7 +35,7 @@ Pages := [].{
 
 	lock : Command.Page
 	lock = {
-		description: "Print every input the lock pins, in its Nix, Guix and direct "
+		description: "Print every input the lock pins, in its Nix and direct "
 			.concat("sections, with its revision, hash and size, as versioned JSON ")
 			.concat("for tools such as SBOM generators."),
 		examples: ["kai update", "kai lock"],

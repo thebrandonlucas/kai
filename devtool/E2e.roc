@@ -52,7 +52,7 @@ E2e := [].{
 		}
 		(from, project) = E2e.kaifile_dirs(source, copy, kaifile_dir)
 		kaifile = Path.read_utf8!(Path.join(from, "Kaifile.roc"))?
-		header = ConfigFixtures.header(root, project)
+		header = ConfigFixtures.header_for(root, project, kaifile)
 		parts = ConfigFixtures.header_parts(kaifile)?
 		body = "${parts.before}${header}${parts.after}"
 		Path.write_utf8!(Path.join(project, "Kaifile.roc"), body)?

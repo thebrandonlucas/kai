@@ -14,8 +14,7 @@ meaning or goes away bumps it. Lists keep declaration order.
 |---|---|
 | `schema_version` | 1. |
 | `name`, `systems`, `build_root` | `Name`, `Systems` and `BuildRoot` (`""` for the project's directory). |
-| `package_sources` | `Packages`, with the implicit `default`: `name`, `provider` (`auto`, `nix` or `guix`) and `ref` (the flake ref or Guix specification, `null` for `auto`). |
-| `guix_channels` | `GuixChannel`: `name`, `url`, `branch`, `introduction_commit`, `introduction_signer`. |
+| `package_sources` | `Packages`, with the implicit `default`: `name`, `provider` (`auto`, `nix` or `guix`) and `ref` (the flake ref or Guix specification, `null` for `auto`). The guix plugin's channels are its own settings, not std's. |
 | `overlays` | `Overlay`: `name`, `ref` and `follows` (`input`, `source`). |
 | `flake_inputs` | Other flake inputs: `name`, `ref`. |
 | `sources` | `Source`: `name`, `ref`. |
@@ -38,7 +37,7 @@ A tool has a `name` and says where it comes from in `from`:
 values.
 
 Names are identifiers that other reports share: package sources, overlays,
-flake inputs and sources by `name`, Guix channels by `name`, and fetched
+flake inputs and sources by `name`, and fetched
 files by `key`, as `.kai/lock.json` pins them and [`kai lock`](lock.md)
 reports them.
 
@@ -65,7 +64,6 @@ kaifile = Std.kaifile([
   "systems": ["x86_64-linux"],
   "build_root": "",
   "package_sources": [{ "name": "default", "provider": "auto", "ref": null }],
-  "guix_channels": [],
   "overlays": [],
   "flake_inputs": [],
   "sources": [],

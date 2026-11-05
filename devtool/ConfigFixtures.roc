@@ -38,6 +38,21 @@ ConfigFixtures := [].{
 		"app [kaifile] {\n\tpf: platform \"${pf}\",\n\tstd: \"${std}\",\n}"
 	}
 
+	# `header`, naming this checkout's guix plugin too when `kaifile`'s
+	# header names one.
+	header_for = |root, dir, kaifile| {
+		plain = ConfigFixtures.header(root, dir)
+		if kaifile.contains("\n\tguix: \"") {
+			guix = ConfigFixtures.relative(
+				Path.display(dir),
+				Path.display(Path.join(root, "plugins/guix/main.roc")),
+			)
+			plain.drop_suffix("}").concat("\tguix: \"${guix}\",\n}")
+		} else {
+			plain
+		}
+	}
+
 	# A fixture body declares `config`, std's settings. Its annotation keeps
 	# large fixtures fast: inferring the type from its use in `kaifile` nearly
 	# doubles the check time.
@@ -451,13 +466,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("invalid"), Packages("default",
 				\\  From(NixPackages("github:NixOS/nixpkgs/nixos-unstable"))),
 				\\ Environment("dev", [Tools(["hello@2.12.1"])])]
-		},
-		{
-			name: "InvalidGuixTool",
-			expected: Rejected("invalid Guix tool"),
-			body: \\config = [Name("invalid"), Packages("default",
-				\\  From(GuixPackages("https://git.savannah.gnu.org/git/guix.git"))),
-				\\ Environment("dev", [Tools(["git@"])])]
 		},
 		{
 			name: "Builds",
@@ -1282,10 +1290,13 @@ ConfigFixtures := [].{
 			)?
 		}
 		app_header = ConfigFixtures.header(root, workspace)
+		# The composition fixture adds the guix plugin.
+		composed_header = ConfigFixtures.header_for(root, workspace, kaifile)
 		for fixture in apps {
+			chosen = if (fixture.name == "Composed") composed_header else app_header
 			Path.write_utf8!(
 				Path.join(workspace, "${fixture.name}.roc"),
-				"${app_header}\n\n${fixture.body}\n",
+				"${chosen}\n\n${fixture.body}\n",
 			)?
 		}
 		for fixture in apps {

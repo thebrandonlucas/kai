@@ -434,8 +434,10 @@ jobs:
       - name: Run Project CI
         run: kai shell default -- zig build ci
 
-  # Real Guix, with Nix hidden from kai, nightly and on demand: run it from
-  # the Actions tab before merging a change to the Guix backend. A cold
+  # The guix plugin on real Guix, with Nix hidden from kai, nightly and on
+  # demand: run it from the Actions tab before merging a change to the
+  # plugin, or to the std model it plans from. The Guix halves of the
+  # end-to-end tests run fixtures whose Kaifiles add the plugin. A cold
   # channel checkout authenticates the whole history (about 35 minutes), so
   # it is cached; the first time-machine run at the pinned release downloads
   # that Guix.

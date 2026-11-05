@@ -15,7 +15,6 @@ package
 	]
 	{
 		direct: "backends/direct/main.roc",
-		guix: "backends/guix/main.roc",
 		model: "model/main.roc",
 		nix: "backends/nix/main.roc",
 		pf: platform "../../platform/main.roc",
@@ -28,7 +27,7 @@ import pf.Conformance
 expect {
 	cases = ["shell", "run", "build", "workflow", "update"]
 		.join_map(
-			|command| ["nix", "guix", "direct"].map(|backend| { command, backend }),
+			|command| ["nix", "direct"].map(|backend| { command, backend }),
 		)
 		.append({ command: "model", backend: "" })
 		.append({ command: "spec", backend: "" })

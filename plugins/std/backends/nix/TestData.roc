@@ -138,7 +138,6 @@ TestData :: [].{
 		name: "plan fixture",
 		systems: t.systems,
 		sources: t.sources,
-		guix_channels: [],
 		inputs: t.inputs,
 		follows: [],
 		environments: t.environments,

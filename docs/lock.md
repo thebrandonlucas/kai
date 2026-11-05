@@ -14,17 +14,19 @@ meaning or goes away bumps it.
 
 ## Fields
 
-`inputs` lists every pinned input: the `nix` section's, then `guix`'s, then
-`direct`'s. Each has every field below, `null` where it does not apply.
+`inputs` lists every pinned input std's sections hold: the `nix` section's,
+then `direct`'s. Each has every field below, `null` where it does not
+apply. Sections other plugins own, such as the guix plugin's `guix`, are
+left out.
 
 | Field | Meaning |
 |---|---|
-| `section` | The lock section that pins it: `nix`, `guix` or `direct`. |
-| `kind` | `nix`: `package_source`, `overlay`, `flake_input`, `source` or `transitive`. `guix`: `channel` or `source`. `direct`: `file`. |
-| `name` | The identifier [`kai spec`](spec.md) uses: package sources, overlays, flake inputs and sources by `name`, Guix channels by `name`, and downloaded files by `key` (`<fetch>/<system>`). A `transitive` input is named by its path from a root input, such as `roc/nixpkgs`. |
-| `url` | The reference as declared: a Nix flake reference (for `transitive`, the one the depending flake names), a Guix channel's URL, `path:<tree>` for a Guix source, or a downloaded file's URL. |
-| `revision` | The locked commit: Nix's `rev` for Git-based inputs, a Guix channel's commit. |
-| `hash` | `algorithm` (`sha256`), `of` (`nar` for a NAR serialization of a tree, `file` for a file's bytes), `encoding` (`sri` as in `sha256-…`, `nix-base32`, or `hex`) and `value`, as the section records it: Nix inputs and Guix sources by NAR hash, downloaded files by SHA-256. A Guix channel has only its commit. |
+| `section` | The lock section that pins it: `nix` or `direct`. |
+| `kind` | `nix`: `package_source`, `overlay`, `flake_input`, `source` or `transitive`. `direct`: `file`. |
+| `name` | The identifier [`kai spec`](spec.md) uses: package sources, overlays, flake inputs and sources by `name`, and downloaded files by `key` (`<fetch>/<system>`). A `transitive` input is named by its path from a root input, such as `roc/nixpkgs`. |
+| `url` | The reference as declared: a Nix flake reference (for `transitive`, the one the depending flake names), or a downloaded file's URL. |
+| `revision` | The locked commit: Nix's `rev` for Git-based inputs. |
+| `hash` | `algorithm` (`sha256`), `of` (`nar` for a NAR serialization of a tree, `file` for a file's bytes), `encoding` (`sri` as in `sha256-…`, or `hex`) and `value`, as the section records it: Nix inputs by NAR hash, downloaded files by SHA-256. |
 | `size` | A downloaded file's size in bytes. |
 | `system` | A downloaded file's system. |
 | `locked` | A Nix input's `locked` attributes from Nix's `flake.lock`, as Nix defines them (`type`, `owner`, `repo`, `rev`, `url`, `narHash`, `lastModified`, …). |

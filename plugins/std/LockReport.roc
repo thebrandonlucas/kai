@@ -31,10 +31,11 @@ LockReport := [].{
 		Ok(Plan.{ steps: [Print(report)], next: Done })
 	}
 
-	## The report of a lock file's text: its Nix, Guix and direct pins.
+	## The report of a lock file's text: its Nix and direct pins. Sections
+	## other plugins own, such as the guix plugin's, are theirs to report.
 	json : Str -> Try(Str, Str)
 	json = |text| {
-		inputs = nix(text)?.concat(guix(text)?).concat(direct(text)?)
+		inputs = nix(text)?.concat(direct(text)?)
 		Ok(
 			LockJson.encode(
 				object([
@@ -199,31 +200,6 @@ flake_ref = |attrs| {
 	}
 }
 
-## Channels at their commits, then `path:` sources by their NAR hash.
-guix : Str -> Try(List(Entry), Str)
-guix = |lock_text| {
-	section = match LockFile.section(lock_text, "guix")? {
-		Present(found) => found
-		Absent => return Ok([])
-	}
-	at = |e, name| LockJson.string(LockJson.field(e, name)?)
-	channels = LockJson.array(LockJson.field(section, "channels")?)?.map_try(
-		|c| {
-			revision = String(at(c, "commit")?)
-			Ok({ ..blank("guix", "channel", at(c, "name")?, at(c, "url")?), revision })
-		},
-	)?
-	listed = LockJson.field(section, "sources") ?? Array([])
-	sources = LockJson.array(listed)?.map_try(
-		|s| {
-			hash = sha256("nar", "nix-base32", at(s, "hash")?)
-			url = "path:${at(s, "path")?}"
-			Ok({ ..blank("guix", "source", at(s, "name")?, url), hash })
-		},
-	)?
-	Ok(channels.concat(sources))
-}
-
 ## Each downloaded file by its key, `<fetch>/<system>`.
 direct : Str -> Try(List(Entry), Str)
 direct = |lock_text| {
@@ -320,8 +296,8 @@ lock_text =
 
 # Root inputs keep their declaration order and the names `kai spec` gives
 # them; what they pull in follows, named by its path, and follows are not
-# repeated. Guix channels pin a commit, sources and Nix nodes a NAR hash,
-# direct files a file hash, size and system.
+# repeated. Nix nodes pin a NAR hash, direct files a file hash, size and
+# system; another plugin's section, such as guix, is left out.
 expect {
 	at = |index, field| ["inputs", index, field]
 	[
@@ -338,20 +314,14 @@ expect {
 		(at("2", "name"), String("tools/utils")),
 		(at("2", "kind"), String("transitive")),
 		(at("2", "url"), String("github:NixOS/utils")),
-		(at("3", "section"), String("guix")),
-		(at("3", "kind"), String("channel")),
-		(at("3", "revision"), String(commit)),
-		(at("3", "hash"), Null),
-		(at("4", "url"), String("path:assets")),
-		(at("4", "hash").concat(["encoding"]), String("nix-base32")),
-		(at("5", "section"), String("direct")),
-		(at("5", "name"), String("tool/x86_64-linux")),
-		(at("5", "system"), String("x86_64-linux")),
-		(at("5", "size"), Number("42")),
-		(at("5", "hash").concat(["encoding"]), String("hex")),
-		(at("5", "locked"), Null),
+		(at("3", "section"), String("direct")),
+		(at("3", "name"), String("tool/x86_64-linux")),
+		(at("3", "system"), String("x86_64-linux")),
+		(at("3", "size"), Number("42")),
+		(at("3", "hash").concat(["encoding"]), String("hex")),
+		(at("3", "locked"), Null),
 	].all(|(path, expected)| report_at(lock_text, path) == Ok(expected))
-		and report_at(lock_text, ["inputs", "6"]).is_err()
+		and report_at(lock_text, ["inputs", "4"]).is_err()
 }
 
 # A lock with no sections reports no inputs; a missing lock is missing_lock,

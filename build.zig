@@ -428,14 +428,6 @@ pub fn build(b: *std.Build) void {
     test_std_nix.step.dependOn(check_step);
     test_step.dependOn(&test_std_nix.step);
 
-    const test_std_guix = b.addSystemCommand(&.{
-        "roc",
-        "test",
-        "plugins/std/backends/guix/main.roc",
-    });
-    test_std_guix.step.dependOn(check_step);
-    test_step.dependOn(&test_std_guix.step);
-
     const test_std_direct = b.addSystemCommand(&.{
         "roc",
         "test",
