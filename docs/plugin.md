@@ -174,6 +174,32 @@ std's `Std.run_in(project, ctx, { environment, argv, description })` plans argv
 inside one of std's environments from the locked Nix inputs, as a task
 would run; the deploy example uses it for `nixos-rebuild`.
 
+## Implementing std's commands on another backend
+
+A plugin that declares a backend of its own can implement std's `shell`,
+`run`, `build` and `workflow` on it from the same settings, through
+`std.StdModel`: std's model and the meaning every backend shares.
+
+```roc
+import std.StdModel exposing [Model, Request]
+
+model = StdModel.from_settings(project)?     # the settings' Model
+wanted = StdModel.request("run", ctx.args)?  # Shell, Run, Build or Workflow
+StdModel.known(model, wanted)?               # unknown_name, with suggestions
+```
+
+`Model` is std's project model (`Model.Environment`, `Model.Task`, …);
+match a `Request` with unqualified tags, such as `Run(task, args)`.
+`StdModel` also resolves environments (`validate`, `for_system`,
+`environment_tools`, `direct_only`), merges variables (`merge_env`,
+`env_command`, `artifacts_variable`, `other_tasks_secrets`), expands
+builds and workflows (`builds_closure`, `workflow_steps`, `snapshot_root`,
+`snapshot_files`) and stamps Revision builds (`revised`). This is std's
+stable surface for backends; its other modules may change between
+releases. Such a plugin keeps its pins in its own section of the lock
+through `pf.LockFile` (`section` reads it; `splice` replaces it and keeps
+the others) and publishes them from its own `update` implementation.
+
 ## Combining plugins
 
 Kaifile.roc fails to compile when two plugins declare the same command,

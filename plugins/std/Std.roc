@@ -22,6 +22,7 @@ import direct.DirectBackend
 import LockReport
 import Pages
 import Spec
+import StdModel
 
 Std := [].{
 
@@ -250,34 +251,6 @@ Std := [].{
 			MayFail(_) => "${Std.step_text(Project.wrapped(step))} (may fail)"
 		}
 
-	## The model request a command's parsed arguments name.
-	request : Str, Command.Args -> Try(Request, Str)
-	request = |command, args|
-		match command {
-			"shell" => {
-				command_words = Command.trailing(args, "command")
-				Ok(Request.Shell(Command.name(args, "shell"), command_words))
-			}
-			"run" =>
-				Ok(Request.Run(Command.name(args, "task"), Command.trailing(args, "args")))
-			"build" => {
-				mode = match (Command.flag(args, "plan"), Command.flag(args, "rebuild")) {
-					(Bool.True, Bool.True) => return Err("--plan and --rebuild do not combine")
-					(Bool.True, _) => Plan
-					(_, Bool.True) => Rebuild
-					_ => Build
-				}
-				shown = {
-					print_build_logs: Command.flag(args, "print-build-logs"),
-					out_link: Command.path(args, "out-link"),
-					mode,
-				}
-				Ok(Request.Build(Command.name(args, "build"), shown))
-			}
-			"workflow" => Ok(Request.Workflow(Command.name(args, "workflow")))
-			_ => Err("std has no ${command} request")
-		}
-
 	implementations : Model -> List(Implementation)
 	implementations = |model| {
 		atomic = ["shell", "run", "build", "workflow"]
@@ -286,9 +259,9 @@ Std := [].{
 				Implementation.{
 					command,
 					backend: On("nix"),
-					fit: |args| Std.fit_nix(model, Std.request(command, args)?),
+					fit: |args| Std.fit_nix(model, StdModel.request(command, args)?),
 					plan: |ctx| {
-						wanted = Std.request(command, ctx.args).map_err(Plan.fail)?
+						wanted = StdModel.request(command, ctx.args).map_err(Plan.fail)?
 						Std.plan_nix(model, wanted, ctx)
 					},
 				},
@@ -298,16 +271,16 @@ Std := [].{
 				Implementation.{
 					command,
 					backend: On("guix"),
-					fit: |args| GuixBackend.fit(model, Std.request(command, args)?),
+					fit: |args| GuixBackend.fit(model, StdModel.request(command, args)?),
 					plan: |ctx| {
 						GuixBackend.check_system(ctx.host.system).map_err(Plan.fail)?
-						wanted = Std.request(command, ctx.args).map_err(Plan.fail)?
-						Std.known(model, wanted)?
+						wanted = StdModel.request(command, ctx.args).map_err(Plan.fail)?
+						StdModel.known(model, wanted)?
 						locked = Std.guix_pins(model, ctx)?
 						# Guix plans for the host, so it takes the host's OnSystems.
 						system = ctx.host.system
 						host = Project.for_system(model, system)
-						revised = Std.revised(host, ctx)
+						revised = StdModel.revised(host, ctx)
 						GuixBackend.request_steps(revised, wanted, ctx.layout, locked)
 							.map_err(|why| Std.guix_failure(command, why))
 					},
@@ -318,10 +291,10 @@ Std := [].{
 				Implementation.{
 					command,
 					backend: On("direct"),
-					fit: |args| DirectBackend.fit(model, Std.request(command, args)?),
+					fit: |args| DirectBackend.fit(model, StdModel.request(command, args)?),
 					plan: |ctx| {
-						wanted = Std.request(command, ctx.args).map_err(Plan.fail)?
-						Std.known(model, wanted)?
+						wanted = StdModel.request(command, ctx.args).map_err(Plan.fail)?
+						StdModel.known(model, wanted)?
 						{ host, layout, lock, .. } = ctx
 						DirectBackend.plan(model, wanted, host.system, layout, lock)
 					},
@@ -344,7 +317,7 @@ Std := [].{
 					},
 					plan: |ctx| {
 						Std.known_inputs(model, Command.trailing(ctx.args, "inputs"))?
-						nix_model = Std.revised(Std.on_nix(model), ctx)
+						nix_model = StdModel.revised(Std.on_nix(model), ctx)
 						Std.update_nix(nix_model, ctx).map_err(Plan.fail)
 					},
 				},
@@ -432,24 +405,6 @@ Std := [].{
 		Project.check_environment(model, Nix, environment)
 	}
 
-	## A shell, task, build or workflow the project does not declare.
-	known : Model, Request -> Try({}, Plan.Failure)
-	known = |model, wanted| {
-		(kind, requested, declared) = match wanted {
-			Request.Shell(name, _) => ("shell", name, model.shells.map(|s| s.name))
-			Request.Run(name, _) => ("task", name, model.tasks.map(|t| t.name))
-			Request.Build(name, _) => ("build", name, model.builds.map(|b| b.name))
-			Request.Workflow(name) => ("workflow", name, model.workflows.map(|w| w.name))
-		}
-		if declared.contains(requested) {
-			Ok({})
-		} else {
-			message = "unknown ${kind}: ${requested}"
-			suggestions = Plan.closest(requested, declared)
-			Err({ code: "unknown_name", message, hint: "", suggestions })
-		}
-	}
-
 	## Inputs `kai update` was asked to move that the project does not declare.
 	known_inputs : Model, List(Str) -> Try({}, Plan.Failure)
 	known_inputs = |model, names| {
@@ -469,7 +424,7 @@ Std := [].{
 	## Nix plans read the lock authority; its absence is a planning failure.
 	plan_nix : Model, Request, Implementation.Context -> Try(Plan, Plan.Failure)
 	plan_nix = |declared, wanted, ctx| {
-		model = Std.revised(Std.on_nix(declared), ctx)
+		model = StdModel.revised(Std.on_nix(declared), ctx)
 		layout = Std.nix_layout(ctx.layout)
 		path = ctx.layout.lock_path
 		lock_failure = |code, message|
@@ -478,7 +433,7 @@ Std := [].{
 			lock_failure("invalid_lock", "cannot read the lock file ${path}: ${why}")
 		rendering = |message| Plan.fail("cannot generate the Nix files: ${message}")
 		target = ctx.host.system
-		Std.known(model, wanted)?
+		StdModel.known(model, wanted)?
 		NixBackend.preflight(model, wanted, target, layout).map_err(rendering)?
 		text = match ctx.lock {
 			Present(contents) => contents
@@ -592,43 +547,6 @@ Std := [].{
 	on_nix = |model| {
 		..model,
 		systems: model.systems.drop_if(|s| DirectBackend.only_systems.contains(s)),
-	}
-
-	## A build declaring Revision receives the project's revision in its
-	## environment, over its own Env.
-	revised : Model, Implementation.Context -> Model
-	revised = |model, ctx| {
-		revision = [
-			{ name: "KAI_REVISION", value: ctx.revision.describe },
-			{ name: "KAI_COMMIT_DATE", value: ctx.revision.commit_date },
-		]
-		stamp = |build|
-			if build.revision {
-				{ ..build, env: Project.merge_env(build.env, revision) }
-			} else {
-				build
-			}
-		Model.{
-			format: model.format,
-			name: model.name,
-			requires_: model.requires_,
-			systems: model.systems,
-			sources: model.sources,
-			guix_channels: model.guix_channels,
-			inputs: model.inputs,
-			follows: model.follows,
-			environments: model.environments,
-			shells: model.shells,
-			tasks: model.tasks,
-			build_sources: model.build_sources,
-			fetches: model.fetches,
-			cargo_vendors: model.cargo_vendors,
-			build_root: model.build_root,
-			builds: model.builds.map(stamp),
-			workflows: model.workflows,
-			extensions: model.extensions,
-			raw: model.raw,
-		}
 	}
 
 	## Nix's generated files live in their own directory beneath kai's
