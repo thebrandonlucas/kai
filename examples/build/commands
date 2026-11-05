@@ -1,4 +1,6 @@
 update
 build
+build wisecow --plan
+build wisecow --rebuild
 build zlib-flags
 build links

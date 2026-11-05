@@ -25,7 +25,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [environment](environment) | Reusable environments shared by shells and tasks, and tools and variables on some systems only | `kai shell pokemon` |
 | [extend](extend) | One environment building on another | `kai run wisdom` |
 | [env](env) | Environment variables, a task overriding its `Environment`'s, a pure environment and paths in packages | `kai run shout` |
-| [build](build) | A sandboxed build and its output, a default build, symbolic links in a build, and a build finding a library with pkg-config | `kai build wisecow` |
+| [build](build) | A sandboxed build and its output, a default build, its plan as JSON and a rebuild check, symbolic links in a build, and a build finding a library with pkg-config | `kai build wisecow` |
 | [needs](needs) | A build, and a task, reading another build's artifact | `kai build loud` |
 | [direct](direct) | Tools from pinned downloads, a file and an archive, run with no provider in tasks and a workflow of tasks, and a program the machine must have | `kai workflow check` |
 | [mixed](mixed) | One environment with a tool from nixpkgs, a pinned download first on `PATH` and a program the machine must have, on Nix | `kai run greet` |

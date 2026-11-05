@@ -18,6 +18,8 @@ whose hash an output contains. Copying `readlink "$KAI_TOOLS/cowsay"` into
 the artifact keeps cowsay in its closure; keeping only the name after the
 hash, such as `cowsay-3.8.4`, does not. The record holds no store paths, so
 an artifact can copy it whole.
+[`kai build NAME --plan`](build-plan.md) prints the same records, and each
+need's derivation and output path, without building.
 
 ## The record
 

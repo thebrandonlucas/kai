@@ -111,6 +111,8 @@ kai shell default -- cowsay hi    # or run one command in it
 kai run hello                     # run a task
 kai run hello -- again            # arguments after -- are appended
 kai build greeting                # sandboxed build; prints the store path
+kai build greeting --plan         # print its plan and identity as JSON (docs/build-plan.md)
+kai build greeting --rebuild      # build again; fail if the output differs
 kai workflow ci                   # run steps in order, stop at a failure
 kai spec                          # print the project as JSON (docs/spec.md)
 kai lock                          # print what the lock pins as JSON (docs/lock.md)
@@ -227,6 +229,9 @@ environment, by the name the Kaifile gives it, to the tool's store path, and
 its name, kind, URL, revision and hash, as [`kai lock`](docs/lock.md)
 reports them. Neither adds to an artifact's closure unless the artifact
 names a store path; see [docs/evidence.md](docs/evidence.md).
+`kai build NAME --plan` prints the same records with the build's snapshot,
+derivation and output path, without building; see
+[docs/build-plan.md](docs/build-plan.md).
 
 A Rust build reads its crates from a `CargoVendor` in its inputs through the
 cargo configuration in the vendored directory, which replaces crates.io and

@@ -690,6 +690,9 @@ GuixBackend :: [].{
 	fit : Model, Request -> Try({}, Str)
 	fit = |model, request|
 		match request {
+			Request.Build(_, { mode: Plan, .. }) => Err("Guix builds have no --plan yet")
+			Request.Build(_, { mode: Rebuild, .. }) =>
+				Err("Guix builds have no --rebuild yet")
 			Request.Build(name, _) =>
 				GuixBackend.build_scm(model, Build(name), "/fit", "/fit").map_ok(|_| {})
 			Request.Workflow(name) => {
@@ -955,4 +958,11 @@ expect {
 		and rendered.contains("(\"lib\" ,kai-build-lib)")
 		and rendered.ends_with("kai-build-app\n")
 		and GuixBackend.build_scm(model, Build("data"), "/p", "/p/.kai").is_err()
+		and GuixBackend.fit(model, Request.build("app")).is_ok()
+		and [Plan, Rebuild].all(
+			|mode| {
+				shown = { ..Request.default_output, mode }
+				GuixBackend.fit(model, Request.Build("app", shown)).is_err()
+			},
+		)
 }

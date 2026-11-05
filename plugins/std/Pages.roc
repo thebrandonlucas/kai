@@ -79,7 +79,7 @@ Pages := [].{
 	build = {
 		description: "Build a named artifact in the Nix sandbox from a fresh "
 			.concat("snapshot of the project, then print its store path."),
-		examples: ["kai update", "kai build copy"],
+		examples: ["kai update", "kai build copy", "kai build copy --plan"],
 		config: [Pages.environment, Pages.copy_build],
 	}
 

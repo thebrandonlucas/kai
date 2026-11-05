@@ -179,6 +179,16 @@ Std := [].{
 						short: "",
 						help: "Link PATH to the artifact, keeping it from garbage collection.",
 					}),
+					Flag({
+						name: "plan",
+						short: "",
+						help: "Print the build's plan and identity as JSON instead of building.",
+					}),
+					Flag({
+						name: "rebuild",
+						short: "",
+						help: "Build again and fail if the output differs from the stored one.",
+					}),
 				],
 				ReadsLock,
 			),
@@ -248,9 +258,16 @@ Std := [].{
 			"run" =>
 				Ok(Request.Run(Command.name(args, "task"), Command.trailing(args, "args")))
 			"build" => {
+				mode = match (Command.flag(args, "plan"), Command.flag(args, "rebuild")) {
+					(Bool.True, Bool.True) => return Err("--plan and --rebuild do not combine")
+					(Bool.True, _) => Plan
+					(_, Bool.True) => Rebuild
+					_ => Build
+				}
 				shown = {
 					print_build_logs: Command.flag(args, "print-build-logs"),
 					out_link: Command.path(args, "out-link"),
+					mode,
 				}
 				Ok(Request.Build(Command.name(args, "build"), shown))
 			}
@@ -487,8 +504,14 @@ Std := [].{
 				Ok({ environment: name, steps })
 			},
 		)?
-		NixBackend.plan_entering(model, wanted, target, layout, locks, entering)
-			.map_err(rendering)
+		continued = { phase: ctx.phase, observed: ctx.observed }
+		planned = match wanted {
+			Request.Build(name, { mode: Plan, .. }) =>
+				NixBackend.plan_build(model, name, target, layout, locks, continued)
+			_ =>
+				NixBackend.plan_entering(model, wanted, target, layout, locks, entering)
+		}
+		planned.map_err(rendering)
 	}
 
 	## The environments a request's shells and tasks enter.

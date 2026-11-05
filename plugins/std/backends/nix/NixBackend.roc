@@ -313,6 +313,8 @@ NixBackend :: [].{
 					.map_err(|_| "unknown build: ${name}")?
 				label = "${base_ref}#packages.${target}.${name}"
 				link = shown.out_link.map_ok(|path| ["--out-link", path]) ?? ["--no-link"]
+				# Nix builds again and compares with the output it already has.
+				rebuild = if (shown.mode == Rebuild) ["--rebuild"] else []
 				{
 					description: "build ${name}",
 					stage: "build ${name}",
@@ -322,7 +324,7 @@ NixBackend :: [].{
 					needs: [],
 					needs_build: [],
 					evaluate: [],
-					argv: build(link, shown.print_build_logs, label),
+					argv: build(link.concat(rebuild), shown.print_build_logs, label),
 					output: Artifact({ name, label, output: built.output }),
 					secrets: [],
 					removed_environment_variables: [],
@@ -440,6 +442,52 @@ NixBackend :: [].{
 		}
 		Ok(Plan.{ steps: $steps, next: Done })
 	}
+
+	## `kai build NAME --plan`. Phase 0 readies the build as `kai build`
+	## does, snapshot included, but instead of building it has Nix evaluate
+	## the build's `kaiPlan`, with its derivation and output paths, into a
+	## generated file, which `--write-to` refuses to replace; phase 1 prints it.
+	plan_build : Model, Str, Str, Layout, Locks, Continued -> Try(Plan, Str)
+	plan_build = |model, name, target, layout, locks, { phase, observed }| {
+		result = "${layout.generated_root}/build-plan.json"
+		if phase > 0 {
+			return match observed.find_first(|o| o.path == result) {
+				Ok({ contents: Text(text), .. }) =>
+					Ok(Plan.{ steps: [Print(text)], next: Done })
+				_ => Err("Nix produced no ${result}")
+			}
+		}
+		built = plan(model, Request.build(name), target, layout, locks)?
+		quiet = |description, argv|
+			Run({
+				description,
+				argv,
+				output: Quiet,
+				secrets: [],
+				removed_environment_variables: [],
+				kept_environment_variables: [],
+			})
+		evaluate = ["nix", "eval", "--no-update-lock-file", "--no-write-lock-file"]
+			.concat(["--builders", "", "--nix-path", "", "--impure"])
+			.concat(["path:${layout.generated_root}#packages.${target}.${name}"])
+			.concat(["--apply", plan_apply, "--write-to", result])
+		# The build's own run is its plan's last step.
+		steps = built.steps.drop_last(1).concat([
+			quiet("remove ${result}", ["rm", "-f", result]),
+			quiet("plan build ${name}", evaluate),
+		])
+		Ok(Plan.{ steps, next: Observe([result]) })
+	}
+
+	## A continuation's phase and the files kai read back for it.
+	Continued : {
+		phase : U64,
+		observed : List({ path : Str, contents : [Missing, Text(Str)] }),
+	}
+
+	plan_apply : Str
+	plan_apply = "p: builtins.toJSON (p.kaiPlan // "
+		.concat("{ derivation = p.drvPath; output_path = p.outPath; })")
 
 	## Every step rechecks the local pins it reads, including after
 	## source-editing tasks, then writes its files, runs `entry`, which
@@ -1131,9 +1179,28 @@ NixBackend :: [].{
 		records = entries.map(|e| e.recorded).concat(build.needs.map(artifact))
 		inputs = entries.map(|e| e.link).append(
 			"{ name = \".kai-inputs.json\"; path = builtins.toFile \"kai-inputs.json\" "
-				.concat("(builtins.toJSON { schema_version = 1; ")
-				.concat("inputs = [ ${Str.join_with(records, " ")} ]; }); }"),
+				.concat("(builtins.toJSON inputsRecord); }"),
 		)
+		# `kai build NAME --plan` prints kaiPlan, which leaves the derivation
+		# untouched: the build's record, snapshot and each need's identity.
+		need_plans = build.needs.map(
+			|name| {
+				need = "artifacts.${quote(name)}"
+				"{ name = ${quote(name)}; derivation = ${need}.drvPath; "
+					.concat("output_path = ${need}.outPath; }")
+			},
+		)
+		files = match build.files {
+			All => "null"
+			Only(paths) => "[ ${Str.join_with(paths.map(quote), " ")} ]"
+		}
+		build_plan = "{ schema_version = 1; backend = \"nix\"; "
+			.concat("name = ${quote(build.name)}; system = system; ")
+			.concat("environment = ${quote(build.environment)}; ")
+			.concat("output = ${quote(build.output)}; files = ${files}; ")
+			.concat("inputs = inputsRecord.inputs; ")
+			.concat("needs = [ ${Str.join_with(need_plans, " ")} ]; ")
+			.concat("snapshot = projectSnapshot; }")
 		vendors = model.cargo_vendors.keep_if(|c| build.inputs.contains(c.name))
 		cargo_locks = vendors.map(
 			|c| "${quote(c.name)} = builtins.toFile \"Cargo.lock\" ${quote(c.lock)}; ",
@@ -1203,10 +1270,14 @@ NixBackend :: [].{
 					.concat(" [ ${Str.join_with(tool_links, " ")} ];"),
 				"            cargoLocks = { ${Str.join_with(cargo_locks, "")}};",
 				"            runner = ${runner};",
+				"            projectSnapshot = ${project};",
+				"            inputsRecord = { schema_version = 1; "
+					.concat("inputs = [ ${Str.join_with(records, " ")} ]; };"),
 				"          in pkgs.runCommandCC ${quote("kai-${build.name}")} {",
 				"            nativeBuildInputs = tools;",
+				"            passthru.kaiPlan = ${build_plan};",
 				"            kaiSpec = builtins.toJSON {",
-				"              project = ${project};",
+				"              project = projectSnapshot;",
 				"              isolation = ${isolation};",
 				"              argv = [ ${argv} ];",
 				"              output = ${quote(build.output)};",
@@ -2289,6 +2360,59 @@ expect match single(Request.build("app")) {
 		Err(_) => False
 	}
 	_ => False
+}
+
+# A build's kaiPlan names its record, snapshot and needs; --rebuild builds
+# again.
+expect {
+	rebuild = Request.Build("app", { ..Request.default_output, mode: Rebuild })
+	match (single(Request.build("app")), plan_fixture(rebuild)) {
+		(Ok(step), Ok(rebuilt)) => match step.files.first() {
+			Ok(file) => file.contents.contains(
+				"passthru.kaiPlan = { schema_version = 1; backend = \"nix\"; "
+					.concat("name = \"app\"; system = system; ")
+					.concat("environment = \"builder\"; output = \"dist/app\"; ")
+					.concat("files = null; inputs = inputsRecord.inputs; ")
+					.concat("needs = [ { name = \"library\"; ")
+					.concat("derivation = artifacts.\"library\".drvPath; ")
+					.concat("output_path = artifacts.\"library\".outPath; } ]; ")
+					.concat("snapshot = projectSnapshot; };"),
+			)
+				and file.contents.contains("project = projectSnapshot;")
+				and runs(rebuilt).any(|run| run.argv.contains("--rebuild"))
+				and !step.argv.contains("--rebuild")
+			Err(_) => False
+		}
+		_ => False
+	}
+}
+
+# --plan readies the build without building it, has Nix write its plan to a
+# generated file, then prints that file.
+expect {
+	plan_with = |phase, observed| {
+		locks = plan_locks?
+		project = TestData.project(TestData.data)
+		layout = TestData.layout
+		continued = { phase, observed }
+		target = "x86_64-linux"
+		NixBackend.plan_build(project, "app", target, layout, locks, continued)
+	}
+	result = "/generated/build-plan.json"
+	written = [{ path: result, contents: Text("{}") }]
+	match (plan_with(0, []), plan_with(1, written)) {
+		(Ok(first), Ok(second)) => {
+			planned = runs(first).map(|run| run.argv)
+			first.next == Observe([result])
+				and first.steps.any(is_snapshot)
+				and planned.map(|argv| argv.take_first(2))
+					== [["rm", "-f"], ["nix", "eval"]]
+				and (planned.last() ?? []).take_last(4)
+					== ["--apply", NixBackend.plan_apply, "--write-to", result]
+				and second == Plan.{ steps: [Print("{}")], next: Done }
+		}
+		_ => False
+	}
 }
 
 # Task extras preserve empty arguments, controls and option-looking literals.
@@ -3658,7 +3782,8 @@ expect {
 		"cargoLocks = { };",
 		"lockFile = cargoLocks.\"crates\"; allowBuiltinFetchGit = true;",
 		"{ name = \".kai-inputs.json\"; path = builtins.toFile \"kai-inputs.json\" "
-			.concat("(builtins.toJSON { schema_version = 1; inputs = [ "),
+			.concat("(builtins.toJSON inputsRecord); }"),
+		"inputsRecord = { schema_version = 1; inputs = [ ",
 		"{ name = \"assets\"; kind = \"source\"; url = \"path:./assets\"; "
 			.concat("revision = inputs.\"assets\".rev or null; ")
 			.concat(sha256("nar", "sri", "inputs.\"assets\".narHash")),
