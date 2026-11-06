@@ -175,7 +175,7 @@ PrepareRelease := [].{
 			}
 		}
 	}
-	write_release_metadata! = |name, version, repository| {
+	write_release_metadata! = |name, version, repository, changelog| {
 		manifest_path = Path.utf8("build.zig.zon")
 		manifest = Path.read_utf8!(manifest_path)?
 		rewritten = match Release.rewrite_manifest(manifest, version) {
@@ -185,6 +185,7 @@ PrepareRelease := [].{
 		Path.write_utf8!(Path.utf8("VERSION"), version)?
 		Path.write_utf8!(Path.utf8("RELEASE_NAME"), name)?
 		Path.write_utf8!(manifest_path, rewritten)?
+		Path.write_utf8!(Path.utf8(Release.changelog_file), changelog)?
 		# Record the URLs this release will publish its bundles at; the std
 		# bundle names the platform URL, so it is built after VERSION, and the
 		# other plugins name both.
@@ -201,8 +202,8 @@ PrepareRelease := [].{
 		}
 		Ok({})
 	}
-	build_release_branch! = |name, version, tag, branch, repository| {
-		PrepareRelease.write_release_metadata!(name, version, repository)?
+	build_release_branch! = |name, version, tag, branch, repository, changelog| {
+		PrepareRelease.write_release_metadata!(name, version, repository, changelog)?
 		Stdout.line!("Building and checking ${name} (${version})...")?
 		Exec.cmd!(Exec.cmd("zig").args(Exec.strs(["build", "build-release"])))?
 		# The artifacts build reproducibly, so flake.nix can name the archives
@@ -394,6 +395,15 @@ PrepareRelease := [].{
 		PrepareRelease.require_local_ref_absent!("refs/heads/${release_branch}")?
 		PrepareRelease.require_remote_ref_absent!("refs/heads/${release_branch}")?
 
+		# The release moves the Unreleased changelog entries under its version,
+		# so it refuses to start without any.
+		date = Exec.output!(Exec.cmd("date").args(Exec.strs(["-u", "+%Y-%m-%d"])))?
+		changelog = Release.release_changelog(
+			Path.read_utf8!(Path.utf8(Release.changelog_file))?,
+			version,
+			date.stdout_utf8.trim(),
+		)?
+
 		switch_result = PrepareRelease.git!([
 			"switch",
 			"--quiet",
@@ -416,6 +426,7 @@ PrepareRelease := [].{
 					tag,
 					release_branch,
 					repository,
+					changelog,
 				) {
 					Err(error) =>
 						PrepareRelease.fail_and_rollback!(

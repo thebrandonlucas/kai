@@ -46,7 +46,6 @@ GitHub := [].{
 	CreateReleaseRequest : {
 		body : Str,
 		draft : Bool,
-		generate_release_notes : Bool,
 		name : Str,
 		prerelease : Bool,
 		tag_name : Str,
@@ -145,7 +144,6 @@ GitHub := [].{
 	create_release_request = |release| {
 		body: release.notes,
 		draft: Bool.True,
-		generate_release_notes: Bool.True,
 		name: release.name,
 		prerelease: Bool.False,
 		tag_name: release.tag_name,
