@@ -386,28 +386,10 @@ Std := [].{
 	plan_nix = |declared, wanted, ctx| {
 		model = StdModel.revised(Std.on_nix(declared), ctx)
 		layout = Std.nix_layout(ctx.layout)
-		path = ctx.layout.lock_path
-		lock_failure = |code, message|
-			{ code, message, hint: "kai update", suggestions: [] }
-		unreadable = |why|
-			lock_failure("invalid_lock", "cannot read the lock file ${path}: ${why}")
-		rendering = |message| Plan.fail("cannot generate the Nix files: ${message}")
 		target = ctx.host.system
 		StdModel.known(model, wanted)?
-		NixBackend.preflight(model, wanted, target, layout).map_err(rendering)?
-		text = match ctx.lock {
-			Present(contents) => contents
-			Absent => return Err(lock_failure("missing_lock", "no lock file at ${path}"))
-		}
-		if LockFile.section(text, "nix") == Ok(Absent) {
-			sectionless = "the lock at ${path} has no Nix section"
-			return Err(lock_failure("missing_lock", sectionless))
-		}
-		locks = Locks.decode(text).map_err(unreadable)?
-		stale = Locks.staleness(locks, model).map_err(rendering)?
-		if !stale.is_empty() {
-			return Err(lock_failure("stale_lock", stale))
-		}
+		NixBackend.preflight(model, wanted, target, layout).map_err(Std.rendering)?
+		locks = Std.nix_locks(model, ctx)?
 		# As on direct, the machine's Expect programs are checked, and the
 		# FetchLocked tools made ready, before a shell or task enters.
 		validated = Project.validate(model).map_err(Plan.fail)?
@@ -433,7 +415,34 @@ Std := [].{
 			_ =>
 				NixBackend.plan_entering(pinned, wanted, target, layout, locks, entering)
 		}
-		planned.map_err(rendering)
+		planned.map_err(Std.rendering)
+	}
+
+	rendering : Str -> Plan.Failure
+	rendering = |message| Plan.fail("cannot generate the Nix files: ${message}")
+
+	## The lock's Nix pins, or why they are missing, unreadable or stale.
+	nix_locks : Model, Implementation.Context -> Try(Locks, Plan.Failure)
+	nix_locks = |model, ctx| {
+		path = ctx.layout.lock_path
+		lock_failure = |code, message|
+			{ code, message, hint: "kai update", suggestions: [] }
+		unreadable = |why|
+			lock_failure("invalid_lock", "cannot read the lock file ${path}: ${why}")
+		text = match ctx.lock {
+			Present(contents) => contents
+			Absent => return Err(lock_failure("missing_lock", "no lock file at ${path}"))
+		}
+		if LockFile.section(text, "nix") == Ok(Absent) {
+			sectionless = "the lock at ${path} has no Nix section"
+			return Err(lock_failure("missing_lock", sectionless))
+		}
+		locks = Locks.decode(text).map_err(unreadable)?
+		stale = Locks.staleness(locks, model).map_err(Std.rendering)?
+		if !stale.is_empty() {
+			return Err(lock_failure("stale_lock", stale))
+		}
+		Ok(locks)
 	}
 
 	## The environments a request's shells and tasks enter.
@@ -502,6 +511,25 @@ Std := [].{
 				other => other
 			}
 		Ok(Plan.{ steps: planned.steps.map(named), next: planned.next })
+	}
+
+	## Flake outputs a plugin adds; see `build_flake_output`.
+	Extra : NixBackend.Output
+
+	## Plan `nix build` of `attribute` in std's generated flake from the
+	## locked inputs, with `outputs` added to the flake's outputs: how a
+	## plugin builds what std's settings cannot say, such as a NixOS system.
+	## `outputs` is Nix attribute definitions, which see `inputs`, `self`
+	## and `environmentsFor system`, defining each of `environments`. kai
+	## prints the store path, naming it `name`.
+	build_flake_output :
+		List(Config.Setting), Implementation.Context, Extra -> Try(Plan, Plan.Failure)
+	build_flake_output = |settings, ctx, wanted| {
+		model = Std.on_nix(ConfigToModel.convert(settings).map_err(Plan.fail)?)
+		locks = Std.nix_locks(model, ctx)?
+		layout = Std.nix_layout(ctx.layout)
+		NixBackend.plan_output(model, wanted, ctx.host.system, layout, locks)
+			.map_err(Std.rendering)
 	}
 
 	## The model as Nix sees it: its flake names no system only direct serves.

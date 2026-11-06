@@ -452,6 +452,10 @@ pub fn build(b: *std.Build) void {
     test_deploy.step.dependOn(check_step);
     test_step.dependOn(&test_deploy.step);
 
+    const test_nixos = b.addSystemCommand(&.{ "roc", "test", "plugins/nixos/main.roc" });
+    test_nixos.step.dependOn(check_step);
+    test_step.dependOn(&test_nixos.step);
+
     const test_cli = b.addSystemCommand(&.{ "roc", "test", "cli/main.roc" });
     test_cli.step.dependOn(check_step);
     test_step.dependOn(&test_cli.step);
@@ -494,12 +498,12 @@ pub fn build(b: *std.Build) void {
     const bare_binary = cli_binary;
     // Every maintained example must load and convert to std's model.
     const examples = [_][]const u8{
-        "examples/agenix",      "examples/build",        "examples/environment",
-        "examples/extend",      "examples/guix",         "examples/modules",
-        "examples/needs",       "examples/overlay",      "examples/packages",
-        "examples/path-source", "examples/raw",          "examples/sbom",
-        "examples/shell",       "examples/source-build", "examples/task",
-        "examples/workflow",
+        "examples/agenix",   "examples/build",       "examples/environment",
+        "examples/extend",   "examples/guix",        "examples/machines",
+        "examples/modules",  "examples/needs",       "examples/overlay",
+        "examples/packages", "examples/path-source", "examples/raw",
+        "examples/sbom",     "examples/shell",       "examples/source-build",
+        "examples/task",     "examples/workflow",
     };
     for (examples) |example| {
         for ([_][]const u8{ "check", "model", "spec" }) |command| {

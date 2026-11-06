@@ -498,6 +498,60 @@ NixBackend :: [].{
 		Ok(Plan.{ steps, next: Observe([result]) })
 	}
 
+	## A plugin's flake output: Nix attribute definitions added to the
+	## flake's outputs, the environments they read, the attribute to build,
+	## and its name and description in kai's messages.
+	Output : {
+		outputs : Str,
+		environments : List(Str),
+		attribute : Str,
+		name : Str,
+		description : Str,
+	}
+
+	## Builds `wanted.attribute` of the flake with `wanted.outputs` added.
+	## `--impure` lets them import project files by absolute path; builders
+	## stay allowed, as a system for another platform may need one.
+	plan_output : Model, Output, Str, Layout, Locks -> Try(Plan, Str)
+	plan_output = |model, wanted, target, layout, locks| {
+		project = Project.validate(model)?
+		check_layout(project, target, layout, Bool.False)?
+		inputs = Locks.inputs(project)?
+		staging = Some({ inputs, layout })
+		flake = render_selected(
+			project,
+			wanted.environments,
+			[],
+			[],
+			layout.workspace,
+			staging,
+			Unlimited,
+		)?
+		ending = lines(["    };", "}"])
+		if !flake.ends_with(ending) {
+			return Err("the generated flake has no outputs to add to")
+		}
+		contents = flake.drop_suffix(ending).concat(wanted.outputs).concat(ending)
+		derived = Locks.derive(locks, project, layout)?
+		lock_path = "${layout.generated_root}/flake.lock"
+		lock = { path: lock_path, contents: derived.contents }
+		argv = ["nix", "build", "--no-link", "--print-out-paths"]
+			.concat(["--no-update-lock-file", "--no-write-lock-file"])
+			.concat(["--nix-path", "", "--impure"])
+			.append("path:${layout.generated_root}#${wanted.attribute}")
+		artifact = { name: wanted.name, label: wanted.attribute, output: "out" }
+		build = Run({
+			description: wanted.description,
+			argv,
+			output: Artifact(artifact),
+			secrets: [],
+			removed_environment_variables: [],
+			kept_environment_variables: [],
+		})
+		files = staged_files(layout, contents).append(lock)
+		Ok(Plan.{ steps: derived.checks.concat([Write(files), build]), next: Done })
+	}
+
 	## A continuation's phase and the files kai read back for it.
 	Continued : {
 		phase : U64,

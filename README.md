@@ -460,6 +460,35 @@ roc-blueprint keeps its reviewed composition and publishes the same
 documents. See [docs/sbom.md](docs/sbom.md) and
 [examples/sbom](examples/sbom).
 
+## Machines
+
+The nixos plugin, `plugins/nixos`, declares NixOS machines beside the
+project's environments, added like the [guix plugin](#guix):
+
+```roc
+kaifile = Kaifile.new([
+	Std.plugin(project),
+	Nixos.plugin(project, [
+		Machine("web", [
+			System("x86_64-linux"),
+			StateVersion("25.05"),
+			User("admin", [SshKeys(["ssh-ed25519 AAAA... admin@example"])]),
+			Ssh,
+			Firewall([Tcp([80, 443])]),
+			Use("ops"),
+			Modules(["nixos/web.nix"]),
+		]),
+	]),
+])
+```
+
+A small typed core covers what most machines set; anything else comes from
+plain NixOS module files. Each machine is `nixosConfigurations.<name>` in the
+generated flake, built from the project's locked nixpkgs. `kai machine build
+web` builds its system and prints the store path. See
+[docs/machines.md](docs/machines.md) and
+[examples/machines](examples/machines).
+
 ## The `.kai` directory
 
 `kai update` is the only command that resolves package sources. It writes

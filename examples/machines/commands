@@ -1,0 +1,3 @@
+update
+--dry-run machine build web
+x86_64-linux: machine build web

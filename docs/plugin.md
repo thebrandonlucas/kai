@@ -177,6 +177,34 @@ std's `Std.run_in(project, ctx, { environment, argv, description })` plans argv
 inside one of std's environments from the locked Nix inputs, as a task
 would run; the deploy example uses it for `nixos-rebuild`.
 
+## Building from std's flake
+
+A plugin that builds something std's settings cannot describe, such as a
+NixOS system, adds Nix outputs to std's generated flake and builds one:
+
+```roc
+Std.build_flake_output(project, ctx, {
+	outputs: "      nixosConfigurations = { ... };\n",
+	environments: ["ops"],
+	attribute: "nixosConfigurations.web.config.system.build.toplevel",
+	name: "web",
+	description: "machine build web",
+})
+```
+
+plans what std plans for its own commands, from the same lock and with the
+same failures (`missing_lock`, `stale_lock`, `invalid_lock`): it writes
+`flake.nix`, with `outputs` added at the end of its outputs, and `flake.lock`,
+then runs `nix build --no-link --print-out-paths --impure` of `attribute`, an
+`Artifact` whose store path kai prints, naming it `name`. `outputs` is Nix
+attribute definitions, which see `inputs`, `self` and `environmentsFor
+system`, the definition of each of `environments`: a function from extra
+`mkShell` attributes to the environment's shell. They may not use the names
+std writes (`devShells`, `packages`, `kaiArtifacts`) or add inputs, which
+would leave the lock stale; they read files by absolute path, which
+`--impure` allows. The nixos plugin, `plugins/nixos`, builds its machines this
+way.
+
 ## Implementing std's commands on another backend
 
 A plugin that declares a backend of its own can implement std's `shell`,
