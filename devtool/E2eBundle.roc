@@ -11,6 +11,7 @@ import pf.Duration
 import pf.Env
 import pf.OsStr
 import pf.Path
+import pf.Sleep
 import pf.Stdout
 import pf.Tcp
 
@@ -139,8 +140,25 @@ E2eBundle := [].{
 		std = Bundles.bundle!("kai-std")?
 		work = Path.canonicalize!(Env.create_temp_dir_with_prefix!("kai-bundle-")?)?
 		result = E2eBundle.run_in!(kai, pf_bundle, std, version, work)
-		Path.delete_all!(work)?
+		E2eBundle.remove!(work)?
 		result
+	}
+
+	# A process the suite started can still be writing into the directory while
+	# it is removed, which fails with "Directory not empty", so try again
+	# briefly before failing (#389).
+	remove! = |dir| {
+		var $left = 5
+		while $left > 1 {
+			match Path.delete_all!(dir) {
+				Ok({}) => return Ok({})
+				Err(_) => {
+					_ = Sleep.millis!(500)
+					$left = $left - 1
+				}
+			}
+		}
+		Path.delete_all!(dir)
 	}
 
 	run_in! = |kai, pf_bundle, std, version, work| {
