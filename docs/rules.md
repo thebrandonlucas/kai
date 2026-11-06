@@ -24,6 +24,7 @@
 - Do not use conventional commits.
 - Every commit must provide standalone value to make merging code at any point safe and ensuring feature branches don't get out of hand (trunk based development). See [Programming Incrementally](https://web.archive.org/web/20220517144332/https://ourmachinery.com/post/step-by-step-programming-incrementally/)
 - Do not create or modify documentation unless explicitly requested. The intent is for the developer to be able to understand the code.
+- A pull request that changes what users see (`cli/`, `platform/`, `plugins/`, `install.sh` or `flake.nix`) adds an entry under `## [Unreleased]` in `CHANGELOG.md`, in Keep a Changelog's `### Added`, `### Changed`, `### Fixed` or `### Removed`. Write it for users: what they can now do or must change, not the pull request's title. Start a breaking change's entry with `**Breaking:**`. A pull request users see no difference from carries the `no changelog` label instead. The changelog check enforces this, and a release refuses to start while Unreleased is empty.
 
 
 ## Issue and PR Guidelines

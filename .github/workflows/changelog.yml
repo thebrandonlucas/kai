@@ -1,0 +1,50 @@
+name: Changelog
+
+# A pull request that changes what users see, Kai itself or how it installs,
+# also adds its entry under Unreleased in CHANGELOG.md, or carries the
+# "no changelog" label. Adding or removing a label reruns the check, so it
+# lives apart from ci.yml, whose jobs a label should not rerun.
+on:
+  pull_request:
+    branches:
+      - master
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: changelog-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changelog:
+    name: changelog
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Check for a changelog entry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if printf '%s' "$LABELS" | jq -e 'index("no changelog")' > /dev/null; then
+            echo "Labeled no changelog."
+            exit 0
+          fi
+          files="$(gh api --paginate "repos/$REPOSITORY/pulls/$NUMBER/files" --jq '.[].filename')"
+          if ! printf '%s\n' "$files" | grep -qE '^(cli/|platform/|plugins/|install\.sh$|flake\.nix$)'; then
+            echo "Changes nothing users see."
+            exit 0
+          fi
+          if printf '%s\n' "$files" | grep -qx CHANGELOG.md; then
+            echo "Changes CHANGELOG.md."
+            exit 0
+          fi
+          echo "::error file=CHANGELOG.md::This pull request changes cli/, platform/, plugins/, install.sh or flake.nix. Add an entry under Unreleased in CHANGELOG.md, or label it \"no changelog\" if users see no difference."
+          exit 1
