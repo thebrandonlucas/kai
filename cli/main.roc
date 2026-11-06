@@ -113,7 +113,7 @@ run! = |shown, mode| {
 		if asks_help(shown) {
 			return Stdout.line!(Help.bundle_plugin)
 		}
-		return bundle_plugin!(bundle_arguments(shown, [], Err(NoValue))?, mode)
+		return bundle_plugin!(bundle_arguments(shown, [], bundle_defaults)?, mode)
 	}
 	located = Load.project!(requested_file(shown), mode)
 	if command_word(shown) == Ok("check") and !asks_help(shown) {
@@ -312,20 +312,25 @@ init! = |requested, mode| {
 	)
 }
 
-# `kai bundle-plugin`: bundle a plugin for this kai's release, by default
-# into the plugin's own directory.
-bundle_plugin! = |{ plugin, output }, mode| {
+# `kai bundle-plugin`: bundle a plugin for this kai's release, or the
+# platform and std releases --platform and --std name, by default into the
+# plugin's own directory.
+bundle_plugin! = |{ plugin, output, pf, std }, mode| {
 	cwd = Env.cwd!()?.to_str()?
 	directory = Load.path(Load.resolve(cwd, plugin)).canonicalize!()?.to_str()?
 	target = Load.resolve(cwd, output ?? directory)
-	bundle = PluginBundle.create!(directory, target)?
+	releases = {
+		pf: pf ?? PluginBundle.released.pf,
+		std: std ?? PluginBundle.released.std,
+	}
+	bundle = PluginBundle.create!(directory, target, releases)?
 	name = directory.split_on("/").last() ?? "plugin"
 	file = bundle.split_on("/").last() ?? bundle
 	bundled = "Bundled ${bundle}."
 	summary =
 		\\${bundled}
 		\\Host it at a URL ending in its file name, and add it to the header of a
-		\\Kaifile.roc that uses this kai's platform and std:
+		\\Kaifile.roc that uses the platform and std it names:
 		\\  ${name}: "https://…/${file}",
 	Output.result!(
 		mode,
@@ -338,24 +343,34 @@ bundle_plugin! = |{ plugin, output }, mode| {
 	)
 }
 
-# bundle-plugin's directory and --output-dir, among kai's own options.
-bundle_arguments = |args, words, output|
+# What bundle-plugin is given before its arguments: no options.
+bundle_defaults = { output: Err(NoValue), pf: Err(NoValue), std: Err(NoValue) }
+
+# bundle-plugin's directory, --output-dir, --platform and --std, among kai's
+# own options.
+bundle_arguments = |args, words, options|
 	match args {
-		[] =>
+		[] => {
+			{ output, pf, std } = options
 			match words {
-				[_] => Ok({ plugin: ".", output })
-				[_, plugin] => Ok({ plugin, output })
+				[_] => Ok({ plugin: ".", output, pf, std })
+				[_, plugin] => Ok({ plugin, output, pf, std })
 				_ => Err(Usage(Help.bundle_plugin))
 			}
+		}
 		["--output-dir", value, .. as rest] =>
-			bundle_arguments(rest, words, Ok(value))
+			bundle_arguments(rest, words, { ..options, output: Ok(value) })
+		["--platform", value, .. as rest] =>
+			bundle_arguments(rest, words, { ..options, pf: Ok(value) })
+		["--std", value, .. as rest] =>
+			bundle_arguments(rest, words, { ..options, std: Ok(value) })
 		["--json", .. as rest] | ["--no-color", .. as rest] =>
-			bundle_arguments(rest, words, output)
+			bundle_arguments(rest, words, options)
 		[arg, .. as rest] =>
 			if arg.starts_with("-") {
 				Err(Usage(Help.bundle_plugin))
 			} else {
-				bundle_arguments(rest, words.append(arg), output)
+				bundle_arguments(rest, words.append(arg), options)
 			}
 	}
 
@@ -614,16 +629,31 @@ expect [
 ].all(|(args, expected)| command_word(args) == expected)
 	and operand(["--json", "workflow", "ci", "--dry-run"]) == "ci"
 
-# bundle-plugin takes a directory and --output-dir among kai's own options.
+# bundle-plugin takes a directory, --output-dir, --platform and --std among
+# kai's own options.
 expect [
-	(["bundle-plugin"], Ok({ plugin: ".", output: Err(NoValue) })),
 	(
-		["--json", "bundle-plugin", "p", "--output-dir", "o"],
-		Ok({ plugin: "p", output: Ok("o") }),
+		["bundle-plugin"],
+		Ok({
+			plugin: ".",
+			output: Err(NoValue),
+			pf: Err(NoValue),
+			std: Err(NoValue),
+		}),
+	),
+	(
+		["--json", "bundle-plugin", "p", "--output-dir", "o", "--std", "s"],
+		Ok({ plugin: "p", output: Ok("o"), pf: Err(NoValue), std: Ok("s") }),
+	),
+	(
+		["bundle-plugin", "--platform", "f", "p"],
+		Ok({ plugin: "p", output: Err(NoValue), pf: Ok("f"), std: Err(NoValue) }),
 	),
 	(["bundle-plugin", "p", "q"], Err(Usage(Help.bundle_plugin))),
 	(["bundle-plugin", "--yes"], Err(Usage(Help.bundle_plugin))),
-].all(|(args, expected)| bundle_arguments(args, [], Err(NoValue)) == expected)
+].all(
+	|(args, expected)| bundle_arguments(args, [], bundle_defaults) == expected,
+)
 
 # A failing child's status becomes kai's, a refusal is a usage error, a
 # needed confirmation is 6, and every other failure is 1.

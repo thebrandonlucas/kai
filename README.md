@@ -16,7 +16,7 @@ Spend very little time thinking about installing software, dependencies, develop
 
 To attempt a solution, `kai` wraps `nix` in a friendly frontend so that you can actually use it with confidence.
 
-`kai` can already enter shells with the other determinate system, [Guix](https://guix.gnu.org/), and plans to support more of it. If we're lucky, maybe it will even get a custom implementation which learns from the mistakes of the others :eyes:
+`kai` can already enter shells with the other determinate system, [Guix](https://guix.gnu.org/), through its [guix plugin](#guix), and plans to support more of it. If we're lucky, maybe it will even get a custom implementation which learns from the mistakes of the others :eyes:
 
 The goal is to make using determinate systems so easy and powerful that they become the de-facto choice for computer use in all its forms: from desktops to servers and beyond. Practically, this means adopting Nix under the hood and creating useful abstractions on top in the short term, like [jujutsu](https://github.com/jj-vcs/jj) does with `git`.
 
@@ -68,6 +68,28 @@ nix run github:thebrandonlucas/kai -- --version
 nix profile install github:thebrandonlucas/kai
 ```
 
+### Use Kai in GitHub Actions
+
+The [setup-kai](.github/actions/setup-kai/action.yml) action installs Nix and
+a Kai release with the install script, and caches Kai's downloads:
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: thebrandonlucas/kai/.github/actions/setup-kai@COMMIT
+    with:
+      version: 0.0.11
+  - run: kai run test
+```
+
+Pin the action by a full commit SHA, or by a release tag from 0.0.12 on.
+`version` is required, so that a run installs the same kai until the workflow
+changes it. `cache` (default `true`) caches `~/.cache/kai`, the direct
+backend's store and the Roc compiler Kai downloads, by the version, the
+runner's OS and architecture, and `.kai/lock.json`. `nix` (default `true`)
+installs Nix unless it is on `PATH`; set it to `false` for a project whose
+environments are all [pinned downloads](#running-without-nix-or-guix).
+
 ## Getting started
 
 A project is configured by `Kaifile.roc`, an ordinary
@@ -111,13 +133,17 @@ kai shell default -- cowsay hi    # or run one command in it
 kai run hello                     # run a task
 kai run hello -- again            # arguments after -- are appended
 kai build greeting                # sandboxed build; prints the store path
+kai build greeting --plan         # print its plan and identity as JSON (docs/build-plan.md)
+kai build greeting --rebuild      # build again; fail if the output differs
 kai workflow ci                   # run steps in order, stop at a failure
+kai spec                          # print the project as JSON (docs/spec.md)
+kai lock                          # print what the lock pins as JSON (docs/lock.md)
 kai bundle-plugin plugins/deploy  # bundle a plugin package for hosting
 ```
 
 Tool names are the backend's own package names: Nix attribute paths such as
 `python3` or `rust-bin.stable."1.90.0".minimal` (quote a segment that is not a
-plain identifier), or Guix specifications. Tasks run their argv exactly,
+plain identifier), or Guix specifications with the [guix plugin](#guix). Tasks run their argv exactly,
 without a shell, so use `Run(["sh", "-c", "...", "sh"])` for pipes: `sh -c`
 takes the argument after its script as `$0`, so the `"sh"` placeholder lets
 arguments after `--` reach the script as `$1`, `$2`, ... and `"$@"`. In Roc
@@ -138,16 +164,16 @@ garbage collection.
 | Setting | Purpose |
 | --- | --- |
 | `Name(name)` | Project name. Required. |
-| `Systems([...])` | Systems the generated flake declares. Optional (default `x86_64-linux` and `aarch64-linux`); must include the system of the host Kai runs on. |
-| `Packages(name, source)` | A package source: `Auto`, `From(NixPackages(flakeRef))` or `From(GuixPackages(...))`. Tools use the `default` source (`Auto`: nixpkgs unstable on Nix, the installed channels on Guix) unless written `"source#tool"`. |
+| `Systems([...])` | Systems the generated flake declares. Optional (default `x86_64-linux` and `aarch64-linux`); must include the system of the host Kai runs on. `x86_64-darwin` and `x86_64-windows`, which neither Nix nor Guix serves, take only environments the [direct backend](#running-without-nix-or-guix) serves there: `kai check` refuses any other, naming it, unless `OnSystems` leaves its package tools to other systems. The generated flake leaves them out. |
+| `Packages(name, source)` | A package source: `Auto`, `From(NixPackages(flakeRef))` or `From(GuixPackages(...))`, which only the [guix plugin](#guix) serves. Tools use the `default` source (`Auto`: nixpkgs unstable on Nix, the installed channels on Guix) unless written `"source#tool"`. |
 | `Overlay(name, flakeRef)` | A Nix overlay, applied only where an environment selects it. |
 | `Follows(overlay, input, source)` | Makes an overlay's own flake input, such as `nixpkgs`, the project's Nix package source `source` (`default` unless declared), so it is neither downloaded nor locked separately. |
-| `GuixChannel(name, url, branch, Introduction(commit, signer))` | A Guix channel beside Guix's own, authenticated by its introduction: the first signed commit and its signer's OpenPGP fingerprint, as the channel publishes them. Its packages are available to every Guix source; `kai update` locks its commit. Nix ignores it. |
 | `Environment(name, [...])` | A set of tools: `Tools([...])`, `Overlays([...])` in order, and `Extend(parent)` to inherit the parent's tools, overlays and aliases first. `Alias(command, tool, binary)` (Nix only) puts `command` on PATH running the tool's `bin/<binary>`, e.g. for two tools that both install `bin/roc`. `RustToolchain(text)` (Nix only) adds the Rust toolchain a `rust-toolchain.toml` pins (its `channel`, `profile`, `components` and `targets`), given its text with `import "rust-toolchain.toml" as toolchain : Str`; the environment must select an `Overlay` of [rust-overlay](https://github.com/oxalica/rust-overlay). `RustToolchainWith(text, [Components([...]), Targets([...])])` adds components, such as `"llvm-tools-preview"`, and targets, such as `"wasm32-unknown-unknown"`, to those the file pins, for what only Kai's environment needs. |
 | `Env([(name, value), ...])` | Environment variables, in an `Environment` for its shells, tasks and builds (overriding its parent's by name), or in a `Task` or `Build` overriding its environment's. |
 | `PackageEnv([(name, value), ...])` | In an `Environment` (Nix only), environment variables set to paths in packages, which Kai computes: `LibraryPath([...])` and `BinPath([...])` join the tools' `lib` or `bin` directories with `:`, and `PackagePath(tool)` is the tool's own path, e.g. `("LD_LIBRARY_PATH", LibraryPath(["wayland"]))`. Like `Env`, they override the parent's by name, and a task's or build's `Env` overrides them. |
 | `OnSystems([...], [...])` | In an `Environment`, `Tools([...])` and `Env([...])` for the named systems only, which must be declared: e.g. `OnSystems(["x86_64-linux", "aarch64-linux"], [Tools(["wayland"])])` gives one shell name a tool with no macOS build. Its tools come after the environment's own and its variables override the environment's; an extending environment's own `Env` overrides them in turn. On Nix the generated flake defines the environment for each system apart, so Nix evaluates only the host's; Guix uses the host's system. |
 | `Expect([...])` | In an `Environment`, programs the machine must have, for the [direct backend](#running-without-nix-or-guix): all are looked for on `PATH` before anything runs, and every missing one is named. Nix checks them too, before a shell or task enters; Guix does not serve such an environment, and a build cannot use it. |
+| `RocPackages([url, ...])` | In an `Environment`, released Roc package bundles, each `https://` and ending in `<hash>.tar.zst`, placed in Roc's package cache (`roc/packages/<hash>` under `$XDG_CACHE_HOME`, or `~/.cache`) before its shells and tasks start, so Roc programs there resolve them offline. List dependencies of dependencies too: basic-cli needs http; `roc deps <file>` prints them. `kai update` pins each file's SHA-256 and size in the lock's `direct` section, as a `Fetch` named `roc-<hash>`; the direct backend downloads it into kai's store, Nix fetches it as a fixed-output file, and a bundle already in the cache is left alone. `Extend` inherits them. Unpacking needs a `tar` that reads zstd. Builds take their bundles as `Source`s in `Inputs` instead. |
 | `Pure` | In an `Environment`, and those extending it, starts its shells and tasks from a clean environment, so a task can check it needs nothing undeclared. Only HOME, USER, TERM, Kai's own variables and the `Env`, `Secrets` and `OptionalEnvironmentVariables` declared reach them. On Nix this is `nix develop --ignore-environment`; Guix shells are always pure, so it changes nothing there. |
 | `Description(text)` | In a `Shell`, `Task`, `Build` or `Workflow`, its summary in help, in place of its environment, command, output or steps, which its own page (e.g. `kai run test --help`) still shows after it. |
 | `Shell(name, [Use(environment)])` | A shell for `kai shell`. |
@@ -156,7 +182,7 @@ garbage collection.
 | `Fetch(name, [{ system, url, sha256 }, ...])` | A file pinned by its published sha256 (hex or SRI), one per system; the host's system picks it, and it needs no lock entry. Builds read it in `Inputs([...])`, and the tool `"name#binary"` puts it on `PATH` as the executable `binary`. |
 | `FetchAll(name, { url, sha256 })` | A `Fetch` of one file for every system, such as a data archive or a source tarball. |
 | `FetchUnavailable(name, [...])` | The declared systems a `Fetch` or `FetchAll` has no file for, such as a tool with no macOS build. On them, Kai refuses only the shells, tasks and builds that use it, saying why, rather than the whole Kaifile; `OnSystems` can leave the tool out there instead. |
-| `FetchLocked(name, [{ system, url, mirrors, program }, ...])` | A `Fetch` with no published sha256: `kai update` records each file's SHA-256 and size in the lock's `direct` section, and the [direct backend](#running-without-nix-or-guix) runs it, as does Nix beside package-source tools; a build cannot use it. `program` is `File`, or `Archive(path)` for a tar.gz or tar.xz with the program at `path`; `mirrors` are other URLs for the same bytes. |
+| `FetchLocked(name, [{ system, url, mirrors, program }, ...])` | A `Fetch` with no published sha256: `kai update` records each file's SHA-256 and size in the lock's `direct` section, and the [direct backend](#running-without-nix-or-guix) runs it, as does Nix beside package-source tools; a build cannot use it. `program` is `File`, or `Archive(path)` for a tar.gz, tar.xz or zip with the program at `path`; `mirrors` are other URLs for the same bytes. |
 | `CargoVendor(name, text)` | The crates a `Cargo.lock` names, vendored into one directory that builds can read, pinned by the lock's checksums with no lock entry, so `kai update <name>` only says so (`cargo update` moves them). Pass the text with `import "Cargo.lock" as cargo_lock : Str`. A git dependency is fetched at the commit the lock records. |
 | `Build(name, [...])` | A sandboxed Nix build of a project snapshot: `Use(environment)`, `Run(argv)`, a relative `Output(path)`, and optionally `Inputs([...])` (sources, fetches and cargo vendors, in `$KAI_INPUTS/<name>`), `Needs([...])` (other builds, in `$KAI_ARTIFACTS/<name>`), `Revision` (the project's revision, below) and `Default`, which makes it the build `kai build` builds when given no name (at most one build). |
 | `BuildRoot(path)` | The directory builds copy, when it is above the project's, as `..` segments: `BuildRoot("../..")` lets an app whose Kaifile sits in `apps/web` build against a library at the repository root. Builds copy that directory instead of the project's, and their `Files`, `Run` and `Output` work from it; `.kai` stays out of the copy. |
@@ -165,7 +191,8 @@ garbage collection.
 
 Names and references are checked as the file compiles, so `kai check` reports
 mistakes before anything runs. [examples](examples/) has a small project for
-each setting and command, from a first shell to builds, workflows and Guix.
+each setting and command, from a first shell to builds, workflows and the
+guix plugin.
 
 ### Tasks and builds
 
@@ -217,6 +244,17 @@ such as `x86_64-linux` or `aarch64-darwin`, and, when its environment has a
 triple, such as `x86_64-unknown-linux-gnu`, for paths like
 `target/$KAI_RUST_TARGET/release`. A variable of the same name in an `Env`
 replaces them.
+
+So that a build can say what made it, such as in an SBOM it writes, a Nix
+build also gets `KAI_TOOLS`, a directory linking each tool of its
+environment, by the name the Kaifile gives it, to the tool's store path, and
+`$KAI_INPUTS/.kai-inputs.json`, a record of each of its inputs and needs:
+its name, kind, URL, revision and hash, as [`kai lock`](docs/lock.md)
+reports them. Neither adds to an artifact's closure unless the artifact
+names a store path; see [docs/evidence.md](docs/evidence.md).
+`kai build NAME --plan` prints the same records with the build's snapshot,
+derivation and output path, without building; see
+[docs/build-plan.md](docs/build-plan.md).
 
 A Rust build reads its crates from a `CargoVendor` in its inputs through the
 cargo configuration in the vendored directory, which replaces crates.io and
@@ -274,29 +312,71 @@ command on one backend, come from plugins: Roc packages next to std in
 ## Backends
 
 Kai picks a backend for each command. Nix is preferred when it is installed and
-can serve the request. Guix is used when Nix is not installed, or when the
-environment's tools come from a `GuixPackages` source. The direct backend,
-which needs neither, comes last. `--backend nix`, `--backend guix` or
-`--backend direct` forces one; Kai never falls back to another.
+can serve the request. The direct backend, which needs no Nix, comes next,
+and a plugin's backends, such as Guix, follow in the order the Kaifile lists
+the plugins (`Kaifile.prefer` changes it). `--backend nix` or
+`--backend direct` forces one, as does `--backend guix` with the guix
+plugin; Kai never falls back to another.
 
-On Guix, `kai shell` and `kai run` run `guix time-machine -C CHANNELS --
-shell -q --pure` with the environment's tools, at the Guix channel commits
-Kai's lock pins. `kai build` runs `guix build -f` on a generated file whose
-derivation runs the same sandboxed build runner as on Nix, and `kai workflow`
-runs tasks and builds in order. `kai update` pins every installed backend that
-fits, each in its own section of `.kai/lock.json` (`kai --backend guix update`
-pins only Guix), and Guix commands refuse to run without a Guix pin. The first
-Guix command at a new commit downloads, or builds, that Guix, which can take a
-long time. Overlays, `Fetch` and build inputs (`Inputs([...])`) other than
-`path:` sources need Nix. See
-[examples/guix](examples/guix).
+### Guix
+
+Guix is a plugin beside std, `plugins/guix`: it implements `kai shell`,
+`run`, `build`, `workflow` and `update` on Guix from the same settings.
+Add it to Kaifile.roc's header and plugins:
+
+```roc
+app [kaifile] {
+	pf: platform "<platform URL>",
+	std: "<std URL>",
+	guix: "<guix plugin URL>",
+}
+
+import pf.Kaifile
+import std.Config
+import std.Std
+import guix.Guix
+
+project : List(Config.Setting)
+project = [
+	Name("site"),
+	Environment("dev", [Tools(["hello"])]),
+	Shell("default", [Use("dev")]),
+]
+
+kaifile = Kaifile.new([Std.plugin(project), Guix.plugin(project, [])])
+```
+
+Each Kai release after 0.0.11 publishes the guix plugin bundled against its
+own platform and std, as `guix-<hash>.tar.zst`. The release's notes give the
+`guix:` line to add to the header, beside the `pf` and `std` lines of the
+same release, and `plugins/guix-release` in its source records the URL.
+
+Guix is used when Nix is not installed, or when the environment's tools come
+from a `GuixPackages` source. `kai shell` and `kai run` run `guix
+time-machine -C CHANNELS -- shell -q --pure` with the environment's tools,
+at the Guix channel commits Kai's lock pins. `kai build` runs `guix build
+-f` on a generated file whose derivation runs the same sandboxed build runner
+as on Nix, and `kai workflow` runs tasks and builds in order. `kai update`
+pins every installed backend that fits, each in its own section of
+`.kai/lock.json` (`kai --backend guix update` pins only Guix), and Guix
+commands refuse to run without a Guix pin. The first Guix command at a new
+commit downloads, or builds, that Guix, which can take a long time. Overlays,
+`Fetch`, `Alias`, `PackageEnv`, `RustToolchain`, `Expect` and build
+inputs (`Inputs([...])`) other than `path:` sources need Nix.
+
+The plugin's one setting, `Channel(name, url, branch, Introduction(commit,
+signer))`, adds a Guix channel beside Guix's own, authenticated by its
+introduction: the first signed commit and its signer's OpenPGP fingerprint,
+as the channel publishes them. Its packages are available to every Guix
+source, and `kai update` locks its commit. See [examples/guix](examples/guix).
 
 ### Running without Nix or Guix
 
 The direct backend runs shells and tasks from pinned downloads, for tools
 built on Kai whose users cannot be assumed to have Nix. It serves an
 environment whose tools are all `Fetch` or `FetchLocked` files, and needs only
-`tar`, `chmod`, `sh` and `env` on the machine (and `xz` for a tar.xz):
+`tar`, `chmod`, `sh` and `env` on the machine (and `xz` for a tar.xz, and
+`unzip`, or a `tar` that is bsdtar as on macOS, for a zip):
 
 ```roc
 kaifile = Std.kaifile([
@@ -326,9 +406,15 @@ runs the task with them first on `PATH`.
 
 Downloads go over HTTPS with no credentials into `kai/v1` in the cache
 directory, named by SHA-256, and are hashed again before every use. An archive
-is unpacked whole, after listing it: one with an absolute name, a `..` or a
-link out of the tree is refused, and its files are made read-only. The store may be deleted at any time. See
+is unpacked whole, after listing it: one with an absolute name, a `..`, a
+backslash or a link out of the tree (any link, for a zip unzip lists) is
+refused, and its files are made read-only. The store may be deleted at any time. See
 [examples/direct](examples/direct).
+
+It is the only backend for `x86_64-darwin` and `x86_64-windows`, so a project
+can declare them for its CI legs there: `kai update` on Linux pins their files
+too. Kai itself does not run on them yet. On Windows the downloads are copied
+into the environment's `bin` directory, with their `.exe`, instead of linked.
 
 A pinned download pins one file, not a dependency tree, so this suits static
 binaries: a program needing the machine's shared libraries is only as
@@ -346,6 +432,66 @@ backend refuses such an environment, naming the tools that are not
 downloads, and a build cannot use it, as its sandbox sees neither the
 lock's direct pins nor the machine's programs. See
 [examples/mixed](examples/mixed).
+
+## SBOMs
+
+The sbom plugin, `plugins/sbom`, writes a release's SBOMs from the same
+settings and lock: SPDX 3.0.1, SPDX 2.3 and CycloneDX 1.7 sidecars of a
+release file and an evidence manifest, from a composition the maintainer
+reviews. Add it to Kaifile.roc's header with the `sbom:` line from the
+release's notes (each release after 0.0.11 publishes the plugin as
+`sbom-<hash>.tar.zst`, and `plugins/sbom-release` records its URL), and to
+its plugins beside std:
+
+```roc
+kaifile = Kaifile.new([Std.plugin(project), Sbom.plugin(project)])
+```
+
+```sh
+kai sbom inputs                      # the inputs a composition disposes of
+kai sbom inspect --composition composition.json --output inventory.json -- source
+kai sbom bind --inventory inventory.json --subject subject.json \
+  --context context.json --artifact dist/app.tar.zst
+kai sbom check --manifest dist/app.tar.zst.sbom-manifest.json
+```
+
+It follows roc-blueprint's SBOM profile, so a project moving from
+roc-blueprint keeps its reviewed composition and publishes the same
+documents. See [docs/sbom.md](docs/sbom.md) and
+[examples/sbom](examples/sbom).
+
+## Machines
+
+The nixos plugin, `plugins/nixos`, declares NixOS machines beside the
+project's environments, added like the [guix plugin](#guix):
+
+```roc
+kaifile = Kaifile.new([
+	Std.plugin(project),
+	Nixos.plugin(project, [
+		Machine("web", [
+			System("x86_64-linux"),
+			StateVersion("25.05"),
+			User("admin", [SshKeys(["ssh-ed25519 AAAA... admin@example"])]),
+			Ssh,
+			Firewall([Tcp([80, 443])]),
+			Use("ops"),
+			Modules(["nixos/web.nix"]),
+		]),
+	]),
+])
+```
+
+A small typed core covers what most machines set; anything else comes from
+plain NixOS module files. Each machine is `nixosConfigurations.<name>` in the
+generated flake, built from the project's locked nixpkgs. `kai machine build
+web` builds its system and prints the store path. On the machine itself,
+`kai machine switch web` builds it and, once you confirm, makes it the
+running system and the boot default; `kai machine rollback web` returns to
+the previous one and `kai machine generations web` lists them. Each refuses
+another host. See
+[docs/machines.md](docs/machines.md) and
+[examples/machines](examples/machines).
 
 ## The `.kai` directory
 
@@ -401,7 +547,8 @@ replace direnv's shell hook with
   unchanged; when a command runs one, stdout is only theirs, and its results
   go to stderr too, where Kai's events are the lines that start with `{`.
 - `--no-color`, or a non-empty `NO_COLOR`: plain text.
-- `--backend nix|guix`: see [Backends](#backends).
+- `--backend nix|direct`, or `guix` with the guix plugin: see
+  [Backends](#backends).
 - `ROC`: the Roc compiler that evaluates `Kaifile.roc` (default: `roc`). It
   must be the pinned version; Kai says which one otherwise.
 
@@ -458,9 +605,8 @@ runs them), and `error` is one of these codes:
 
 - Linux only. Kai runs on `x86_64-linux` and `aarch64-linux`, and generates
   shells and builds for the system it runs on.
-- Services, machines, deploy, switch, rollback, generations, images, ISOs and
-  secrets are not in this version, and the old `Kaifile` format is not read.
-  If you need them, stay on
+- Services, deploy, images, ISOs and secrets are not in this version, and
+  the old `Kaifile` format is not read. If you need them, stay on
   [v0.0.7](https://github.com/thebrandonlucas/kai/releases/tag/v0.0.7)
   (`nix run github:thebrandonlucas/kai/v0.0.7`).
 
@@ -473,8 +619,8 @@ kai shell default -- zig build ci    # or `kai shell`, then `zig build ci`
 ```
 
 `zig build ci` includes the end-to-end tests, which run a built kai against
-real Nix and, when it is installed, Guix, so it needs network access or a warm
-Nix cache. `zig build e2e -- --nix` or `-- --guix` runs them on one backend,
+real Nix and, when it is installed, Guix (with the guix plugin), so it needs
+network access or a warm Nix cache. `zig build e2e -- --nix` or `-- --guix` runs them on one backend,
 and `zig build e2e-run` (or `-build`, `-workflow`, `-update`, ...) runs one;
 `zig build guix-integration` runs every Guix test and fails without Guix. If
 the shell is missing a dependency, please open an issue.
@@ -501,8 +647,12 @@ The code follows the pipeline:
 - `plugins/std`: the std plugin. It lowers its settings to its project model
   at compile time.
   - `plugins/std/model`: std's project model and its validation.
-  - `plugins/std/backends/nix`, `plugins/std/backends/guix`: std's pure
+  - `plugins/std/backends/nix`, `plugins/std/backends/direct`: std's pure
     backends that plan files and argv from the model.
+- `plugins/guix`: the guix plugin, which plans std's commands on Guix
+  from std's model, as any backend plugin would.
+- `plugins/sbom`: the sbom plugin, `kai sbom`, which writes a release's
+  SBOMs from std's model and the lock.
 - `cli`: `kai` itself. It asks the compiled Kaifile for the command's
   candidate plans, chooses a backend, checks the plan and runs it.
 - `devtool`: checks, integration tests and release tooling; see

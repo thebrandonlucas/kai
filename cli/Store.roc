@@ -22,6 +22,7 @@ import pf.OsStr
 import pf.Path
 import pf.Random
 import pf.Sleep
+import pf.System
 
 import api.Plan
 
@@ -67,13 +68,18 @@ Store := [].{
 		}
 
 	# Make `programs` ready and link each into `bin`, which then holds no
-	# other program.
+	# other program. Windows gets copies, named with their `.exe`, as it finds
+	# a program on PATH only so.
 	expose! :
 		Str, { bin : Str, programs : List(Plan.Program) }, Output.Mode => Try({}, _)
 	expose! = |cache, { bin, programs }, mode| {
 		Workspace.safe_path!(bin)?
 		Workspace.path(bin).create_all!()?
-		kept = programs.map(|program| "${bin}/${program.name}")
+		windows = match System.target!().os() {
+			Windows(_) => Bool.True
+			_ => Bool.False
+		}
+		kept = programs.join_map(|p| ["${bin}/${p.name}", "${bin}/${p.name}.exe"])
 		for entry in Workspace.path(bin).list!()? {
 			name = entry.to_str()?
 			if !kept.contains(name) and !name.ends_with(".tmp") {
@@ -82,9 +88,14 @@ Store := [].{
 		}
 		for program in programs {
 			target = Store.realise!(cache, program, mode)?
-			link = "${bin}/${program.name}"
+			exe = if (windows and target.ends_with(".exe")) ".exe" else ""
+			link = "${bin}/${program.name}${exe}"
 			staged = "${link}.${Random.seed_u64!()?.to_str()}.tmp"
-			Path.symlink!(Workspace.path(target), Workspace.path(staged), File)?
+			if windows {
+				Workspace.path(target).copy!(Workspace.path(staged))?
+			} else {
+				Path.symlink!(Workspace.path(target), Workspace.path(staged), File)?
+			}
 			Workspace.path(staged).rename!(Workspace.path(link))?
 		}
 		Ok({})
@@ -244,8 +255,10 @@ Store := [].{
 	# from a file afterwards. Another kai may place the same tree first.
 	unpack! : Str, Str, Str => Try({}, _)
 	unpack! = |artifact, tree, name| {
-		names = Store.tool!("tar", ["-tf", artifact], "list ${name}")?
-		long = Store.tool!("tar", ["-tvf", artifact], "list ${name}")?
+		{ program, listing, names: names_args, long: long_args, extract } =
+			Store.unpacker!(artifact, name)?
+		names = Store.tool!(program, names_args, listing)?
+		long = Store.tool!(program, long_args, listing)?
 		files = Store.refusal(names, long).map_err(
 			|why| StoreFailed("the archive for ${name} is not unpacked: ${why}"),
 		)?
@@ -253,7 +266,7 @@ Store := [].{
 		staged = temporary.join("tree")
 		staged.create_dir!()?
 		into = staged.to_str()?
-		moved = match Store.extract!(artifact, into, files, name) {
+		moved = match Store.extract!(program, extract.append(into), files, name) {
 			Ok({}) => staged.rename!(Workspace.path(tree))
 			Err(err) => Err(err)
 		}
@@ -265,11 +278,49 @@ Store := [].{
 		}
 	}
 
-	# Unpack an archive into `into` and make its files read-only; directories
-	# stay writable, so that the tree can still be removed.
-	extract! : Str, Str, List(Str), Str => Try({}, [StoreFailed(Str)])
-	extract! = |artifact, into, files, name| {
-		_ = Store.tool!("tar", ["-xf", artifact, "-C", into], "unpack ${name}")?
+	# The program that lists and unpacks an archive, with its arguments to
+	# list its names, to list it long and, before a directory, to unpack it
+	# there. A zip takes unzip where the machine has it, and otherwise tar,
+	# which reads a zip only where it is bsdtar, as on macOS and Windows.
+	Unpacker : {
+		program : Str,
+		listing : Str,
+		names : List(Str),
+		long : List(Str),
+		extract : List(Str),
+	}
+
+	unpacker! : Str, Str => Try(Unpacker, _)
+	unpacker! = |artifact, name| {
+		reader = File.open_reader_with_capacity!(Workspace.path(artifact), 4)?
+		zip = reader.read_up_to!(4) == Ok(['P', 'K', 3, 4])
+		unzip = Cmd.new(OsStr.from_str("unzip")).arg(OsStr.from_str("-v"))
+		if zip and unzip.run!().is_ok() {
+			return Ok({
+				program: "unzip",
+				listing: "list ${name}",
+				names: ["-Z1", artifact, "*"],
+				long: ["-Zs", artifact, "*"],
+				extract: ["-q", artifact, "-d"],
+			})
+		}
+		needs = if (zip) ", a zip, which needs unzip or bsdtar" else ""
+		Ok({
+			program: "tar",
+			listing: "list ${name}${needs}",
+			names: ["-tf", artifact],
+			long: ["-tvf", artifact],
+			extract: ["-xf", artifact, "-C"],
+		})
+	}
+
+	# Unpack an archive with `program` and `args`, whose last is the directory
+	# it is unpacked into, and make its files read-only; directories stay
+	# writable, so that the tree can still be removed.
+	extract! : Str, List(Str), List(Str), Str => Try({}, [StoreFailed(Str)])
+	extract! = |program, args, files, name| {
+		into = args.last() ?? ""
+		_ = Store.tool!(program, args, "unpack ${name}")?
 		for batch in files.chunks_of(256) {
 			read_only = ["a-w", "--"].concat(batch.map(|file| "${into}/${file}"))
 			_ = Store.tool!("chmod", read_only, "make ${name} read-only")?
@@ -319,9 +370,11 @@ Store := [].{
 	}
 
 	# What is wrong with an archive, from its two listings, `tar -tf` and
-	# `tar -tvf`, line for line: an absolute name, a `..` segment, a name that
-	# is not plain text, a link leaving the tree, or anything other than a
-	# file, a directory or a link. Otherwise, its regular files.
+	# `tar -tvf` or `unzip -Z1` and `unzip -Zs`, line for line: an absolute
+	# name, a `..` segment, a backslash, a name that is not plain text, a link
+	# leaving the tree, or anything other than a file, a directory or a link
+	# (unzip shows no link's target, so it refuses links). Otherwise, its
+	# regular files.
 	refusal : Str, Str -> Try(List(Str), Str)
 	refusal = |names_text, long_text| {
 		lines = |text| text.split_on("\n").keep_if(|line| !line.is_empty())
@@ -351,7 +404,7 @@ Store := [].{
 		parent = Str.join_with(Store.clean(name).split_on("/").drop_last(1), "/")
 		unreadable = "its listing of ${name} cannot be read"
 		leaves = "it holds a link ${name} out of the tree"
-		if name.starts_with("/") or !plain {
+		if name.starts_with("/") or name.contains("\\") or !plain {
 			return Err("it holds the name ${Str.inspect(name)}")
 		}
 		if name.split_on("/").contains("..") {
@@ -449,8 +502,19 @@ expect {
 		("h", "a/c", " link to ../b"),
 		("c", "a/dev", ""),
 		("p", "a/fifo", ""),
+		("-", "a\\b", ""),
 	]
 	listing(good) == Ok(["a/b"])
 		and bad.all(|row| listing([file, row]).is_err())
 		and Store.refusal("a\nb", "-rw a").is_err()
+}
+
+# unzip's listing of a zip reads as tar's, and refuses a link, whose target it
+# does not show.
+expect {
+	row = |kind, name|
+		"${kind}rw-r--r--  3.0 unx  3 tx stor 26-Nov-05 12:46 ${name}"
+	zip = Str.join_with([row("d", "a/"), row("-", "a/f")], "\n")
+	Store.refusal("a/\na/f", zip) == Ok(["a/f"])
+		and Store.refusal("a/l", row("l", "a/l")).is_err()
 }

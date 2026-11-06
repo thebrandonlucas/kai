@@ -182,12 +182,14 @@ Help := [].{
 	# `kai bundle-plugin`'s help, also its usage error.
 	bundle_plugin =
 		\\Usage:
-		\\  kai bundle-plugin [DIR] [--output-dir DIR]
+		\\  kai bundle-plugin [DIR] [--output-dir DIR] [--platform URL] [--std URL]
 		\\
 		\\Bundle the plugin package in DIR (default: the current directory) with
 		\\`roc bundle`, its header naming this kai's platform and std releases, into
 		\\<hash>.tar.zst in --output-dir (default: DIR). Host it, and a Kaifile.roc
-		\\using this kai's platform and std can name it by its URL.
+		\\using that platform and std can name it by its URL. --platform and --std
+		\\name other hosted platform and std bundles instead, such as a newer
+		\\release's.
 
 	# Color is decoration only: NO_COLOR (when non-empty), --no-color or output
 	# that is not a terminal all get plain text.

@@ -19,14 +19,6 @@ Model := {
 	sources : List(
 		{ name : Str, provider : [Auto, NixPackages(Str), GuixPackages(Str)] },
 	),
-	guix_channels : List(
-		{
-			name : Str,
-			url : Str,
-			branch : Str,
-			introduction : { commit : Str, signer : Str },
-		},
-	),
 	inputs : List({ name : Str, url : Str, kind : [Overlay, Flake] }),
 	follows : List({ overlay : Str, input : Str, source : Str }),
 	environments : List(
@@ -55,6 +47,7 @@ Model := {
 				},
 			),
 			expected : List(Str),
+			roc_packages : List(Str),
 			on_systems : List(
 				{
 					systems : List(Str),
@@ -133,20 +126,14 @@ Model := {
 	Format : { major : U64, minor : U64 }
 	Provider : [Auto, NixPackages(Str), GuixPackages(Str)]
 	Source : { name : Str, provider : Provider }
-
-	## A Guix channel beside Guix's own, authenticated by its introduction:
-	## its first signed commit and that signer's OpenPGP fingerprint.
-	GuixChannel : {
-		name : Str,
-		url : Str,
-		branch : Str,
-		introduction : { commit : Str, signer : Str },
-	}
 	Input : { name : Str, url : Str, kind : [Overlay, Flake] }
 
 	## Overlay `overlay`'s own flake input `input` is package source `source`.
 	Follows : { overlay : Str, input : Str, source : Str }
 	Tool : { source : Str, name : Str }
+
+	## `roc_packages` are Roc package bundle URLs placed in Roc's package cache
+	## before a shell or task starts; the Fetch `roc-<hash>` pins each.
 	Environment : {
 		name : Str,
 		parents : List(Str),
@@ -158,6 +145,7 @@ Model := {
 		rust_toolchain : RustToolchain,
 		package_env : List(PackageVariable),
 		expected : List(Str),
+		roc_packages : List(Str),
 		on_systems : List(OnSystems),
 	}
 
@@ -275,7 +263,6 @@ Model := {
 		systems: [],
 		build_root: "",
 		sources: [],
-		guix_channels: [],
 		inputs: [],
 		follows: [],
 		environments: [],

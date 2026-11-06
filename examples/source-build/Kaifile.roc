@@ -31,4 +31,25 @@ kaifile = Std.kaifile([
 			Output("moofasa.txt"),
 		],
 	),
+	# Every build gets $KAI_TOOLS, a link to each tool of its environment, and
+	# $KAI_INPUTS/.kai-inputs.json, a record of its inputs, to say what made
+	# it: `kai build evidence` keeps the record and each tool's store name,
+	# such as cowsay-3.8.4, without the hash, which would keep the tool in
+	# the artifact's closure.
+	Build(
+		"evidence",
+		[
+			Use("cow"),
+			Inputs(["cows"]),
+			Run(["sh", "-c", evidence]),
+			Output("evidence"),
+		],
+	),
 ])
+
+evidence =
+	\\mkdir evidence
+	\\cp "$KAI_INPUTS/.kai-inputs.json" evidence/inputs.json
+	\\for tool in "$KAI_TOOLS"/*; do
+	\\  echo "$(basename "$tool") $(readlink "$tool" | cut -d- -f2-)"
+	\\done > evidence/tools.txt

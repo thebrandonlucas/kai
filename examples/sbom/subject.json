@@ -1,0 +1,14 @@
+{
+  "filename": "greeting.tar.zst",
+  "version": "1.0.0",
+  "target": "source",
+  "url": "https://example.org/releases/1.0.0/greeting.tar.zst",
+  "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
+  "size": 1024,
+  "kind": "file",
+  "producer": "Organization: Example",
+  "license": "MIT",
+  "license_url": "",
+  "copyright": "NOASSERTION",
+  "attribution": "NOASSERTION"
+}

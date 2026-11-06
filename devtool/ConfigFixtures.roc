@@ -38,6 +38,22 @@ ConfigFixtures := [].{
 		"app [kaifile] {\n\tpf: platform \"${pf}\",\n\tstd: \"${std}\",\n}"
 	}
 
+	# `header`, naming this checkout's guix, sbom and nixos plugins too when
+	# `kaifile`'s header names them.
+	header_for = |root, dir, kaifile|
+		["guix", "sbom", "nixos"]
+			.keep_if(|plugin| kaifile.contains("\n\t${plugin}: \""))
+			.fold(
+				ConfigFixtures.header(root, dir),
+				|named, plugin| {
+					path = ConfigFixtures.relative(
+						Path.display(dir),
+						Path.display(Path.join(root, "plugins/${plugin}/main.roc")),
+					)
+					named.drop_suffix("}").concat("\t${plugin}: \"${path}\",\n}")
+				},
+			)
+
 	# A fixture body declares `config`, std's settings. Its annotation keeps
 	# large fixtures fast: inferring the type from its use in `kaifile` nearly
 	# doubles the check time.
@@ -136,6 +152,58 @@ ConfigFixtures := [].{
 				\\
 				\\kaifile = Kaifile.new([Std.plugin(config), extra])
 		}
+
+	# The nixos plugin's machines beside a std project with an environment.
+	nixos_kaifile = |machines|
+		\\import pf.Kaifile
+		\\import std.Config
+		\\import std.Std
+		\\import nixos.Nixos
+		\\
+		\\config : List(Config.Setting)
+		\\config = [Name("machines"), Environment("ops", [Tools(["htop"])])]
+		\\
+		\\kaifile = Kaifile.new([Std.plugin(config),
+		\\  Nixos.plugin(config, [${machines}])])
+
+	# Machines the nixos plugin accepts or refuses as Kaifile.roc compiles.
+	nixos_fixtures : List(Fixture)
+	nixos_fixtures = [
+		{
+			name: "NixosMachine",
+			expected: Valid,
+			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+				\\  User("admin", [SshKeys(["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 a@b"]),
+				\\   Groups(["wheel"])]), Ssh, Firewall([Tcp([80, 443])]),
+				\\  TimeZone("Etc/UTC"), Use("ops"), Modules(["nixos/web.nix"])])
+		},
+		{
+			name: "NixosDarwinMachine",
+			expected: Rejected(
+				"machine mac: System x86_64-darwin is not x86_64-linux or aarch64-linux",
+			),
+			body: \\Machine("mac", [System("x86_64-darwin"), StateVersion("25.05")])
+		},
+		{
+			name: "NixosModuleOutside",
+			expected: Rejected(
+				"machine web: module ../web.nix is no .nix file inside the project",
+			),
+			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+				\\  Modules(["../web.nix"])])
+		},
+		{
+			name: "NixosSshWithoutKeys",
+			expected: Rejected("machine web: Ssh needs a User with SshKeys"),
+			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+				\\  User("admin", []), Ssh])
+		},
+		{
+			name: "NixosSystemName",
+			expected: RejectedName("\"linux\" is not a system"),
+			body: \\Machine("web", [System("linux"), StateVersion("25.05")])
+		},
+	].map(|f| { ..f, body: ConfigFixtures.nixos_kaifile(f.body) })
 
 	registry_fixtures : List(Fixture)
 	registry_fixtures = [
@@ -281,8 +349,8 @@ ConfigFixtures := [].{
 		},
 		{
 			name: "UnsupportedSystem",
-			expected: Rejected("unsupported system x86_64-darwin"),
-			body: "config = [Name(\"invalid\"), Systems([\"x86_64-darwin\"])]",
+			expected: Rejected("unsupported system x86_64-freebsd"),
+			body: "config = [Name(\"invalid\"), Systems([\"x86_64-freebsd\"])]",
 		},
 		{
 			name: "NoSystems",
@@ -451,13 +519,6 @@ ConfigFixtures := [].{
 			body: \\config = [Name("invalid"), Packages("default",
 				\\  From(NixPackages("github:NixOS/nixpkgs/nixos-unstable"))),
 				\\ Environment("dev", [Tools(["hello@2.12.1"])])]
-		},
-		{
-			name: "InvalidGuixTool",
-			expected: Rejected("invalid Guix tool"),
-			body: \\config = [Name("invalid"), Packages("default",
-				\\  From(GuixPackages("https://git.savannah.gnu.org/git/guix.git"))),
-				\\ Environment("dev", [Tools(["git@"])])]
 		},
 		{
 			name: "Builds",
@@ -650,10 +711,66 @@ ConfigFixtures := [].{
 				\\  Output("out")])]
 		},
 		{
+			name: "DirectOnlySystems",
+			expected: Valid,
+			body: \\config = [Name("direct-systems"),
+				\\ Systems(["x86_64-linux", "x86_64-darwin", "x86_64-windows"]),
+				\\ FetchLocked("tool", [
+				\\  { system: "x86_64-linux", url: "https://example.com/tool-linux",
+				\\   mirrors: [], program: File },
+				\\  { system: "x86_64-darwin", url: "https://example.com/tool-macos",
+				\\   mirrors: [], program: File },
+				\\  { system: "x86_64-windows", url: "https://example.com/tool.zip",
+				\\   mirrors: [], program: Archive("tool/tool.exe") }]),
+				\\ Environment("dev", [Tools(["tool#tool"]), Expect(["git"]),
+				\\  OnSystems(["x86_64-linux"], [Tools(["hello"])])]),
+				\\ Shell("default", [Use("dev")])]
+		},
+		{
+			name: "DirectOnlySystemNeedsNix",
+			expected: Rejected(
+				"x86_64-windows has no Nix or Guix: environment dev has tools",
+			),
+			body: \\config = [Name("bad"), Systems(["x86_64-linux", "x86_64-windows"]),
+				\\ Environment("dev", [Tools(["hello"])])]
+		},
+		{
 			name: "DuplicateExpect",
 			expected: Rejected("DuplicateExpect: environment dev"),
 			body: \\config = [Name("bad"),
 				\\ Environment("dev", [Expect(["git"]), Expect(["gh"])])]
+		},
+		{
+			name: "RocPackages",
+			expected: Valid,
+			body: \\config = [Name("roc-packages"),
+				\\ Environment("scripts", [RocPackages([
+				\\  "https://e.co/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst"
+				\\ ])]),
+				\\ Environment("more", [Extend("scripts"), Tools(["hello"])]),
+				\\ Task("check", [Use("more"), Run(["true"])])]
+		},
+		{
+			name: "RocPackagesNotBundle",
+			expected: Rejected("RocPackages needs https://.../<hash>.tar.zst"),
+			body: \\config = [Name("bad"),
+				\\ Environment("scripts",
+				\\  [RocPackages(["https://example.com/pkg.tar.gz"])])]
+		},
+		{
+			name: "RocPackagesBuild",
+			expected: Rejected("RocPackages are for shells and tasks"),
+			body: \\config = [Name("bad"),
+				\\ Environment("scripts", [RocPackages([
+				\\  "https://e.co/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst"
+				\\ ])]),
+				\\ Build("app", [Use("scripts"), Run(["true"]), Output("out")])]
+		},
+		{
+			name: "DuplicateRocPackages",
+			expected: Rejected("DuplicateRocPackages: environment dev"),
+			body: \\config = [Name("bad"),
+				\\ Environment("dev", [RocPackages([]), RocPackages([])])]
 		},
 		{
 			name: "FetchUnavailableNoFetch",
@@ -1248,6 +1365,7 @@ ConfigFixtures := [].{
 		apps = ConfigFixtures.fixtures
 			.map(|f| { ..f, body: ConfigFixtures.std_kaifile(f.body) })
 			.concat(ConfigFixtures.registry_fixtures)
+			.concat(ConfigFixtures.nixos_fixtures)
 			.append(
 				{ name: "Composed", body: composed, expected: Valid },
 			)
@@ -1258,10 +1376,22 @@ ConfigFixtures := [].{
 			)?
 		}
 		app_header = ConfigFixtures.header(root, workspace)
+		# The composition fixture adds the guix plugin.
+		composed_header = ConfigFixtures.header_for(root, workspace, kaifile)
+		nixos = "\n\tnixos: \""
+		nixos_header = ConfigFixtures.header_for(root, workspace, nixos)
 		for fixture in apps {
+			chosen =
+				if fixture.name == "Composed" {
+					composed_header
+				} else if fixture.body.contains("import nixos.Nixos") {
+					nixos_header
+				} else {
+					app_header
+				}
 			Path.write_utf8!(
 				Path.join(workspace, "${fixture.name}.roc"),
-				"${app_header}\n\n${fixture.body}\n",
+				"${chosen}\n\n${fixture.body}\n",
 			)?
 		}
 		for fixture in apps {

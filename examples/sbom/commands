@@ -1,0 +1,7 @@
+sbom inputs
+sbom pins
+sbom inspect --composition composition.json -- source
+sbom inspect --composition composition.json --output inventory.json -- source
+sbom bind --inventory inventory.json --subject subject.json --context context.json --artifact greeting.tar.zst
+sbom bind --inventory inventory.json --subject subject.json --context context.json --artifact greeting.tar.zst --output greeting.spdx-2.3.json --spdx-2-3
+sbom check --manifest greeting.tar.zst.sbom-manifest.json --inventory inventory.json -- greeting.spdx-2.3.json

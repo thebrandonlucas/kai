@@ -98,8 +98,8 @@ parsed values. Only the one command that owns the lock
 A backend is `Backend.{ id, summary, program, flag }`: kai checks it by
 running `program --version` (or `-v`, `version`), bounded and side-effect
 free. A backend whose `program` is `""` needs none and is always usable.
-std declares `nix`, `guix` and `direct`; other plugins usually implement
-commands on those.
+std declares `nix` and `direct`, and the guix plugin `guix`; other
+plugins usually implement commands on those.
 
 ```roc
 Implementation.{
@@ -140,14 +140,16 @@ closest to a mistyped one. std uses these codes:
 |---|---|
 | `missing_lock` | There is no lock, or it has no Nix section; hint `kai update`. |
 | `invalid_lock` | The lock cannot be read; hint `kai update`. |
-| `stale_lock` | The lock was made for other inputs, overlays, Guix channels, sources or downloads; hint `kai update`, `kai --backend guix update` or `kai --backend direct update`. |
-| `missing_guix_lock` | The lock has no Guix pins; hint `kai --backend guix update`. |
+| `stale_lock` | The lock was made for other inputs, overlays, sources or downloads; hint `kai update` or `kai --backend direct update`. |
 | `missing_direct_lock` | The lock has no direct pin for a download; hint `kai --backend direct update`. |
 | `unknown_input` | `kai update` names an input the project does not declare. |
 | `unknown_name` | The project declares no shell, task, build or workflow of that name. |
 | `plan_failed` | Any other failure. |
 
-A plugin may use these codes for the same meaning, or its own.
+A plugin may use these codes for the same meaning, or its own: the guix
+plugin reports `missing_guix_lock` when the lock has no Guix pins, and
+`stale_lock` when they are for other channels or sources, both with hint
+`kai --backend guix update`.
 
 ## Plans
 
@@ -162,17 +164,79 @@ A plan is a list of steps and what comes next:
 | `VerifyPath`, `CheckSource`, `Snapshot`, `InstallRunner` | std's checks and build sandbox steps |
 | `Realise({ bin, programs })` | make each `Plan.Program`, a file or tar.gz/tar.xz archive pinned by SHA-256 and size, ready in kai's store, and link it into `bin` in the workspace; the `Run`s after it have `bin` first on `PATH`, until the next `Realise` or `Stage` |
 | `Measure({ files, result })` | download each `{ key, urls }` into the store and write `<key> <sha256> <size>` lines to `result`, a generated file a continuation observes |
+| `PlaceRocPackages(programs)` | make each Roc package bundle, a `Plan.Program` named by the hash its URL ends in and unpacking to `main.roc`, ready in kai's store, and copy it into Roc's package cache (`roc/packages/<hash>` under `$XDG_CACHE_HOME`, or `~/.cache`) unless that directory already has its `main.roc`, so Roc resolves the URL offline |
 | `ExpectPrograms({ description, programs })` | fail unless every program is on `PATH`, naming each missing one; the error is `missing_programs`, and with `--json` its `programs` lists them |
 | `PublishLock({ previous, contents })` | replace the lock, only for the lock owner |
 
 `next: Observe(paths)` asks kai to read generated files and ask again with
 `phase` 1 and their contents (std's `update` resolves with Nix, then
-publishes). kai checks the whole plan before its first step and refuses
+publishes; an `Independent` plan continues the same way). kai checks the whole plan before its first step and refuses
 anything outside these rules; `kai --dry-run` prints the plan instead.
 
 std's `Std.run_in(project, ctx, { environment, argv, description })` plans argv
 inside one of std's environments from the locked Nix inputs, as a task
 would run; the deploy example uses it for `nixos-rebuild`.
+
+## Building from std's flake
+
+A plugin that builds something std's settings cannot describe, such as a
+NixOS system, adds Nix outputs to std's generated flake and builds one:
+
+```roc
+Std.build_flake_output(project, ctx, {
+	outputs: "      nixosConfigurations = { ... };\n",
+	environments: ["ops"],
+	attribute: "nixosConfigurations.web.config.system.build.toplevel",
+	name: "web",
+	description: "machine build web",
+	out_link: "",
+})
+```
+
+plans what std plans for its own commands, from the same lock and with the
+same failures (`missing_lock`, `stale_lock`, `invalid_lock`): it writes
+`flake.nix`, with `outputs` added at the end of its outputs, and `flake.lock`,
+then runs `nix build --no-link --print-out-paths --impure` of `attribute`, an
+`Artifact` whose store path kai prints, naming it `name`. A non-empty
+`out_link` replaces `--no-link` with `--out-link out_link`, a path the steps
+after the build can name, such as one in the workspace. `outputs` is Nix
+attribute definitions, which see `inputs`, `self` and `environmentsFor
+system`, the definition of each of `environments`: a function from extra
+`mkShell` attributes to the environment's shell. They may not use the names
+std writes (`devShells`, `packages`, `kaiArtifacts`) or add inputs, which
+would leave the lock stale; they read files by absolute path, which
+`--impure` allows. The nixos plugin, `plugins/nixos`, builds its machines this
+way.
+
+## Implementing std's commands on another backend
+
+A plugin that declares a backend of its own can implement std's `shell`,
+`run`, `build` and `workflow` on it from the same settings, through
+`std.StdModel`: std's model and the meaning every backend shares.
+
+```roc
+import std.StdModel exposing [Model, Request]
+
+model = StdModel.from_settings(project)?     # the settings' Model
+wanted = StdModel.request("run", ctx.args)?  # Shell, Run, Build or Workflow
+StdModel.known(model, wanted)?               # unknown_name, with suggestions
+```
+
+`Model` is std's project model (`Model.Environment`, `Model.Task`, …);
+match a `Request` with unqualified tags, such as `Run(task, args)`.
+`StdModel` also resolves environments (`validate`, `for_system`,
+`environment_tools`, `direct_only`), merges variables (`merge_env`,
+`env_command`, `artifacts_variable`, `other_tasks_secrets`), expands
+builds and workflows (`builds_closure`, `workflow_steps`, `snapshot_root`,
+`snapshot_files`), stamps Revision builds (`revised`) and reads the lock's
+pins as `kai lock` reports them (`lock_report`). This is std's
+stable surface for backends; its other modules may change between
+releases. Such a plugin keeps its pins in its own section of the lock
+through `pf.LockFile` (`section` reads it; `splice` replaces it and keeps
+the others) and publishes them from its own `update` implementation.
+`plugins/guix`, Kai's Guix backend, is such a plugin. `plugins/sbom`,
+which adds `kai sbom` from the same model and the lock report, is a plugin
+with no backend: its one implementation is `Independent`.
 
 ## Combining plugins
 
@@ -203,7 +267,21 @@ same release names it:
 	deploy: "https://example.com/v0.0.8/deploy-<hash>.tar.zst",
 ```
 
-Bundle again for each Kai release.
+Bundle again for each Kai release. `--platform URL` and `--std URL` point
+the header at other hosted platform and std bundles instead, such as those
+of a newer release than this kai's; Roc downloads them, so they must be
+hosted (or already in Roc's cache).
+
+The plugins in Kai's own `plugins/` directory are not bundled this way:
+each release publishes them, bundled against its own platform and std, as
+`<name>-<hash>.tar.zst`, its release notes give each one's header line,
+and `plugins/<name>-release` records each URL (see
+[RELEASE.md](RELEASE.md#release-another-plugin)). In a checkout whose std
+differs from the last release, `kai bundle-plugin plugins/guix` would
+point the plugin at that release's std, which it may no longer build
+against; `kai build kai-guix` (or `kai-std`, `kai-sbom`) instead builds the
+bundle this checkout would release, against this checkout's platform and
+std bundles.
 
 ## Testing
 

@@ -332,12 +332,34 @@ jobs:
           # shellcheck disable=SC2086 # STEPS lists several zig steps
           kai shell default -- zig build $STEPS -Dkai="$PWD/dist/kai" -- --nix
 
+  # The setup-kai action as another repository's workflow uses it: it
+  # installs the release it names, with its download cache and no Nix.
+  e2e-setup-kai:
+    name: e2e (setup-kai)
+    needs: e2e-changes
+    if: needs.e2e-changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Kai
+        uses: ./.github/actions/setup-kai
+        with:
+          version: 0.0.11
+          nix: "false"
+
+      - name: Run the installed kai
+        run: test "$(kai --version)" = 0.0.11
+
   # The e2e check: green when every end-to-end job passed, or when a pull
   # request changes only docs and they are skipped.
   e2e:
     name: e2e
     if: always() && github.event_name != 'push' && github.event_name != 'schedule' && github.event.pull_request.draft != true
-    needs: [e2e-changes, e2e-build, e2e-config-fixtures, e2e-bundle, e2e-suites]
+    needs: [e2e-changes, e2e-build, e2e-config-fixtures, e2e-bundle, e2e-setup-kai, e2e-suites]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
 
@@ -412,8 +434,10 @@ jobs:
       - name: Run Project CI
         run: kai shell default -- zig build ci
 
-  # Real Guix, with Nix hidden from kai, nightly and on demand: run it from
-  # the Actions tab before merging a change to the Guix backend. A cold
+  # The guix plugin on real Guix, with Nix hidden from kai, nightly and on
+  # demand: run it from the Actions tab before merging a change to the
+  # plugin, or to the std model it plans from. The Guix halves of the
+  # end-to-end tests run fixtures whose Kaifiles add the plugin. A cold
   # channel checkout authenticates the whole history (about 35 minutes), so
   # it is cached; the first time-machine run at the pinned release downloads
   # that Guix.

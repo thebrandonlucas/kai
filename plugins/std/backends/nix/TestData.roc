@@ -23,6 +23,7 @@ TestData :: [].{
 		rust_toolchain: None,
 		expected: [],
 		package_env: [],
+		roc_packages: [],
 		on_systems: [],
 	}
 
@@ -138,7 +139,6 @@ TestData :: [].{
 		name: "plan fixture",
 		systems: t.systems,
 		sources: t.sources,
-		guix_channels: [],
 		inputs: t.inputs,
 		follows: [],
 		environments: t.environments,

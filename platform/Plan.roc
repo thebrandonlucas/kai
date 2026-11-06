@@ -55,6 +55,12 @@ Plan := { steps : List(Step), next : Next }.{
 		## continuation to observe.
 		Measure({ files : List({ key : Str, urls : List(Str) }), result : Str }),
 
+		## Makes each Roc package bundle, a tar.zst named by the hash its URL ends
+		## in and unpacking to `main.roc` and the rest, ready in kai's store and
+		## places it in Roc's package cache as that directory, unless the cache
+		## has it whole, so Roc resolves the URL without downloading.
+		PlaceRocPackages(List(Program)),
+
 		## Fails, naming every one that is not on PATH, unless the machine has
 		## all of `programs`, which `description` (such as `environment dev`)
 		## expects.
@@ -209,6 +215,15 @@ expect {
 				files: [{ key: "tool", urls: ["https://example.com/tool"] }],
 				result: "/g/measured",
 			}),
+			PlaceRocPackages([
+				{
+					name: "7j6K",
+					urls: ["https://example.com/7j6K.tar.zst"],
+					sha256: "ef",
+					size: 4,
+					unpack: Archive("main.roc"),
+				},
+			]),
 			ExpectPrograms({ description: "environment dev", programs: ["git", "zip"] }),
 			Run({
 				description: "shell dev",

@@ -428,14 +428,6 @@ pub fn build(b: *std.Build) void {
     test_std_nix.step.dependOn(check_step);
     test_step.dependOn(&test_std_nix.step);
 
-    const test_std_guix = b.addSystemCommand(&.{
-        "roc",
-        "test",
-        "plugins/std/backends/guix/main.roc",
-    });
-    test_std_guix.step.dependOn(check_step);
-    test_step.dependOn(&test_std_guix.step);
-
     const test_std_direct = b.addSystemCommand(&.{
         "roc",
         "test",
@@ -448,9 +440,21 @@ pub fn build(b: *std.Build) void {
     test_std.step.dependOn(check_step);
     test_step.dependOn(&test_std.step);
 
+    const test_guix = b.addSystemCommand(&.{ "roc", "test", "plugins/guix/main.roc" });
+    test_guix.step.dependOn(check_step);
+    test_step.dependOn(&test_guix.step);
+
+    const test_sbom = b.addSystemCommand(&.{ "roc", "test", "plugins/sbom/main.roc" });
+    test_sbom.step.dependOn(check_step);
+    test_step.dependOn(&test_sbom.step);
+
     const test_deploy = b.addSystemCommand(&.{ "roc", "test", "examples/plugins/deploy/main.roc" });
     test_deploy.step.dependOn(check_step);
     test_step.dependOn(&test_deploy.step);
+
+    const test_nixos = b.addSystemCommand(&.{ "roc", "test", "plugins/nixos/main.roc" });
+    test_nixos.step.dependOn(check_step);
+    test_step.dependOn(&test_nixos.step);
 
     const test_cli = b.addSystemCommand(&.{ "roc", "test", "cli/main.roc" });
     test_cli.step.dependOn(check_step);
@@ -494,14 +498,15 @@ pub fn build(b: *std.Build) void {
     const bare_binary = cli_binary;
     // Every maintained example must load and convert to std's model.
     const examples = [_][]const u8{
-        "examples/agenix",       "examples/build",   "examples/environment",
-        "examples/extend",       "examples/guix",    "examples/modules",
-        "examples/needs",        "examples/overlay", "examples/packages",
-        "examples/path-source",  "examples/raw",     "examples/shell",
-        "examples/source-build", "examples/task",    "examples/workflow",
+        "examples/agenix",   "examples/build",       "examples/environment",
+        "examples/extend",   "examples/guix",        "examples/machines",
+        "examples/modules",  "examples/needs",       "examples/overlay",
+        "examples/packages", "examples/path-source", "examples/raw",
+        "examples/sbom",     "examples/shell",       "examples/source-build",
+        "examples/task",     "examples/workflow",
     };
     for (examples) |example| {
-        for ([_][]const u8{ "check", "model" }) |command| {
+        for ([_][]const u8{ "check", "model", "spec" }) |command| {
             const smoke = std.Build.Step.Run.create(
                 b,
                 b.fmt("kai {s} {s}", .{ command, example }),
@@ -576,9 +581,15 @@ pub fn build(b: *std.Build) void {
     ci_step.dependOn(config_fixtures_step);
     build_release.step.dependOn(ci_step);
 
-    // One Kai build at a time, after those of the end-to-end tests.
+    // One Kai build at a time, after those of the end-to-end tests: the
+    // plugin bundles and CLI archives a release publishes.
     var previous_build: *std.Build.Step = e2e_step;
-    for ([_][]const u8{ "release-x86-64-linux", "release-aarch64-linux" }) |release| {
+    for ([_][]const u8{
+        "kai-guix",
+        "kai-sbom",
+        "release-x86-64-linux",
+        "release-aarch64-linux",
+    }) |release| {
         previous_build = &addCiCommand(
             b,
             ci_step,

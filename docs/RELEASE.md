@@ -3,7 +3,7 @@
 Kai releases use a protected release branch. Release preparation pushes only that branch; merging its required pull request triggers publication automatically.
 
 > [!WARNING]
-> `.github/workflows/release.yml` publishes on **any** push to `master` that changes `VERSION` or `RELEASE_NAME`, not only on release-branch merges. A change that bumps `VERSION` must also carry the matching `RELEASE_NAME` and `platform-release`, or the release is published under a stale name or fails. Prefer `zig build release`, which updates all of them together.
+> `.github/workflows/release.yml` publishes on **any** push to `master` that changes `VERSION` or `RELEASE_NAME`, not only on release-branch merges. A change that bumps `VERSION` must also carry the matching `RELEASE_NAME` and bundle URL files (`platform-release` and `plugins/*-release`), or the release is published under a stale name or fails. Prefer `zig build release`, which updates all of them together.
 
 ## Metadata ownership
 
@@ -12,6 +12,7 @@ Kai releases use a protected release branch. Release preparation pushes only tha
 - `build.zig.zon` contains Zig's required literal version mirror. Release automation updates it and validates exact agreement with `VERSION`.
 - `RELEASE_SYSTEMS` lists, one per line, the systems (`x86_64-linux`, `aarch64-linux`) a release publishes a CLI archive for; see [aarch64-linux archives](#aarch64-linux-archives).
 - `platform-release` records the URL this release publishes the Kai platform bundle at, `https://github.com/OWNER/REPOSITORY/releases/download/vX.Y.Z/<hash>.tar.zst`, where `<hash>` is Roc's content hash of the bundle. `kai` embeds it and prints it in `kai --help` as the header a `Kaifile.roc` starts with.
+- `plugins/std-release` records the URL of the std plugin's bundle, `.../vX.Y.Z/std-<hash>.tar.zst`, which `kai` also embeds and prints. Each other plugin a release bundles, listed in `Release.plugins` in `devtool/Release.roc` (`guix` and `sbom`), has `plugins/<name>-release`, recording `.../vX.Y.Z/<name>-<hash>.tar.zst`. A Kaifile.roc names a plugin by that URL; `kai` does not embed these, and the release notes list them.
 - `RELEASE_SHA256SUMS` is a copy of the release's `SHA256SUMS`. The root `flake.nix` reads it with `VERSION` to package the release archives, for `nix run github:OWNER/REPOSITORY` and `nix profile install`. Release preparation writes it from the artifacts it builds, and `publish-release` refuses to publish unless the artifacts it rebuilds match it, so the flake names exactly the published archives once the release is published.
 - The release branch, annotated tag, and GitHub release derive their version and name from this committed metadata. Do not edit them independently.
 
@@ -23,20 +24,26 @@ From `kai shell` on an x86_64 Linux host, build and validate the release artifac
 zig build build-release
 ```
 
-This runs `zig build ci` first. Artifacts are written to `dist/`. Checksums cover a portable CLI archive for each system in `RELEASE_SYSTEMS`, the platform and std bundles, and the `install.sh` install script:
+This runs `zig build ci` first. Artifacts are written to `dist/`. Checksums cover a portable CLI archive for each system in `RELEASE_SYSTEMS`, the platform bundle, a bundle for each plugin (std and those `Release.plugins` lists), and the `install.sh` install script:
 
 ```text
 dist/kai-X.Y.Z-x86_64-linux.tar.gz
 dist/kai-X.Y.Z-aarch64-linux.tar.gz   (only when RELEASE_SYSTEMS lists aarch64-linux)
 dist/<hash>.tar.zst
 dist/std-<hash>.tar.zst
+dist/guix-<hash>.tar.zst
+dist/sbom-<hash>.tar.zst
 dist/install.sh
 dist/SHA256SUMS
 ```
 
-The build fails with `StalePlatformUrl` unless `platform-release` names exactly the bundle just built, for the `origin` repository and `VERSION`. Any change to `platform` changes the hash; `zig build release` rewrites the file, and `zig build platform-bundle` builds the bundle into `zig-out/kai-platform` for inspection.
+The build fails with `StaleBundleUrl` unless `platform-release`, `plugins/std-release` and each `plugins/<name>-release` name exactly the bundles just built, for the `origin` repository and `VERSION`, so a missing or stale URL file is refused. Any change to `platform` or a plugin changes its bundle's hash, and since each plugin's header names the platform and std URLs, a platform or std change changes every plugin's; `zig build release` rewrites the files. `zig build platform-bundle` builds the platform bundle into `zig-out/kai-platform` for inspection, and `kai build kai-std`, `kai build kai-guix` or `kai build kai-sbom` a plugin's, against the platform and std bundles of this checkout.
 
 Each archive contains only the `kai` binary. At runtime it needs Nix, and loads `Kaifile.roc` with the Roc compiler named in `.roc-version`: on `PATH`, as `ROC`, or else fetched with Nix; Roc downloads the platform bundle from the recorded URL. The x86_64 archive is checked by running `kai --version`; the aarch64 archive, cross-built on x86_64, is checked here only for its architecture.
+
+## Release another plugin
+
+A plugin under `plugins/` other than std is released once it is listed in three places: `Release.plugins` in `devtool/Release.roc`, a `plugin_build("kai-<name>", "<name>")` build in `Kaifile.roc`, and the CI builds in `build.zig`. `zig build build-release` refuses a `plugins/` directory `Release.plugins` leaves out. The plugin's `main.roc` must name the platform as `"../../platform/main.roc"` and std as `"../std/main.roc"`, which its build replaces with the release's URLs; its next release adds `plugins/<name>-release`.
 
 ## aarch64-linux archives
 
@@ -62,7 +69,7 @@ zig build release -- "Kai X.Y.Z" X.Y.Z
 The command:
 
 1. creates `release/vX.Y.Z` from `origin/master` without moving local `master`;
-2. updates only `VERSION`, `RELEASE_NAME`, `build.zig.zon`, `platform-release` and `plugins/std-release` (from the bundles it builds), and `RELEASE_SHA256SUMS` (from the artifacts it builds);
+2. updates only `VERSION`, `RELEASE_NAME`, `build.zig.zon`, `platform-release`, `plugins/std-release` and each `plugins/<name>-release` (from the bundles it builds; a plugin's first release adds its file), and `RELEASE_SHA256SUMS` (from the artifacts it builds);
 3. runs the complete release artifact build;
 4. commits `Release <name>` and pushes only the release branch;
 5. restores the clean local `master`; and
@@ -78,7 +85,7 @@ A push to `master` that changes `VERSION` or `RELEASE_NAME`, such as the release
 zig build publish-release
 ```
 
-The Roc publisher rebuilds the artifacts, creates the matching annotated tag using the committed release name, creates a draft GitHub release, uploads the CLI archives, the platform and std bundles, `install.sh` and `SHA256SUMS`, and publishes only after every upload succeeds. Matching completed releases are successful no-ops.
+The Roc publisher rebuilds the artifacts, creates the matching annotated tag using the committed release name, creates a draft GitHub release, uploads the CLI archives, the platform and plugin bundles, `install.sh` and `SHA256SUMS`, and publishes only after every upload succeeds. The release notes start with the Kaifile.roc header naming the platform and std bundles and the header line that adds each other plugin, such as `guix: ".../vX.Y.Z/guix-<hash>.tar.zst",`, before GitHub's generated notes. Matching completed releases are successful no-ops.
 
 `publish-release` is CI-only and is not part of normal local release preparation.
 

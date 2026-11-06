@@ -44,6 +44,7 @@ NixBackend :: [].{
 		"fetch_unavailable",
 		"fetch_locked",
 		"expect",
+		"roc_packages",
 	]
 
 	default_nixpkgs : Str
@@ -313,6 +314,8 @@ NixBackend :: [].{
 					.map_err(|_| "unknown build: ${name}")?
 				label = "${base_ref}#packages.${target}.${name}"
 				link = shown.out_link.map_ok(|path| ["--out-link", path]) ?? ["--no-link"]
+				# Nix builds again and compares with the output it already has.
+				rebuild = if (shown.mode == Rebuild) ["--rebuild"] else []
 				{
 					description: "build ${name}",
 					stage: "build ${name}",
@@ -322,7 +325,7 @@ NixBackend :: [].{
 					needs: [],
 					needs_build: [],
 					evaluate: [],
-					argv: build(link, shown.print_build_logs, label),
+					argv: build(link.concat(rebuild), shown.print_build_logs, label),
 					output: Artifact({ name, label, output: built.output }),
 					secrets: [],
 					removed_environment_variables: [],
@@ -373,22 +376,40 @@ NixBackend :: [].{
 	## `system`, which kai's store holds and a Realise links into the
 	## workspace, first on PATH, before the environment's own: sh puts them
 	## there. With no command, the shell kai was started from starts, as on
-	## direct. Without such tools, it is `command` unchanged.
+	## direct. Before it, sh places the environment's RocPackages bundles in
+	## Roc's package cache. Without either, it is `command` unchanged.
 	first_on_path : Model, Str, Str, Layout, List(Str) -> List(Str)
 	first_on_path = |project, name, system, layout, command| {
-		tools = project.environments.keep_if(|e| e.name == name)
-			.join_map(|e| Project.on_system(e, system).tools)
-		if !tools.any(|t| Project.locked_fetch(project, t.source)) {
+		environments = project.environments.keep_if(|e| e.name == name)
+		tools = environments.join_map(|e| Project.on_system(e, system).tools)
+		locked = tools.any(|t| Project.locked_fetch(project, t.source))
+		bundles = environments.any(|e| !e.roc_packages.is_empty())
+		if !locked and !bundles {
 			return command
 		}
 		bin = Project.downloads_bin(layout.workspace, name)
-		first = "PATH=\"$0:$PATH\" && exec "
+		place = if (bundles) place_roc_packages else ""
+		path = if (locked) "PATH=\"$0:$PATH\" && " else ""
+		first = "${place}${path}exec "
 		if command.is_empty() {
 			["sh", "-c", "${first}\"\${KAI_OPERATOR_SHELL:-/bin/sh}\"", bin]
 		} else {
 			["sh", "-c", "${first}\"$@\"", bin].concat(command)
 		}
 	}
+
+	## Copies each directory KAI_ROC_PACKAGES lists, named by its package's
+	## hash, into Roc's package cache unless the cache has it whole, staged
+	## beside it and renamed into place, as kai seeds the cache itself.
+	place_roc_packages : Str
+	place_roc_packages =
+		"cache=\"\${XDG_CACHE_HOME:-$HOME/.cache}/roc/packages\" && IFS=: && "
+			.concat("for tree in $KAI_ROC_PACKAGES; do hash=\"\${tree##*/}\" && ")
+			.concat("staging=\"$cache/$hash.$$.tmp\" && ")
+			.concat("{ [ -f \"$cache/$hash/main.roc\" ] || { ")
+			.concat("rm -rf \"$staging\" \"$cache/$hash\" && mkdir -p \"$staging\" && ")
+			.concat("cp -R \"$tree/.\" \"$staging\" && chmod -R u+w \"$staging\" && ")
+			.concat("mv \"$staging\" \"$cache/$hash\"; }; } || exit 1; done && ")
 
 	## A Pure environment's shells and tasks start from a clean environment,
 	## keeping only HOME, USER and TERM (as Guix's --pure does), the
@@ -440,6 +461,112 @@ NixBackend :: [].{
 		}
 		Ok(Plan.{ steps: $steps, next: Done })
 	}
+
+	## `kai build NAME --plan`. Phase 0 readies the build as `kai build`
+	## does, snapshot included, but instead of building it has Nix evaluate
+	## the build's `kaiPlan`, with its derivation and output paths, into a
+	## generated file, which `--write-to` refuses to replace; phase 1 prints it.
+	plan_build : Model, Str, Str, Layout, Locks, Continued -> Try(Plan, Str)
+	plan_build = |model, name, target, layout, locks, { phase, observed }| {
+		result = "${layout.generated_root}/build-plan.json"
+		if phase > 0 {
+			return match observed.find_first(|o| o.path == result) {
+				Ok({ contents: Text(text), .. }) =>
+					Ok(Plan.{ steps: [Print(text)], next: Done })
+				_ => Err("Nix produced no ${result}")
+			}
+		}
+		built = plan(model, Request.build(name), target, layout, locks)?
+		quiet = |description, argv|
+			Run({
+				description,
+				argv,
+				output: Quiet,
+				secrets: [],
+				removed_environment_variables: [],
+				kept_environment_variables: [],
+			})
+		evaluate = ["nix", "eval", "--no-update-lock-file", "--no-write-lock-file"]
+			.concat(["--builders", "", "--nix-path", "", "--impure"])
+			.concat(["path:${layout.generated_root}#packages.${target}.${name}"])
+			.concat(["--apply", plan_apply, "--write-to", result])
+		# The build's own run is its plan's last step.
+		steps = built.steps.drop_last(1).concat([
+			quiet("remove ${result}", ["rm", "-f", result]),
+			quiet("plan build ${name}", evaluate),
+		])
+		Ok(Plan.{ steps, next: Observe([result]) })
+	}
+
+	## A plugin's flake output: Nix attribute definitions added to the
+	## flake's outputs, the environments they read, the attribute to build,
+	## its name and description in kai's messages, and the out-link the
+	## build leaves, "" for none.
+	Output : {
+		outputs : Str,
+		environments : List(Str),
+		attribute : Str,
+		name : Str,
+		description : Str,
+		out_link : Str,
+	}
+
+	## Builds `wanted.attribute` of the flake with `wanted.outputs` added.
+	## `--impure` lets them import project files by absolute path; builders
+	## stay allowed, as a system for another platform may need one.
+	plan_output : Model, Output, Str, Layout, Locks -> Try(Plan, Str)
+	plan_output = |model, wanted, target, layout, locks| {
+		project = Project.validate(model)?
+		check_layout(project, target, layout, Bool.False)?
+		inputs = Locks.inputs(project)?
+		staging = Some({ inputs, layout })
+		flake = render_selected(
+			project,
+			wanted.environments,
+			[],
+			[],
+			layout.workspace,
+			staging,
+			Unlimited,
+		)?
+		ending = lines(["    };", "}"])
+		if !flake.ends_with(ending) {
+			return Err("the generated flake has no outputs to add to")
+		}
+		contents = flake.drop_suffix(ending).concat(wanted.outputs).concat(ending)
+		derived = Locks.derive(locks, project, layout)?
+		lock_path = "${layout.generated_root}/flake.lock"
+		lock = { path: lock_path, contents: derived.contents }
+		out_link = wanted.out_link
+		link = if (out_link.is_empty()) ["--no-link"] else ["--out-link", out_link]
+		argv = ["nix", "build"]
+			.concat(link)
+			.append("--print-out-paths")
+			.concat(["--no-update-lock-file", "--no-write-lock-file"])
+			.concat(["--nix-path", "", "--impure"])
+			.append("path:${layout.generated_root}#${wanted.attribute}")
+		artifact = { name: wanted.name, label: wanted.attribute, output: "out" }
+		build = Run({
+			description: wanted.description,
+			argv,
+			output: Artifact(artifact),
+			secrets: [],
+			removed_environment_variables: [],
+			kept_environment_variables: [],
+		})
+		files = staged_files(layout, contents).append(lock)
+		Ok(Plan.{ steps: derived.checks.concat([Write(files), build]), next: Done })
+	}
+
+	## A continuation's phase and the files kai read back for it.
+	Continued : {
+		phase : U64,
+		observed : List({ path : Str, contents : [Missing, Text(Str)] }),
+	}
+
+	plan_apply : Str
+	plan_apply = "p: builtins.toJSON (p.kaiPlan // "
+		.concat("{ derivation = p.drvPath; output_path = p.outPath; })")
 
 	## Every step rechecks the local pins it reads, including after
 	## source-editing tasks, then writes its files, runs `entry`, which
@@ -721,7 +848,7 @@ NixBackend :: [].{
 			|seen, name| if (seen.contains(name)) seen else seen.append(name),
 		)
 		for name in selected_names {
-			Project.check_environment(model, Nix, name)?
+			Project.check_environment(model, name)?
 		}
 		environments = model.environments.keep_if(|e| names.contains(e.name))
 		shells = model.shells.keep_if(|s| names.contains(s.environment))
@@ -1027,7 +1154,7 @@ NixBackend :: [].{
 		# mkShell exports `env` to its shells, and to tasks through kai-env-*.
 		computed = package_env_attrs(environment, fetches).concat(
 			system_attrs(environment, [], "sets.${quote(primary)}"),
-		)
+		).concat(roc_package_attrs(environment, fetches, primary))
 		env = ["          env = ${env_attrs(environment.env, computed)};"]
 		lines([
 			"        ${quote(environment.name)} = let",
@@ -1068,35 +1195,110 @@ NixBackend :: [].{
 		# vendored directory is copied whole. Its cargo config names the crates
 		# `.`, the directory above the config's, so rustc reads them under
 		# $KAI_INPUTS/<name>, the path a build remaps, rather than the copy's.
-		inputs = build.inputs.map(
+		#
+		# Each input also gets a record for $KAI_INPUTS/.kai-inputs.json, a
+		# name no input can have, with `kai lock`'s names and hash shape and
+		# no store paths, so an artifact can copy it without growing its
+		# closure. A cargo vendor's hash is its Cargo.lock's.
+		sha256 = |of, encoding, value|
+			"{ algorithm = \"sha256\"; of = \"${of}\"; "
+				.concat("encoding = \"${encoding}\"; value = ${value}; }")
+		record = |name, kind, url, revision, hashed|
+			"{ name = ${quote(name)}; kind = \"${kind}\"; url = ${url}; "
+				.concat("revision = ${revision}; hash = ${hashed}; }")
+		entries = build.inputs.map(
 			|name| {
 				fetched = model.fetches.find_first(|f| f.name == name)
 				vendored = model.cargo_vendors.find_first(|c| c.name == name)
 				copy = "cp -rL $vendor $out && chmod -R u+w $out && substituteInPlace "
 					.concat("$out/.cargo/config.toml --replace-fail cargo-vendor-dir .")
-				path = match (fetched, vendored) {
-					(Ok(fetch), _) => "pkgs.fetchurl ${fetch_file(fetch)}"
-					(_, Ok(vendor)) =>
-						"pkgs.runCommand ${quote("kai-cargo-vendor-${name}")} { "
-							.concat("vendor = pkgs.rustPlatform.importCargoLock { ")
-							.concat("lockFile = builtins.toFile \"Cargo.lock\" ")
-							.concat("${quote(vendor.lock)}; allowBuiltinFetchGit = true; }; } ")
-							.concat(quote(copy))
-					_ => "inputs.${quote(name)}"
+				source = "inputs.${quote(name)}"
+				(path, recorded) = match (fetched, vendored) {
+					(Ok(fetch), _) => {
+						file = sha256("file", "sri", "file.hash")
+						(
+							"pkgs.fetchurl ${fetch_file(fetch)}",
+							"(let file = ${fetch_file(fetch)}; in "
+								.concat("${record(name, "fetch", "file.url", "null", file)})"),
+						)
+					}
+					(_, Ok(_)) => {
+						lock_file = "cargoLocks.${quote(name)}"
+						lock = sha256("file", "hex", "builtins.hashFile \"sha256\" ${lock_file}")
+						(
+							"pkgs.runCommand ${quote("kai-cargo-vendor-${name}")} { "
+								.concat("vendor = pkgs.rustPlatform.importCargoLock { ")
+								.concat("lockFile = ${lock_file}; allowBuiltinFetchGit = true; }; } ")
+								.concat(quote(copy)),
+							record(name, "cargo_vendor", "null", "null", lock),
+						)
+					}
+					_ => {
+						declared = model.build_sources.find_first(|s| s.name == name)
+							.map_ok(|s| quote(s.ref)) ?? "null"
+						nar = sha256("nar", "sri", "${source}.narHash")
+						(source, record(name, "source", declared, "${source}.rev or null", nar))
+					}
 				}
-				"{ name = ${quote(name)}; path = ${path}; }"
+				{ link: "{ name = ${quote(name)}; path = ${path}; }", recorded }
 			},
 		)
 		roc_packages = model.build_sources.keep_if(|s| build.inputs.contains(s.name))
 			.keep_oks(
 				|source|
-					roc_package_hash(source.ref).map_ok(
+					Project.roc_package_hash(source.ref).map_ok(
 						|hash| "{ name = ${quote(source.name)}; hash = ${quote(hash)}; }",
 					),
 			)
 		dependencies = build.needs.map(
 			|name|
 				"{ name = ${quote(name)}; path = artifacts.${quote(name)}; }",
+		)
+		artifact = |name| record(name, "artifact", "null", "null", "null")
+		records = entries.map(|e| e.recorded).concat(build.needs.map(artifact))
+		inputs = entries.map(|e| e.link).append(
+			"{ name = \".kai-inputs.json\"; path = builtins.toFile \"kai-inputs.json\" "
+				.concat("(builtins.toJSON inputsRecord); }"),
+		)
+		# `kai build NAME --plan` prints kaiPlan, which leaves the derivation
+		# untouched: the build's record, snapshot and each need's identity.
+		need_plans = build.needs.map(
+			|name| {
+				need = "artifacts.${quote(name)}"
+				"{ name = ${quote(name)}; derivation = ${need}.drvPath; "
+					.concat("output_path = ${need}.outPath; }")
+			},
+		)
+		files = match build.files {
+			All => "null"
+			Only(paths) => "[ ${Str.join_with(paths.map(quote), " ")} ]"
+		}
+		build_plan = "{ schema_version = 1; backend = \"nix\"; "
+			.concat("name = ${quote(build.name)}; system = system; ")
+			.concat("environment = ${quote(build.environment)}; ")
+			.concat("output = ${quote(build.output)}; files = ${files}; ")
+			.concat("inputs = inputsRecord.inputs; ")
+			.concat("needs = [ ${Str.join_with(need_plans, " ")} ]; ")
+			.concat("snapshot = projectSnapshot; }")
+		vendors = model.cargo_vendors.keep_if(|c| build.inputs.contains(c.name))
+		cargo_locks = vendors.map(
+			|c| "${quote(c.name)} = builtins.toFile \"Cargo.lock\" ${quote(c.lock)}; ",
+		)
+		# $KAI_TOOLS links each tool by the name the Kaifile writes, and the
+		# RustToolchain, which path_packages lists last. The build's closure
+		# holds them already, and an artifact only those it references.
+		written = |tool|
+			if (tool.source == "default") tool.name else "${tool.source}#${tool.name}"
+		tool_links = environment.tools.map(
+			|tool| {
+				path = tool_reference(tool, environment, model.fetches, primary)
+				"{ name = ${quote(written(tool))}; path = ${path}; }"
+			},
+		).concat(
+			if (environment.rust_toolchain == None)
+				[]
+			else
+				["{ name = \"rust-toolchain\"; path = pkgs.lib.last tools; }"],
 		)
 		project = if snapshot.is_empty() {
 			"builtins.throw \"build execution requires NixBackend.plan "
@@ -1131,6 +1333,7 @@ NixBackend :: [].{
 			},
 			model.fetches,
 		).concat(system_attrs(environment, build.env, "pkgs"))
+			.append("\"KAI_TOOLS\" = toolLinks; ")
 		lines([
 			"          ${quote(build.name)} = let",
 			"            system = ${quote(system)};",
@@ -1141,11 +1344,19 @@ NixBackend :: [].{
 				"            };",
 				"            pkgs = sets.${quote(primary)};",
 				"            tools = [ ${Str.join_with(tools, " ")} ];",
+				"            toolLinks = pkgs.linkFarm "
+					.concat(quote("kai-tools-${build.name}"))
+					.concat(" [ ${Str.join_with(tool_links, " ")} ];"),
+				"            cargoLocks = { ${Str.join_with(cargo_locks, "")}};",
 				"            runner = ${runner};",
+				"            projectSnapshot = ${project};",
+				"            inputsRecord = { schema_version = 1; "
+					.concat("inputs = [ ${Str.join_with(records, " ")} ]; };"),
 				"          in pkgs.runCommandCC ${quote("kai-${build.name}")} {",
 				"            nativeBuildInputs = tools;",
+				"            passthru.kaiPlan = ${build_plan};",
 				"            kaiSpec = builtins.toJSON {",
-				"              project = ${project};",
+				"              project = projectSnapshot;",
 				"              isolation = ${isolation};",
 				"              argv = [ ${argv} ];",
 				"              output = ${quote(build.output)};",
@@ -1169,23 +1380,6 @@ NixBackend :: [].{
 				"          '';",
 			]),
 		)
-	}
-
-	## The content hash a Roc package bundle URL ends in, `<hash>.tar.zst`,
-	## which names the bundle's directory in Roc's package cache.
-	roc_package_hash : Str -> Try(Str, [NotRocPackage])
-	roc_package_hash = |ref| {
-		url = ref.drop_prefix("tarball+")
-		base58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-			.to_utf8()
-		hash = (url.split_on("/").last() ?? "").drop_suffix(".tar.zst")
-		bytes = hash.to_utf8()
-		if url.starts_with("https://") and url.ends_with("/${hash}.tar.zst") and
-			bytes.len() >= 32 and bytes.all(|byte| base58.contains(byte)) {
-			Ok(hash)
-		} else {
-			Err(NotRocPackage)
-		}
 	}
 
 	## Keeps a selected path, what lies inside it and the directories above it.
@@ -1390,6 +1584,30 @@ NixBackend :: [].{
 		"{ ${Str.join_with(attrs.concat(computed), "")}}"
 	}
 
+	## KAI_ROC_PACKAGES: each RocPackages bundle of the environment, fetched by
+	## the SHA-256 the lock pins and unpacked as `<hash>`, joined with `:`, for
+	## `first_on_path` to place in Roc's package cache. Without any, nothing.
+	roc_package_attrs : Model.Environment, List(Model.Fetch), Str -> List(Str)
+	roc_package_attrs = |environment, fetches, primary| {
+		pkgs = "sets.${quote(primary)}"
+		tree = |fetch| {
+			hash = fetch.name.drop_prefix("roc-")
+			into = "$out/${hash}"
+			unpack = quote("mkdir -p ${into} && tar --zstd -xf $src -C ${into}")
+			"\${${pkgs}.runCommand ${quote(fetch.name)} { "
+				.concat("src = ${pkgs}.fetchurl ${fetch_file(fetch)}; ")
+				.concat("nativeBuildInputs = [ ${pkgs}.zstd ]; } ${unpack}}/${hash}")
+		}
+		trees = environment.roc_packages.keep_oks(
+			|url| fetches.find_first(|f| f.name == Project.roc_package_fetch(url)),
+		)
+		if trees.is_empty() {
+			[]
+		} else {
+			["\"KAI_ROC_PACKAGES\" = \"${Str.join_with(trees.map(tree), ":")}\"; "]
+		}
+	}
+
 	## An environment's PackageEnv as Nix attributes, its paths computed from
 	## the packages of the environment's sets.
 	package_env_attrs : Model.Environment, List(Model.Fetch) -> List(Str)
@@ -1456,6 +1674,7 @@ sample_model = {
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 		{
@@ -1469,6 +1688,7 @@ sample_model = {
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 	],
@@ -1508,6 +1728,7 @@ full_model = {
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 		{
@@ -1521,6 +1742,7 @@ full_model = {
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 		{
@@ -1534,6 +1756,7 @@ full_model = {
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 	],
@@ -1631,6 +1854,7 @@ base = {
 	rust_toolchain: None,
 	expected: [],
 	package_env: [],
+	roc_packages: [],
 	on_systems: [],
 }
 
@@ -1653,7 +1877,6 @@ mk = |t| Model.{
 	name: "test",
 	systems: t.systems,
 	sources: t.sources,
-	guix_channels: [],
 	inputs: t.inputs,
 	follows: [],
 	environments: t.environments,
@@ -2228,6 +2451,59 @@ expect match single(Request.build("app")) {
 		Err(_) => False
 	}
 	_ => False
+}
+
+# A build's kaiPlan names its record, snapshot and needs; --rebuild builds
+# again.
+expect {
+	rebuild = Request.Build("app", { ..Request.default_output, mode: Rebuild })
+	match (single(Request.build("app")), plan_fixture(rebuild)) {
+		(Ok(step), Ok(rebuilt)) => match step.files.first() {
+			Ok(file) => file.contents.contains(
+				"passthru.kaiPlan = { schema_version = 1; backend = \"nix\"; "
+					.concat("name = \"app\"; system = system; ")
+					.concat("environment = \"builder\"; output = \"dist/app\"; ")
+					.concat("files = null; inputs = inputsRecord.inputs; ")
+					.concat("needs = [ { name = \"library\"; ")
+					.concat("derivation = artifacts.\"library\".drvPath; ")
+					.concat("output_path = artifacts.\"library\".outPath; } ]; ")
+					.concat("snapshot = projectSnapshot; };"),
+			)
+				and file.contents.contains("project = projectSnapshot;")
+				and runs(rebuilt).any(|run| run.argv.contains("--rebuild"))
+				and !step.argv.contains("--rebuild")
+			Err(_) => False
+		}
+		_ => False
+	}
+}
+
+# --plan readies the build without building it, has Nix write its plan to a
+# generated file, then prints that file.
+expect {
+	plan_with = |phase, observed| {
+		locks = plan_locks?
+		project = TestData.project(TestData.data)
+		layout = TestData.layout
+		continued = { phase, observed }
+		target = "x86_64-linux"
+		NixBackend.plan_build(project, "app", target, layout, locks, continued)
+	}
+	result = "/generated/build-plan.json"
+	written = [{ path: result, contents: Text("{}") }]
+	match (plan_with(0, []), plan_with(1, written)) {
+		(Ok(first), Ok(second)) => {
+			planned = runs(first).map(|run| run.argv)
+			first.next == Observe([result])
+				and first.steps.any(is_snapshot)
+				and planned.map(|argv| argv.take_first(2))
+					== [["rm", "-f"], ["nix", "eval"]]
+				and (planned.last() ?? []).take_last(4)
+					== ["--apply", NixBackend.plan_apply, "--write-to", result]
+				and second == Plan.{ steps: [Print("{}")], next: Done }
+		}
+		_ => False
+	}
 }
 
 # Task extras preserve empty arguments, controls and option-looking literals.
@@ -3526,6 +3802,7 @@ expect {
 	target = |pkgs|
 		"\"KAI_RUST_TARGET\" = ${pkgs}.stdenv.hostPlatform.rust.rustcTarget; "
 	rust_target = target("sets.\"default\"")
+	tools = "\"KAI_TOOLS\" = toolLinks; "
 	data = {
 		..TestData.data,
 		environments: [{ ..TestData.builder, rust_toolchain: toolchain }],
@@ -3544,11 +3821,75 @@ expect {
 			rust.contains("env = { \"KAI_SYSTEM\" = system; ${rust_target}};")
 				and set.contains("env = { \"KAI_SYSTEM\" = \"mine\"; };")
 				and builds.contains(
-					"env = { \"KAI_SYSTEM\" = system; ${target("pkgs")}};",
+					"env = { \"KAI_SYSTEM\" = system; ${target("pkgs")}${tools}};",
 				)
 				and builds.contains(
-					"env = { \"KAI_RUST_TARGET\" = \"mine\"; \"KAI_SYSTEM\" = system; };",
+					"env = { \"KAI_RUST_TARGET\" = \"mine\"; \"KAI_SYSTEM\" = system; "
+						.concat("${tools}};"),
 				)
 		_ => Bool.False
 	}
+}
+
+# Builds get $KAI_TOOLS, linking each tool by its written name, and
+# $KAI_INPUTS/.kai-inputs.json, recording each input and need; no Env sets
+# KAI_TOOLS.
+expect {
+	sri = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+	jq = {
+		system: "x86_64-linux",
+		url: "https://example.com/jq",
+		hash: sri,
+		mirrors: [],
+		unpack: File,
+	}
+	builder = {
+		..TestData.builder,
+		tools: TestData.builder.tools.append({ source: "jq", name: "jq" }),
+		rust_toolchain: Toml(
+			{ text: "[toolchain]", components: [], target_triples: [] },
+		),
+	}
+	library = { ..TestData.library, inputs: ["assets", "jq", "crates"] }
+	builds = [TestData.application, library]
+	data = { ..TestData.data, environments: [builder], builds }
+	project = TestData.project(data)
+	model = {
+		..project,
+		requires_: project.requires_.concat(["fetches", "cargo"]),
+		fetches: [{ name: "jq", files: [jq], unavailable: [] }],
+		cargo_vendors: [{ name: "crates", lock: "version = 4\n" }],
+	}
+	sha256 = |of, encoding, value|
+		"hash = { algorithm = \"sha256\"; of = \"${of}\"; "
+			.concat("encoding = \"${encoding}\"; value = ${value}; }; }")
+	vendored = "builtins.hashFile \"sha256\" cargoLocks.\"crates\""
+	parts = [
+		"toolLinks = pkgs.linkFarm \"kai-tools-library\" [ { name = \"python3\"; ",
+		"{ name = \"jq#jq\"; path = (sets.\"default\".runCommand \"jq\" ",
+		"{ name = \"rust-toolchain\"; path = pkgs.lib.last tools; } ];",
+		"cargoLocks = { \"crates\" = builtins.toFile \"Cargo.lock\" "
+			.concat("\"version = 4\\n\"; };"),
+		"cargoLocks = { };",
+		"lockFile = cargoLocks.\"crates\"; allowBuiltinFetchGit = true;",
+		"{ name = \".kai-inputs.json\"; path = builtins.toFile \"kai-inputs.json\" "
+			.concat("(builtins.toJSON inputsRecord); }"),
+		"inputsRecord = { schema_version = 1; inputs = [ ",
+		"{ name = \"assets\"; kind = \"source\"; url = \"path:./assets\"; "
+			.concat("revision = inputs.\"assets\".rev or null; ")
+			.concat(sha256("nar", "sri", "inputs.\"assets\".narHash")),
+		"in { name = \"jq\"; kind = \"fetch\"; url = file.url; revision = null; "
+			.concat(sha256("file", "sri", "file.hash")).concat(")"),
+		"{ name = \"crates\"; kind = \"cargo_vendor\"; url = null; revision = null; "
+			.concat(sha256("file", "hex", vendored)),
+		"{ name = \"library\"; kind = \"artifact\"; url = null; "
+			.concat("revision = null; hash = null; }"),
+		"\"KAI_TOOLS\" = toolLinks; };",
+	]
+	own_tools = [{ ..base, env: [{ name: "KAI_TOOLS", value: "mine" }] }]
+	match NixBackend.render(model) {
+		Ok(text) => parts.all(|part| text.contains(part))
+		Err(_) => Bool.False
+	}
+		and rejects({ ..simple, environments: own_tools }, "invalid Env name")
 }

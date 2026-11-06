@@ -1,10 +1,10 @@
-# --pure` argv under `guix time-machine`, at the channels Kai's lock pins.
-import api.Layout
-import api.LockJson
-import api.Plan as Steps
-import model.Model
-import model.Project
-import model.Request
+# Guix planning for std's model: shells and tasks as `guix shell -q
+# --pure` argv under `guix time-machine`, at the channels Kai's lock pins,
+# builds as generated files `guix build -f` builds there.
+import pf.Layout
+import pf.LockJson
+import pf.Plan as Steps
+import std.StdModel exposing [Model, Request]
 
 ## Tool names are native Guix specifications, never translated from Nix
 ## names. Every Guix command runs under `guix time-machine` at the channel
@@ -16,6 +16,127 @@ GuixBackend :: [].{
 	check_system = |system|
 		if (system.ends_with("-linux")) Ok({}) else Err("Guix runs only on Linux")
 
+	## What Guix checks as Kaifile.roc compiles: the declared channels, and
+	## the tools Guix sources name, which are native Guix specifications.
+	check_settings : Model, List(Channel) -> Try({}, Str)
+	check_settings = |model, channels| {
+		project = StdModel.validate(model)?
+		# Guix's own channel is always present, so no other may take its name.
+		var $names = ["guix"]
+		for channel in channels {
+			if $names.contains(channel.name) {
+				return Err("DuplicateGuixChannel: ${channel.name}")
+			}
+			$names = $names.append(channel.name)
+			{ commit, signer } = channel.introduction
+			clean = |text|
+				!text.is_empty() and text.to_utf8().all(|b| b > 32 and b != 127)
+			hex = |text|
+				text.count_utf8_bytes() == 40
+					and text.to_utf8().all(|b| GuixBackend.hex_digit(b))
+			if !clean(channel.url) or !clean(channel.branch) or !hex(commit)
+				or !hex(signer.replace_each(" ", "")) {
+				return Err("invalid Guix channel: ${channel.name}")
+			}
+		}
+		guix = |name|
+			project.sources.any(
+				|s|
+					s.name == name
+						and match s.provider {
+							GuixPackages(_) => Bool.True
+							_ => Bool.False
+						},
+			)
+		for environment in project.environments {
+			for t in StdModel.environment_tools(environment) {
+				if guix(t.source) {
+					GuixBackend.check_tool(t.name)?
+				}
+			}
+		}
+		Ok({})
+	}
+
+	valid_name : Str -> Bool
+	valid_name = |name|
+		!name.is_empty() and name.to_utf8().all(
+			|b| GuixBackend.letter(b) or (b >= '0' and b <= '9') or b == '-' or b == '_',
+		)
+
+	letter : U8 -> Bool
+	letter = |b| (b >= 'a' and b <= 'z') or (b >= 'A' and b <= 'Z')
+
+	hex_digit : U8 -> Bool
+	hex_digit = |b|
+		(b >= '0' and b <= '9') or (b >= 'a' and b <= 'f') or (b >= 'A' and b <= 'F')
+
+	## A Guix package[@version][:output] specification, conservatively: no
+	## translation or probing.
+	check_tool : Str -> Try({}, Str)
+	check_tool = |name| {
+		if name.contains("\"") {
+			return Err("invalid Guix tool: ${name}: quoted segments are Nix-only")
+		}
+		parts = name.split_on(":")
+		versions = (parts.first() ?? "").split_on("@")
+		segment = |b|
+			GuixBackend.letter(b) or (b >= '0' and b <= '9')
+				or b == '-' or b == '_' or b == '.' or b == '+'
+		valid = parts.len() <= 2 and versions.len() <= 2
+			and parts.drop_first(1).all(GuixBackend.valid_name)
+			and versions.all(|part| !part.is_empty() and part.to_utf8().all(segment))
+		if (valid) Ok({}) else Err("invalid Guix tool: ${name}")
+	}
+
+	## Whether Guix can enter environment `name`: its tools come from Guix or
+	## the default source, and it needs nothing only Nix or direct gives.
+	check_environment : Model, Str -> Try({}, Str)
+	check_environment = |model, name| {
+		project = StdModel.validate(model)?
+		env = project.environments.find_first(|e| e.name == name)
+			.map_err(|_| "unknown environment: ${name}")?
+		if StdModel.direct_only(project, env) {
+			return Err("environment ${name} needs the direct backend")
+		}
+		if !env.expected.is_empty() {
+			return Err("Expect needs Nix or the direct backend: environment ${name}")
+		}
+		if !env.roc_packages.is_empty() {
+			return Err("RocPackages needs Nix or direct: environment ${name}")
+		}
+		if !env.overlays.is_empty() {
+			return Err("Guix does not support overlays in environment ${name}")
+		}
+		if !env.aliases.is_empty() {
+			return Err("Alias needs Nix: environment ${name}")
+		}
+		if env.rust_toolchain != None {
+			return Err("RustToolchain needs Nix: environment ${name}")
+		}
+		if !env.package_env.is_empty() {
+			return Err("PackageEnv needs Nix: environment ${name}")
+		}
+		every_tool = StdModel.environment_tools(env)
+		tools = every_tool.drop_if(|t| project.fetches.any(|f| f.name == t.source))
+		if tools.len() != every_tool.len() {
+			return Err("Guix cannot use Fetch tools, in environment ${name}")
+		}
+		# An empty environment still uses the default source's packages.
+		used = if (tools.is_empty()) ["default"] else tools.map(|t| t.source)
+		for source in project.sources.keep_if(|s| used.contains(s.name)) {
+			match source.provider {
+				NixPackages(_) =>
+					return Err("source ${source.name} requires Nix, not Guix")
+				_ => {}
+			}
+		}
+		for t in tools {
+			GuixBackend.check_tool(t.name)?
+		}
+		Ok({})
+	}
+
 	## `guix shell` arguments for a shell or task, run under time-machine, and
 	## the variables it keeps from kai's environment, KAI_ARTIFACTS under
 	## `workspace` for a task with Needs.
@@ -23,26 +144,26 @@ GuixBackend :: [].{
 
 	plan : Model, Request, Str -> Try(Planned, Str)
 	plan = |model, request, workspace| {
-		project = Project.validate(model)?
+		project = StdModel.validate(model)?
 		(env_name, command, own_env, received) = match request {
-			Request.Shell(name, argv) => {
+			Shell(name, argv) => {
 				shell = project.shells.find_first(|s| s.name == name)
 					.map_err(|_| "unknown shell: ${name}")?
 				(shell.environment, argv, [], [])
 			}
-			Request.Run(name, extra) => {
+			Run(name, extra) => {
 				task = project.tasks.find_first(|t| t.name == name)
 					.map_err(|_| "unknown task: ${name}")?
 				(
 					task.environment,
 					task.run.concat(extra),
-					task.env.concat(Project.artifacts_variable(task, workspace)),
+					task.env.concat(StdModel.artifacts_variable(task, workspace)),
 					task.secrets.concat(task.optional_environment_variables),
 				)
 			}
 			_ => return Err("Guix supports only kai shell and kai run")
 		}
-		Project.check_environment(project, Guix, env_name)?
+		GuixBackend.check_environment(project, env_name)?
 		environment = project.environments.find_first(|e| e.name == env_name)
 			.map_err(|_| "unknown environment: ${env_name}")?
 		# Without specifications, guix shell would load a manifest from the
@@ -56,7 +177,7 @@ GuixBackend :: [].{
 			return Err("invalid Guix tool in environment ${environment.name}")
 		}
 		tail = if (command.is_empty()) [] else ["--"].concat(command)
-		env = Project.merge_env(environment.env, own_env)
+		env = StdModel.merge_env(environment.env, own_env)
 		# --pure would drop the operator's shell, which kai passes to children,
 		# the variables the environment and task set, and the secrets and optional
 		# variables the task declares. Every Guix shell is pure, so Pure
@@ -69,14 +190,20 @@ GuixBackend :: [].{
 	}
 
 	## A Guix channel as kai pins it: its commit is locked by `kai update`.
-	Channel : Model.GuixChannel
+	## It is authenticated by its introduction: its first signed commit and
+	## that signer's OpenPGP fingerprint.
+	Channel : {
+		name : Str,
+		url : Str,
+		branch : Str,
+		introduction : { commit : Str, signer : Str },
+	}
 
 	Pin : { channel : Channel, commit : Str }
 
 	## Guix's own channel, then those the project declares.
-	project_channels : Model -> List(Channel)
-	project_channels = |model|
-		[GuixBackend.default_channel].concat(model.guix_channels)
+	project_channels : List(Channel) -> List(Channel)
+	project_channels = |declared| [GuixBackend.default_channel].concat(declared)
 
 	## The channel `%default-guix-channel` reports (Guix 1.5), which every
 	## project on Guix uses.
@@ -362,7 +489,7 @@ GuixBackend :: [].{
 	## kai's runner on the project snapshot, as the Nix builds do.
 	build_scm : Model, Built, Str, Str -> Try(Str, Str)
 	build_scm = |model, target, root, workspace| {
-		project = Project.validate(model)?
+		project = StdModel.validate(model)?
 		q = GuixBackend.quote
 		farm = |name, needs| {
 			entries = needs.map(|n| "(${q(n)} ,kai-build-${n})")
@@ -373,14 +500,14 @@ GuixBackend :: [].{
 			Artifacts(needs) => (needs, farm("kai-artifacts", needs))
 		}
 		var $defines = []
-		for build in Project.builds_closure(project, names)? {
-			Project.check_environment(project, Guix, build.environment)?
+		for build in StdModel.builds_closure(project, names)? {
+			GuixBackend.check_environment(project, build.environment)?
 			environment = project.environments
 				.find_first(|e| e.name == build.environment)
 				.map_err(|_| "unknown environment: ${build.environment}")?
 			specs = Str.join_with(environment.tools.map(|t| q(t.name)), " ")
 			argv = LockJson.encode(Array(build.run.map(|a| String(a))))
-			variables = Project.merge_env(environment.env, build.env)
+			variables = StdModel.merge_env(environment.env, build.env)
 			env = LockJson.encode(
 				Object(variables.map(|v| { name: v.name, value: String(v.value) })),
 			)
@@ -552,7 +679,7 @@ GuixBackend :: [].{
 			Build(name) => [name]
 			Artifacts(needs) => needs
 		}
-		closure = Project.builds_closure(model, names)?
+		closure = StdModel.builds_closure(model, names)?
 		var $checks = []
 		for needed in closure {
 			for input in needed.inputs {
@@ -578,10 +705,10 @@ GuixBackend :: [].{
 			Steps.{
 				steps: $checks.concat(before).concat([
 					Snapshot({
-						root: Project.snapshot_root(model, root)?,
+						root: StdModel.snapshot_root(model, root)?,
 						destination: "${workspace}/snapshot",
 						exclude,
-						files: Project.snapshot_files(closure),
+						files: StdModel.snapshot_files(closure),
 						store: "/gnu/store",
 					}),
 					InstallRunner({ destination: "${workspace}/build-runner" }),
@@ -604,10 +731,10 @@ GuixBackend :: [].{
 	task_steps : Model, Request, Layout, Locked -> Try(Steps, Str)
 	task_steps = |model, request, layout, locked| {
 		needs = match request {
-			Request.Run(name, _) =>
+			Run(name, _) =>
 				match model.tasks.find_first(|t| t.name == name) {
 					Ok(task) =>
-						Project.artifacts_variable(task, layout.workspace).map_try(
+						StdModel.artifacts_variable(task, layout.workspace).map_try(
 							|variable| {
 								link = variable.value
 								# `guix build --root` never replaces an existing link.
@@ -657,16 +784,16 @@ GuixBackend :: [].{
 	request_steps : Model, Request, Layout, Locked -> Try(Steps, Str)
 	request_steps = |model, request, layout, locked|
 		match request {
-			Request.Build(name, shown) =>
+			Build(name, shown) =>
 				GuixBackend.build_steps(model, name, shown, layout, locked)
-			Request.Workflow(name) => {
+			Workflow(name) => {
 				var $steps = []
-				for step in Project.workflow_steps(model, name)? {
+				for step in StdModel.workflow_steps(model, name)? {
 					$steps = match step {
 						RunTask(task, args) => {
 							part = GuixBackend.task_steps(
 								model,
-								Request.Run(task, args),
+								Run(task, args),
 								layout,
 								locked,
 							)?
@@ -690,19 +817,22 @@ GuixBackend :: [].{
 	fit : Model, Request -> Try({}, Str)
 	fit = |model, request|
 		match request {
-			Request.Build(name, _) =>
+			Build(_, { mode: Plan, .. }) => Err("Guix builds have no --plan yet")
+			Build(_, { mode: Rebuild, .. }) =>
+				Err("Guix builds have no --rebuild yet")
+			Build(name, _) =>
 				GuixBackend.build_scm(model, Build(name), "/fit", "/fit").map_ok(|_| {})
-			Request.Workflow(name) => {
-				for step in Project.workflow_steps(model, name)? {
+			Workflow(name) => {
+				for step in StdModel.workflow_steps(model, name)? {
 					match step {
-						RunTask(task, args) => GuixBackend.fit(model, Request.Run(task, args))?
+						RunTask(task, args) => GuixBackend.fit(model, Run(task, args))?
 						BuildArtifact(build) => GuixBackend.fit(model, Request.build(build))?
 						MayFail(_) => {}
 					}
 				}
 				Ok({})
 			}
-			Request.Run(name, _) => {
+			Run(name, _) => {
 				_ = GuixBackend.plan(model, request, "/fit")?
 				task = model.tasks.find_first(|t| t.name == name)
 				needs = task.map_ok(|t| t.needs) ?? []
@@ -718,8 +848,8 @@ GuixBackend :: [].{
 	steps = |model, request, layout, locked| {
 		shell = GuixBackend.plan(model, request, layout.workspace)?
 		description = match request {
-			Request.Shell(name, _) => "shell ${name}"
-			Request.Run(name, _) => "task ${name}"
+			Shell(name, _) => "shell ${name}"
+			Run(name, _) => "task ${name}"
 			_ => "guix"
 		}
 		(
@@ -728,10 +858,10 @@ GuixBackend :: [].{
 			kept_environment_variables,
 			dir,
 		) = match request {
-			Request.Run(name, _) =>
+			Run(name, _) =>
 				match model.tasks.find_first(|t| t.name == name) {
 					Ok(task) => {
-						removed = Project.other_tasks_secrets(model, task)
+						removed = StdModel.other_tasks_secrets(model, task)
 						(
 							task.secrets,
 							removed,
@@ -747,7 +877,7 @@ GuixBackend :: [].{
 		entries = locked.map(|p| { channel: p.channel, commit: Pinned(p.commit) })
 		# --pure keeps only what --preserve names, so kai sets it on guix, which
 		# runs the task in its directory.
-		argv = Project.env_command(dir, shell.env)
+		argv = StdModel.env_command(dir, shell.env)
 			.concat(["guix", "time-machine", "-C", channels, "--"])
 			.concat(shell.args)
 		Ok(
@@ -792,7 +922,13 @@ env : Str, List(Str) -> Model.Environment
 env = |name, tools| {
 	name,
 	parents: [],
-	tools: tools.map(|text| Project.tool(text) ?? { source: "", name: text }),
+	tools: tools.map(
+		|text|
+			match text.split_first("#") {
+				Ok({ before, after }) => { source: before, name: after }
+				Err(_) => { source: "default", name: text }
+			},
+	),
 	overlays: [],
 	env: [],
 	pure: Bool.False,
@@ -800,6 +936,7 @@ env = |name, tools| {
 	rust_toolchain: None,
 	expected: [],
 	package_env: [],
+	roc_packages: [],
 	on_systems: [],
 }
 
@@ -815,14 +952,14 @@ check = |environments, request, expected|
 # exact argv; a command follows --, arguments unchanged.
 expect [
 	(
-		Request.Shell("dev", []),
+		Shell("dev", []),
 		Ok(
 			["shell", "-q", "--pure", "--preserve=^KAI_OPERATOR_SHELL$"]
 				.concat(["git", "hello@2.12:out"]),
 		),
 	),
 	(
-		Request.Shell("dev", ["hello", "--greeting", "two words", ""]),
+		Shell("dev", ["hello", "--greeting", "two words", ""]),
 		Ok([
 			"shell",
 			"-q",
@@ -851,14 +988,14 @@ expect [
 
 # Nix-only data, empty tool lists and builds or workflows are refused.
 expect [
-	([env("dev", ["nix#hello"])], Request.Shell("dev", [])),
-	([env("dev", ["python3Packages.requests'"])], Request.Shell("dev", [])),
-	([{ ..env("dev", ["hello"]), overlays: ["patch"] }], Request.Shell("dev", [])),
-	([env("dev", [])], Request.Shell("dev", [])),
-	([env("dev", ["-L"])], Request.Shell("dev", [])),
-	([env("dev", ["hello"])], Request.Shell("missing", [])),
+	([env("dev", ["nix#hello"])], Shell("dev", [])),
+	([env("dev", ["python3Packages.requests'"])], Shell("dev", [])),
+	([{ ..env("dev", ["hello"]), overlays: ["patch"] }], Shell("dev", [])),
+	([env("dev", [])], Shell("dev", [])),
+	([env("dev", ["-L"])], Shell("dev", [])),
+	([env("dev", ["hello"])], Shell("missing", [])),
 	([env("dev", ["hello"])], Request.build("dev")),
-	([env("dev", ["hello"])], Request.Workflow("dev")),
+	([env("dev", ["hello"])], Workflow("dev")),
 ].all(|(environments, request)| check(environments, request, Err({})))
 
 hex = "0123456789abcdef0123456789abcdef01234567"
@@ -902,7 +1039,7 @@ expect {
 expect {
 	model = fixture([env("dev", ["hello"])])
 	pin = { channel: GuixBackend.default_channel, commit: hex }
-	shell = Request.Shell("dev", ["hello", "a b"])
+	shell = Shell("dev", ["hello", "a b"])
 	layout = Layout.{
 		project_root: "/p",
 		workspace: "/p/.kai",
@@ -955,4 +1092,21 @@ expect {
 		and rendered.contains("(\"lib\" ,kai-build-lib)")
 		and rendered.ends_with("kai-build-app\n")
 		and GuixBackend.build_scm(model, Build("data"), "/p", "/p/.kai").is_err()
+		and GuixBackend.fit(model, Request.build("app")).is_ok()
+		and [Plan, Rebuild].all(
+			|mode| {
+				shown = { ..Request.default_output, mode }
+				GuixBackend.fit(model, Build("app", shown)).is_err()
+			},
+		)
 }
+
+# Guix specifications: package[@version][:output], with "+" and "." in
+# package and version segments, at most one output and no empty version.
+expect [
+	("python@3.12:out", Bool.True),
+	("g++@12.3:lib", Bool.True),
+	("git::out", Bool.False),
+	("python@", Bool.False),
+	("\"git\"", Bool.False),
+].all(|(tool, valid)| GuixBackend.check_tool(tool).is_ok() == valid)

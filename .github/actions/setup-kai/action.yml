@@ -1,0 +1,82 @@
+name: Set up Kai
+description: >-
+  Install a Kai release with this repository's install.sh, which checks it
+  against the release's SHA256SUMS, and put kai on PATH. Optionally install
+  Nix first, and cache Kai's downloads between runs.
+
+inputs:
+  version:
+    description: >-
+      The Kai release to install, such as 0.0.11. Required, so that a run
+      installs the same kai until the workflow changes it.
+    required: true
+  cache:
+    description: >-
+      Whether to cache ~/.cache/kai (the direct backend's store and the Roc
+      compiler Kai downloads), keyed by the version, the runner's OS and
+      architecture, and .kai/lock.json.
+    default: "true"
+  nix:
+    description: >-
+      Whether to install Nix, which every backend but the direct one needs.
+      Set it to "false" for a project whose environments are all pinned
+      downloads. Nix already on PATH is used as it is.
+    default: "true"
+  github-token:
+    description: The token Nix uses for GitHub, against its rate limit.
+    default: ${{ github.token }}
+
+outputs:
+  cache-hit:
+    description: Whether the cache held exactly this key.
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the inputs
+      id: check
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        CACHE: ${{ inputs.cache }}
+        NIX: ${{ inputs.nix }}
+      run: |
+        set -euo pipefail
+        [ -n "$VERSION" ] || { echo "setup-kai: set version, such as 0.0.11" >&2; exit 1; }
+        for input in "cache=$CACHE" "nix=$NIX"; do
+          case ${input#*=} in
+          true | false) ;;
+          *) echo "setup-kai: ${input%%=*} must be true or false" >&2; exit 1 ;;
+          esac
+        done
+        if [ "$NIX" = true ] && ! command -v nix >/dev/null; then
+          echo "install-nix=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Install Nix
+      if: steps.check.outputs.install-nix == 'true'
+      uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      with:
+        github_access_token: ${{ inputs.github-token }}
+
+    - name: Restore Kai's downloads
+      id: cache
+      if: inputs.cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/kai
+        key: setup-kai-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kai/lock.json') }}
+        restore-keys: setup-kai-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-
+
+    # No --yes: Nix, when wanted, is installed above, and without a terminal
+    # install.sh only says how to install it.
+    - name: Install Kai
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/setup-kai"
+        sh "$GITHUB_ACTION_PATH/../../../install.sh" --version "$VERSION" --dir "$dir"
+        echo "$dir" >> "$GITHUB_PATH"

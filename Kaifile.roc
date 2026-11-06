@@ -116,26 +116,65 @@ platform_script =
 	\\cp platform/*.roc stage/
 	\\cp -R platform/targets/*/ stage/targets/
 
-# std's own packages reach the platform's modules through api.roc; bundled,
-# they depend on the platform itself, by the URL this release publishes it at.
-std_script =
-	\\platform="$KAI_ARTIFACTS/kai-platform"
-	\\hash="$(basename "$platform"/*.tar.zst .tar.zst)"
-	\\cp -RL "$platform/$hash" "$packages/$hash"
-	\\url="https://github.com/thebrandonlucas/kai/releases/download"
-	\\url="$(printf '"%s/v%s/%s.tar.zst"' "$url" "$(cat VERSION)" "$hash")"
-	\\api="api: platform $url"
-	\\cp -R plugins/std/. stage
-	\\rm -rf stage/*/fuzz stage/backends/*/fuzz
+# Fails unless file $1 has $2, and replaces it with $3.
+replace_function =
 	\\replace() {
 	\\  grep -qF "$2" "$1" || { echo "$1 lacks $2" >&2; exit 1; }
 	\\  sed -i "s|$2|$3|g" "$1"
 	\\}
-	\\replace stage/model/main.roc 'api: "../../../platform/api.roc"' "$api"
-	\\for main in stage/backends/*/main.roc; do
-	\\  replace "$main" 'api: "../../../../platform/api.roc"' "$api"
-	\\done
-	\\replace stage/main.roc '"../../platform/main.roc"' "$url"
+	\\
+
+# std's own packages reach the platform's modules through api.roc; bundled,
+# they depend on the platform itself, by the URL this release publishes it at.
+std_script =
+	replace_function.concat(
+		\\platform="$KAI_ARTIFACTS/kai-platform"
+		\\hash="$(basename "$platform"/*.tar.zst .tar.zst)"
+		\\cp -RL "$platform/$hash" "$packages/$hash"
+		\\url="https://github.com/thebrandonlucas/kai/releases/download"
+		\\url="$(printf '"%s/v%s/%s.tar.zst"' "$url" "$(cat VERSION)" "$hash")"
+		\\api="api: platform $url"
+		\\cp -R plugins/std/. stage
+		\\rm -rf stage/*/fuzz stage/backends/*/fuzz
+		\\replace stage/model/main.roc 'api: "../../../platform/api.roc"' "$api"
+		\\for main in stage/backends/*/main.roc; do
+		\\  replace "$main" 'api: "../../../../platform/api.roc"' "$api"
+		\\done
+		\\replace stage/main.roc '"../../platform/main.roc"' "$url"
+	)
+
+# Every other plugin depends on the platform and std by the URLs this release
+# publishes them at.
+plugin_script = |name|
+	replace_function.concat(
+		\\base="https://github.com/thebrandonlucas/kai/releases/download"
+		\\base="$base/v$(cat VERSION)"
+		\\for built in kai-platform kai-std; do
+		\\  hash="$(basename "$KAI_ARTIFACTS/$built"/*.tar.zst .tar.zst)"
+		\\  cp -RL "$KAI_ARTIFACTS/$built/$hash" "$packages/$hash"
+		\\done
+		\\bundle() { basename "$KAI_ARTIFACTS/$1"/*.tar.zst; }
+		\\pf="$(printf '"%s/%s"' "$base" "$(bundle kai-platform)")"
+		\\std="$(printf '"%s/std-%s"' "$base" "$(bundle kai-std)")"
+		\\cp -R plugins/${name}/. stage
+		\\replace stage/main.roc '"../../platform/main.roc"' "$pf"
+		\\replace stage/main.roc '"../std/main.roc"' "$std"
+	)
+
+# The bundle, kai-NAME, of plugin NAME other than std that a release
+# publishes: one for each plugin devtool/Release.roc's Release.plugins lists.
+plugin_build = |build, name|
+	Build(
+		build,
+		[
+			Use("build"),
+			Inputs(roc_inputs),
+			Needs(["kai-platform", "kai-std"]),
+			Run(["sh", "-c", bundle(plugin_script(name))]),
+			Files(["plugins/${name}", "VERSION"]),
+			Output("bundle"),
+		],
+	)
 
 # The bare kai binary for a Roc target, embedding the URLs this release
 # publishes the bundles built here at.
@@ -227,6 +266,7 @@ kaifile = Std.kaifile(
 						"nixfmt",
 						"shellcheck",
 						"sops",
+						"unzip",
 					]),
 				),
 			],
@@ -262,7 +302,7 @@ kaifile = Std.kaifile(
 			],
 		),
 		# The Roc package bundles of the platform and the std plugin that a
-		# release publishes.
+		# release publishes; the other plugins' are at the end.
 		Build(
 			"kai-platform",
 			[
@@ -288,5 +328,7 @@ kaifile = Std.kaifile(
 		binary("kai-arm64musl", "arm64musl"),
 		release("release-x86-64-linux", "kai-x64musl"),
 		release("release-aarch64-linux", "kai-arm64musl"),
+		plugin_build("kai-guix", "guix"),
+		plugin_build("kai-sbom", "sbom"),
 	]).concat(roc_sources).concat(link_sources),
 )

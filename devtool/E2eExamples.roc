@@ -30,11 +30,15 @@ E2eExamples := [].{
 		var $commands = []
 		var $sources = []
 		var $offered = []
+		evaluate = ["eval", "--raw", "--impure", "--expr", "builtins.currentSystem"]
+		host = Exec.output!(Exec.cmd("nix").args(Exec.strs(evaluate)))?
+			.stdout_utf8
+			.trim()
 		names = E2eExamples.names!(examples)?
 		# Every example counts towards the check below, though a shard runs some.
 		for name in names {
 			dir = Path.join(examples, name)
-			lines = E2eExamples.commands!(dir)?
+			lines = E2eExamples.commands!(dir, host)?
 			$commands = $commands.concat(lines.map(E2eExamples.command_name))
 			(source, _) = E2e.kaifile_dirs(dir, dir, E2eExamples.kaifile_dir!(dir)?)
 			for file in Path.list!(source)? {
@@ -45,7 +49,7 @@ E2eExamples := [].{
 		}
 		for name in E2eExamples.shard(names, Env.var_str!("KAI_E2E_SHARD") ?? "")? {
 			dir = Path.join(examples, name)
-			lines = E2eExamples.commands!(dir)?
+			lines = E2eExamples.commands!(dir, host)?
 			entries = Path.list!(dir)?
 				.map(|path| Path.display(Path.filename(path) ?? path))
 				.keep_if(|entry| !E2eExamples.metadata.contains(entry))
@@ -99,12 +103,13 @@ E2eExamples := [].{
 		Ok($names)
 	}
 
-	## The command lines an example's commands file holds.
-	commands! = |dir|
+	## The command lines an example's commands file holds that run on `host`.
+	commands! = |dir, host|
 		Ok(
 			Path.read_utf8!(Path.join(dir, "commands"))?
 				.split_on("\n")
-				.keep_if(|line| !line.trim().is_empty()),
+				.keep_if(|line| !line.trim().is_empty())
+				.keep_oks(|line| E2eExamples.on_host(line, host)),
 		)
 
 	## The examples to run: all, or for a shard `i/n` (KAI_E2E_SHARD), every
@@ -156,14 +161,15 @@ E2eExamples := [].{
 
 	## Run each command in order and return their stdout, apart from update's
 	## report. `update` locks only Nix, so a host with Guix too never waits for
-	## a Guix lock, except in the direct and mixed examples, whose downloads
-	## direct pins.
+	## a Guix lock, except in the direct, mixed and roc-packages examples,
+	## whose downloads direct pins.
 	run_in! = |kai, project, name, lines| {
+		pinned_by_direct = ["direct", "mixed", "roc-packages"]
 		var $stdout = ""
 		for line in lines {
 			args = line.split_on(" ").keep_if(|arg| !arg.is_empty())
 			argv =
-				if args == ["update"] and !["direct", "mixed"].contains(name) {
+				if args == ["update"] and !pinned_by_direct.contains(name) {
 					["--backend", "nix", "update"]
 				} else {
 					args
@@ -199,6 +205,16 @@ E2eExamples := [].{
 		}
 		[]
 	}
+
+	## A commands line `<system>: <command>` runs only on a host of that
+	## system, such as a NixOS machine's build; any other line runs anywhere.
+	on_host : Str, Str -> Try(Str, [OtherHost])
+	on_host = |line, host|
+		match line.split_first(": ") {
+			Ok({ before, after }) if !before.contains(" ") =>
+				if (before == host) Ok(after) else Err(OtherHost)
+			_ => Ok(line)
+		}
 
 	## A command line's command: its first word that is not a flag.
 	command_name : Str -> Str
@@ -343,3 +359,11 @@ expect E2eExamples.shard(["b", "a"], "") == Ok(["b", "a"])
 
 # A shard past the count is refused.
 expect E2eExamples.shard(["a"], "3/2") == Err(BadShard("3/2"))
+
+# A line naming a system runs only on that host, without its prefix.
+expect {
+	lines = ["update", "x86_64-linux: machine build web", "run say -- a: b"]
+	on = |host| lines.keep_oks(|line| E2eExamples.on_host(line, host))
+	on("x86_64-linux") == ["update", "machine build web", "run say -- a: b"]
+		and on("aarch64-linux") == ["update", "run say -- a: b"]
+}

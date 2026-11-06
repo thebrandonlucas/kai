@@ -1,0 +1,269 @@
+{
+  "profile": "blueprint-spdx-3.0-v1",
+  "components": [
+    {
+      "producer": "Person: Luke Boswell",
+      "license": "UPL-1.0 AND MIT",
+      "license_url": "",
+      "modified": "",
+      "target": "source",
+      "origin": "reviewed",
+      "id": "weaver",
+      "name": "weaver",
+      "version": "@RELEASE@",
+      "identity": "https://github.com/lukewilliamboswell/weaver/tree/@COMMIT@/package",
+      "download": "@BUNDLE_URL@",
+      "sha256": "@BUNDLE_SHA256@"
+    },
+    {
+      "producer": "Organization: Roc contributors",
+      "license": "NOASSERTION",
+      "license_url": "",
+      "modified": "SHA-256 identifies the actual build compiler executable; its native dependency closure is outside this source inventory.",
+      "target": "",
+      "origin": "reviewed",
+      "id": "compiler",
+      "name": "roc",
+      "version": "@COMPILER@",
+      "identity": "https://github.com/roc-lang/nightlies/releases/tag/@COMPILER@",
+      "download": "NOASSERTION",
+      "sha256": "@COMPILER_SHA256@"
+    },
+    {
+      "producer": "Person: Luke Boswell",
+      "license": "UPL-1.0",
+      "license_url": "",
+      "modified": "",
+      "target": "source",
+      "origin": "source:roc-ansi",
+      "id": "roc-ansi",
+      "name": "roc-ansi",
+      "version": "0.13.3",
+      "identity": "",
+      "download": "",
+      "sha256": ""
+    },
+    {
+      "producer": "Organization: Roc contributors",
+      "license": "UPL-1.0",
+      "license_url": "",
+      "modified": "",
+      "target": "source",
+      "origin": "source:path",
+      "id": "path",
+      "name": "path",
+      "version": "4.0.0",
+      "identity": "",
+      "download": "",
+      "sha256": ""
+    },
+    "@ARCHIVE_COMPONENTS@"
+  ],
+  "relationships": [
+    {
+      "from": "Subject",
+      "to": "weaver",
+      "relation": "contains",
+      "scope": "",
+      "basis": "Exact source bundle; first-party source and artifact share the verified bundle SHA-256."
+    },
+    {
+      "from": "Subject",
+      "to": "compiler",
+      "relation": "dependsOn",
+      "scope": "build",
+      "basis": "Compiler used for roc bundle; compiler code is not shipped inside the source archive."
+    },
+    {
+      "from": "Subject",
+      "to": "roc-ansi",
+      "relation": "dependsOn",
+      "scope": "",
+      "basis": "Named in the header of package/main.roc by its immutable bundle URL, and pinned in Blueprint.roc by the SHA-256 its release publishes. The Roc compiler fetches it when an application is built; its code is not inside this source archive."
+    },
+    {
+      "from": "Subject",
+      "to": "path",
+      "relation": "dependsOn",
+      "scope": "",
+      "basis": "Named in the header of package/main.roc by its immutable bundle URL, and pinned in Blueprint.roc by the SHA-256 its release publishes. The Roc compiler fetches it when an application is built; its code is not inside this source archive."
+    },
+    "@ARCHIVE_RELATIONSHIPS@"
+  ],
+  "coverage": [
+    {
+      "scope": "shipped-source",
+      "status": "complete",
+      "reason": "Archive members and their bytes are checked against the package source tree. This SBOM covers the Roc source bundle only.",
+      "contact": "https://github.com/lukewilliamboswell/weaver/issues"
+    },
+    {
+      "scope": "external-package-dependencies",
+      "status": "complete",
+      "reason": "roc deps package/main.roc lists exactly the bundles Blueprint.lock pins as file sources, with no dependencies of their own. roc-ansi's supplier SBOM is imported, bound to the pinned file; path publishes none and is recorded from its reviewed bundle.",
+      "contact": "https://github.com/lukewilliamboswell/weaver/issues"
+    },
+    {
+      "scope": "vendored-source",
+      "status": "verified-empty",
+      "reason": "The reviewed package consists solely of first-party modules; it contains no vendored source.",
+      "contact": "https://github.com/lukewilliamboswell/weaver/issues"
+    },
+    {
+      "scope": "build-tool-closure",
+      "status": "incomplete",
+      "reason": "The compiler executable is identified as build-only. Its native dependencies and other CI tooling are outside the shipped source dependency closure; this is not an executable SBOM.",
+      "contact": "https://github.com/lukewilliamboswell/weaver/issues"
+    }
+  ],
+  "inputs": [
+    {
+      "input": "source:roc-ansi",
+      "component": "roc-ansi",
+      "reason": "Package dependency the source bundle names in its header; recorded as a dependsOn component, not contained in the archive."
+    },
+    {
+      "input": "source:path",
+      "component": "path",
+      "reason": "Package dependency the source bundle names in its header; recorded as a dependsOn component, not contained in the archive."
+    },
+    {
+      "input": "program:roc-stable:x86_64-linux",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "program:roc-stable:aarch64-linux",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "program:roc-stable:aarch64-darwin",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "program:roc-docs:x86_64-linux",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "program:roc-docs:aarch64-linux",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "program:roc-docs:aarch64-darwin",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "roc-package:CZsY7tYZwR3rj9kYbpaCfxki2yVAaRL8bBwMLvB2xkbA",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "roc-package:6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "build-source:roc-CZsY7tYZwR3rj9kYbpaCfxki2yVAaRL8bBwMLvB2xkbA",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "build-source:roc-6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "task:prepare-sbom",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "task:sbom-tool",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "task:docs",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "task:docs-path",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "task:check",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "task:install-snippet",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "task:site",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "task:serve",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "task:capture",
+      "component": "",
+      "reason": "Development, checking or documentation tooling; no code from this input is included in the Roc source bundle."
+    },
+    {
+      "input": "program:blueprint-sbom:x86_64-linux",
+      "component": "",
+      "reason": "Native SBOM generator; its code is not included in the source bundle."
+    },
+    {
+      "input": "program:blueprint-sbom:aarch64-linux",
+      "component": "",
+      "reason": "Native SBOM generator; its code is not included in the source bundle."
+    },
+    {
+      "input": "program:blueprint-sbom:aarch64-darwin",
+      "component": "",
+      "reason": "Native SBOM generator; its code is not included in the source bundle."
+    },
+    {
+      "input": "program:release-package:x86_64-linux",
+      "component": "",
+      "reason": "Released build and test utility; its code is not included in the source bundle."
+    },
+    {
+      "input": "program:release-package:aarch64-linux",
+      "component": "",
+      "reason": "Released build and test utility; its code is not included in the source bundle."
+    },
+    {
+      "input": "program:release-package:aarch64-darwin",
+      "component": "",
+      "reason": "Released build and test utility; its code is not included in the source bundle."
+    },
+    {
+      "input": "task:release-package",
+      "component": "",
+      "reason": "Release orchestration; no code from this task is included in the source bundle."
+    }
+  ],
+  "imported_documents": [],
+  "unavailable_sboms": [
+    {
+      "component": "path",
+      "reason": "roc-lang/path 4.0.0 publishes no SBOM beside its bundle. Its single-module source has no package dependencies of its own; its component records the locked bundle's version, license and SHA-256.",
+      "contact": "https://github.com/lukewilliamboswell/weaver/issues"
+    }
+  ]
+}

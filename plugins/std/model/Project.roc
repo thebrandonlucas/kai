@@ -4,8 +4,6 @@ import Model
 ## Shared pure semantic boundary. Validation observes neither PATH nor the host.
 ## It normalizes defaults and inheritance, and is safe to repeat on its output.
 Project :: [].{
-	Backend : [Nix, Guix]
-
 	valid_name : Str -> Bool
 	valid_name = |name|
 		!name.is_empty() and name.to_utf8().all(
@@ -100,37 +98,15 @@ Project :: [].{
 	nix_identifier_byte = |b|
 		letter(b) or (b >= '0' and b <= '9') or b == '_' or b == '-' or b == '\''
 
-	## Deliberately conservative native grammars: Nix dotted attribute paths;
-	## Guix package[@version][:output] specifications. No translation or probing.
-	check_tool : Backend, Str -> Try({}, Str)
-	check_tool = |backend, name| {
-		if backend == Guix and name.contains("\"") {
-			return Err("invalid Guix tool: ${name}: quoted segments are Nix-only")
-		}
-		valid = match backend {
-			Nix => nix_attribute_path(name).is_ok()
-			Guix => {
-				parts = name.split_on(":")
-				spec = parts.first() ?? ""
-				versions = spec.split_on("@")
-				parts.len() <= 2 and versions.len() <= 2 and
-					parts.drop_first(1).all(valid_name) and
-						versions.all(
-							|part|
-								!part.is_empty() and part.to_utf8().all(
-									|b|
-										letter(b) or (b >= '0' and b <= '9') or
-											b == '-' or b == '_' or b == '.' or b == '+',
-								),
-						)
-			}
-		}
-		if valid {
+	## A deliberately conservative native grammar: Nix dotted attribute
+	## paths. No translation or probing.
+	check_tool : Str -> Try({}, Str)
+	check_tool = |name|
+		if nix_attribute_path(name).is_ok() {
 			Ok({})
 		} else {
-			Err("invalid ${if (backend == Nix) "Nix" else "Guix"} tool: ${name}")
+			Err("invalid Nix tool: ${name}")
 		}
-	}
 
 	check_names : List(Str), Str -> Try({}, Str)
 	check_names = |names, kind| {
@@ -206,6 +182,27 @@ Project :: [].{
 		Ok("sha256-".concat(Str.from_utf8($encoded.append(last)) ?? "").concat("="))
 	}
 
+	## The content hash a Roc package bundle URL ends in, `<hash>.tar.zst`,
+	## which names the bundle's directory in Roc's package cache.
+	roc_package_hash : Str -> Try(Str, [NotRocPackage])
+	roc_package_hash = |ref| {
+		url = ref.drop_prefix("tarball+")
+		base58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+			.to_utf8()
+		hash = (url.split_on("/").last() ?? "").drop_suffix(".tar.zst")
+		bytes = hash.to_utf8()
+		if url.starts_with("https://") and url.ends_with("/${hash}.tar.zst") and
+			bytes.len() >= 32 and bytes.all(|byte| base58.contains(byte)) {
+			Ok(hash)
+		} else {
+			Err(NotRocPackage)
+		}
+	}
+
+	## The Fetch that pins a RocPackages bundle: `roc-<hash>`.
+	roc_package_fetch : Str -> Str
+	roc_package_fetch = |url| "roc-${roc_package_hash(url) ?? ""}"
+
 	## Lexical containment only; the executor must also reject escaping symlinks.
 	## Spaces are valid path bytes. Empty, dot and parent segments are not.
 	valid_output : Str -> Bool
@@ -247,7 +244,7 @@ Project :: [].{
 	## Portable shell names, none that Kai or the Nix builder sets itself.
 	check_env : List(Model.Variable), Str -> Try({}, Str)
 	check_env = |variables, declaration| {
-		reserved = ["PATH", "HOME", "KAI_INPUTS", "KAI_ARTIFACTS", "out"]
+		reserved = ["PATH", "HOME", "KAI_INPUTS", "KAI_ARTIFACTS", "KAI_TOOLS", "out"]
 		var $seen = []
 		for variable in variables {
 			if !valid_variable_name(variable.name) or reserved.contains(variable.name) {
@@ -452,16 +449,6 @@ Project :: [].{
 		check_names(model.builds.map(|b| b.name), "Build")?
 		check_names(model.sources.map(|s| s.name), "Source")?
 		check_names(model.inputs.map(|i| i.name), "Input")?
-		# Guix's own channel is always present, so no other may take its name.
-		channel_names = model.guix_channels.map(|c| c.name)
-		check_names(["guix"].concat(channel_names), "GuixChannel")?
-		for channel in model.guix_channels {
-			{ commit, signer } = channel.introduction
-			if !clean(channel.url) or !clean(channel.branch) or !forty_hex_digits(commit)
-				or !forty_hex_digits(signer.replace_each(" ", "")) {
-				return Err("invalid Guix channel: ${channel.name}")
-			}
-		}
 		check_names(model.environments.map(|e| e.name), "Environment")?
 		check_names(model.shells.map(|s| s.name), "Shell")?
 		check_names(model.tasks.map(|t| t.name), "Task")?
@@ -652,12 +639,9 @@ Project :: [].{
 						.map_err(|_| "unknown source: ${t.source}")?
 					match source.provider {
 						Auto => {}
-						NixPackages(_) => {
-							check_tool(Nix, t.name)?
-						}
-						GuixPackages(_) => {
-							check_tool(Guix, t.name)?
-						}
+						NixPackages(_) => check_tool(t.name)?
+						# The guix plugin checks Guix specifications.
+						GuixPackages(_) => {}
 					}
 				}
 			}
@@ -727,6 +711,12 @@ Project :: [].{
 			if !environment.expected.is_empty() {
 				return Err("${sandboxed}: a sandbox has none of the programs it Expects")
 			}
+			if !environment.roc_packages.is_empty() {
+				return Err(
+					"${sandboxed}: RocPackages are for shells and tasks; "
+						.concat("give a build its bundles as Sources in Inputs"),
+				)
+			}
 			check_argv(build.run, build.name)?
 			check_env(build.env, "build ${build.name}")?
 			if !valid_output(build.output) {
@@ -785,7 +775,6 @@ Project :: [].{
 				requires_: model.requires_,
 				systems: unique(model.systems),
 				sources,
-				guix_channels: model.guix_channels,
 				inputs: model.inputs,
 				follows: model.follows,
 				environments: $environments,
@@ -1132,6 +1121,7 @@ Project :: [].{
 						own => own
 					},
 					expected: unique(base.expected.concat(env.expected)),
+					roc_packages: unique(base.roc_packages.concat(env.roc_packages)),
 					# The child's own variables override the parent's on every
 					# system, as its OnSystems override them on theirs.
 					on_systems: base.on_systems
@@ -1151,18 +1141,15 @@ Project :: [].{
 		}
 	}
 
-	## Check only the requested environment's normalized dependency closure.
-	## This models Guix shell capability without implementing a Guix executor.
-	check_environment : Model, Backend, Str -> Try({}, Str)
-	check_environment = |model, backend, name| {
+	## Whether Nix can enter an environment: only the requested environment's
+	## normalized dependency closure is checked.
+	check_environment : Model, Str -> Try({}, Str)
+	check_environment = |model, name| {
 		project = validate(model)?
 		env = project.environments.find_first(|e| e.name == name)
 			.map_err(|_| "unknown environment: ${name}")?
 		if direct_only(project, env) {
 			return Err("environment ${name} needs the direct backend")
-		}
-		if backend == Guix and !env.expected.is_empty() {
-			return Err("Expect needs Nix or the direct backend: environment ${name}")
 		}
 		# Nix makes a FetchLocked tool ready only for PATH.
 		named = env.aliases.map(|a| a.tool)
@@ -1173,23 +1160,7 @@ Project :: [].{
 			)
 			Err(_) => {}
 		}
-		if backend == Guix and !env.overlays.is_empty() {
-			return Err("Guix does not support overlays in environment ${name}")
-		}
-		if backend == Guix and !env.aliases.is_empty() {
-			return Err("Alias needs Nix: environment ${name}")
-		}
-		if backend == Guix and env.rust_toolchain != None {
-			return Err("RustToolchain needs Nix: environment ${name}")
-		}
-		if backend == Guix and !env.package_env.is_empty() {
-			return Err("PackageEnv needs Nix: environment ${name}")
-		}
-		every_tool = environment_tools(env)
-		tools = package_tools(every_tool, project.fetches)
-		if backend == Guix and tools.len() != every_tool.len() {
-			return Err("Guix cannot use Fetch tools, in environment ${name}")
-		}
+		tools = package_tools(environment_tools(env), project.fetches)
 		# An empty environment still uses the default provider's environment builder.
 		source_names = if tools.is_empty() {
 			["default"]
@@ -1199,16 +1170,14 @@ Project :: [].{
 		for source_name in source_names {
 			source = project.sources.find_first(|s| s.name == source_name)
 				.map_err(|_| "unknown source: ${source_name}")?
-			match (backend, source.provider) {
-				(Nix, GuixPackages(_)) =>
+			match source.provider {
+				GuixPackages(_) =>
 					return Err("source ${source.name} requires Guix, not Nix")
-				(Guix, NixPackages(_)) =>
-					return Err("source ${source.name} requires Nix, not Guix")
 				_ => {}
 			}
 		}
 		for t in tools {
-			check_tool(backend, t.name)?
+			check_tool(t.name)?
 		}
 		Ok({})
 	}
@@ -1244,10 +1213,11 @@ Project :: [].{
 		)
 
 	## Whether an environment expects programs of the machine, or has a tool
-	## only the lock's direct section pins.
+	## or Roc package only the lock's direct section pins.
 	needs_direct : Model, Model.Environment -> Bool
 	needs_direct = |model, environment|
 		!environment.expected.is_empty()
+			or !environment.roc_packages.is_empty()
 			or environment_tools(environment).any(|t| locked_fetch(model, t.source))
 
 	## Whether only the direct backend serves an environment: it needs direct,
@@ -1299,23 +1269,14 @@ expect Project.tool("bad##git").is_err()
 expect Project.tool("git\n").is_err()
 
 # Nix attribute paths may be dotted package-set selections.
-expect Project.check_tool(Nix, "python3Packages.requests").is_ok()
+expect Project.check_tool("python3Packages.requests").is_ok()
 
 # Nix identifiers may start with a digit, as real nixpkgs attributes do.
-expect Project.check_tool(Nix, "7zip").is_ok() and
-	Project.check_tool(Nix, "2bwm").is_ok()
+expect Project.check_tool("7zip").is_ok() and
+	Project.check_tool("2bwm").is_ok()
 
 # Guix version syntax is not a valid Nix attribute path.
-expect Project.check_tool(Nix, "python@3").is_err()
-
-# Guix accepts package@version:output specifications.
-expect Project.check_tool(Guix, "python@3.12:out").is_ok()
-
-# A Guix specification allows at most one output separator.
-expect Project.check_tool(Guix, "git::out").is_err()
-
-# Guix package and version segments may contain "+" and ".".
-expect Project.check_tool(Guix, "g++@12.3:lib").is_ok()
+expect Project.check_tool("python@3").is_err()
 
 # These fixtures use the public model and validation boundary, not resolve
 # internals.
@@ -1332,7 +1293,6 @@ fixture = |environments| Model.{
 			provider: GuixPackages("https://git.savannah.gnu.org/git/guix.git"),
 		},
 	],
-	guix_channels: [],
 	inputs: [
 		{ name: "first", url: "github:example/first", kind: Overlay },
 		{ name: "second", url: "github:example/second", kind: Overlay },
@@ -1364,6 +1324,7 @@ base = {
 	rust_toolchain: None,
 	expected: [],
 	package_env: [],
+	roc_packages: [],
 	on_systems: [],
 }
 
@@ -1382,6 +1343,7 @@ child = {
 	rust_toolchain: None,
 	expected: [],
 	package_env: [],
+	roc_packages: [],
 	on_systems: [],
 }
 
@@ -1402,6 +1364,7 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 		base,
@@ -1422,6 +1385,7 @@ expect match Project.validate(
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 		{
@@ -1435,6 +1399,7 @@ expect match Project.validate(
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 	]),
@@ -1453,6 +1418,7 @@ expect match Project.validate(
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 	]
@@ -1510,13 +1476,6 @@ expect Project.validate(
 	fixture([{ ..base, tools: [{ source: "nix", name: "python@3" }] }]),
 ).is_err()
 
-# An explicit Guix source rejects an empty version after "@".
-expect Project.validate(
-	fixture([
-		{ ..base, overlays: [], tools: [{ source: "guix", name: "python@" }] },
-	]),
-).is_err()
-
 # Auto sources defer grammar checks to the backend requested for the shell.
 expect {
 	model = fixture([
@@ -1527,8 +1486,7 @@ expect {
 		},
 	])
 	Project.validate(model).is_ok() and
-		Project.check_environment(model, Guix, "base").is_ok() and
-			Project.check_environment(model, Nix, "base").is_err()
+		Project.check_environment(model, "base").is_err()
 }
 
 # An unused overlay/foreign source is not a global backend requirement.
@@ -1545,14 +1503,13 @@ expect {
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 			tools: [{ source: "guix", name: "git" }],
 		},
 	])
-	Project.check_environment(model, Nix, "base").is_ok() and
-		Project.check_environment(model, Guix, "plain").is_ok() and
-			Project.check_environment(model, Nix, "plain").is_err() and
-				Project.check_environment(model, Guix, "base").is_err()
+	Project.check_environment(model, "base").is_ok() and
+		Project.check_environment(model, "plain").is_err()
 }
 
 # Capabilities belong to the request, even with an explicit source constraint.
@@ -1562,20 +1519,12 @@ expect {
 		{ ..child, parents: [], overlays: [] },
 	])
 	Project.validate(model).is_ok() and
-		Project.check_environment(model, Nix, "dev").is_ok() and
-			Project.check_environment(model, Guix, "base").is_err() and
-				Project.check_environment(model, Nix, "base").is_err()
+		Project.check_environment(model, "dev").is_ok() and
+			Project.check_environment(model, "base").is_err()
 }
 
-# A Guix request cannot use a tool pinned to an explicit Nix source.
-expect Project.check_environment(
-	fixture([{ ..base, overlays: [], tools: [{ source: "nix", name: "git" }] }]),
-	Guix,
-	"base",
-).is_err()
-
 # Checking an undeclared environment fails instead of passing vacuously.
-expect Project.check_environment(fixture([base]), Nix, "missing").is_err()
+expect Project.check_environment(fixture([base]), "missing").is_err()
 
 # Runtime callers must not bypass validation by constructing model directly.
 expect Project.validate(Model.empty("empty")).is_err()
@@ -1594,7 +1543,6 @@ build_fixture = |builds| Model.{
 	requires_: ["sources", "builds"],
 	systems: ["x86_64-linux"],
 	sources: [],
-	guix_channels: [],
 	inputs: [],
 	follows: [],
 	environments: [
@@ -1609,6 +1557,7 @@ build_fixture = |builds| Model.{
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 	],
@@ -1805,7 +1754,6 @@ build_source_fixture = |build_sources, requires_| {
 		requires_,
 		systems: model.systems,
 		sources: model.sources,
-		guix_channels: model.guix_channels,
 		inputs: model.inputs,
 		follows: model.follows,
 		environments: model.environments,
@@ -1950,7 +1898,6 @@ workflow_features = |workflows, features| Model.{
 	requires_: ["sources", "builds"].concat(features),
 	systems: ["x86_64-linux"],
 	sources: [],
-	guix_channels: [],
 	inputs: [],
 	follows: [],
 	environments: [
@@ -1965,6 +1912,7 @@ workflow_features = |workflows, features| Model.{
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 	],
@@ -2285,8 +2233,7 @@ expect {
 }
 
 # A child's Env and PackageEnv override its parent's variables by name, either
-# way. One environment may not set a variable with both, and Guix refuses
-# PackageEnv.
+# way. One environment may not set a variable with both.
 expect {
 	zlib = { source: "default", name: "zlib" }
 	libraries = { name: "LIBS", value: LibraryPath([zlib]) }
@@ -2313,9 +2260,7 @@ expect {
 	resolved == [([{ name: "LIBS", value: "/x" }], [git_path])]
 		and Project.validate(fixture([both]))
 			== Err("Env and PackageEnv both set LIBS in environment base")
-		and Project.check_environment(fixture([parent]), Guix, "base")
-			== Err("PackageEnv needs Nix: environment base")
-		and Project.check_environment(fixture([parent]), Nix, "base") == Ok({})
+		and Project.check_environment(fixture([parent]), "base") == Ok({})
 }
 
 # CargoVendor takes git sources pinned by the commit Cargo.lock records.

@@ -501,6 +501,7 @@ Execute := [].{
 				} else {
 					Err("links programs outside the workspace: ${bin}")
 				}
+			PlaceRocPackages(bundles) => Execute.each(bundles, Store.check)
 			Measure({ files, result }) =>
 				if under(result, layout.generated_root) {
 					Execute.each(files, |f| Store.check_urls(f.key, f.urls))
@@ -595,6 +596,17 @@ Execute := [].{
 			Snapshot(snapshot) => Snapshot.snapshot!(snapshot)
 			InstallRunner({ destination }) => Workspace.install_runner!(destination)
 			Realise(realise) => Store.expose!(Load.cache!()?, realise, mode)
+			# Only a package Roc's cache lacks is downloaded or unpacked.
+			PlaceRocPackages(bundles) => {
+				cache = Load.cache!()?
+				for bundle in bundles {
+					if !Load.cached!(bundle.name)? {
+						main = Store.realise!(cache, bundle, mode)?
+						Load.place!(main.drop_suffix("/main.roc"), bundle.name)?
+					}
+				}
+				Ok({})
+			}
 			Measure({ files, result }) => {
 				cache = Load.cache!()?
 				var $lines = []

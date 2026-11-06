@@ -9,7 +9,8 @@ The layout for each example is:
 ```
 Setup in each example/<example> dir is:
 - example
-    | commands          input command args to kai e.g. `update`, `run` etc.
+    | commands          input command args to kai e.g. `update`, `run` etc.;
+                        a line `x86_64-linux: <args>` runs on that host only
     | Kaifile.roc       describes what to run given the above commands
     | stdout            expected stdout given the run for validation
     | project           optional: the subdirectory holding Kaifile.roc, where
@@ -25,12 +26,13 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [environment](environment) | Reusable environments shared by shells and tasks, and tools and variables on some systems only | `kai shell pokemon` |
 | [extend](extend) | One environment building on another | `kai run wisdom` |
 | [env](env) | Environment variables, a task overriding its `Environment`'s, a pure environment and paths in packages | `kai run shout` |
-| [build](build) | A sandboxed build and its output, a default build, symbolic links in a build, and a build finding a library with pkg-config | `kai build wisecow` |
+| [build](build) | A sandboxed build and its output, a default build, its plan as JSON and a rebuild check, symbolic links in a build, and a build finding a library with pkg-config | `kai build wisecow` |
 | [needs](needs) | A build, and a task, reading another build's artifact | `kai build loud` |
-| [direct](direct) | Tools from pinned downloads, a file and an archive, run with no provider in tasks and a workflow of tasks, and a program the machine must have | `kai workflow check` |
+| [direct](direct) | Tools from pinned downloads, a file, a tarball and a zip, run with no provider in tasks and a workflow of tasks, and a program the machine must have | `kai workflow check` |
 | [mixed](mixed) | One environment with a tool from nixpkgs, a pinned download first on `PATH` and a program the machine must have, on Nix | `kai run greet` |
+| [roc-packages](roc-packages) | Roc package bundles placed in Roc's package cache before a task starts, from kai's store on the direct backend and from a fixed-output fetch on Nix | `kai run placed` |
 | [revision](revision) | A build stamped with the project's git revision | `kai build version` |
-| [source-build](source-build) | A build reading a locked source | `kai build moofasa` |
+| [source-build](source-build) | A build reading a locked source, and a build recording its tools and inputs | `kai build moofasa` |
 | [path-source](path-source) | A build reading a locked project directory | `kai build kai` |
 | [workspace](workspace) | An app whose Kaifile sits in a subdirectory, building against a module at the workspace root with `BuildRoot` | `kai build greeting` in `apps/greeter` |
 | [fetch](fetch) | A file pinned by its sha256, run as a tool and read by a build, one file for every system, and a system a file is unavailable on | `kai run version` |
@@ -40,7 +42,9 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [raw](raw) | Passing Nix-specific data through with `Raw`, to a shell and to an environment's shells and tasks | `kai run moo` |
 | [overlay](overlay) | An overlay adding a package, seen only where selected, following the project's nixpkgs | `kai run moo` |
 | [modules](modules) | Settings shared through an ordinary Roc module | `kai run moo` |
-| [guix](guix) | Packages from a Guix channel beside the default source | `kai shell guix` |
+| [guix](guix) | The guix plugin: packages from a Guix channel beside the default source | `kai shell guix` |
+| [sbom](sbom) | The sbom plugin: a reviewed composition inspected into an inventory, bound to a release file as SPDX and CycloneDX sidecars with a manifest, and checked | `kai sbom inputs` |
+| [machines](machines) | The nixos plugin: a NixOS machine with a user, OpenSSH, the firewall, an environment's tools and a module file | `kai machine build web`, `kai --dry-run machine switch web` |
 | [agenix](agenix) | A tool from another flake's overlay, encrypting and decrypting a secret | `kai run round-trip` |
 | [rust-toolchain](rust-toolchain) | A Rust toolchain pinned by `rust-toolchain.toml`, plus a component and a target it does not pin, and the host's target triple | `kai shell`, `kai run wasm-target`, `kai run host-target` |
 | [plugins/deploy](plugins/deploy) | A third-party plugin adding `kai deploy` | see [plugin.md](../docs/plugin.md) |
