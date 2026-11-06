@@ -38,20 +38,21 @@ ConfigFixtures := [].{
 		"app [kaifile] {\n\tpf: platform \"${pf}\",\n\tstd: \"${std}\",\n}"
 	}
 
-	# `header`, naming this checkout's guix plugin too when `kaifile`'s
-	# header names one.
-	header_for = |root, dir, kaifile| {
-		plain = ConfigFixtures.header(root, dir)
-		if kaifile.contains("\n\tguix: \"") {
-			guix = ConfigFixtures.relative(
-				Path.display(dir),
-				Path.display(Path.join(root, "plugins/guix/main.roc")),
+	# `header`, naming this checkout's guix and sbom plugins too when
+	# `kaifile`'s header names them.
+	header_for = |root, dir, kaifile|
+		["guix", "sbom"]
+			.keep_if(|plugin| kaifile.contains("\n\t${plugin}: \""))
+			.fold(
+				ConfigFixtures.header(root, dir),
+				|named, plugin| {
+					path = ConfigFixtures.relative(
+						Path.display(dir),
+						Path.display(Path.join(root, "plugins/${plugin}/main.roc")),
+					)
+					named.drop_suffix("}").concat("\t${plugin}: \"${path}\",\n}")
+				},
 			)
-			plain.drop_suffix("}").concat("\tguix: \"${guix}\",\n}")
-		} else {
-			plain
-		}
-	}
 
 	# A fixture body declares `config`, std's settings. Its annotation keeps
 	# large fixtures fast: inferring the type from its use in `kaifile` nearly

@@ -1,8 +1,21 @@
-## roc-blueprint's SBOM profile, ported for Kai's sbom plugin: Profile.roc
-## inspects a reviewed composition against a project's inputs and renders
-## the inventory as SPDX 3.0.1, SPDX 2.3 and CycloneDX 1.7; Spdx3.roc,
-## Spdx2.roc and CycloneDx.roc check and read those formats; Sidecar.roc and
-## Manifest.roc check written sidecars and their evidence manifest.
-package [Manifest, Profile, Sidecar] {}
+## The sbom plugin: `kai sbom`, SBOMs of a project's releases from its std
+## settings and lock. Sbom.roc plans each action; Inputs.roc names the
+## project's inputs; Profile.roc and the format modules beside it inspect
+## compositions and render, read and check SPDX and CycloneDX documents.
+package
+	[Sbom]
+	{
+		pf: platform "../../platform/main.roc",
+		std: "../std/main.roc",
+	}
 
 import Cases
+import Release
+import Sbom
+import pf.Conformance
+
+# Sbom.roc's planning tests cover the implementation.
+expect Conformance.missing(
+	Sbom.plugin([Name("x")]),
+	[{ command: "sbom", backend: "" }],
+) == []

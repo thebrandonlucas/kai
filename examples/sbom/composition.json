@@ -1,0 +1,84 @@
+{
+  "profile": "blueprint-spdx-3.0-v2",
+  "components": [
+    {
+      "id": "greeting",
+      "name": "greeting",
+      "version": "1.0.0",
+      "producer": "Organization: Example",
+      "license": "MIT",
+      "license_url": "",
+      "modified": "",
+      "target": "source",
+      "origin": "reviewed",
+      "identity": "https://example.org/greeting/1.0.0",
+      "download": "https://example.org/releases/1.0.0/greeting.tar.zst",
+      "sha256": ""
+    },
+    {
+      "id": "path",
+      "name": "path",
+      "version": "4.0.0",
+      "producer": "Organization: Roc contributors",
+      "license": "UPL-1.0",
+      "license_url": "",
+      "modified": "",
+      "target": "source",
+      "origin": "source:path",
+      "identity": "",
+      "download": "",
+      "sha256": ""
+    }
+  ],
+  "relationships": [
+    {
+      "from": "Subject",
+      "to": "greeting",
+      "relation": "contains",
+      "scope": "",
+      "basis": "The release file is the greeting source bundle."
+    },
+    {
+      "from": "Subject",
+      "to": "path",
+      "relation": "dependsOn",
+      "scope": "",
+      "basis": "Named in the bundle header by its URL; the Roc compiler fetches it when an application is built."
+    }
+  ],
+  "coverage": [
+    {
+      "scope": "shipped-source",
+      "component": "Subject",
+      "aspect": "assembly",
+      "status": "complete",
+      "reason": "The bundle holds the reviewed greeting source only.",
+      "contact": "https://example.org/security"
+    }
+  ],
+  "inputs": [
+    {
+      "input": "source:path",
+      "component": "path",
+      "reason": "Package dependency the bundle names in its header."
+    },
+    {
+      "input": "program:jq:x86_64-linux",
+      "component": "",
+      "reason": "Checking tool; none of its code is in the bundle."
+    },
+    {
+      "input": "task:check",
+      "component": "",
+      "reason": "Checking task; it adds nothing to the bundle."
+    }
+  ],
+  "imported_documents": [],
+  "unavailable_sboms": [
+    {
+      "component": "path",
+      "reason": "Its release publishes no SBOM beside the bundle.",
+      "contact": "https://example.org/security"
+    }
+  ]
+}

@@ -170,7 +170,7 @@ A plan is a list of steps and what comes next:
 
 `next: Observe(paths)` asks kai to read generated files and ask again with
 `phase` 1 and their contents (std's `update` resolves with Nix, then
-publishes). kai checks the whole plan before its first step and refuses
+publishes; an `Independent` plan continues the same way). kai checks the whole plan before its first step and refuses
 anything outside these rules; `kai --dry-run` prints the plan instead.
 
 std's `Std.run_in(project, ctx, { environment, argv, description })` plans argv
@@ -197,12 +197,15 @@ match a `Request` with unqualified tags, such as `Run(task, args)`.
 `environment_tools`, `direct_only`), merges variables (`merge_env`,
 `env_command`, `artifacts_variable`, `other_tasks_secrets`), expands
 builds and workflows (`builds_closure`, `workflow_steps`, `snapshot_root`,
-`snapshot_files`) and stamps Revision builds (`revised`). This is std's
+`snapshot_files`), stamps Revision builds (`revised`) and reads the lock's
+pins as `kai lock` reports them (`lock_report`). This is std's
 stable surface for backends; its other modules may change between
 releases. Such a plugin keeps its pins in its own section of the lock
 through `pf.LockFile` (`section` reads it; `splice` replaces it and keeps
 the others) and publishes them from its own `update` implementation.
-`plugins/guix`, Kai's Guix backend, is such a plugin.
+`plugins/guix`, Kai's Guix backend, is such a plugin. `plugins/sbom`,
+which adds `kai sbom` from the same model and the lock report, is a plugin
+with no backend: its one implementation is `Independent`.
 
 ## Combining plugins
 

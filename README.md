@@ -432,6 +432,30 @@ downloads, and a build cannot use it, as its sandbox sees neither the
 lock's direct pins nor the machine's programs. See
 [examples/mixed](examples/mixed).
 
+## SBOMs
+
+The sbom plugin, `plugins/sbom`, writes a release's SBOMs from the same
+settings and lock: SPDX 3.0.1, SPDX 2.3 and CycloneDX 1.7 sidecars of a
+release file and an evidence manifest, from a composition the maintainer
+reviews. Add it beside std:
+
+```roc
+kaifile = Kaifile.new([Std.plugin(project), Sbom.plugin(project)])
+```
+
+```sh
+kai sbom inputs                      # the inputs a composition disposes of
+kai sbom inspect --composition composition.json --output inventory.json -- source
+kai sbom bind --inventory inventory.json --subject subject.json \
+  --context context.json --artifact dist/app.tar.zst
+kai sbom check --manifest dist/app.tar.zst.sbom-manifest.json
+```
+
+It follows roc-blueprint's SBOM profile, so a project moving from
+roc-blueprint keeps its reviewed composition and publishes the same
+documents. See [docs/sbom.md](docs/sbom.md) and
+[examples/sbom](examples/sbom).
+
 ## The `.kai` directory
 
 `kai update` is the only command that resolves package sources. It writes
@@ -591,6 +615,8 @@ The code follows the pipeline:
     backends that plan files and argv from the model.
 - `plugins/guix`: the guix plugin, which plans std's commands on Guix
   from std's model, as any backend plugin would.
+- `plugins/sbom`: the sbom plugin, `kai sbom`, which writes a release's
+  SBOMs from std's model and the lock.
 - `cli`: `kai` itself. It asks the compiled Kaifile for the command's
   candidate plans, chooses a backend, checks the plan and runs it.
 - `devtool`: checks, integration tests and release tooling; see

@@ -7,6 +7,7 @@
 import pf.Command
 import Config
 import ConfigToModel
+import LockReport
 import pf.Implementation
 import pf.Plan
 import model.Model
@@ -18,6 +19,11 @@ StdModel := [].{
 	Model : Model
 
 	Request : Request
+
+	## The pins of a lock file's text as `kai lock` prints them, the JSON
+	## docs/lock.md describes, or why the lock cannot be read.
+	lock_report : Str -> Try(Str, Str)
+	lock_report = LockReport.json
 
 	## The settings' model, or why std refuses them.
 	from_settings : List(Config.Setting) -> Try(Model, Str)

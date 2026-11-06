@@ -1,0 +1,7 @@
+{
+  "namespace": "https://example.org/sbom/greeting/1.0.0/revision-1",
+  "revision": "1",
+  "created": "2026-11-06T00:00:00Z",
+  "author": "Organization: Example",
+  "generator": "Tool: kai-sbom-0.0.12"
+}

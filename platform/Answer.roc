@@ -103,6 +103,10 @@ Answer := [].{
 							Ok(backend) => (Only(backend), 0, [])
 							Err(NoValue) => (Auto, 0, [])
 						}
+					# An Independent implementation, planned on no backend, continues
+					# on none.
+					Resume(resumed) if resumed.backend.is_empty() =>
+						(Auto, resumed.phase, resumed.observed)
 					Resume(resumed) => (Only(resumed.backend), resumed.phase, resumed.observed)
 				}
 				Kaifile.candidates(
@@ -167,5 +171,59 @@ Answer := [].{
 			Err(err) => refused("cannot read kai's request: ${Str.inspect(err)}")
 		}
 		Sexpr.to_str(response)
+	}
+}
+
+import Implementation
+import Layout
+import Plan
+import Plugin
+
+# A plan with no backend continues on none: kai resumes it with backend "",
+# and its next phase is planned rather than refused as an unknown backend.
+expect {
+	ir = Command.{
+		name: "ir",
+		summary: "",
+		help: { description: "", examples: [], config: [] },
+		args: [],
+		lock: ReadsLock,
+	}
+	phased = Implementation.{
+		command: "ir",
+		backend: Independent,
+		fit: |_| Ok({}),
+		plan: |ctx| Ok(Plan.{ steps: [Note(ctx.phase.to_str())], next: Done }),
+	}
+	kaifile = Kaifile.new([
+		Plugin.new({
+			name: "x",
+			version: "1",
+			describe: "",
+			commands: [ir],
+			backends: [],
+			implementations: [phased],
+		}),
+	])
+	resumed = {
+		protocol: Protocol.current,
+		argv: ["ir"],
+		working_directory: "/p",
+		style: Plain,
+		host: { system: "x86_64-linux" },
+		layout: Layout.{
+			project_root: "/p",
+			workspace: "/p/.kai",
+			generated_root: "/p/.kai/generated",
+			lock_path: "/p/.kai/lock.json",
+		},
+		revision: { describe: "", commit_date: "" },
+		lock: Absent,
+		resume: Resume({ command: "ir", backend: "", phase: 1, observed: [] }),
+	}
+	match Answer.body(kaifile, resumed) {
+		Candidates({ options: [only], .. }) =>
+			only.outcome == Planned(Plan.{ steps: [Note("1")], next: Done })
+		_ => Bool.False
 	}
 }
