@@ -391,20 +391,22 @@ environment whose tools are all `Fetch` or `FetchLocked` files, and needs only
 or `chmod` when either is missing from `PATH`. For example:
 
 ```roc
+# Zig names each system's archive after it, as in zig-x86_64-linux-0.16.0.
+# A System goes into a string as `system.to_str()`.
+zig = |system| {
+	name = "zig-${system.to_str()}-0.16.0"
+	{
+		system,
+		url: "https://ziglang.org/download/0.16.0/${name}.tar.xz",
+		mirrors: [],
+		program: Archive("${name}/zig"),
+	}
+}
+
 kaifile = Std.kaifile([
 	Name("site"),
-	Systems(["x86_64-linux"]),
-	FetchLocked(
-		"zig",
-		[
-			{
-				system: "x86_64-linux",
-				url: "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz",
-				mirrors: [],
-				program: Archive("zig-x86_64-linux-0.16.0/zig"),
-			},
-		],
-	),
+	Systems(["x86_64-linux", "aarch64-linux"]),
+	FetchLocked("zig", [zig("x86_64-linux"), zig("aarch64-linux")]),
 	Environment("dev", [Tools(["zig#zig"]), Expect(["git"])]),
 	Task("test", [Use("dev"), Run(["zig", "build", "test"])]),
 ])
