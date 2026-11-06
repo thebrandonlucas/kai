@@ -592,6 +592,7 @@ pub fn build(b: *std.Build) void {
     var previous_build: *std.Build.Step = e2e_step;
     for ([_][]const u8{
         "kai-guix",
+        "kai-nixos",
         "kai-sbom",
         "release-x86-64-linux",
         "release-aarch64-linux",

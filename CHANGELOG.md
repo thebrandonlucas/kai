@@ -8,7 +8,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 - The guix plugin serves Guix: add `Guix.plugin(project, settings)` beside `Std.plugin(project)` in `Kaifile.new([...])` to run shells, tasks, workflows, builds and `kai update` on Guix. Each release publishes its bundle, and its notes give the line that adds it.
 - The sbom plugin adds `kai sbom`, which writes a release's SBOMs (SPDX 3.0.1, SPDX 2.3 and CycloneDX 1.7) from the Kaifile and the lock: `inputs`, `pins` and `inspect` among its subcommands. Each release publishes its bundle.
-- The nixos plugin, not yet bundled with releases, declares NixOS machines in a Kaifile, `Machine(name, [...])`, and `kai machine build NAME` builds one. On the machine itself, `kai machine switch NAME` builds and activates it, `kai machine rollback NAME` returns to the previous system and `kai machine generations NAME` lists them.
+- The nixos plugin declares NixOS machines in a Kaifile, `Machine(name, [...])`, and `kai machine build NAME` builds one. On the machine itself, `kai machine switch NAME` builds and activates it, `kai machine rollback NAME` returns to the previous system and `kai machine generations NAME` lists them. Each release publishes its bundle.
 - `kai spec` prints what `Kaifile.roc` declares, and `kai lock` every input the lock pins, each as one line of documented, versioned JSON.
 - `kai build NAME --plan` prints a build's inputs, snapshot, derivation and output path as JSON without building it.
 - Nix builds get `$KAI_TOOLS`, a directory linking each of their tools, and `$KAI_INPUTS/.kai-inputs.json`, a record of their inputs.

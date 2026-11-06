@@ -380,6 +380,7 @@ kaifile = Std.kaifile(
 		release("release-aarch64-linux", "kai-arm64musl"),
 		release("release-aarch64-darwin", "kai-arm64mac"),
 		plugin_build("kai-guix", "guix"),
+		plugin_build("kai-nixos", "nixos"),
 		plugin_build("kai-sbom", "sbom"),
 	]).concat(roc_sources).concat(link_sources),
 )
