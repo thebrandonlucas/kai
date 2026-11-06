@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Ask a question
+    url: https://github.com/thebrandonlucas/kai/discussions/categories/q-a
+    about: Ask how to do something with Kai in GitHub Discussions.
+  - name: Chat on Discord
+    url: https://discord.gg/SrH3w5uAa3
+    about: Talk with other Kai users and the maintainer.
