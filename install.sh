@@ -54,7 +54,7 @@ fetch() {
 has_flakes() {
   {
     "$1" config show experimental-features 2>/dev/null ||
-      "$1" show-config 2>/dev/null | sed -n 's/^experimental-features = //p'
+      "$1" show-config 2>/dev/null | grep '^experimental-features = '
   } | grep -qw flakes
 }
 
@@ -115,6 +115,11 @@ main() {
     dir=$HOME/.local/bin
   fi
 
+  # Each program the script runs, so that a missing one is named rather than
+  # mistaken for something else.
+  for tool in uname mktemp rm cut tar gzip mkdir cp chmod mv grep; do
+    command -v "$tool" >/dev/null 2>&1 || die "needs $tool, which is not on PATH"
+  done
   if command -v sha256sum >/dev/null 2>&1; then
     sha256() { sha256sum "$1" | cut -d ' ' -f 1; }
   elif command -v shasum >/dev/null 2>&1; then
@@ -150,18 +155,31 @@ main() {
   fi
   fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" ||
     die "could not download SHA256SUMS of $what from $base"
-  line=$(sed -n "/^[0-9a-f]\{64\}  \*\{0,1\}kai-[0-9.]*-$system\.tar\.gz\$/p" \
-    "$tmp/SHA256SUMS" | head -n 1)
-  if [ -z "$line" ]; then
-    systems=$(sed -n 's/^.*  \*\{0,1\}kai-[0-9.]*-\(.*\)\.tar\.gz$/\1/p' \
-      "$tmp/SHA256SUMS" | tr '\n' ' ')
-    die "$what has no kai for $system; it supports: ${systems% }"
-  fi
-  expected=${line%% *}
-  archive=${line##* }
-  archive=${archive#\*}
+  # Read with the shell alone, so that no tool beyond those checked above
+  # can turn a missing program into a missing build.
+  expected=
+  systems=
+  while read -r sum name || [ -n "$sum" ]; do
+    name=${name#\*}
+    case $name in
+    kai-*-*.tar.gz) ;;
+    *) continue ;;
+    esac
+    # VERSION has no `-`, so the shortest `kai-*-` prefix ends before SYSTEM.
+    archive_system=${name#kai-*-}
+    archive_system=${archive_system%.tar.gz}
+    systems="$systems $archive_system"
+    if [ -z "$expected" ] && [ "$archive_system" = "$system" ]; then
+      expected=$sum
+      archive=$name
+    fi
+  done <"$tmp/SHA256SUMS"
+  [ -n "$expected" ] || die "$what has no kai for $system; it supports:$systems"
   version=${archive#kai-}
   version=${version%-"$system".tar.gz}
+  case $version in
+  '' | *[!0-9.]*) die "$archive in SHA256SUMS names no version" ;;
+  esac
 
   say "downloading $archive"
   fetch "$releases/download/v$version/$archive" "$tmp/$archive" ||
