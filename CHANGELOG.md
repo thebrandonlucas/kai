@@ -26,6 +26,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 ### Fixed
 
 - `install.sh` names a program it needs that is not on `PATH`, such as `tar`, instead of reporting that the release has no build for the system when `sed` is missing.
+- When `tar` or `chmod` is not on `PATH`, the direct backend names the missing program, as in "could not make jq executable: chmod is not on PATH", instead of saying only that it did not start.
 
 ## [0.0.11] - 2026-11-05
 

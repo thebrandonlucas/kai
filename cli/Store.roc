@@ -328,6 +328,7 @@ Store := [].{
 		Ok({})
 	}
 
+	# Run one of the host's programs, which a failure names with `purpose`.
 	tool! : Str, List(Str), Str => Try(Str, [StoreFailed(Str)])
 	tool! = |program, args, purpose| {
 		command = Cmd.new(OsStr.from_str(program)).args(args.map(OsStr.from_str))
@@ -335,10 +336,16 @@ Store := [].{
 			Ok(ran) if ran.status == Exited(0) =>
 				return Ok(Str.from_utf8_lossy(ran.stdout_bytes))
 			Ok(ran) => Str.from_utf8_lossy(ran.stderr_bytes).trim()
-			Err(_) => "it did not start"
+			Err(CmdErr(StartFailed(NotFound, _))) => Store.missing(program)
+			Err(_) => "${program} did not start"
 		}
 		Err(StoreFailed("could not ${purpose}: ".concat(why)))
 	}
+
+	# Why a host program the store runs is missing, and which it needs.
+	missing : Str -> Str
+	missing = |program|
+		"${program} is not on PATH (the direct backend needs tar and chmod)"
 
 	# A name as an archive lists it, without `./` and a directory's last `/`.
 	clean : Str -> Str
@@ -442,6 +449,10 @@ program = {
 	size: 3,
 	unpack: Archive("dir/tool"),
 }
+
+# A missing host program is named, with those the direct backend needs.
+expect Store.missing("chmod")
+	== "chmod is not on PATH (the direct backend needs tar and chmod)"
 
 # Only a named program, by digest and size, over HTTPS, from inside its
 # archive, is downloaded.

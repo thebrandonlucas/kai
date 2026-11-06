@@ -387,7 +387,8 @@ The direct backend runs shells and tasks from pinned downloads, for tools
 built on Kai whose users cannot be assumed to have Nix. It serves an
 environment whose tools are all `Fetch` or `FetchLocked` files, and needs only
 `tar`, `chmod`, `sh` and `env` on the machine (and `xz` for a tar.xz, and
-`unzip`, or a `tar` that is bsdtar as on macOS, for a zip):
+`unzip`, or a `tar` that is bsdtar as on macOS, for a zip). It names `tar`
+or `chmod` when either is missing from `PATH`. For example:
 
 ```roc
 kaifile = Std.kaifile([
