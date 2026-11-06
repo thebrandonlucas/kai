@@ -39,37 +39,6 @@ die() {
   exit 1
 }
 
-version=${KAI_VERSION:-}
-dir=${KAI_INSTALL_DIR:-}
-install_nix=${KAI_INSTALL_NIX:-0}
-while [ $# -gt 0 ]; do
-  case $1 in
-  --help | -h)
-    usage
-    exit 0
-    ;;
-  --yes | -y) install_nix=1 ;;
-  --version | --dir)
-    [ $# -ge 2 ] || die "$1 needs a value"
-    case $1 in
-    --version) version=$2 ;;
-    *) dir=$2 ;;
-    esac
-    shift
-    ;;
-  --version=*) version=${1#*=} ;;
-  --dir=*) dir=${1#*=} ;;
-  *) die "unknown option: $1 (see --help)" ;;
-  esac
-  shift
-done
-[ "$install_nix" = 1 ] || install_nix=0
-version=${version#v}
-if [ -z "$dir" ]; then
-  [ -n "${HOME:-}" ] || die "HOME is not set; choose a directory with --dir"
-  dir=$HOME/.local/bin
-fi
-
 # Downloads URL to FILE.
 fetch() {
   if command -v curl >/dev/null 2>&1; then
@@ -81,84 +50,11 @@ fetch() {
   fi
 }
 
-if command -v sha256sum >/dev/null 2>&1; then
-  sha256() { sha256sum "$1" | cut -d ' ' -f 1; }
-elif command -v shasum >/dev/null 2>&1; then
-  sha256() { shasum -a 256 "$1" | cut -d ' ' -f 1; }
-else
-  die "needs sha256sum or shasum to check the download"
-fi
-
-os=$(uname -s)
-arch=$(uname -m)
-case $arch in
-amd64) arch=x86_64 ;;
-arm64) arch=aarch64 ;;
-esac
-case $os in
-Linux) system=$arch-linux ;;
-Darwin) system=$arch-darwin ;;
-*) system=$arch-$os ;;
-esac
-
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-trap 'exit 1' HUP INT TERM
-
-# The release's SHA256SUMS names its archives, kai-VERSION-SYSTEM.tar.gz, so
-# the latest release's names its version.
-if [ -n "$version" ]; then
-  base=$releases/download/v$version
-  what="Kai $version"
-else
-  base=$releases/latest/download
-  what="the latest Kai release"
-fi
-fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" ||
-  die "could not download SHA256SUMS of $what from $base"
-line=$(sed -n "/^[0-9a-f]\{64\}  \*\{0,1\}kai-[0-9.]*-$system\.tar\.gz\$/p" \
-  "$tmp/SHA256SUMS" | head -n 1)
-if [ -z "$line" ]; then
-  systems=$(sed -n 's/^.*  \*\{0,1\}kai-[0-9.]*-\(.*\)\.tar\.gz$/\1/p' \
-    "$tmp/SHA256SUMS" | tr '\n' ' ')
-  die "$what has no kai for $system; it supports: ${systems% }"
-fi
-expected=${line%% *}
-archive=${line##* }
-archive=${archive#\*}
-version=${archive#kai-}
-version=${version%-"$system".tar.gz}
-
-say "downloading $archive"
-fetch "$releases/download/v$version/$archive" "$tmp/$archive" ||
-  die "could not download $releases/download/v$version/$archive"
-actual=$(sha256 "$tmp/$archive")
-[ "$actual" = "$expected" ] ||
-  die "$archive does not match its SHA256SUMS (expected $expected, got $actual); not installing"
-tar -xzf "$tmp/$archive" -C "$tmp" kai || die "could not unpack $archive"
-
-mkdir -p "$dir" || die "could not create $dir"
-if ! { cp "$tmp/kai" "$dir/.kai.tmp" && chmod 0755 "$dir/.kai.tmp" &&
-  mv -f "$dir/.kai.tmp" "$dir/kai"; }; then
-  die "could not install kai into $dir"
-fi
-say "installed kai $version to $dir/kai"
-"$dir/kai" --version
-
-case :${PATH:-}: in
-*:"$dir":*) ;;
-*)
-  say "$dir is not on PATH; add it, for example in your shell's profile:"
-  # shellcheck disable=SC2016 # prints $PATH for the profile to expand
-  printf '\n  export PATH="%s:$PATH"\n\n' "$dir"
-  ;;
-esac
-
 # Whether NIX enables flakes.
 has_flakes() {
   {
     "$1" config show experimental-features 2>/dev/null ||
-      "$1" show-config 2>/dev/null | sed -n 's/^experimental-features = //p'
+      "$1" show-config 2>/dev/null | grep '^experimental-features = '
   } | grep -qw flakes
 }
 
@@ -185,28 +81,156 @@ install_nix() {
   say "open a new shell so that nix is on PATH, then run kai"
 }
 
-if command -v nix >/dev/null 2>&1; then
-  has_flakes nix ||
-    say "Kai needs Nix flakes; enable them by adding 'extra-experimental-features = nix-command flakes' to ~/.config/nix/nix.conf"
-elif command -v guix >/dev/null 2>&1; then
-  :
-elif [ -x "$default_nix" ]; then
-  say "Nix is installed but not on PATH; open a new shell before running kai"
-else
-  say "Kai needs Nix (or Guix), and neither is installed."
-  if [ "$install_nix" != 1 ] && (: </dev/tty) 2>/dev/null; then
-    printf 'kai-install: Install Nix now with the official Nix installer? [y/N] ' >/dev/tty
-    read -r answer </dev/tty || answer=
-    case $answer in
-    [yY] | [yY][eE][sS]) install_nix="tty" ;;
+# Everything the script does runs from here, called on its last line, so that
+# a download cut short runs nothing.
+main() {
+  version=${KAI_VERSION:-}
+  dir=${KAI_INSTALL_DIR:-}
+  install_nix=${KAI_INSTALL_NIX:-0}
+  while [ $# -gt 0 ]; do
+    case $1 in
+    --help | -h)
+      usage
+      exit 0
+      ;;
+    --yes | -y) install_nix=1 ;;
+    --version | --dir)
+      [ $# -ge 2 ] || die "$1 needs a value"
+      case $1 in
+      --version) version=$2 ;;
+      *) dir=$2 ;;
+      esac
+      shift
+      ;;
+    --version=*) version=${1#*=} ;;
+    --dir=*) dir=${1#*=} ;;
+    *) die "unknown option: $1 (see --help)" ;;
     esac
+    shift
+  done
+  [ "$install_nix" = 1 ] || install_nix=0
+  version=${version#v}
+  if [ -z "$dir" ]; then
+    [ -n "${HOME:-}" ] || die "HOME is not set; choose a directory with --dir"
+    dir=$HOME/.local/bin
   fi
-  if [ "$install_nix" = 0 ]; then
-    say "to install Nix, run the official installer, then enable flakes:"
-    printf '\n  sh <(curl -L %s) --daemon\n' "$nix_installer"
-    printf "  echo 'extra-experimental-features = nix-command flakes' >>~/.config/nix/nix.conf\n\n"
-    say "or rerun this script with --yes to do both; for Guix, see $guix_installer"
+
+  # Each program the script runs, so that a missing one is named rather than
+  # mistaken for something else.
+  for tool in uname mktemp rm cut tar gzip mkdir cp chmod mv grep; do
+    command -v "$tool" >/dev/null 2>&1 || die "needs $tool, which is not on PATH"
+  done
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256() { sha256sum "$1" | cut -d ' ' -f 1; }
+  elif command -v shasum >/dev/null 2>&1; then
+    sha256() { shasum -a 256 "$1" | cut -d ' ' -f 1; }
   else
-    install_nix
+    die "needs sha256sum or shasum to check the download"
   fi
-fi
+
+  os=$(uname -s)
+  arch=$(uname -m)
+  case $arch in
+  amd64) arch=x86_64 ;;
+  arm64) arch=aarch64 ;;
+  esac
+  case $os in
+  Linux) system=$arch-linux ;;
+  Darwin) system=$arch-darwin ;;
+  *) system=$arch-$os ;;
+  esac
+
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  trap 'exit 1' HUP INT TERM
+
+  # The release's SHA256SUMS names its archives, kai-VERSION-SYSTEM.tar.gz, so
+  # the latest release's names its version.
+  if [ -n "$version" ]; then
+    base=$releases/download/v$version
+    what="Kai $version"
+  else
+    base=$releases/latest/download
+    what="the latest Kai release"
+  fi
+  fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" ||
+    die "could not download SHA256SUMS of $what from $base"
+  # Read with the shell alone, so that no tool beyond those checked above
+  # can turn a missing program into a missing build.
+  expected=
+  systems=
+  while read -r sum name || [ -n "$sum" ]; do
+    name=${name#\*}
+    case $name in
+    kai-*-*.tar.gz) ;;
+    *) continue ;;
+    esac
+    # VERSION has no `-`, so the shortest `kai-*-` prefix ends before SYSTEM.
+    archive_system=${name#kai-*-}
+    archive_system=${archive_system%.tar.gz}
+    systems="$systems $archive_system"
+    if [ -z "$expected" ] && [ "$archive_system" = "$system" ]; then
+      expected=$sum
+      archive=$name
+    fi
+  done <"$tmp/SHA256SUMS"
+  [ -n "$expected" ] || die "$what has no kai for $system; it supports:$systems"
+  version=${archive#kai-}
+  version=${version%-"$system".tar.gz}
+  case $version in
+  '' | *[!0-9.]*) die "$archive in SHA256SUMS names no version" ;;
+  esac
+
+  say "downloading $archive"
+  fetch "$releases/download/v$version/$archive" "$tmp/$archive" ||
+    die "could not download $releases/download/v$version/$archive"
+  actual=$(sha256 "$tmp/$archive")
+  [ "$actual" = "$expected" ] ||
+    die "$archive does not match its SHA256SUMS (expected $expected, got $actual); not installing"
+  tar -xzf "$tmp/$archive" -C "$tmp" kai || die "could not unpack $archive"
+
+  mkdir -p "$dir" || die "could not create $dir"
+  if ! { cp "$tmp/kai" "$dir/.kai.tmp" && chmod 0755 "$dir/.kai.tmp" &&
+    mv -f "$dir/.kai.tmp" "$dir/kai"; }; then
+    die "could not install kai into $dir"
+  fi
+  say "installed kai $version to $dir/kai"
+  "$dir/kai" --version
+
+  case :${PATH:-}: in
+  *:"$dir":*) ;;
+  *)
+    say "$dir is not on PATH; add it, for example in your shell's profile:"
+    # shellcheck disable=SC2016 # prints $PATH for the profile to expand
+    printf '\n  export PATH="%s:$PATH"\n\n' "$dir"
+    ;;
+  esac
+
+  if command -v nix >/dev/null 2>&1; then
+    has_flakes nix ||
+      say "Kai needs Nix flakes; enable them by adding 'extra-experimental-features = nix-command flakes' to ~/.config/nix/nix.conf"
+  elif command -v guix >/dev/null 2>&1; then
+    :
+  elif [ -x "$default_nix" ]; then
+    say "Nix is installed but not on PATH; open a new shell before running kai"
+  else
+    say "Kai needs Nix (or Guix), and neither is installed."
+    if [ "$install_nix" != 1 ] && (: </dev/tty) 2>/dev/null; then
+      printf 'kai-install: Install Nix now with the official Nix installer? [y/N] ' >/dev/tty
+      read -r answer </dev/tty || answer=
+      case $answer in
+      [yY] | [yY][eE][sS]) install_nix="tty" ;;
+      esac
+    fi
+    if [ "$install_nix" = 0 ]; then
+      say "to install Nix, run the official installer, then enable flakes:"
+      printf '\n  sh <(curl -L %s) --daemon\n' "$nix_installer"
+      printf "  echo 'extra-experimental-features = nix-command flakes' >>~/.config/nix/nix.conf\n\n"
+      say "or rerun this script with --yes to do both; for Guix, see $guix_installer"
+    else
+      install_nix
+    fi
+  fi
+}
+
+main "$@"

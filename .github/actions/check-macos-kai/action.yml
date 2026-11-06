@@ -1,0 +1,69 @@
+name: Check kai on macOS
+description: >-
+  Run an Apple Silicon kai natively: check that it reports this checkout's
+  VERSION, then that a small Kaifile on this checkout's platform and std
+  checks, updates, runs a task and enters a shell, and that kai build refuses
+  with the macOS message. Needs Nix.
+
+inputs:
+  kai:
+    description: The path of the kai binary to check.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The Kaifile names this checkout's platform, which links with the host
+    # zig builds.
+    - name: Build the platform host
+      shell: bash
+      run: nix shell nixpkgs#zig_0_16 --command sh -c 'cd platform && zig build --release'
+
+    - name: Check a Kaifile
+      shell: bash
+      env:
+        KAI: ${{ inputs.kai }}
+      run: |
+        set -euo pipefail
+        kai=$(cd "$(dirname "$KAI")" && pwd)/$(basename "$KAI")
+        file "$kai"
+        version=$("$kai" --version)
+        echo "kai --version: $version"
+        [ "$version" = "$(cat VERSION)" ] || { echo "expected $(cat VERSION)" >&2; exit 1; }
+        rm -rf macos-check
+        mkdir macos-check
+        cd macos-check
+        cat > Kaifile.roc <<'KAIFILE'
+        app [kaifile] {
+            pf: platform "../platform/main.roc",
+            std: "../plugins/std/main.roc",
+        }
+
+        import std.Std
+
+        kaifile = Std.kaifile([
+            Name("macos-check"),
+            Systems(["aarch64-darwin"]),
+            Environment("cow", [Tools(["cowsay"])]),
+            Shell("default", [Use("cow")]),
+            Task("moo", [Use("cow"), Run(["cowsay", "moo"])]),
+            Build("note", [Use("cow"), Run(["sh", "-c", "echo moo > note"]), Output("note"), Files([])]),
+        ])
+        KAIFILE
+        "$kai" check
+        "$kai" update
+        "$kai" run moo > run.log
+        cat run.log
+        grep -q moo run.log
+        "$kai" shell default -- cowsay hello > shell.log
+        cat shell.log
+        grep -q hello shell.log
+        if "$kai" build note > build.log 2>&1; then
+          cat build.log
+          echo "kai build should refuse on macOS" >&2
+          exit 1
+        fi
+        cat build.log
+        grep -q macOS build.log
+        cd ..
+        rm -rf macos-check

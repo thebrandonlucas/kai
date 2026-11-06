@@ -285,7 +285,7 @@ Release := [].{
 	# against the release's own platform and std bundles: Kaifile.roc's
 	# kai-NAME build makes the bundle, and plugin_file(NAME) records its URL.
 	# A release build refuses a plugins/ directory this list leaves out.
-	plugins = ["guix", "sbom"]
+	plugins = ["guix", "nixos", "sbom"]
 
 	# The file recording the URL a release publishes plugin `name`'s bundle at.
 	plugin_file : Str -> Str
@@ -442,14 +442,34 @@ Release := [].{
 	}
 
 	# Lists, one per line, the systems a release publishes a CLI archive for.
-	# publish-release requires aarch64_verified_env to name the release commit
-	# before it publishes an aarch64-linux archive.
 	systems_file = "RELEASE_SYSTEMS"
 
-	aarch64_verified_env = "KAI_AARCH64_VERIFIED_COMMIT"
+	# The systems whose archive the x86_64 release host cannot run, each with
+	# the variable through which release.yml reports the commit a native run
+	# on that system verified. publish-release refuses to publish such an
+	# archive unless its variable names the release commit.
+	verified_envs = [
+		("aarch64-linux", "KAI_AARCH64_VERIFIED_COMMIT"),
+		("aarch64-darwin", "KAI_AARCH64_DARWIN_VERIFIED_COMMIT"),
+	]
+
+	# The systems a release publishes that no native run verified at commit
+	# `target`, given each verified_envs variable's value.
+	unverified_systems : List(Str), List((Str, Str)), Str -> List(Str)
+	unverified_systems = |systems, values, target|
+		Release.verified_envs.keep_oks(
+			|(system, env)| {
+				verified = values.keep_if(|(name, _)| name == env).first()
+				match verified {
+					Ok((_, commit)) if commit == target => Err(Verified)
+					_ if !systems.contains(system) => Err(Unpublished)
+					_ => Ok(system)
+				}
+			},
+		)
 
 	# Systems Kaifile.roc builds a release archive for.
-	archive_systems = ["x86_64-linux", "aarch64-linux"]
+	archive_systems = ["x86_64-linux", "aarch64-linux", "aarch64-darwin"]
 
 	release_systems : Str -> Try(List(Str), [InvalidReleaseSystems(Str)])
 	release_systems = |text| {
@@ -639,6 +659,30 @@ expect {
 		and notes.contains("```roc\n\tguix: \"G\",\n\tsbom: \"B\",\n```")
 		and notes.contains("(https://github.com/o/r#guix)")
 }
+
+# Each archive the release host cannot run needs a native run of the release
+# commit on its system.
+expect {
+	both = ["x86_64-linux", "aarch64-linux", "aarch64-darwin"]
+	linux = ("KAI_AARCH64_VERIFIED_COMMIT", "c")
+	darwin = ("KAI_AARCH64_DARWIN_VERIFIED_COMMIT", "c")
+	Release.unverified_systems(both, [linux, darwin], "c") == []
+		and Release.unverified_systems(both, [linux], "c") == ["aarch64-darwin"]
+		and Release.unverified_systems(both, [darwin], "c") == ["aarch64-linux"]
+		and Release.unverified_systems(both, [linux, darwin], "d")
+			== ["aarch64-linux", "aarch64-darwin"]
+		and Release.unverified_systems(["x86_64-linux"], [], "c") == []
+		and Release.unverified_systems(["aarch64-darwin"], [linux], "c")
+			== ["aarch64-darwin"]
+}
+
+# RELEASE_SYSTEMS lists each system Kaifile.roc builds an archive for at most
+# once.
+expect
+	Release.release_systems("x86_64-linux\naarch64-linux\naarch64-darwin\n")
+		== Ok(["x86_64-linux", "aarch64-linux", "aarch64-darwin"])
+		and Release.release_systems("x86_64-linux\nx86_64-darwin\n").is_err()
+		and Release.release_systems("aarch64-darwin\naarch64-darwin\n").is_err()
 
 # A release publishes SHA256SUMS, and the archives, bundles and install script
 # it covers.

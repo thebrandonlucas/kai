@@ -1,8 +1,9 @@
 name: Set up Kai
 description: >-
   Install a Kai release with this repository's install.sh, which checks it
-  against the release's SHA256SUMS, and put kai on PATH. Optionally install
-  Nix first, and cache Kai's downloads between runs.
+  against the release's SHA256SUMS, and put kai on PATH, on a Linux or, from
+  0.0.12 on, an Apple Silicon macOS runner. Optionally install Nix first, and
+  cache Kai's downloads between runs.
 
 inputs:
   version:

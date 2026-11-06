@@ -103,7 +103,7 @@ Argv := [].{
 				file: Opt.maybe_str({
 					short: "f",
 					long: "file",
-					help: "Read PATH (default: the nearest Kaifile.roc).",
+					help: "Read PATH (default: nearest Kaifile.roc in the repo).",
 				}),
 				no_color: Opt.flag({
 					short: "",

@@ -25,7 +25,7 @@ kai build kai-x64musl --out-link /tmp/kai-dev    # kai at /tmp/kai-dev/kai
 kai shell default -- sh -c 'cd platform && zig build --release'
 ```
 
-`kai-arm64musl` is the aarch64 build. The project's Kaifile.roc then names the checkout's platform and std by relative path, as `examples/` do, such as `pf: platform "../kai/platform/main.roc"` and `std: "../kai/plugins/std/main.roc"`: Roc refuses an absolute platform path.
+`kai-arm64musl` is the aarch64 build, and `kai-arm64mac` the Apple Silicon macOS one, cross-built on Linux. The project's Kaifile.roc then names the checkout's platform and std by relative path, as `examples/` do, such as `pf: platform "../kai/platform/main.roc"` and `std: "../kai/plugins/std/main.roc"`: Roc refuses an absolute platform path.
 
 ## How the code is laid out
 

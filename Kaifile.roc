@@ -10,6 +10,7 @@ import std.InputName
 import std.Std
 import std.Tool
 
+import ".roc-downloads" as roc_downloads : Str
 import ".roc-overlay" as roc_overlay : Str
 import ".roc-version" as roc_version : Str
 
@@ -74,8 +75,27 @@ link_inputs_url =
 
 link_inputs = [(link_inputs_url, "link-inputs")]
 
+# Roc's Apple Silicon archive of the nightly .roc-version pins, as
+# .roc-downloads names it: Roc links a macOS program against the darwin/
+# sysroot only that archive ships, beside its executable.
+roc_darwin_archive =
+	roc_downloads.split_on("\n").keep_oks(
+		|line|
+			match line.split_on(" ") {
+				["aarch64-darwin", _, _, archive] => Ok(archive)
+				_ => Err(OtherSystem)
+			},
+	).first()
+		?? ""
+
+roc_darwin_url =
+	"tarball+https://github.com/roc-lang/nightlies/releases/download"
+		.concat("/${roc_version.trim()}/${roc_darwin_archive}.tar.gz")
+
+roc_darwin = [(roc_darwin_url, "roc-darwin")]
+
 link_sources = List.keep_oks(
-	link_inputs,
+	link_inputs.concat(roc_darwin),
 	|(url, name)|
 		Ok(Source(InputName.from_quote(name)?, FlakeRef.from_quote(url)?)),
 )
@@ -181,18 +201,47 @@ plugin_build = |build, name|
 # One Roc worker: the code roc emits depends on how many it uses
 # (roc-lang/roc#11449), so a fixed count builds the same binary anywhere.
 # Use the default once a Roc nightly emits the same code for any count.
-binary_script = |target|
-	seed.concat(
+binary_script = |target, prepare, finish|
+	seed.concat(prepare).concat(
 		\\url="https://github.com/thebrandonlucas/kai/releases/download"
 		\\base="$url/v$(cat VERSION)"
 		\\bundle() { basename "$KAI_ARTIFACTS/$1"/*.tar.zst; }
 		\\echo "$base/$(bundle kai-platform)" > platform-release
 		\\echo "$base/std-$(bundle kai-std)" > plugins/std-release
-		\\roc build cli/main.roc --opt=size --target=${target} --jobs=1 --output=kai
-		\\llvm-strip kai
+		\\flags="--opt=size --target=${target} --jobs=1"
+		\\"$roc" build cli/main.roc $flags --output=kai
+		\\
+	).concat(finish).concat(
 		\\chmod -R u+w "$packages"
 		\\mkdir bin
 		\\install -m755 kai bin/kai
+	)
+
+# A Linux kai, stripped of its symbols.
+linux_script = |target|
+	binary_script(target, "roc=roc\n", "llvm-strip kai\n")
+
+# The Apple Silicon kai, cross-built: a copy of the Roc compiler with the
+# darwin/ sysroot of Roc's macOS archive beside it, where Roc looks for it,
+# links it. The Linux archives lack that sysroot; roc-lang/roc#12731, first in
+# nightly-2026-10-31-f7bef6b, embeds it in roc, so drop this copy, and the
+# roc-darwin source, once .roc-version names that nightly or a later one.
+# Not stripped: the linker signs it ad hoc, as macOS requires on Apple
+# Silicon, and stripping would rewrite that signature.
+darwin_script =
+	binary_script(
+		"arm64mac",
+		\\real="$(readlink -f "$(command -v roc)")"
+		\\# roc-overlay wraps the compiler; copy what the wrapper runs.
+		\\wrapped="$(dirname "$real")/.roc-wrapped"
+		\\if [ -f "$wrapped" ]; then real="$wrapped"; fi
+		\\mkdir roc-cross
+		\\cp "$real" roc-cross/roc
+		\\cp -R "$KAI_INPUTS/roc-darwin/darwin" roc-cross/darwin
+		\\roc="$PWD/roc-cross/roc"
+		\\
+		,
+		"",
 	)
 
 # What cli/main.roc reads: its modules, the files they embed, and the
@@ -208,14 +257,14 @@ binary_files = [
 	"plugins/std-release",
 ]
 
-binary = |name, target|
+binary = |name, script, extra_inputs|
 	Build(
 		name,
 		[
 			Use("build"),
-			Inputs(roc_inputs.concat(inputs(cli_packages))),
+			Inputs(roc_inputs.concat(inputs(cli_packages)).concat(extra_inputs)),
 			Needs(["kai-platform", "kai-std"]),
-			Run(["sh", "-c", binary_script(target)]),
+			Run(["sh", "-c", script]),
 			Output("bin"),
 			Files(binary_files),
 		],
@@ -324,11 +373,14 @@ kaifile = Std.kaifile(
 				Output("bundle"),
 			],
 		),
-		binary("kai-x64musl", "x64musl"),
-		binary("kai-arm64musl", "arm64musl"),
+		binary("kai-x64musl", linux_script("x64musl"), []),
+		binary("kai-arm64musl", linux_script("arm64musl"), []),
+		binary("kai-arm64mac", darwin_script, inputs(roc_darwin)),
 		release("release-x86-64-linux", "kai-x64musl"),
 		release("release-aarch64-linux", "kai-arm64musl"),
+		release("release-aarch64-darwin", "kai-arm64mac"),
 		plugin_build("kai-guix", "guix"),
+		plugin_build("kai-nixos", "nixos"),
 		plugin_build("kai-sbom", "sbom"),
 	]).concat(roc_sources).concat(link_sources),
 )

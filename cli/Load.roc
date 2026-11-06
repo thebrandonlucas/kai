@@ -50,21 +50,40 @@ Load := [].{
 		Ok(Load.split_file(canonical))
 	}
 
-	# The first Kaifile.roc in `cwd` or above it, up to the git repository's
-	# root (the first directory holding .git) or the filesystem root; the one
-	# in `cwd` when there is none, which is then missing.
+	# The Kaifile.roc `nearest` picks from `cwd` and the directories above it,
+	# or else the one in `cwd`, which may be missing.
 	nearest! : Str => Str
 	nearest! = |cwd| {
+		var $directories = []
 		for directory in Load.ancestors(cwd) {
-			file = Load.resolve(directory, Load.default_file)
-			if Load.path(file).exists!() ?? Bool.False {
-				return file
+			holds! = |name|
+				Load.path(Load.resolve(directory, name)).exists!() ?? Bool.False
+			$directories = $directories.append(
+				{ directory, kaifile: holds!(Load.default_file), git: holds!(".git") },
+			)
+		}
+		Load.nearest($directories) ?? Load.resolve(cwd, Load.default_file)
+	}
+
+	# A directory the search looked in, and whether it holds each file.
+	Searched : { directory : Str, kaifile : Bool, git : Bool }
+
+	# Of directories, nearest first, the Kaifile.roc of the first holding one,
+	# up to the git repository's root, the first holding .git. Outside a
+	# repository there is none, so that a Kaifile.roc above it, such as one in
+	# the home directory belonging to another project, is never used.
+	nearest : List(Searched) -> Try(Str, [NoValue])
+	nearest = |directories| {
+		var $found = ""
+		for candidate in directories {
+			if $found.is_empty() and candidate.kaifile {
+				$found = Load.resolve(candidate.directory, Load.default_file)
 			}
-			if Load.path(Load.resolve(directory, ".git")).exists!() ?? Bool.False {
-				return Load.resolve(cwd, Load.default_file)
+			if candidate.git {
+				return if ($found.is_empty()) Err(NoValue) else Ok($found)
 			}
 		}
-		Load.resolve(cwd, Load.default_file)
+		Err(NoValue)
 	}
 
 	# A directory and those above it, nearest first. The filesystem root is
@@ -420,7 +439,7 @@ Load := [].{
 				errors = Str.from_utf8_lossy(ran.stderr_bytes)
 				failure = KaifileFailed(
 					project.file,
-					out.concat(errors),
+					out.concat(errors).concat(Load.download_hint!(out.concat(errors))),
 					header_releases,
 				)
 				if ran.status == Exited(2) {
@@ -438,6 +457,32 @@ Load := [].{
 			Err(_) => Err(KaifileInvalid(project.file, header_releases))
 		}
 	}
+
+	# Roc downloads packages through Zig's resolver, whose resolv.conf parser
+	# fails on a last line with no newline, as Docker Desktop writes it, and
+	# Roc then reports only DownloadFailed. A workaround for
+	# https://codeberg.org/ziglang/zig/issues/36278 (a fix, closed unmerged:
+	# https://codeberg.org/ziglang/zig/pulls/36280); remove it once the
+	# pinned Roc is built with a Zig release that fixes it.
+	download_hint! : Str => Str
+	download_hint! = |output|
+		if output.contains("DownloadFailed") {
+			resolv_conf = Path.read_utf8!(Load.path("/etc/resolv.conf")) ?? ""
+			Load.download_hint(resolv_conf)
+		} else {
+			""
+		}
+
+	# The hint after Roc fails to download a package, given /etc/resolv.conf.
+	download_hint : Str -> Str
+	download_hint = |resolv_conf|
+		if !resolv_conf.is_empty() and !resolv_conf.ends_with("\n") {
+			"\nRoc cannot read /etc/resolv.conf, whose last line has no "
+				.concat("newline (https://codeberg.org/ziglang/zig/issues/36278); ")
+				.concat("end it with one, then run kai again")
+		} else {
+			"\nRoc could not download a package; check that curl can fetch its URL"
+		}
 
 	# The Kaifile compiled to a program in `directory`, compiled again only
 	# when its inputs changed. A record beside it names the program and the
@@ -643,6 +688,35 @@ expect {
 # A relative --file resolves against the invocation directory.
 expect Load.resolve("/work", "../project/Kaifile.roc")
 	== "/work/../project/Kaifile.roc"
+
+# Inside a repository, the nearest Kaifile.roc up to its root is used, and
+# not one above the root.
+expect {
+	at = |directory, names| {
+		directory,
+		kaifile: names.contains("Kaifile.roc"),
+		git: names.contains(".git"),
+	}
+	below = at("/r/a", [])
+	above = at("/", ["Kaifile.roc"])
+	Load.nearest([below, at("/r", ["Kaifile.roc", ".git"]), above])
+		== Ok("/r/Kaifile.roc")
+		and Load.nearest([below, at("/r", [".git"]), above]) == Err(NoValue)
+}
+
+# Outside a repository, kai does not search: a Kaifile.roc in a directory
+# above, such as the home directory, is not used.
+expect {
+	at = |directory, kaifile| { directory, kaifile, git: Bool.False }
+	searched = [at("/home/u/p", Bool.False), at("/home/u", Bool.True)]
+	Load.nearest(searched.append(at("/", Bool.False))) == Err(NoValue)
+}
+
+# After a failed download, a resolv.conf Roc cannot read, as Docker Desktop
+# writes it with a lone space after its last newline, is named.
+expect Load.download_hint("nameserver 192.0.2.1\n ").contains("resolv.conf")
+	and Load.download_hint("nameserver 192.0.2.1\n").contains("curl")
+	and Load.download_hint("").contains("curl")
 
 # An absolute --file is used as given.
 expect Load.resolve("/work", "/project/Kaifile.roc") == "/project/Kaifile.roc"

@@ -132,11 +132,13 @@ check_x64! = |archive, destination, version| {
 	}
 }
 
-check_arm64! = |archive, destination| {
+# An archive the release host cannot run, checked for the architecture
+# `file` reports; release.yml runs it natively before publishing.
+check_architecture! = |archive, destination, architecture| {
 	archive_contents!(archive)?
 	binary = extract_archive!(archive, destination)?
 	output = Exec.output!(Exec.cmd("file").arg(Path.to_os_str(binary)))?
-	if output.stdout_utf8.contains("ARM aarch64") {
+	if output.stdout_utf8.contains(architecture) {
 		Ok({})
 	} else {
 		Err(WrongArchitecture(output.stdout_utf8))
@@ -255,10 +257,11 @@ build_release_stage! = |root, dist, workspace, version| {
 		release = "release-".concat(system.replace_each("_", "-"))
 		copy_file!(Bundles.output!(release)?, archive)?
 		destination = Path.join(workspace, "${system}-cli-test")
-		if system == "x86_64-linux" {
-			check_x64!(archive, destination, version)?
-		} else {
-			check_arm64!(archive, destination)?
+		match system {
+			"x86_64-linux" => check_x64!(archive, destination, version)?
+			"aarch64-darwin" =>
+				check_architecture!(archive, destination, "Mach-O 64-bit arm64 executable")?
+			_ => check_architecture!(archive, destination, "ARM aarch64")?
 		}
 	}
 

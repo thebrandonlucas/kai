@@ -28,7 +28,8 @@ The goal is to make using determinate systems so easy and powerful that they bec
 
 ## Installation
 
-Kai runs on Linux and needs
+Kai runs on Linux (x86_64 and aarch64) and on Apple Silicon macOS, whose
+releases start with 0.0.12, and needs
 [Nix with flakes enabled](https://nixos.org/download).
 
 Install the latest release into `~/.local/bin`:
@@ -42,6 +43,17 @@ The [script](install.sh) checks the download against the release's
 install Nix with the official installer and enable flakes; not at a
 terminal, it only prints how, unless given `--yes`. Pass options after
 `sh -s --`, such as `--version 0.0.10` or `--dir DIR`; see `--help`.
+
+To read the script before running it, download it with the release's
+`SHA256SUMS`, check it, and run it:
+
+```sh
+curl -fsSLO https://github.com/thebrandonlucas/kai/releases/latest/download/install.sh
+curl -fsSLO https://github.com/thebrandonlucas/kai/releases/latest/download/SHA256SUMS
+grep ' install.sh$' SHA256SUMS | sha256sum --check
+less install.sh
+sh install.sh
+```
 
 Or download the archive for your system from the
 [latest release](https://github.com/thebrandonlucas/kai/releases/latest),
@@ -88,7 +100,9 @@ changes it. `cache` (default `true`) caches `~/.cache/kai`, the direct
 backend's store and the Roc compiler Kai downloads, by the version, the
 runner's OS and architecture, and `.kai/lock.json`. `nix` (default `true`)
 installs Nix unless it is on `PATH`; set it to `false` for a project whose
-environments are all [pinned downloads](#running-without-nix-or-guix).
+environments are all [pinned downloads](#running-without-nix-or-guix). It runs
+on Linux runners, and on Apple Silicon macOS runners, such as `macos-14`, with a
+`version` from 0.0.12 on.
 
 ## Getting started
 
@@ -376,23 +390,26 @@ The direct backend runs shells and tasks from pinned downloads, for tools
 built on Kai whose users cannot be assumed to have Nix. It serves an
 environment whose tools are all `Fetch` or `FetchLocked` files, and needs only
 `tar`, `chmod`, `sh` and `env` on the machine (and `xz` for a tar.xz, and
-`unzip`, or a `tar` that is bsdtar as on macOS, for a zip):
+`unzip`, or a `tar` that is bsdtar as on macOS, for a zip). It names `tar`
+or `chmod` when either is missing from `PATH`. For example:
 
 ```roc
+# Zig names each system's archive after it, as in zig-x86_64-linux-0.16.0.
+# A System goes into a string as `system.to_str()`.
+zig = |system| {
+	name = "zig-${system.to_str()}-0.16.0"
+	{
+		system,
+		url: "https://ziglang.org/download/0.16.0/${name}.tar.xz",
+		mirrors: [],
+		program: Archive("${name}/zig"),
+	}
+}
+
 kaifile = Std.kaifile([
 	Name("site"),
-	Systems(["x86_64-linux"]),
-	FetchLocked(
-		"zig",
-		[
-			{
-				system: "x86_64-linux",
-				url: "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz",
-				mirrors: [],
-				program: Archive("zig-x86_64-linux-0.16.0/zig"),
-			},
-		],
-	),
+	Systems(["x86_64-linux", "aarch64-linux"]),
+	FetchLocked("zig", [zig("x86_64-linux"), zig("aarch64-linux")]),
 	Environment("dev", [Tools(["zig#zig"]), Expect(["git"])]),
 	Task("test", [Use("dev"), Run(["zig", "build", "test"])]),
 ])
@@ -463,7 +480,8 @@ documents. See [docs/sbom.md](docs/sbom.md) and
 ## Machines
 
 The nixos plugin, `plugins/nixos`, declares NixOS machines beside the
-project's environments, added like the [guix plugin](#guix):
+project's environments, added like the [guix plugin](#guix), from the
+`nixos:` line in the release notes of each release after 0.0.11:
 
 ```roc
 kaifile = Kaifile.new([
@@ -536,8 +554,9 @@ replace direnv's shell hook with
 
 - `-f`, `--file PATH`: use another configuration file. Its directory is the
   project root. Without it, kai uses the nearest `Kaifile.roc`: in the
-  current directory or the first above it, up to the git repository's root,
-  and says which when it is not in the current directory.
+  current directory or, inside a git repository, the first above it up to
+  the repository's root, and says which when it is not in the current
+  directory. Outside a repository, it uses only the current directory's.
 - `--json`: print Kai's own messages as JSON Lines, one object per line. Each
   has `type` and `message`, plus fields for its type (e.g. `backend`,
   `step_started`, `artifact`, or `error`, described in
@@ -603,8 +622,9 @@ runs them), and `error` is one of these codes:
 
 ## Limits
 
-- Linux only. Kai runs on `x86_64-linux` and `aarch64-linux`, and generates
-  shells and builds for the system it runs on.
+- Kai runs on `x86_64-linux`, `aarch64-linux` and `aarch64-darwin` (Apple
+  Silicon macOS), and generates shells and builds for the system it runs on.
+  On macOS, `kai build` is not supported yet.
 - Services, deploy, images, ISOs and secrets are not in this version, and
   the old `Kaifile` format is not read. If you need them, stay on
   [v0.0.7](https://github.com/thebrandonlucas/kai/releases/tag/v0.0.7)

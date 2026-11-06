@@ -41,6 +41,9 @@
           sourceRoot = ".";
           dontConfigure = true;
           dontBuild = true;
+          # The macOS kai carries the ad hoc signature Apple Silicon requires,
+          # which stripping would break; the Linux ones are stripped already.
+          dontStrip = true;
           installPhase = ''
             runHook preInstall
             install -Dm755 kai "$out/bin/kai"

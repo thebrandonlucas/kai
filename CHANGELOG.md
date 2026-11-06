@@ -8,18 +8,28 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 - The guix plugin serves Guix: add `Guix.plugin(project, settings)` beside `Std.plugin(project)` in `Kaifile.new([...])` to run shells, tasks, workflows, builds and `kai update` on Guix. Each release publishes its bundle, and its notes give the line that adds it.
 - The sbom plugin adds `kai sbom`, which writes a release's SBOMs (SPDX 3.0.1, SPDX 2.3 and CycloneDX 1.7) from the Kaifile and the lock: `inputs`, `pins` and `inspect` among its subcommands. Each release publishes its bundle.
-- The nixos plugin, not yet bundled with releases, declares NixOS machines in a Kaifile, `Machine(name, [...])`, and `kai machine build NAME` builds one. On the machine itself, `kai machine switch NAME` builds and activates it, `kai machine rollback NAME` returns to the previous system and `kai machine generations NAME` lists them.
+- The nixos plugin declares NixOS machines in a Kaifile, `Machine(name, [...])`, and `kai machine build NAME` builds one. On the machine itself, `kai machine switch NAME` builds and activates it, `kai machine rollback NAME` returns to the previous system and `kai machine generations NAME` lists them. Each release publishes its bundle.
 - `kai spec` prints what `Kaifile.roc` declares, and `kai lock` every input the lock pins, each as one line of documented, versioned JSON.
 - `kai build NAME --plan` prints a build's inputs, snapshot, derivation and output path as JSON without building it.
 - Nix builds get `$KAI_TOOLS`, a directory linking each of their tools, and `$KAI_INPUTS/.kai-inputs.json`, a record of their inputs.
 - `RocPackages([url, ...])` in an `Environment` places the named Roc package bundles in Roc's package cache before a shell or task starts, so Roc does not download them.
 - `Systems([...])` accepts `x86_64-darwin` and `x86_64-windows`, served by the direct backend from downloads and `Expect`, and downloads can be zip archives.
 - A setup-kai GitHub Action, `thebrandonlucas/kai/.github/actions/setup-kai`, installs a given Kai release in CI with a download cache.
+- Releases publish an Apple Silicon macOS kai, `kai-X.Y.Z-aarch64-darwin.tar.gz`, run on a macOS runner before each release is published. `install.sh`, `nix run github:thebrandonlucas/kai` and the setup-kai action install it on Apple Silicon Macs and macOS runners. `kai build` is not supported on macOS yet.
 - For plugin authors: std exports `StdModel`, so a plugin with its own backend can implement `kai shell`, `run`, `build` and `workflow` from std's model.
 
 ### Changed
 
 - **Breaking:** std serves only Nix and the direct backend. Guix needs the guix plugin, and `GuixChannel` moves from std's settings to the plugin's `Channel`; `kai --backend guix` without the plugin fails.
+- `install.sh` runs nothing unless it downloaded in full, so a connection that drops while it is piped to `sh` no longer runs part of it. The README shows how to check the script against the release's `SHA256SUMS` and read it before running it.
+- Outside a git repository, Kai uses only the current directory's `Kaifile.roc` and no longer searches the directories above it, where one, such as in the home directory, may belong to another project. Inside a repository, it still uses the nearest one up to the repository's root.
+
+### Fixed
+
+- `install.sh` names a program it needs that is not on `PATH`, such as `tar`, instead of reporting that the release has no build for the system when `sed` is missing.
+- When `tar` or `chmod` is not on `PATH`, the direct backend names the missing program, as in "could not make jq executable: chmod is not on PATH", instead of saying only that it did not start.
+- When a `System` is interpolated into a URL, as in `"${prefix}${system}"`, the error on the URL's other string now says to interpolate `system.to_str()`. The README's direct backend example builds each system's download URL that way.
+- When Roc cannot download the platform or a package, Kai says so after Roc's `DownloadFailed`. When `/etc/resolv.conf`'s last line has no newline, as Docker Desktop writes it, which Roc cannot read, Kai names the file and says to end it with a newline.
 
 ## [0.0.11] - 2026-11-05
 
