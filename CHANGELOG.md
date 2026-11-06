@@ -20,6 +20,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 ### Changed
 
 - **Breaking:** std serves only Nix and the direct backend. Guix needs the guix plugin, and `GuixChannel` moves from std's settings to the plugin's `Channel`; `kai --backend guix` without the plugin fails.
+- `install.sh` runs nothing unless it downloaded in full, so a connection that drops while it is piped to `sh` no longer runs part of it. The README shows how to check the script against the release's `SHA256SUMS` and read it before running it.
 
 ## [0.0.11] - 2026-11-05
 

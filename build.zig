@@ -336,10 +336,16 @@ pub fn build(b: *std.Build) void {
     const check_actions = b.addSystemCommand(&.{"actionlint"});
     check_step.dependOn(&check_actions.step);
 
-    // The install script each release publishes, as POSIX sh.
+    // The install script each release publishes, as POSIX sh, and its test.
     const check_installer = b.addSystemCommand(&.{ "shellcheck", "--shell=sh" });
     check_installer.addFileArg(b.path("install.sh"));
+    check_installer.addFileArg(b.path("devtool/install_test.sh"));
     check_step.dependOn(&check_installer.step);
+
+    const test_installer = b.addSystemCommand(&.{"sh"});
+    test_installer.addFileArg(b.path("devtool/install_test.sh"));
+    test_installer.addFileArg(b.path("install.sh"));
+    check_step.dependOn(&test_installer.step);
 
     const nix_fmt = addFilesCommand(
         b,

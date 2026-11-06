@@ -43,6 +43,17 @@ install Nix with the official installer and enable flakes; not at a
 terminal, it only prints how, unless given `--yes`. Pass options after
 `sh -s --`, such as `--version 0.0.10` or `--dir DIR`; see `--help`.
 
+To read the script before running it, download it with the release's
+`SHA256SUMS`, check it, and run it:
+
+```sh
+curl -fsSLO https://github.com/thebrandonlucas/kai/releases/latest/download/install.sh
+curl -fsSLO https://github.com/thebrandonlucas/kai/releases/latest/download/SHA256SUMS
+grep ' install.sh$' SHA256SUMS | sha256sum --check
+less install.sh
+sh install.sh
+```
+
 Or download the archive for your system from the
 [latest release](https://github.com/thebrandonlucas/kai/releases/latest),
 check it against the release's `SHA256SUMS`, and put `kai` on `PATH`:
