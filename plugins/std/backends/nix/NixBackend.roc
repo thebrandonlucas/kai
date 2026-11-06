@@ -500,13 +500,15 @@ NixBackend :: [].{
 
 	## A plugin's flake output: Nix attribute definitions added to the
 	## flake's outputs, the environments they read, the attribute to build,
-	## and its name and description in kai's messages.
+	## its name and description in kai's messages, and the out-link the
+	## build leaves, "" for none.
 	Output : {
 		outputs : Str,
 		environments : List(Str),
 		attribute : Str,
 		name : Str,
 		description : Str,
+		out_link : Str,
 	}
 
 	## Builds `wanted.attribute` of the flake with `wanted.outputs` added.
@@ -535,7 +537,11 @@ NixBackend :: [].{
 		derived = Locks.derive(locks, project, layout)?
 		lock_path = "${layout.generated_root}/flake.lock"
 		lock = { path: lock_path, contents: derived.contents }
-		argv = ["nix", "build", "--no-link", "--print-out-paths"]
+		out_link = wanted.out_link
+		link = if (out_link.is_empty()) ["--no-link"] else ["--out-link", out_link]
+		argv = ["nix", "build"]
+			.concat(link)
+			.append("--print-out-paths")
 			.concat(["--no-update-lock-file", "--no-write-lock-file"])
 			.concat(["--nix-path", "", "--impure"])
 			.append("path:${layout.generated_root}#${wanted.attribute}")

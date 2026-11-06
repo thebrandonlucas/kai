@@ -4,7 +4,8 @@
 # the ops environment's tools on its PATH, and Modules adds plain NixOS
 # module files, here the disk and boot loader a system needs. `kai machine
 # build web` builds the system from the locked nixpkgs and prints its store
-# path.
+# path. Run on the machine itself, `kai machine switch web` also makes it
+# the running system; the example only prints that plan.
 app [kaifile] {
 	nixos: "../../plugins/nixos/main.roc",
 	pf: platform "../../platform/main.roc",

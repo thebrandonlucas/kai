@@ -485,7 +485,11 @@ kaifile = Kaifile.new([
 A small typed core covers what most machines set; anything else comes from
 plain NixOS module files. Each machine is `nixosConfigurations.<name>` in the
 generated flake, built from the project's locked nixpkgs. `kai machine build
-web` builds its system and prints the store path. See
+web` builds its system and prints the store path. On the machine itself,
+`kai machine switch web` builds it and, once you confirm, makes it the
+running system and the boot default; `kai machine rollback web` returns to
+the previous one and `kai machine generations web` lists them. Each refuses
+another host. See
 [docs/machines.md](docs/machines.md) and
 [examples/machines](examples/machines).
 
@@ -601,9 +605,8 @@ runs them), and `error` is one of these codes:
 
 - Linux only. Kai runs on `x86_64-linux` and `aarch64-linux`, and generates
   shells and builds for the system it runs on.
-- Services, machines, deploy, switch, rollback, generations, images, ISOs and
-  secrets are not in this version, and the old `Kaifile` format is not read.
-  If you need them, stay on
+- Services, deploy, images, ISOs and secrets are not in this version, and
+  the old `Kaifile` format is not read. If you need them, stay on
   [v0.0.7](https://github.com/thebrandonlucas/kai/releases/tag/v0.0.7)
   (`nix run github:thebrandonlucas/kai/v0.0.7`).
 

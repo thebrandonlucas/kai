@@ -45,6 +45,13 @@ Nixos := [].{
 
 	Machine : NixosBackend.Machine
 
+	## std's settings, which machines use.
+	Project : List(Config.Setting)
+
+	Planned : Try(Plan, Plan.Failure)
+
+	Context : Implementation.Context
+
 	## `project` is std's settings, whose environments and inputs machines
 	## use; a machine's System must be one of its Systems.
 	plugin : List(Config.Setting), List(Setting) -> Plugin
@@ -73,12 +80,11 @@ Nixos := [].{
 					name: "action",
 					help: "What to do with the machine.",
 					choices: [
-						{
-							value: "build",
-							summary: "Build the machine's system and print its store path.",
-							details: [],
-						},
-					],
+						("build", "Build the machine's system and print its store path."),
+						("switch", "Build the machine's system and switch this host to it."),
+						("rollback", "Switch this host back to its previous system."),
+						("generations", "List this host's system generations."),
+					].map(|(value, summary)| { value, summary, details: [] }),
 					default: Required,
 				}),
 				Trailing({
@@ -94,8 +100,13 @@ Nixos := [].{
 
 	page : Command.Page
 	page = {
-		description: "Build a NixOS machine the project declares.",
-		examples: ["kai machine build web", "kai --dry-run machine build web"],
+		description: "Build a NixOS machine the project declares, or switch to it.",
+		examples: [
+			"kai machine build web",
+			"kai --dry-run machine switch web",
+			"kai machine rollback web",
+			"kai machine generations web",
+		],
 		config: [
 			"Machine(\"web\", [System(\"x86_64-linux\"), StateVersion(\"25.05\"),",
 			"  User(\"admin\", [SshKeys([\"ssh-ed25519 AAAA...\"])]), Ssh,",
@@ -110,29 +121,116 @@ Nixos := [].{
 			backend: On("nix"),
 			fit: |args| Nixos.requested(machines, args).map_ok(|_| {}),
 			plan: |ctx| {
-				machine = Nixos.requested(machines, ctx.args).map_err(Plan.fail)?
-				root = ctx.layout.project_root
-				attribute = "nixosConfigurations.${machine.name}"
-					.concat(".config.system.build.toplevel")
-				built = Std.build_flake_output(
-					project,
-					ctx,
-					{
-						outputs: NixosBackend.outputs(machines, root),
-						environments: machines
-							.keep_if(|m| !m.environment.is_empty())
-							.map(|m| m.environment),
-						attribute,
-						name: machine.name,
-						description: "machine build ${machine.name}",
-					},
-				)?
-				checks = machine.modules.map(|path| CheckSource("${root}/${path}"))
-				Ok(Plan.{ steps: checks.concat(built.steps), next: built.next })
+				m = Nixos.requested(machines, ctx.args).map_err(Plan.fail)?
+				action = Command.name(ctx.args, "action")
+				if action == "build" {
+					Nixos.build(project, machines, m, ctx, "")
+				} else {
+					Nixos.on_host(project, machines, m, ctx, action)
+				}
 			},
 		}
 
-	## The machine `kai machine build NAME` names.
+	## NixOS's system profile, whose generations are the host's systems.
+	profile = "/nix/var/nix/profiles/system"
+
+	## Switching, rolling back and listing act on this host, which must be
+	## the machine: its System now, its HostName as the plan runs. Only the
+	## profile and the activation run as root.
+	on_host : Project, List(Machine), Machine, Context, Str -> Planned
+	on_host = |project, machines, m, ctx, action| {
+		if ctx.host.system != m.system {
+			return Err(
+				Plan.fail(
+					"machine ${m.name} is ${m.system}, but this host is ${ctx.host.system}: "
+						.concat(Nixos.local_only(action, m)),
+				),
+			)
+		}
+		description = "machine ${action} ${m.name}"
+		check = Nixos.host_check(action, m)
+		here = Nixos.run("${description}: host check", Quiet, check)
+		sudo = |argv| Nixos.run(description, Inherit, ["sudo"].concat(argv))
+		activate = sudo(["${Nixos.profile}/bin/switch-to-configuration", "switch"])
+		restarting = "restarting changed services and booting it by default?"
+		steps = match action {
+			"switch" => {
+				link = "${ctx.layout.workspace}/machines/${m.name}"
+				built = Nixos.build(project, machines, m, ctx, link)?
+				prompt = "Switch this host to machine ${m.name}, ${restarting}"
+				set = sudo(["nix", "build", "--no-link", "--profile", Nixos.profile, link])
+				[here].concat(built.steps).concat([Confirm(prompt), set, activate])
+			}
+			"rollback" => {
+				prompt = "Switch this host back to its previous system, ${restarting}"
+				# Steps the profile's link back a generation, as `nix-env
+				# --rollback` does: it needs no `nix profile` manifest.
+				back = sudo(["nix", "profile", "rollback", "--profile", Nixos.profile])
+				[here, Confirm(prompt), back, activate]
+			}
+			_ => {
+				listed = ["nixos-rebuild", "list-generations"]
+				[here, Nixos.run(description, Inherit, listed)]
+			}
+		}
+		Ok(Plan.{ steps, next: Done })
+	}
+
+	## `kai machine build`'s plan, leaving `out_link` ("" for none).
+	build : Project, List(Machine), Machine, Context, Str -> Planned
+	build = |project, machines, machine, ctx, out_link| {
+		root = ctx.layout.project_root
+		attribute = "nixosConfigurations.${machine.name}"
+			.concat(".config.system.build.toplevel")
+		built = Std.build_flake_output(
+			project,
+			ctx,
+			{
+				outputs: NixosBackend.outputs(machines, root),
+				environments: machines
+					.keep_if(|m| !m.environment.is_empty())
+					.map(|m| m.environment),
+				attribute,
+				name: machine.name,
+				description: "machine build ${machine.name}",
+				out_link,
+			},
+		)?
+		checks = machine.modules.map(|path| CheckSource("${root}/${path}"))
+		Ok(Plan.{ steps: checks.concat(built.steps), next: built.next })
+	}
+
+	## Why `action` refuses another host than `m`.
+	local_only : Str, Machine -> Str
+	local_only = |action, m|
+		"kai machine ${action} acts on the host it runs on; run it on "
+			.concat("${m.host_name}, or use kai deploy for another host")
+
+	## A shell check, as the switch runs, that this host's name is the
+	## machine's HostName. The names and the message are arguments, never
+	## part of the script.
+	host_check : Str, Machine -> List(Str)
+	host_check = |action, m| {
+		script =
+			\\host=$(uname -n)
+			\\[ "$host" = "$1" ] && exit 0
+			\\echo "this host is $host, not $1: $2" >&2
+			\\exit 1
+		["sh", "-c", script, "sh", m.host_name, Nixos.local_only(action, m)]
+	}
+
+	run : Str, Plan.Output, List(Str) -> Plan.Step
+	run = |description, output, argv|
+		Run({
+			description,
+			argv,
+			output,
+			secrets: [],
+			removed_environment_variables: [],
+			kept_environment_variables: [],
+		})
+
+	## The machine `kai machine ACTION NAME` names.
 	requested : List(Machine), Command.Args -> Try(Machine, Str)
 	requested = |machines, args| {
 		name = match Command.trailing(args, "machine") {
@@ -144,7 +242,7 @@ Nixos := [].{
 			.map_err(|_| "unknown machine: ${name}")
 	}
 
-	name_one = "name one machine: kai machine build NAME"
+	name_one = "name one machine: kai machine ACTION NAME"
 
 	## The machines, or every problem with the settings.
 	checked : List(Config.Setting), List(Setting) -> Try(List(Machine), List(Str))
@@ -520,17 +618,19 @@ published = |settings| {
 	}
 }
 
-# The plan of `kai machine build NAME`, after the implementation fits.
-build : List(Setting), Str -> Try(Plan, Plan.Failure)
-build = |settings, name| {
-	plugin = Nixos.plugin(project, settings)
-	args = [{ name: "action", value: Present("build") }]
-		.append({ name: "machine", value: Many([name]) })
+# The plan of `kai machine ACTION web` on a host of `system`, after the
+# implementation fits.
+planned : Str, Str -> Try(Plan, Plan.Failure)
+planned = |action, system| {
+	plugin = Nixos.plugin(project, [Machine("web", web)])
+	args = [{ name: "action", value: Present(action) }]
+		.append({ name: "machine", value: Many(["web"]) })
 	found = plugin.implementations
 		.first()
 		.map_err(|_| Plan.fail("no implementation"))?
 	(found.fit)(args).map_err(Plan.fail)?
-	(found.plan)({ ..context, args, lock: published(project) })
+	lock = published(project)
+	(found.plan)({ ..context, args, host: { system: system }, lock })
 }
 
 # Whether machine web's rendered lines, trimmed, hold `expected` in order.
@@ -561,14 +661,92 @@ problems_of = |settings|
 expect {
 	toplevel = "nixosConfigurations.web.config.system.build.toplevel"
 	outputs = NixosBackend.outputs([Nixos.machine("web", web)], "/project")
-	match build([Machine("web", web)], "web").map_ok(|plan| plan.steps) {
+	match planned("build", "x86_64-linux").map_ok(|plan| plan.steps) {
 		Ok([CheckSource(checked), Write([flake, ..]), Run({ argv, output, .. })]) =>
 			checked == "/project/nixos/web.nix"
 				and flake.contents.contains(outputs)
 				and argv.last() == Ok("path:/generated/nix#${toplevel}")
+				and argv.contains("--no-link")
 				and output == Artifact({ name: "web", label: toplevel, output: "out" })
 		_ => Bool.False
 	}
+}
+
+# Run steps' argv, in order.
+argvs : List(Plan.Step) -> List(List(Str))
+argvs = |steps|
+	steps.keep_oks(
+		|step|
+			match step {
+				Run({ argv, .. }) => Ok(argv)
+				_ => Err({})
+			},
+	)
+
+# A switch checks the host first, builds as `build` does but leaves an
+# out-link, confirms, then sets the system profile to it and activates it as
+# root. The whole plan is known up front, so --dry-run prints all of it.
+expect {
+	activate = ["sudo", "${Nixos.profile}/bin/switch-to-configuration", "switch"]
+	link = "/work/machines/web"
+	set = ["sudo", "nix", "build", "--no-link", "--profile", Nixos.profile, link]
+	plan = planned("switch", "x86_64-linux")
+	done = plan.map_ok(|p| p.next) == Ok(Done)
+	match plan.map_ok(|p| p.steps) {
+		Ok([Run(check), _, _, Run(built), Confirm(prompt), .. as rest]) =>
+			done
+				and check.argv == Nixos.host_check("switch", Nixos.machine("web", web))
+				and built.argv.contains("--out-link")
+				and built.argv.contains(link)
+				and !built.argv.contains("--no-link")
+				and prompt.starts_with("Switch this host to machine web,")
+				and argvs(rest) == [set, activate]
+		_ => Bool.False
+	}
+}
+
+# A rollback checks the host and confirms before rolling the profile back and
+# activating it; generations only lists, with nothing to confirm or run as
+# root.
+expect {
+	activate = ["sudo", "${Nixos.profile}/bin/switch-to-configuration", "switch"]
+	back = ["sudo", "nix", "profile", "rollback", "--profile", Nixos.profile]
+	rolled_back = match planned("rollback", "x86_64-linux") {
+		Ok({ steps: [Run(check), Confirm(_), .. as rest], next: Done }) =>
+			check.argv == Nixos.host_check("rollback", Nixos.machine("web", web))
+				and argvs(rest) == [back, activate]
+		_ => Bool.False
+	}
+	listed = match planned("generations", "x86_64-linux") {
+		Ok({ steps: [Run(_), Run({ argv, .. })], next: Done }) =>
+			argv == ["nixos-rebuild", "list-generations"]
+		_ => Bool.False
+	}
+	rolled_back and listed
+}
+
+# Each refuses a host of another system before planning anything, and checks
+# the host's name, the machine's HostName, as it runs: the names and the
+# message are the script's arguments, never part of it.
+expect {
+	other = |action|
+		match planned(action, "aarch64-linux") {
+			Err({ message, .. }) =>
+				message
+					== "machine web is x86_64-linux, but this host is aarch64-linux: "
+						.concat(Nixos.local_only(action, Nixos.machine("web", web)))
+			Ok(_) => Bool.False
+		}
+	www = Nixos.machine("web", web.append(HostName("www")))
+	checked = match Nixos.host_check("switch", www) {
+		["sh", "-c", script, "sh", "www", why] =>
+			!script.contains("www")
+				and why
+					== "kai machine switch acts on the host it runs on; run it on www, "
+						.concat("or use kai deploy for another host")
+		_ => Bool.False
+	}
+	["switch", "rollback", "generations"].all(other) and checked
 }
 
 # A machine is nixosSystem of the default source: one module of its typed

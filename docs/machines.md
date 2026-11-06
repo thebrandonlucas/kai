@@ -113,10 +113,51 @@ A system needs a root file system and a boot loader, which come from a module
 such as the `hardware-configuration.nix` that `nixos-generate-config` writes;
 see [examples/machines](../examples/machines).
 
+### Switching this host
+
+`kai machine switch NAME`, `rollback NAME` and `generations NAME` act on the
+host kai runs on, which must be the machine: kai refuses a host of another
+system than the machine's `System` before planning, and the plan's first step
+checks that `uname -n` is the machine's `HostName`, failing otherwise. To
+change another host, run kai there; `kai deploy`, for remote hosts, comes
+next.
+
+`kai machine switch NAME` builds the system as `build` does, leaving an
+out-link at `.kai/machines/NAME`, then asks for confirmation and runs
+
+```sh
+sudo nix build --no-link --profile /nix/var/nix/profiles/system .kai/machines/NAME
+sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
+```
+
+which does what `nixos-rebuild switch` does once it has built: the system
+becomes a new generation of the system profile (already built, it is only
+recorded), is activated, restarting the services that changed, and is the
+boot default. The build runs as you; only
+these two commands run as root, through `sudo`. Switching the system that was
+just built, rather than having `nixos-rebuild` evaluate the flake again,
+means what kai printed is what runs.
+
+`kai machine rollback NAME` asks, then switches back to the previous
+generation:
+
+```sh
+sudo nix profile rollback --profile /nix/var/nix/profiles/system
+sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
+```
+
+`kai machine generations NAME` lists the system generations with
+`nixos-rebuild list-generations`, which needs no root and, unlike `nix
+profile history`, shows each generation's NixOS version and kernel.
+
+Switch and rollback ask before changing the system, so they need a terminal
+or `--yes`. A rollback changes only the host, not `.kai/lock.json`: the next
+switch builds from the lock again. `kai --dry-run machine switch NAME` prints the whole plan, the host
+check, the build and the confirmation included, and runs none of it.
+
 ## Not yet
 
-Switching a machine (`kai machine switch`, `rollback`, `generations`),
-deploying to a remote host, services from the project's own builds, secrets,
+Deploying to a remote host, services from the project's own builds, secrets,
 disks and installation, and images come next; see
 [#288](https://github.com/thebrandonlucas/kai/issues/288). Guix System is
 not planned yet, though only `Modules` in the settings is Nix-specific.

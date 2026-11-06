@@ -189,6 +189,7 @@ Std.build_flake_output(project, ctx, {
 	attribute: "nixosConfigurations.web.config.system.build.toplevel",
 	name: "web",
 	description: "machine build web",
+	out_link: "",
 })
 ```
 
@@ -196,7 +197,9 @@ plans what std plans for its own commands, from the same lock and with the
 same failures (`missing_lock`, `stale_lock`, `invalid_lock`): it writes
 `flake.nix`, with `outputs` added at the end of its outputs, and `flake.lock`,
 then runs `nix build --no-link --print-out-paths --impure` of `attribute`, an
-`Artifact` whose store path kai prints, naming it `name`. `outputs` is Nix
+`Artifact` whose store path kai prints, naming it `name`. A non-empty
+`out_link` replaces `--no-link` with `--out-link out_link`, a path the steps
+after the build can name, such as one in the workspace. `outputs` is Nix
 attribute definitions, which see `inputs`, `self` and `environmentsFor
 system`, the definition of each of `environments`: a function from extra
 `mkShell` attributes to the environment's shell. They may not use the names
