@@ -346,9 +346,10 @@ project = [
 kaifile = Kaifile.new([Std.plugin(project), Guix.plugin(project, [])])
 ```
 
-The guix plugin URL is the plugin bundled for your kai's release:
-`kai bundle-plugin plugins/guix` in a checkout of that release makes it, to
-host as [docs/plugin.md](docs/plugin.md#publishing-a-plugin) describes.
+Each Kai release after 0.0.11 publishes the guix plugin bundled against its
+own platform and std, as `guix-<hash>.tar.zst`. The release's notes give the
+`guix:` line to add to the header, beside the `pf` and `std` lines of the
+same release, and `plugins/guix-release` in its source records the URL.
 
 Guix is used when Nix is not installed, or when the environment's tools come
 from a `GuixPackages` source. `kai shell` and `kai run` run `guix
@@ -437,7 +438,10 @@ lock's direct pins nor the machine's programs. See
 The sbom plugin, `plugins/sbom`, writes a release's SBOMs from the same
 settings and lock: SPDX 3.0.1, SPDX 2.3 and CycloneDX 1.7 sidecars of a
 release file and an evidence manifest, from a composition the maintainer
-reviews. Add it beside std:
+reviews. Add it to Kaifile.roc's header with the `sbom:` line from the
+release's notes (each release after 0.0.11 publishes the plugin as
+`sbom-<hash>.tar.zst`, and `plugins/sbom-release` records its URL), and to
+its plugins beside std:
 
 ```roc
 kaifile = Kaifile.new([Std.plugin(project), Sbom.plugin(project)])

@@ -1,6 +1,7 @@
 # `kai bundle-plugin`: a plugin package bundled with `roc bundle` for this
-# kai's release, as the Kaifile.roc's kai-std build bundles std, so a
-# Kaifile.roc can name it by the URL it is hosted at.
+# kai's release, or other platform and std releases, as the Kaifile.roc's
+# kai-std build bundles std, so a Kaifile.roc can name it by the URL it is
+# hosted at.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -11,19 +12,24 @@ import "../plugins/std-release" as std_release : Str
 import Load
 
 PluginBundle := [].{
+	# The platform and std releases this kai uses, which a bundle names unless
+	# told otherwise.
+	released = { pf: platform_release.trim(), std: std_release.trim() }
+
 	# Bundle the package in directory `plugin` into directory `output`, both
-	# absolute, and return the bundle's path.
-	create! : Str, Str => Try(Str, _)
-	create! = |plugin, output| {
+	# absolute, its header naming the platform and std `releases`, and return
+	# the bundle's path.
+	create! : Str, Str, { pf : Str, std : Str } => Try(Str, _)
+	create! = |plugin, output, releases| {
 		temporary = Env.create_temp_dir_with_prefix!("kai-bundle-")?.to_str()?
-		result = PluginBundle.staged!(plugin, output, "${temporary}/plugin")
+		result = PluginBundle.staged!(plugin, output, "${temporary}/plugin", releases)
 		_ = Load.path(temporary).delete_all!()
 		result
 	}
 
 	# Rewrite a copy's headers and bundle every file in it, main.roc first and
 	# the rest sorted; earlier bundles in the directory are left out.
-	staged! = |plugin, output, staging| {
+	staged! = |plugin, output, staging, releases| {
 		Load.path(plugin).copy_dir!(Load.path(staging))?
 		listed = Cmd.new("find").args([".", "-type", "f"])
 			.cwd(Load.path(staging))
@@ -38,7 +44,7 @@ PluginBundle := [].{
 		for file in files.keep_if(|file| file.ends_with("/main.roc")) {
 			path = Load.path("${staging}/${file}")
 			text = path.read_utf8!()?
-			match PluginBundle.header(text) {
+			match PluginBundle.header(text, releases) {
 				Ok(rewritten) => path.write_utf8!(rewritten)?
 				Err(NoPlatformReference) if file == "./main.roc" =>
 					return Err(NoPlatformReference("${plugin}/main.roc"))
@@ -65,17 +71,17 @@ PluginBundle := [].{
 		Ok("${output}/${name}")
 	}
 
-	# A package header, up to its first `}`, naming this kai's releases: a
+	# A package header, up to its first `}`, naming the `releases`: a
 	# `platform "…"` and an api.roc path (std's packages reach the platform's
 	# modules through api.roc) become the platform release, and `std: "…"`
 	# the std release. A header naming no platform is refused.
-	header : Str -> Try(Str, [NoPlatformReference])
-	header = |text| {
+	header : Str, { pf : Str, std : Str } -> Try(Str, [NoPlatformReference])
+	header = |text, releases| {
 		(head, body) = match text.split_first("}") {
 			Ok({ before, after }) => (before, "}${after}")
 			Err(_) => (text, "")
 		}
-		release = platform_release.trim()
+		release = releases.pf
 		var $pieces = []
 		var $quoted = Bool.False
 		var $found = Bool.False
@@ -90,7 +96,7 @@ PluginBundle := [].{
 				$pieces = $pieces.drop_last(1).concat([before.concat("platform "), release])
 				$found = Bool.True
 			} else if before.ends_with("std: ") {
-				$pieces = $pieces.append(std_release.trim())
+				$pieces = $pieces.append(releases.std)
 			} else {
 				$pieces = $pieces.append(piece)
 			}
@@ -104,7 +110,9 @@ PluginBundle := [].{
 	}
 }
 
-# The platform and std become this kai's releases; local packages stay.
+releases = { pf: "https://h/v1/P.tar.zst", std: "https://h/v1/std-S.tar.zst" }
+
+# The platform and std become the releases; local packages stay.
 expect {
 	text =
 		\\package [Deploy] {
@@ -117,21 +125,28 @@ expect {
 		\\
 	expected =
 		\\package [Deploy] {
-		\\	pf: platform "${platform_release.trim()}",
-		\\	std: "${std_release.trim()}",
+		\\	pf: platform "https://h/v1/P.tar.zst",
+		\\	std: "https://h/v1/std-S.tar.zst",
 		\\	local: "local/main.roc",
 		\\}
 		\\
 		\\x = "std: "
 		\\
-	PluginBundle.header(text) == Ok(expected)
+	PluginBundle.header(text, releases) == Ok(expected)
 }
 
 # std's packages name the platform through api.roc.
 expect
-	PluginBundle.header("package [M] { api: \"../../platform/api.roc\" }\n")
-		== Ok("package [M] { api: platform \"${platform_release.trim()}\" }\n")
+	PluginBundle.header(
+		"package [M] { api: \"../../platform/api.roc\" }\n",
+		releases,
+	)
+		== Ok("package [M] { api: platform \"https://h/v1/P.tar.zst\" }\n")
 
 # A header without a platform is refused.
-expect PluginBundle.header("package [M] { model: \"m/main.roc\" }")
+expect PluginBundle.header("package [M] { model: \"m/main.roc\" }", releases)
 	== Err(NoPlatformReference)
+
+# By default a bundle names this kai's releases.
+expect PluginBundle.released.pf == platform_release.trim()
+	and PluginBundle.released.std == std_release.trim()

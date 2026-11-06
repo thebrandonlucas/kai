@@ -236,7 +236,21 @@ same release names it:
 	deploy: "https://example.com/v0.0.8/deploy-<hash>.tar.zst",
 ```
 
-Bundle again for each Kai release.
+Bundle again for each Kai release. `--platform URL` and `--std URL` point
+the header at other hosted platform and std bundles instead, such as those
+of a newer release than this kai's; Roc downloads them, so they must be
+hosted (or already in Roc's cache).
+
+The plugins in Kai's own `plugins/` directory are not bundled this way:
+each release publishes them, bundled against its own platform and std, as
+`<name>-<hash>.tar.zst`, its release notes give each one's header line,
+and `plugins/<name>-release` records each URL (see
+[RELEASE.md](RELEASE.md#release-another-plugin)). In a checkout whose std
+differs from the last release, `kai bundle-plugin plugins/guix` would
+point the plugin at that release's std, which it may no longer build
+against; `kai build kai-guix` (or `kai-std`, `kai-sbom`) instead builds the
+bundle this checkout would release, against this checkout's platform and
+std bundles.
 
 ## Testing
 

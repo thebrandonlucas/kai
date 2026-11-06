@@ -1,5 +1,5 @@
-# The platform and std bundles Kai releases, as Kaifile.roc builds them: each
-# is <hash>.tar.zst beside its unpacked <hash>/.
+# The platform and plugin bundles Kai releases, as Kaifile.roc builds them:
+# each is <hash>.tar.zst beside its unpacked <hash>/.
 import pf.Path
 
 import Exec
@@ -40,5 +40,9 @@ Bundles := [].{
 
 	# The platform bundle.
 	platform! = || Bundles.bundle!("kai-platform")
+
+	# The bundle of plugin `name`, other than std, which names the platform
+	# and std bundles.
+	plugin! = |name| Bundles.bundle!("kai-${name}")
 
 }

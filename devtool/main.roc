@@ -167,9 +167,29 @@ generate_checksums! = |root, dist, archive_names| {
 	}
 }
 
-# A release publishes the platform and std bundles their recorded URLs name,
-# so the URLs cannot go stale.
-check_bundle_urls! = |version, pf_bundle, std_bundle| {
+# The plugins/ directories other than std, which Release.plugins must list
+# for a release to bundle them.
+check_plugin_list! = || {
+	var $found = []
+	for entry in Path.list!(Path.utf8("plugins"))? {
+		name = Path.display(Path.filename(entry) ?? entry)
+		if Path.is_dir!(entry)? and name != "std" {
+			$found = $found.append(name)
+		}
+	}
+	unlisted = $found.keep_if(|name| !Release.plugins.contains(name))
+	missing = Release.plugins.keep_if(|name| !$found.contains(name))
+	if unlisted.is_empty() and missing.is_empty() {
+		Ok({})
+	} else {
+		Err(UnlistedPlugins({ unlisted, missing }))
+	}
+}
+
+# The bundles a release publishes, the platform's, std's and then each
+# plugin's in Release.plugins' order, with the URLs they are published at.
+# Each must be the URL its file records, so the URLs cannot go stale.
+release_bundles! = |version| {
 	origin = Exec.output!(
 		Exec.cmd("git")
 			.args(Exec.strs(["config", "--get", "remote.origin.url"])),
@@ -180,30 +200,50 @@ check_bundle_urls! = |version, pf_bundle, std_bundle| {
 		Ok(repo) => "${repo.owner}/${repo.repository}"
 		Err(_) => return Err(UnsupportedReleaseOrigin(origin))
 	}
-	for (file, expected) in [
-		(
-			Release.platform_file,
-			Release.platform_url(repository, version, pf_bundle.hash),
-		),
-		(Release.std_file, Release.std_url(repository, version, std_bundle.hash)),
-	] {
-		recorded = Path.read_utf8!(Path.utf8(file))?.trim()
-		if recorded != expected {
-			return Err(StaleBundleUrl({ file, expected, recorded }))
+	pf_bundle = Bundles.platform!()?
+	std_bundle = Bundles.bundle!("kai-std")?
+	var $bundles = [
+		{
+			file: Release.platform_file,
+			asset: "${pf_bundle.hash}.tar.zst",
+			archive: pf_bundle.archive,
+			url: Release.platform_url(repository, version, pf_bundle.hash),
+		},
+		{
+			file: Release.std_file,
+			asset: "std-${std_bundle.hash}.tar.zst",
+			archive: std_bundle.archive,
+			url: Release.std_url(repository, version, std_bundle.hash),
+		},
+	]
+	for plugin in Release.plugins {
+		built = Bundles.plugin!(plugin)?
+		$bundles = $bundles.append({
+			file: Release.plugin_file(plugin),
+			asset: "${plugin}-${built.hash}.tar.zst",
+			archive: built.archive,
+			url: Release.plugin_url(repository, version, plugin, built.hash),
+		})
+	}
+	for bundle in $bundles {
+		recorded = (Path.read_utf8!(Path.utf8(bundle.file)) ?? "").trim()
+		if recorded != bundle.url {
+			return Err(
+				StaleBundleUrl({ file: bundle.file, expected: bundle.url, recorded }),
+			)
 		}
 	}
-	Ok({})
+	Ok($bundles)
 }
 
 build_release_stage! = |root, dist, workspace, version| {
-	Stdout.line!("Building the Kai platform and std bundles with Kai...")?
-	pf_bundle = Bundles.platform!()?
-	std_bundle = Bundles.bundle!("kai-std")?
-	check_bundle_urls!(version, pf_bundle, std_bundle)?
-	bundles = ["${pf_bundle.hash}.tar.zst", "std-${std_bundle.hash}.tar.zst"]
-	copy_file!(pf_bundle.archive, Path.join(dist, "${pf_bundle.hash}.tar.zst"))?
-	std_asset = "std-${std_bundle.hash}.tar.zst"
-	copy_file!(std_bundle.archive, Path.join(dist, std_asset))?
+	check_plugin_list!()?
+	Stdout.line!("Building the Kai platform and plugin bundles with Kai...")?
+	built = release_bundles!(version)?
+	for bundle in built {
+		copy_file!(bundle.archive, Path.join(dist, bundle.asset))?
+	}
+	bundles = built.map(|bundle| bundle.asset)
 	copy_file!(Path.utf8(Release.installer), Path.join(dist, Release.installer))?
 
 	systems = Release.release_systems(

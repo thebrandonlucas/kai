@@ -9,6 +9,9 @@ Release := [].{
 
 		## The Roc bundles a release publishes, by asset name.
 		bundles : List(Str),
+
+		## What the release notes start with, before GitHub's generated notes.
+		notes : Str,
 		systems : List(Str),
 		tag_name : Str,
 		target_commit : Str,
@@ -16,6 +19,7 @@ Release := [].{
 	MergedRelease : {
 		assets : List(Str),
 		name : Str,
+		notes : Str,
 		tag_name : Str,
 		target_commit : Str,
 		version : Str,
@@ -262,6 +266,7 @@ Release := [].{
 					input.bundles,
 				),
 				name: input.name,
+				notes: input.notes,
 				tag_name: input.tag_name,
 				target_commit: input.target_commit,
 				version: input.canonical_version,
@@ -275,34 +280,44 @@ Release := [].{
 	# The file recording the released std bundle's URL.
 	std_file = "plugins/std-release"
 
+	# The plugins under plugins/ other than std that a release bundles, each
+	# against the release's own platform and std bundles: Kaifile.roc's
+	# kai-NAME build makes the bundle, and plugin_file(NAME) records its URL.
+	# A release build refuses a plugins/ directory this list leaves out.
+	plugins = ["guix", "sbom"]
+
+	# The file recording the URL a release publishes plugin `name`'s bundle at.
+	plugin_file : Str -> Str
+	plugin_file = |name| "plugins/${name}-release"
+
+	# The files recording the URLs of the bundles a release publishes.
+	url_files = [Release.platform_file, Release.std_file]
+		.concat(Release.plugins.map(Release.plugin_file))
+
 	# A copy of the release's SHA256SUMS, from which flake.nix packages the
 	# release archives.
 	checksums_file = "RELEASE_SHA256SUMS"
 
-	release_files = [
-		"build.zig.zon",
-		Release.platform_file,
-		Release.std_file,
-		Release.checksums_file,
-		"RELEASE_NAME",
-		"VERSION",
-	]
+	release_files = ["build.zig.zon"]
+		.concat(Release.url_files)
+		.concat([Release.checksums_file, "RELEASE_NAME", "VERSION"])
 
 	# A new version changes VERSION and its build.zig.zon mirror together; a
 	# release of the committed, never released version changes only its name.
-	# Either way the bundle URLs, and so the checksums, change.
+	# Either way the bundle URLs, and so the checksums, change; a plugin's
+	# first release adds its URL file.
 	are_allowed_release_files : List(Str) -> Bool
 	are_allowed_release_files = |files| {
 		bumped = files.contains("VERSION") and files.contains("build.zig.zon")
 		kept = !files.contains("VERSION") and !files.contains("build.zig.zon")
 		renamed = files.contains("RELEASE_NAME")
-		expected_length = 3 + (if (bumped) 2 else 0) + (if (renamed) 1 else 0)
+		required = Release.url_files.append(Release.checksums_file)
+		expected_length =
+			required.len() + (if (bumped) 2 else 0) + (if (renamed) 1 else 0)
 		(bumped or (kept and renamed)) and
-			files.contains(Release.platform_file) and
-				files.contains(Release.std_file) and
-					files.contains(Release.checksums_file) and
-						files.len() == expected_length and
-							List.all(files, |file| Release.release_files.contains(file))
+			List.all(required, |file| files.contains(file)) and
+				files.len() == expected_length and
+					List.all(files, |file| Release.release_files.contains(file))
 	}
 
 	manifest_version :
@@ -415,11 +430,67 @@ Release := [].{
 		"https://github.com/${repository}/releases/download/"
 			.concat("v${version}/${hash}.tar.zst")
 
-	# Roc tells packages apart by URL minus version and hash, so the std
-	# bundle's asset name carries a prefix.
+	# Roc tells packages apart by URL minus version and hash, so a plugin
+	# bundle's asset name, std's included, starts with the plugin's name.
+	plugin_url : Str, Str, Str, Str -> Str
+	plugin_url = |repository, version, name, hash|
+		Release.platform_url(repository, version, "${name}-${hash}")
+
 	std_url : Str, Str, Str -> Str
 	std_url = |repository, version, hash|
-		Release.platform_url(repository, version, "std-${hash}")
+		Release.plugin_url(repository, version, "std", hash)
+
+	# The asset name in a recorded URL of plugin `name`'s bundle, for this
+	# repository and version.
+	plugin_asset : Str, Str, Str, Str -> Try(Str, [UnexpectedPluginUrl(Str)])
+	plugin_asset = |url, repository, version, name| {
+		asset = url.split_on("/").last() ?? ""
+		hash = asset.drop_prefix("${name}-").drop_suffix(".tar.zst")
+		expected = Release.plugin_url(repository, version, name, hash)
+		if !hash.is_empty() and expected == url {
+			Ok(asset)
+		} else {
+			Err(UnexpectedPluginUrl(url))
+		}
+	}
+
+	# What a release's notes start with, before the notes GitHub generates:
+	# the Kaifile.roc header naming its platform and std, and the line that
+	# adds each plugin it bundles, as (name, URL).
+	Notes : {
+		repository : Str,
+		pf : Str,
+		std : Str,
+		plugin_urls : List((Str, Str)),
+	}
+
+	notes : Notes -> Str
+	notes = |{ repository, pf, std, plugin_urls }| {
+		readme = "https://github.com/${repository}#guix"
+		Str.join_with(
+			[
+				"## Using this release",
+				"",
+				"A `Kaifile.roc` on this release starts with:",
+				"",
+				"```roc",
+				"app [kaifile] {",
+				"\tpf: platform \"${pf}\",",
+				"\tstd: \"${std}\",",
+				"}",
+				"```",
+				"",
+				"To use [Guix](${readme}), or another plugin released with it, add "
+					.concat("the plugin's line to that header, and the plugin to ")
+					.concat("`Kaifile.new` as the README describes:"),
+				"",
+				"```roc",
+			]
+				.concat(plugin_urls.map(|(name, url)| "\t${name}: \"${url}\","))
+				.concat(["```", ""]),
+			"\n",
+		)
+	}
 
 	# The bundle hash in a recorded URL for this repository and version.
 	platform_hash : Str, Str, Str -> Try(Str, [UnexpectedPlatformUrl(Str)])
@@ -480,7 +551,7 @@ invalid_versions = [
 # A release changes the bundle URLs and either bumps the version or, for the
 # committed, never released version, only renames it.
 expect {
-	urls = [Release.platform_file, Release.std_file, Release.checksums_file]
+	urls = Release.url_files.append(Release.checksums_file)
 	bump = ["VERSION", "build.zig.zon"]
 	allowed = |files| Release.are_allowed_release_files(urls.concat(files))
 	allowed(bump)
@@ -489,9 +560,35 @@ expect {
 		and !allowed([])
 		and !allowed(["VERSION", "RELEASE_NAME"])
 		and !allowed(["RELEASE_NAME", "README.md"])
+		and !Release.are_allowed_release_files(Release.url_files.concat(bump))
 		and !Release.are_allowed_release_files(
-			[Release.platform_file, Release.std_file].concat(bump),
+			urls.keep_if(|file| file != Release.plugin_file("guix")).concat(bump),
 		)
+}
+
+# Each plugin's bundle is named after it, std's included.
+expect {
+	url = Release.plugin_url("o/r", "1.2.3", "guix", "h")
+	url == "https://github.com/o/r/releases/download/v1.2.3/guix-h.tar.zst"
+		and Release.std_url("o/r", "1.2.3", "h") == url.replace_each("guix-", "std-")
+		and Release.plugin_asset(url, "o/r", "1.2.3", "guix") == Ok("guix-h.tar.zst")
+		and Release.plugin_asset(url, "o/r", "1.2.4", "guix")
+			== Err(UnexpectedPluginUrl(url))
+		and Release.plugin_asset(url, "o/r", "1.2.3", "sbom")
+			== Err(UnexpectedPluginUrl(url))
+}
+
+# The notes give the header and each plugin's line.
+expect {
+	notes = Release.notes({
+		repository: "o/r",
+		pf: "P",
+		std: "S",
+		plugin_urls: [("guix", "G"), ("sbom", "B")],
+	})
+	notes.contains("\tpf: platform \"P\",\n\tstd: \"S\",\n}")
+		and notes.contains("```roc\n\tguix: \"G\",\n\tsbom: \"B\",\n```")
+		and notes.contains("(https://github.com/o/r#guix)")
 }
 
 # A release publishes SHA256SUMS, and the archives, bundles and install script

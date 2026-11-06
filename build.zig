@@ -577,9 +577,15 @@ pub fn build(b: *std.Build) void {
     ci_step.dependOn(config_fixtures_step);
     build_release.step.dependOn(ci_step);
 
-    // One Kai build at a time, after those of the end-to-end tests.
+    // One Kai build at a time, after those of the end-to-end tests: the
+    // plugin bundles and CLI archives a release publishes.
     var previous_build: *std.Build.Step = e2e_step;
-    for ([_][]const u8{ "release-x86-64-linux", "release-aarch64-linux" }) |release| {
+    for ([_][]const u8{
+        "kai-guix",
+        "kai-sbom",
+        "release-x86-64-linux",
+        "release-aarch64-linux",
+    }) |release| {
         previous_build = &addCiCommand(
             b,
             ci_step,

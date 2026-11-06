@@ -319,10 +319,14 @@ PublishRelease := [].{
 		platform_url = Path.read_utf8!(Path.utf8(Release.platform_file))?.trim()
 		platform_hash = Release.platform_hash(platform_url, repository_name, version)?
 		std_url = Path.read_utf8!(Path.utf8(Release.std_file))?.trim()
-		std_asset = std_url.split_on("/").last() ?? ""
-		std_hash = std_asset.drop_prefix("std-").drop_suffix(".tar.zst")
-		if Release.std_url(repository_name, version, std_hash) != std_url {
-			return Err(UnexpectedStdUrl(std_url))
+		std_asset = Release.plugin_asset(std_url, repository_name, version, "std")?
+		var $plugins = []
+		var $plugin_assets = []
+		for plugin in Release.plugins {
+			url = Path.read_utf8!(Path.utf8(Release.plugin_file(plugin)))?.trim()
+			asset = Release.plugin_asset(url, repository_name, version, plugin)?
+			$plugins = $plugins.append((plugin, url))
+			$plugin_assets = $plugin_assets.append(asset)
 		}
 		systems = Release.release_systems(
 			Path.read_utf8!(Path.utf8(Release.systems_file))?,
@@ -339,7 +343,13 @@ PublishRelease := [].{
 			canonical_version: version,
 			manifest_version,
 			name,
-			bundles: ["${platform_hash}.tar.zst", std_asset],
+			bundles: ["${platform_hash}.tar.zst", std_asset].concat($plugin_assets),
+			notes: Release.notes({
+				repository: repository_name,
+				pf: platform_url,
+				std: std_url,
+				plugin_urls: $plugins,
+			}),
 			systems,
 			tag_name: "v${version}",
 			target_commit: target,

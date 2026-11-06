@@ -40,9 +40,10 @@ project = [
 kaifile = Kaifile.new([Std.plugin(project), Sbom.plugin(project)])
 ```
 
-The plugin URL is the plugin bundled for your kai's release:
-`kai bundle-plugin plugins/sbom` in a checkout of that release makes it
-(see [plugin.md](plugin.md#publishing-a-plugin)). `examples/sbom` is a
+The plugin URL is the `sbom:` line in your kai's release notes: each
+release after 0.0.11 publishes the sbom plugin bundled against its own
+platform and std, as `sbom-<hash>.tar.zst`, and `plugins/sbom-release` in
+its source records the URL. `examples/sbom` is a
 small project with a reviewed composition.
 
 ## Commands

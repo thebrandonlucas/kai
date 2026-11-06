@@ -44,6 +44,7 @@ GitHub := [].{
 		UnexpectedLightweightTag,
 	]
 	CreateReleaseRequest : {
+		body : Str,
 		draft : Bool,
 		generate_release_notes : Bool,
 		name : Str,
@@ -142,6 +143,7 @@ GitHub := [].{
 
 	create_release_request : Release.MergedRelease -> CreateReleaseRequest
 	create_release_request = |release| {
+		body: release.notes,
 		draft: Bool.True,
 		generate_release_notes: Bool.True,
 		name: release.name,
@@ -176,6 +178,7 @@ release = {
 		"kai-0.0.3-x86_64-linux.tar.gz",
 	],
 	name: "μοριων \"blue\" \\ path 🚀",
+	notes: "## Using this release",
 	tag_name: "v0.0.3",
 	target_commit: "0123456789abcdef0123456789abcdef01234567",
 	version: "0.0.3",

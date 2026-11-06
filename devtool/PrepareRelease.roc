@@ -152,25 +152,20 @@ PrepareRelease := [].{
 		}
 
 	verify_release_changes! = || {
-		changed = PrepareRelease.git_lines!(["diff", "--name-only"])?
-		untracked = PrepareRelease.git_lines!([
+		modified = PrepareRelease.git_lines!(["diff", "--name-only"])?
+		new_files = PrepareRelease.git_lines!([
 			"ls-files",
 			"--others",
 			"--exclude-standard",
 		])?
+		# A plugin's first release adds the file recording its URL.
+		added = new_files.keep_if(|file| Release.url_files.contains(file))
+		untracked = new_files.keep_if(|file| !added.contains(file))
+		changed = modified.concat(added)
 		if !Release.are_allowed_release_files(changed) or !untracked.is_empty() {
 			Err(UnexpectedReleaseFiles({ changed, untracked }))
 		} else {
-			PrepareRelease.git!([
-				"add",
-				"--",
-				"build.zig.zon",
-				Release.platform_file,
-				Release.std_file,
-				Release.checksums_file,
-				"RELEASE_NAME",
-				"VERSION",
-			])?
+			PrepareRelease.git!(["add", "--"].concat(changed))?
 			staged = PrepareRelease.git_lines!(["diff", "--cached", "--name-only"])?
 			unstaged = PrepareRelease.git_lines!(["diff", "--name-only"])?
 			if Release.are_allowed_release_files(staged) and unstaged.is_empty() {
@@ -190,14 +185,20 @@ PrepareRelease := [].{
 		Path.write_utf8!(Path.utf8("VERSION"), version)?
 		Path.write_utf8!(Path.utf8("RELEASE_NAME"), name)?
 		Path.write_utf8!(manifest_path, rewritten)?
-		# Record the URLs this release will publish the platform and std bundles
-		# at; the std bundle names the platform URL, so it is built after VERSION.
+		# Record the URLs this release will publish its bundles at; the std
+		# bundle names the platform URL, so it is built after VERSION, and the
+		# other plugins name both.
 		bundle = Bundles.platform!()?
 		url = Release.platform_url(repository, version, bundle.hash)
 		Path.write_utf8!(Path.utf8(Release.platform_file), "${url}\n")?
 		std = Bundles.bundle!("kai-std")?
 		std_url = Release.std_url(repository, version, std.hash)
 		Path.write_utf8!(Path.utf8(Release.std_file), "${std_url}\n")?
+		for plugin in Release.plugins {
+			built = Bundles.plugin!(plugin)?
+			plugin_url = Release.plugin_url(repository, version, plugin, built.hash)
+			Path.write_utf8!(Path.utf8(Release.plugin_file(plugin)), "${plugin_url}\n")?
+		}
 		Ok({})
 	}
 	build_release_branch! = |name, version, tag, branch, repository| {
