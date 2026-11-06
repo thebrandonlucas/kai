@@ -10,7 +10,8 @@ Release := [].{
 		## The Roc bundles a release publishes, by asset name.
 		bundles : List(Str),
 
-		## What the release notes start with, before GitHub's generated notes.
+		## The release notes: the changelog's section for the version, then how
+		## to use the release.
 		notes : Str,
 		systems : List(Str),
 		tag_name : Str,
@@ -298,20 +299,66 @@ Release := [].{
 	# release archives.
 	checksums_file = "RELEASE_SHA256SUMS"
 
-	release_files = ["build.zig.zon"]
+	# The changelog: a release moves its Unreleased entries under the new
+	# version, whose section becomes the GitHub release notes.
+	changelog_file = "CHANGELOG.md"
+
+	# The changelog with the Unreleased entries moved under a heading for the
+	# version, leaving Unreleased empty. A release refuses to ship none.
+	release_changelog :
+		Str, Str, Str -> Try(Str, [EmptyUnreleased, MissingUnreleased])
+	release_changelog = |changelog, version, date|
+		match changelog.split_on("\n## [Unreleased]\n") {
+			[before, after] => {
+				sections = after.split_on("\n## ")
+				entries = (sections.first() ?? "").trim()
+				has_entries = List.any(
+					entries.split_on("\n"),
+					|line| !line.trim().is_empty() and !line.starts_with("### "),
+				)
+				if !has_entries {
+					return Err(EmptyUnreleased)
+				}
+				released = "${before}\n## [Unreleased]\n\n"
+					.concat("## [${version}] - ${date}\n\n${entries}\n")
+				Ok(Str.join_with([released].concat(sections.drop_first(1)), "\n## "))
+			}
+			_ => Err(MissingUnreleased)
+		}
+
+	# The entries under a version's heading, which its release publishes as
+	# its notes.
+	changelog_section : Str, Str -> Try(Str, [MissingChangelogSection(Str)])
+	changelog_section = |changelog, version|
+		match changelog.split_on("\n## [${version}] - ") {
+			[_, after] => {
+				section = after.split_on("\n## ").first() ?? ""
+				entries = Str.join_with(section.split_on("\n").drop_first(1), "\n")
+				if entries.trim().is_empty() {
+					Err(MissingChangelogSection(version))
+				} else {
+					Ok(entries.trim())
+				}
+			}
+			_ => Err(MissingChangelogSection(version))
+		}
+
+	release_files = ["build.zig.zon", Release.changelog_file]
 		.concat(Release.url_files)
 		.concat([Release.checksums_file, "RELEASE_NAME", "VERSION"])
 
 	# A new version changes VERSION and its build.zig.zon mirror together; a
 	# release of the committed, never released version changes only its name.
-	# Either way the bundle URLs, and so the checksums, change; a plugin's
-	# first release adds its URL file.
+	# Either way the changelog, the bundle URLs and so the checksums change; a
+	# plugin's first release adds its URL file.
 	are_allowed_release_files : List(Str) -> Bool
 	are_allowed_release_files = |files| {
 		bumped = files.contains("VERSION") and files.contains("build.zig.zon")
 		kept = !files.contains("VERSION") and !files.contains("build.zig.zon")
 		renamed = files.contains("RELEASE_NAME")
-		required = Release.url_files.append(Release.checksums_file)
+		required = Release.url_files
+			.append(Release.checksums_file)
+			.append(Release.changelog_file)
 		expected_length =
 			required.len() + (if (bumped) 2 else 0) + (if (renamed) 1 else 0)
 		(bumped or (kept and renamed)) and
@@ -454,7 +501,7 @@ Release := [].{
 		}
 	}
 
-	# What a release's notes start with, before the notes GitHub generates:
+	# What a release's notes end with, after its section of the changelog:
 	# the Kaifile.roc header naming its platform and std, and the line that
 	# adds each plugin it bundles, as (name, URL).
 	Notes : {
@@ -548,10 +595,12 @@ invalid_versions = [
 	"1.2.3\n",
 ]
 
-# A release changes the bundle URLs and either bumps the version or, for the
-# committed, never released version, only renames it.
+# A release changes the changelog and bundle URLs and either bumps the version
+# or, for the committed, never released version, only renames it.
 expect {
-	urls = Release.url_files.append(Release.checksums_file)
+	urls = Release.url_files
+		.append(Release.checksums_file)
+		.append(Release.changelog_file)
 	bump = ["VERSION", "build.zig.zon"]
 	allowed = |files| Release.are_allowed_release_files(urls.concat(files))
 	allowed(bump)

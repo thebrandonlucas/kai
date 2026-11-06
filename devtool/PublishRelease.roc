@@ -313,6 +313,10 @@ PublishRelease := [].{
 
 		version = Path.read_utf8!(Path.utf8("VERSION"))?
 		name = Path.read_utf8!(Path.utf8("RELEASE_NAME"))?
+		changelog = Release.changelog_section(
+			Path.read_utf8!(Path.utf8(Release.changelog_file))?,
+			version,
+		)?
 		manifest = Path.read_utf8!(Path.utf8("build.zig.zon"))?
 		manifest_version =
 			Release.manifest_version(manifest) ? InvalidPublicationManifest
@@ -344,12 +348,14 @@ PublishRelease := [].{
 			manifest_version,
 			name,
 			bundles: ["${platform_hash}.tar.zst", std_asset].concat($plugin_assets),
-			notes: Release.notes({
-				repository: repository_name,
-				pf: platform_url,
-				std: std_url,
-				plugin_urls: $plugins,
-			}),
+			notes: "${changelog}\n\n".concat(
+				Release.notes({
+					repository: repository_name,
+					pf: platform_url,
+					std: std_url,
+					plugin_urls: $plugins,
+				}),
+			),
 			systems,
 			tag_name: "v${version}",
 			target_commit: target,
