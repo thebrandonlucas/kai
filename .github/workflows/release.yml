@@ -58,9 +58,107 @@ jobs:
         if: steps.systems.outputs.publish == 'true'
         run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+  # When RELEASE_SYSTEMS lists aarch64-darwin, cross-build the Apple Silicon
+  # archive on Linux as publish-release does, and check that it is the one
+  # release preparation recorded in RELEASE_SHA256SUMS, for the darwin job
+  # to run.
+  darwin-archive:
+    name: Build the aarch64-darwin archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      publish: ${{ steps.systems.outputs.publish }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check whether the release publishes aarch64-darwin
+        id: systems
+        run: |
+          if grep -qx aarch64-darwin RELEASE_SYSTEMS; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Nix
+        if: steps.systems.outputs.publish == 'true'
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Kai
+        if: steps.systems.outputs.publish == 'true'
+        uses: ./.github/actions/install-kai
+
+      - name: Build the archive
+        if: steps.systems.outputs.publish == 'true'
+        run: |
+          set -eu
+          archive="kai-$(cat VERSION)-aarch64-darwin.tar.gz"
+          mkdir darwin-archive
+          cp "$(kai build release-aarch64-darwin | tail -n 1)" "darwin-archive/$archive"
+          (cd darwin-archive && grep "  $archive\$" ../RELEASE_SHA256SUMS | sha256sum -c -)
+
+      - name: Upload the archive
+        if: steps.systems.outputs.publish == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: darwin-archive
+          path: darwin-archive
+          if-no-files-found: error
+
+  # Run that archive natively on Apple Silicon: its kai --version and a small
+  # Kaifile. publish-release refuses the archive unless this job reports the
+  # commit it verified, and publishes only an archive whose checksum is the
+  # one recorded, so the published archive is the one run here.
+  darwin:
+    name: Verify aarch64-darwin
+    needs: darwin-archive
+    runs-on: macos-14
+    timeout-minutes: 45
+    outputs:
+      verified-commit: ${{ steps.verified.outputs.commit }}
+
+    steps:
+      - name: Check out repository
+        if: needs.darwin-archive.outputs.publish == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        if: needs.darwin-archive.outputs.publish == 'true'
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download the archive
+        if: needs.darwin-archive.outputs.publish == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: darwin-archive
+          path: darwin-archive
+
+      - name: Unpack the recorded archive
+        if: needs.darwin-archive.outputs.publish == 'true'
+        run: |
+          set -eu
+          archive="kai-$(cat VERSION)-aarch64-darwin.tar.gz"
+          (cd darwin-archive && grep "  $archive\$" ../RELEASE_SHA256SUMS | shasum -a 256 -c -)
+          tar -xzf "darwin-archive/$archive" -C darwin-archive kai
+
+      - name: Check kai
+        if: needs.darwin-archive.outputs.publish == 'true'
+        uses: ./.github/actions/check-macos-kai
+        with:
+          kai: darwin-archive/kai
+
+      - name: Record the verified commit
+        id: verified
+        if: needs.darwin-archive.outputs.publish == 'true'
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   release:
     name: Publish release
-    needs: aarch64
+    needs: [aarch64, darwin]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
 
@@ -82,6 +180,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KAI_AARCH64_VERIFIED_COMMIT: ${{ needs.aarch64.outputs.verified-commit }}
+          KAI_AARCH64_DARWIN_VERIFIED_COMMIT: ${{ needs.darwin.outputs.verified-commit }}
         run: kai shell default -- zig build publish-release
 
       - name: Check that the flake installs the published release

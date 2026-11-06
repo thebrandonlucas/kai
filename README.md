@@ -28,7 +28,8 @@ The goal is to make using determinate systems so easy and powerful that they bec
 
 ## Installation
 
-Kai runs on Linux and needs
+Kai runs on Linux (x86_64 and aarch64) and on Apple Silicon macOS, whose
+releases start with 0.0.12, and needs
 [Nix with flakes enabled](https://nixos.org/download).
 
 Install the latest release into `~/.local/bin`:
@@ -99,7 +100,9 @@ changes it. `cache` (default `true`) caches `~/.cache/kai`, the direct
 backend's store and the Roc compiler Kai downloads, by the version, the
 runner's OS and architecture, and `.kai/lock.json`. `nix` (default `true`)
 installs Nix unless it is on `PATH`; set it to `false` for a project whose
-environments are all [pinned downloads](#running-without-nix-or-guix).
+environments are all [pinned downloads](#running-without-nix-or-guix). It runs
+on Linux runners, and on Apple Silicon macOS runners, such as `macos-14`, with a
+`version` from 0.0.12 on.
 
 ## Getting started
 
@@ -618,8 +621,9 @@ runs them), and `error` is one of these codes:
 
 ## Limits
 
-- Linux only. Kai runs on `x86_64-linux` and `aarch64-linux`, and generates
-  shells and builds for the system it runs on.
+- Kai runs on `x86_64-linux`, `aarch64-linux` and `aarch64-darwin` (Apple
+  Silicon macOS), and generates shells and builds for the system it runs on.
+  On macOS, `kai build` is not supported yet.
 - Services, deploy, images, ISOs and secrets are not in this version, and
   the old `Kaifile` format is not read. If you need them, stay on
   [v0.0.7](https://github.com/thebrandonlucas/kai/releases/tag/v0.0.7)

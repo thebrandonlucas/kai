@@ -595,6 +595,7 @@ pub fn build(b: *std.Build) void {
         "kai-sbom",
         "release-x86-64-linux",
         "release-aarch64-linux",
+        "release-aarch64-darwin",
     }) |release| {
         previous_build = &addCiCommand(
             b,

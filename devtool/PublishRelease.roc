@@ -335,11 +335,17 @@ PublishRelease := [].{
 		systems = Release.release_systems(
 			Path.read_utf8!(Path.utf8(Release.systems_file))?,
 		)?
-		# Only a passing native aarch64 CI run of this commit may publish its
-		# archive; release.yml passes that job's verified commit.
-		verified = Env.var_str!(OsStr.utf8(Release.aarch64_verified_env)) ?? ""
-		if systems.contains("aarch64-linux") and verified != target {
-			return Err(Aarch64Unverified(target))
+		# Only a passing native run of this commit on aarch64-linux or
+		# aarch64-darwin may publish that system's archive; release.yml passes
+		# the commit each job verified.
+		var $verified = []
+		for (_, env) in Release.verified_envs {
+			value = Env.var_str!(OsStr.utf8(env)) ?? ""
+			$verified = $verified.append((env, value))
+		}
+		unverified = Release.unverified_systems(systems, $verified, target)
+		if !unverified.is_empty() {
+			return Err(ArchivesUnverified({ commit: target, systems: unverified }))
 		}
 		release = Release.validate_publication({
 			branch_contains_target: Bool.True,

@@ -480,13 +480,45 @@ jobs:
       - name: Run Guix integration
         run: kai shell default -- zig build guix-integration
 
-  # Kai natively on Apple Silicon, nightly and on demand. No darwin release
-  # exists yet, so it builds kai from source, then checks a small Kaifile:
-  # update, run and shell work, and build refuses with the macOS message.
-  # Then it runs the tests in Kai's own dev shell.
+  # The Apple Silicon kai a release publishes, cross-built on Linux from
+  # Kaifile.roc, nightly and on demand, for the macos job to run.
+  kai-arm64mac:
+    name: build kai (aarch64-darwin)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Kai
+        uses: ./.github/actions/install-kai
+
+      - name: Cross-build kai
+        run: |
+          set -eu
+          kai build kai-arm64mac --out-link kai-arm64mac
+          file kai-arm64mac/kai
+
+      - name: Upload kai
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kai-arm64mac
+          path: kai-arm64mac/kai
+          if-no-files-found: error
+
+  # Kai natively on Apple Silicon, nightly and on demand: the cross-built kai
+  # checks a small Kaifile (update, run and shell work, and build refuses
+  # with the macOS message), then runs the tests in Kai's own dev shell.
   macos:
     name: macos (aarch64-darwin)
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: kai-arm64mac
     runs-on: macos-14
     timeout-minutes: 60
 
@@ -499,49 +531,20 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build kai
-        run: |
-          set -eu
-          nix shell "$(cat .roc-overlay)#$(cat .roc-version)" nixpkgs#zig_0_16 --command sh -c \
-            '(cd platform && zig build --release) && roc build cli/main.roc --output=kai'
+      - name: Download kai
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kai-arm64mac
+          path: macos-kai
 
-      - name: Check a Kaifile
-        run: |
-          set -eu
-          mkdir macos-check
-          cd macos-check
-          cat > Kaifile.roc <<'KAIFILE'
-          app [kaifile] {
-              pf: platform "../platform/main.roc",
-              std: "../plugins/std/main.roc",
-          }
+      # Artifacts lose the executable bit.
+      - name: Make kai executable
+        run: chmod 0755 macos-kai/kai
 
-          import std.Std
-
-          kaifile = Std.kaifile([
-              Name("macos-check"),
-              Systems(["aarch64-darwin"]),
-              Environment("cow", [Tools(["cowsay"])]),
-              Shell("default", [Use("cow")]),
-              Task("moo", [Use("cow"), Run(["cowsay", "moo"])]),
-              Build("note", [Use("cow"), Run(["sh", "-c", "echo moo > note"]), Output("note"), Files([])]),
-          ])
-          KAIFILE
-          ../kai check
-          ../kai update
-          ../kai run moo > run.log
-          cat run.log
-          grep -q moo run.log
-          ../kai shell default -- cowsay hello > shell.log
-          cat shell.log
-          grep -q hello shell.log
-          if ../kai build note > build.log 2>&1; then
-            cat build.log
-            echo "kai build should refuse on macOS"
-            exit 1
-          fi
-          cat build.log
-          grep -q macOS build.log
+      - name: Check kai
+        uses: ./.github/actions/check-macos-kai
+        with:
+          kai: macos-kai/kai
 
       # The kai built above is this checkout's, so the dev shell uses this
       # checkout's platform and std rather than the last release's bundles,
@@ -549,7 +552,6 @@ jobs:
       - name: Test in Kai's dev shell
         run: |
           set -eu
-          rm -rf macos-check
           perl -pi -e 's|pf: platform "[^"]*"|pf: platform "platform/main.roc"|' Kaifile.roc
           perl -pi -e 's|std: "[^"]*"|std: "plugins/std/main.roc"|' Kaifile.roc
-          ./kai shell default -- zig build test
+          macos-kai/kai shell default -- zig build test

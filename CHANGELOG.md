@@ -15,6 +15,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 - `RocPackages([url, ...])` in an `Environment` places the named Roc package bundles in Roc's package cache before a shell or task starts, so Roc does not download them.
 - `Systems([...])` accepts `x86_64-darwin` and `x86_64-windows`, served by the direct backend from downloads and `Expect`, and downloads can be zip archives.
 - A setup-kai GitHub Action, `thebrandonlucas/kai/.github/actions/setup-kai`, installs a given Kai release in CI with a download cache.
+- Releases publish an Apple Silicon macOS kai, `kai-X.Y.Z-aarch64-darwin.tar.gz`, run on a macOS runner before each release is published. `install.sh`, `nix run github:thebrandonlucas/kai` and the setup-kai action install it on Apple Silicon Macs and macOS runners. `kai build` is not supported on macOS yet.
 - For plugin authors: std exports `StdModel`, so a plugin with its own backend can implement `kai shell`, `run`, `build` and `workflow` from std's model.
 
 ### Changed

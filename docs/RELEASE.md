@@ -10,7 +10,7 @@ Kai releases use a protected release branch. Release preparation pushes only tha
 - `VERSION` is the canonical persisted semantic version used by Roc, Nix, artifacts, and release automation.
 - `RELEASE_NAME` owns the exact one-line release title, including custom or Unicode names. It is not another version source.
 - `build.zig.zon` contains Zig's required literal version mirror. Release automation updates it and validates exact agreement with `VERSION`.
-- `RELEASE_SYSTEMS` lists, one per line, the systems (`x86_64-linux`, `aarch64-linux`) a release publishes a CLI archive for; see [aarch64-linux archives](#aarch64-linux-archives).
+- `RELEASE_SYSTEMS` lists, one per line, the systems (`x86_64-linux`, `aarch64-linux`, `aarch64-darwin`) a release publishes a CLI archive for; see [aarch64-linux archives](#aarch64-linux-archives) and [aarch64-darwin archives](#aarch64-darwin-archives).
 - `platform-release` records the URL this release publishes the Kai platform bundle at, `https://github.com/OWNER/REPOSITORY/releases/download/vX.Y.Z/<hash>.tar.zst`, where `<hash>` is Roc's content hash of the bundle. `kai` embeds it and prints it in `kai --help` as the header a `Kaifile.roc` starts with.
 - `plugins/std-release` records the URL of the std plugin's bundle, `.../vX.Y.Z/std-<hash>.tar.zst`, which `kai` also embeds and prints. Each other plugin a release bundles, listed in `Release.plugins` in `devtool/Release.roc` (`guix` and `sbom`), has `plugins/<name>-release`, recording `.../vX.Y.Z/<name>-<hash>.tar.zst`. A Kaifile.roc names a plugin by that URL; `kai` does not embed these, and the release notes list them.
 - `CHANGELOG.md` records each release's changes for users, newest first, under `## [Unreleased]` until a release. Release preparation moves those entries under a `## [X.Y.Z] - YYYY-MM-DD` heading and refuses to start while Unreleased is empty, and publication starts the GitHub release notes with that section. Pull requests add the entries; see [rules.md](rules.md).
@@ -30,6 +30,7 @@ This runs `zig build ci` first. Artifacts are written to `dist/`. Checksums cove
 ```text
 dist/kai-X.Y.Z-x86_64-linux.tar.gz
 dist/kai-X.Y.Z-aarch64-linux.tar.gz   (only when RELEASE_SYSTEMS lists aarch64-linux)
+dist/kai-X.Y.Z-aarch64-darwin.tar.gz  (only when RELEASE_SYSTEMS lists aarch64-darwin)
 dist/<hash>.tar.zst
 dist/std-<hash>.tar.zst
 dist/guix-<hash>.tar.zst
@@ -40,7 +41,7 @@ dist/SHA256SUMS
 
 The build fails with `StaleBundleUrl` unless `platform-release`, `plugins/std-release` and each `plugins/<name>-release` name exactly the bundles just built, for the `origin` repository and `VERSION`, so a missing or stale URL file is refused. Any change to `platform` or a plugin changes its bundle's hash, and since each plugin's header names the platform and std URLs, a platform or std change changes every plugin's; `zig build release` rewrites the files. `zig build platform-bundle` builds the platform bundle into `zig-out/kai-platform` for inspection, and `kai build kai-std`, `kai build kai-guix` or `kai build kai-sbom` a plugin's, against the platform and std bundles of this checkout.
 
-Each archive contains only the `kai` binary. At runtime it needs Nix, and loads `Kaifile.roc` with the Roc compiler named in `.roc-version`: on `PATH`, as `ROC`, or else fetched with Nix; Roc downloads the platform bundle from the recorded URL. The x86_64 archive is checked by running `kai --version`; the aarch64 archive, cross-built on x86_64, is checked here only for its architecture.
+Each archive contains only the `kai` binary. At runtime it needs Nix, and loads `Kaifile.roc` with the Roc compiler named in `.roc-version`: on `PATH`, as `ROC`, or else fetched with Nix; Roc downloads the platform bundle from the recorded URL. The x86_64 archive is checked by running `kai --version`; the aarch64-linux and aarch64-darwin archives, cross-built on x86_64, are checked here only for their architecture, and the release workflow runs them natively before publishing.
 
 ## Release another plugin
 
@@ -58,6 +59,12 @@ aarch64-linux
 ```
 
 Remove the line to stop publishing it.
+
+## aarch64-darwin archives
+
+The Apple Silicon archive is cross-built on Linux like the others: `kai build kai-arm64mac` links kai for Roc's `arm64mac` target with a copy of the pinned Roc compiler and, beside it, the `darwin/` sysroot from Roc's macOS archive of the same nightly (the `roc-darwin` source in `Kaifile.roc`), since only that archive ships it. The linker signs the binary ad hoc, as macOS requires on Apple Silicon, so it is not stripped.
+
+The nightly `macos (aarch64-darwin)` job in `.github/workflows/ci.yml` runs that cross-built kai on a macOS runner. When `RELEASE_SYSTEMS` lists `aarch64-darwin`, the release workflow cross-builds the archive, checks that it matches `RELEASE_SHA256SUMS`, and runs it on a macOS runner: `kai --version`, then a small Kaifile that checks, updates, runs a task, enters a shell and has `kai build` refuse (the shared `.github/actions/check-macos-kai` action). `publish-release` refuses to publish unless `KAI_AARCH64_DARWIN_VERIFIED_COMMIT` names the release commit, which only that passing job provides, and it publishes only archives matching `RELEASE_SHA256SUMS`, so the published archive is the one that ran. Remove the `aarch64-darwin` line from `RELEASE_SYSTEMS` to stop publishing it.
 
 ## Prepare the protected release pull request
 
