@@ -444,6 +444,10 @@ pub fn build(b: *std.Build) void {
     test_guix.step.dependOn(check_step);
     test_step.dependOn(&test_guix.step);
 
+    const test_sbom = b.addSystemCommand(&.{ "roc", "test", "plugins/sbom/main.roc" });
+    test_sbom.step.dependOn(check_step);
+    test_step.dependOn(&test_sbom.step);
+
     const test_deploy = b.addSystemCommand(&.{ "roc", "test", "examples/plugins/deploy/main.roc" });
     test_deploy.step.dependOn(check_step);
     test_step.dependOn(&test_deploy.step);
