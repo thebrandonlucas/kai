@@ -439,7 +439,7 @@ Load := [].{
 				errors = Str.from_utf8_lossy(ran.stderr_bytes)
 				failure = KaifileFailed(
 					project.file,
-					out.concat(errors),
+					out.concat(errors).concat(Load.download_hint!(out.concat(errors))),
 					header_releases,
 				)
 				if ran.status == Exited(2) {
@@ -457,6 +457,32 @@ Load := [].{
 			Err(_) => Err(KaifileInvalid(project.file, header_releases))
 		}
 	}
+
+	# Roc downloads packages through Zig's resolver, whose resolv.conf parser
+	# fails on a last line with no newline, as Docker Desktop writes it, and
+	# Roc then reports only DownloadFailed. A workaround for
+	# https://codeberg.org/ziglang/zig/issues/36278 (a fix, closed unmerged:
+	# https://codeberg.org/ziglang/zig/pulls/36280); remove it once the
+	# pinned Roc is built with a Zig release that fixes it.
+	download_hint! : Str => Str
+	download_hint! = |output|
+		if output.contains("DownloadFailed") {
+			resolv_conf = Path.read_utf8!(Load.path("/etc/resolv.conf")) ?? ""
+			Load.download_hint(resolv_conf)
+		} else {
+			""
+		}
+
+	# The hint after Roc fails to download a package, given /etc/resolv.conf.
+	download_hint : Str -> Str
+	download_hint = |resolv_conf|
+		if !resolv_conf.is_empty() and !resolv_conf.ends_with("\n") {
+			"\nRoc cannot read /etc/resolv.conf, whose last line has no "
+				.concat("newline (https://codeberg.org/ziglang/zig/issues/36278); ")
+				.concat("end it with one, then run kai again")
+		} else {
+			"\nRoc could not download a package; check that curl can fetch its URL"
+		}
 
 	# The Kaifile compiled to a program in `directory`, compiled again only
 	# when its inputs changed. A record beside it names the program and the
@@ -685,6 +711,12 @@ expect {
 	searched = [at("/home/u/p", Bool.False), at("/home/u", Bool.True)]
 	Load.nearest(searched.append(at("/", Bool.False))) == Err(NoValue)
 }
+
+# After a failed download, a resolv.conf Roc cannot read, as Docker Desktop
+# writes it with a lone space after its last newline, is named.
+expect Load.download_hint("nameserver 192.0.2.1\n ").contains("resolv.conf")
+	and Load.download_hint("nameserver 192.0.2.1\n").contains("curl")
+	and Load.download_hint("").contains("curl")
 
 # An absolute --file is used as given.
 expect Load.resolve("/work", "/project/Kaifile.roc") == "/project/Kaifile.roc"

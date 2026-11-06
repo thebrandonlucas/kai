@@ -28,6 +28,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 - `install.sh` names a program it needs that is not on `PATH`, such as `tar`, instead of reporting that the release has no build for the system when `sed` is missing.
 - When `tar` or `chmod` is not on `PATH`, the direct backend names the missing program, as in "could not make jq executable: chmod is not on PATH", instead of saying only that it did not start.
 - When a `System` is interpolated into a URL, as in `"${prefix}${system}"`, the error on the URL's other string now says to interpolate `system.to_str()`. The README's direct backend example builds each system's download URL that way.
+- When Roc cannot download the platform or a package, Kai says so after Roc's `DownloadFailed`. When `/etc/resolv.conf`'s last line has no newline, as Docker Desktop writes it, which Roc cannot read, Kai names the file and says to end it with a newline.
 
 ## [0.0.11] - 2026-11-05
 
