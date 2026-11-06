@@ -47,6 +47,7 @@ Model := {
 				},
 			),
 			expected : List(Str),
+			roc_packages : List(Str),
 			on_systems : List(
 				{
 					systems : List(Str),
@@ -130,6 +131,9 @@ Model := {
 	## Overlay `overlay`'s own flake input `input` is package source `source`.
 	Follows : { overlay : Str, input : Str, source : Str }
 	Tool : { source : Str, name : Str }
+
+	## `roc_packages` are Roc package bundle URLs placed in Roc's package cache
+	## before a shell or task starts; the Fetch `roc-<hash>` pins each.
 	Environment : {
 		name : Str,
 		parents : List(Str),
@@ -141,6 +145,7 @@ Model := {
 		rust_toolchain : RustToolchain,
 		package_env : List(PackageVariable),
 		expected : List(Str),
+		roc_packages : List(Str),
 		on_systems : List(OnSystems),
 	}
 

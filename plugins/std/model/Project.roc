@@ -182,6 +182,27 @@ Project :: [].{
 		Ok("sha256-".concat(Str.from_utf8($encoded.append(last)) ?? "").concat("="))
 	}
 
+	## The content hash a Roc package bundle URL ends in, `<hash>.tar.zst`,
+	## which names the bundle's directory in Roc's package cache.
+	roc_package_hash : Str -> Try(Str, [NotRocPackage])
+	roc_package_hash = |ref| {
+		url = ref.drop_prefix("tarball+")
+		base58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+			.to_utf8()
+		hash = (url.split_on("/").last() ?? "").drop_suffix(".tar.zst")
+		bytes = hash.to_utf8()
+		if url.starts_with("https://") and url.ends_with("/${hash}.tar.zst") and
+			bytes.len() >= 32 and bytes.all(|byte| base58.contains(byte)) {
+			Ok(hash)
+		} else {
+			Err(NotRocPackage)
+		}
+	}
+
+	## The Fetch that pins a RocPackages bundle: `roc-<hash>`.
+	roc_package_fetch : Str -> Str
+	roc_package_fetch = |url| "roc-${roc_package_hash(url) ?? ""}"
+
 	## Lexical containment only; the executor must also reject escaping symlinks.
 	## Spaces are valid path bytes. Empty, dot and parent segments are not.
 	valid_output : Str -> Bool
@@ -690,6 +711,12 @@ Project :: [].{
 			if !environment.expected.is_empty() {
 				return Err("${sandboxed}: a sandbox has none of the programs it Expects")
 			}
+			if !environment.roc_packages.is_empty() {
+				return Err(
+					"${sandboxed}: RocPackages are for shells and tasks; "
+						.concat("give a build its bundles as Sources in Inputs"),
+				)
+			}
 			check_argv(build.run, build.name)?
 			check_env(build.env, "build ${build.name}")?
 			if !valid_output(build.output) {
@@ -1094,6 +1121,7 @@ Project :: [].{
 						own => own
 					},
 					expected: unique(base.expected.concat(env.expected)),
+					roc_packages: unique(base.roc_packages.concat(env.roc_packages)),
 					# The child's own variables override the parent's on every
 					# system, as its OnSystems override them on theirs.
 					on_systems: base.on_systems
@@ -1185,10 +1213,11 @@ Project :: [].{
 		)
 
 	## Whether an environment expects programs of the machine, or has a tool
-	## only the lock's direct section pins.
+	## or Roc package only the lock's direct section pins.
 	needs_direct : Model, Model.Environment -> Bool
 	needs_direct = |model, environment|
 		!environment.expected.is_empty()
+			or !environment.roc_packages.is_empty()
 			or environment_tools(environment).any(|t| locked_fetch(model, t.source))
 
 	## Whether only the direct backend serves an environment: it needs direct,
@@ -1295,6 +1324,7 @@ base = {
 	rust_toolchain: None,
 	expected: [],
 	package_env: [],
+	roc_packages: [],
 	on_systems: [],
 }
 
@@ -1313,6 +1343,7 @@ child = {
 	rust_toolchain: None,
 	expected: [],
 	package_env: [],
+	roc_packages: [],
 	on_systems: [],
 }
 
@@ -1333,6 +1364,7 @@ expect Project.validate(fixture([child, base])) == Project.validate(
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 		base,
@@ -1353,6 +1385,7 @@ expect match Project.validate(
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 		{
@@ -1366,6 +1399,7 @@ expect match Project.validate(
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 	]),
@@ -1384,6 +1418,7 @@ expect match Project.validate(
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 	]
@@ -1468,6 +1503,7 @@ expect {
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 			tools: [{ source: "guix", name: "git" }],
 		},
@@ -1521,6 +1557,7 @@ build_fixture = |builds| Model.{
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 	],
@@ -1875,6 +1912,7 @@ workflow_features = |workflows, features| Model.{
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 	],

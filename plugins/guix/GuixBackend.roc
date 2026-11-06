@@ -102,6 +102,9 @@ GuixBackend :: [].{
 		if !env.expected.is_empty() {
 			return Err("Expect needs Nix or the direct backend: environment ${name}")
 		}
+		if !env.roc_packages.is_empty() {
+			return Err("RocPackages needs Nix or direct: environment ${name}")
+		}
 		if !env.overlays.is_empty() {
 			return Err("Guix does not support overlays in environment ${name}")
 		}
@@ -933,6 +936,7 @@ env = |name, tools| {
 	rust_toolchain: None,
 	expected: [],
 	package_env: [],
+	roc_packages: [],
 	on_systems: [],
 }
 

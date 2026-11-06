@@ -44,6 +44,7 @@ NixBackend :: [].{
 		"fetch_unavailable",
 		"fetch_locked",
 		"expect",
+		"roc_packages",
 	]
 
 	default_nixpkgs : Str
@@ -375,22 +376,40 @@ NixBackend :: [].{
 	## `system`, which kai's store holds and a Realise links into the
 	## workspace, first on PATH, before the environment's own: sh puts them
 	## there. With no command, the shell kai was started from starts, as on
-	## direct. Without such tools, it is `command` unchanged.
+	## direct. Before it, sh places the environment's RocPackages bundles in
+	## Roc's package cache. Without either, it is `command` unchanged.
 	first_on_path : Model, Str, Str, Layout, List(Str) -> List(Str)
 	first_on_path = |project, name, system, layout, command| {
-		tools = project.environments.keep_if(|e| e.name == name)
-			.join_map(|e| Project.on_system(e, system).tools)
-		if !tools.any(|t| Project.locked_fetch(project, t.source)) {
+		environments = project.environments.keep_if(|e| e.name == name)
+		tools = environments.join_map(|e| Project.on_system(e, system).tools)
+		locked = tools.any(|t| Project.locked_fetch(project, t.source))
+		bundles = environments.any(|e| !e.roc_packages.is_empty())
+		if !locked and !bundles {
 			return command
 		}
 		bin = Project.downloads_bin(layout.workspace, name)
-		first = "PATH=\"$0:$PATH\" && exec "
+		place = if (bundles) place_roc_packages else ""
+		path = if (locked) "PATH=\"$0:$PATH\" && " else ""
+		first = "${place}${path}exec "
 		if command.is_empty() {
 			["sh", "-c", "${first}\"\${KAI_OPERATOR_SHELL:-/bin/sh}\"", bin]
 		} else {
 			["sh", "-c", "${first}\"$@\"", bin].concat(command)
 		}
 	}
+
+	## Copies each directory KAI_ROC_PACKAGES lists, named by its package's
+	## hash, into Roc's package cache unless the cache has it whole, staged
+	## beside it and renamed into place, as kai seeds the cache itself.
+	place_roc_packages : Str
+	place_roc_packages =
+		"cache=\"\${XDG_CACHE_HOME:-$HOME/.cache}/roc/packages\" && IFS=: && "
+			.concat("for tree in $KAI_ROC_PACKAGES; do hash=\"\${tree##*/}\" && ")
+			.concat("staging=\"$cache/$hash.$$.tmp\" && ")
+			.concat("{ [ -f \"$cache/$hash/main.roc\" ] || { ")
+			.concat("rm -rf \"$staging\" \"$cache/$hash\" && mkdir -p \"$staging\" && ")
+			.concat("cp -R \"$tree/.\" \"$staging\" && chmod -R u+w \"$staging\" && ")
+			.concat("mv \"$staging\" \"$cache/$hash\"; }; } || exit 1; done && ")
 
 	## A Pure environment's shells and tasks start from a clean environment,
 	## keeping only HOME, USER and TERM (as Guix's --pure does), the
@@ -1075,7 +1094,7 @@ NixBackend :: [].{
 		# mkShell exports `env` to its shells, and to tasks through kai-env-*.
 		computed = package_env_attrs(environment, fetches).concat(
 			system_attrs(environment, [], "sets.${quote(primary)}"),
-		)
+		).concat(roc_package_attrs(environment, fetches, primary))
 		env = ["          env = ${env_attrs(environment.env, computed)};"]
 		lines([
 			"        ${quote(environment.name)} = let",
@@ -1167,7 +1186,7 @@ NixBackend :: [].{
 		roc_packages = model.build_sources.keep_if(|s| build.inputs.contains(s.name))
 			.keep_oks(
 				|source|
-					roc_package_hash(source.ref).map_ok(
+					Project.roc_package_hash(source.ref).map_ok(
 						|hash| "{ name = ${quote(source.name)}; hash = ${quote(hash)}; }",
 					),
 			)
@@ -1301,23 +1320,6 @@ NixBackend :: [].{
 				"          '';",
 			]),
 		)
-	}
-
-	## The content hash a Roc package bundle URL ends in, `<hash>.tar.zst`,
-	## which names the bundle's directory in Roc's package cache.
-	roc_package_hash : Str -> Try(Str, [NotRocPackage])
-	roc_package_hash = |ref| {
-		url = ref.drop_prefix("tarball+")
-		base58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-			.to_utf8()
-		hash = (url.split_on("/").last() ?? "").drop_suffix(".tar.zst")
-		bytes = hash.to_utf8()
-		if url.starts_with("https://") and url.ends_with("/${hash}.tar.zst") and
-			bytes.len() >= 32 and bytes.all(|byte| base58.contains(byte)) {
-			Ok(hash)
-		} else {
-			Err(NotRocPackage)
-		}
 	}
 
 	## Keeps a selected path, what lies inside it and the directories above it.
@@ -1522,6 +1524,30 @@ NixBackend :: [].{
 		"{ ${Str.join_with(attrs.concat(computed), "")}}"
 	}
 
+	## KAI_ROC_PACKAGES: each RocPackages bundle of the environment, fetched by
+	## the SHA-256 the lock pins and unpacked as `<hash>`, joined with `:`, for
+	## `first_on_path` to place in Roc's package cache. Without any, nothing.
+	roc_package_attrs : Model.Environment, List(Model.Fetch), Str -> List(Str)
+	roc_package_attrs = |environment, fetches, primary| {
+		pkgs = "sets.${quote(primary)}"
+		tree = |fetch| {
+			hash = fetch.name.drop_prefix("roc-")
+			into = "$out/${hash}"
+			unpack = quote("mkdir -p ${into} && tar --zstd -xf $src -C ${into}")
+			"\${${pkgs}.runCommand ${quote(fetch.name)} { "
+				.concat("src = ${pkgs}.fetchurl ${fetch_file(fetch)}; ")
+				.concat("nativeBuildInputs = [ ${pkgs}.zstd ]; } ${unpack}}/${hash}")
+		}
+		trees = environment.roc_packages.keep_oks(
+			|url| fetches.find_first(|f| f.name == Project.roc_package_fetch(url)),
+		)
+		if trees.is_empty() {
+			[]
+		} else {
+			["\"KAI_ROC_PACKAGES\" = \"${Str.join_with(trees.map(tree), ":")}\"; "]
+		}
+	}
+
 	## An environment's PackageEnv as Nix attributes, its paths computed from
 	## the packages of the environment's sets.
 	package_env_attrs : Model.Environment, List(Model.Fetch) -> List(Str)
@@ -1588,6 +1614,7 @@ sample_model = {
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 		{
@@ -1601,6 +1628,7 @@ sample_model = {
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 	],
@@ -1640,6 +1668,7 @@ full_model = {
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 		{
@@ -1653,6 +1682,7 @@ full_model = {
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 		{
@@ -1666,6 +1696,7 @@ full_model = {
 			rust_toolchain: None,
 			expected: [],
 			package_env: [],
+			roc_packages: [],
 			on_systems: [],
 		},
 	],
@@ -1763,6 +1794,7 @@ base = {
 	rust_toolchain: None,
 	expected: [],
 	package_env: [],
+	roc_packages: [],
 	on_systems: [],
 }
 

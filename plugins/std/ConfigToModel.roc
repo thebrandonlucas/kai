@@ -77,18 +77,20 @@ ConfigToModel :: [].{
 			[one] => one
 			_ => return Err("DuplicateSystems: declare Systems at most once")
 		}
+		bundled = uses_roc_packages(acc)
 		requires_ =
 			(if (acc.extensions.is_empty()) [] else ["extensions"])
 				.concat(if (acc.raw.is_empty()) [] else ["raw"])
 				.concat(if (acc.build_sources.is_empty()) [] else ["sources"])
 				.concat(
-					if (acc.fetches.is_empty() and acc.fetch_alls.is_empty())
+					if (acc.fetches.is_empty() and acc.fetch_alls.is_empty() and !bundled)
 						[]
 					else
 						["fetches"],
 				)
 				.concat(if (acc.unavailable.is_empty()) [] else ["fetch_unavailable"])
-				.concat(if (uses_locked_fetch(acc)) ["fetch_locked"] else [])
+				.concat(if (uses_locked_fetch(acc) or bundled) ["fetch_locked"] else [])
+				.concat(if (bundled) ["roc_packages"] else [])
 				.concat(if (uses_expect(acc)) ["expect"] else [])
 				.concat(if (acc.cargo_vendors.is_empty()) [] else ["cargo"])
 				.concat(if (acc.builds.is_empty()) [] else ["builds"])
@@ -347,6 +349,7 @@ ConfigToModel :: [].{
 				toolchains: [],
 				package_envs: [],
 				expects: [],
+				roc_packages: [],
 				on_systems: [],
 			},
 			|acc, setting|
@@ -389,6 +392,7 @@ ConfigToModel :: [].{
 						..acc,
 						on_systems: acc.on_systems.append((systems, settings)),
 					}
+					RocPackages(urls) => { ..acc, roc_packages: acc.roc_packages.append(urls) }
 				},
 		)
 		if draft.tools.len() > 1 {
@@ -409,6 +413,9 @@ ConfigToModel :: [].{
 		if draft.expects.len() > 1 {
 			return Err("DuplicateExpect: environment ${name}")
 		}
+		if draft.roc_packages.len() > 1 {
+			return Err("DuplicateRocPackages: environment ${name}")
+		}
 		Ok({
 			name,
 			parents: draft.parents,
@@ -428,6 +435,7 @@ ConfigToModel :: [].{
 				_ => return Err("DuplicatePackageEnv: environment ${name}")
 			},
 			expected: draft.expects.first() ?? [],
+			roc_packages: draft.roc_packages.first() ?? [],
 			on_systems,
 		})
 	}
@@ -701,7 +709,21 @@ ConfigToModel :: [].{
 				unavailable: [],
 			},
 		)
-		all = acc.fetches.concat(every_system)
+		# Each RocPackages bundle once, as an archive on every system that the
+		# lock pins, as it does a FetchLocked file.
+		urls = acc.environments.join_map(|e| e.roc_packages)
+			.fold([], |kept, url| if (kept.contains(url)) kept else kept.append(url))
+		bundles = urls.map_try(
+			|url| {
+				_ = Project.roc_package_hash(url)
+					.map_err(|_| "RocPackages needs https://.../<hash>.tar.zst: ${url}")?
+				bundle = |system|
+					{ system, url, hash: "", mirrors: [], unpack: Archive("main.roc") }
+				files = systems.map(bundle)
+				Ok({ name: Project.roc_package_fetch(url), files, unavailable: [] })
+			},
+		)?
+		all = acc.fetches.concat(every_system).concat(bundles)
 		for name in $named {
 			if !all.any(|f| f.name == name) {
 				return Err("FetchUnavailable ${name} names no Fetch")
@@ -721,6 +743,9 @@ ConfigToModel :: [].{
 	uses_locked_fetch : Acc -> Bool
 	uses_locked_fetch = |acc|
 		acc.fetches.any(|f| f.files.any(|file| file.hash.is_empty()))
+
+	uses_roc_packages : Acc -> Bool
+	uses_roc_packages = |acc| acc.environments.any(|e| !e.roc_packages.is_empty())
 
 	uses_expect : Acc -> Bool
 	uses_expect = |acc| acc.environments.any(|e| !e.expected.is_empty())

@@ -56,6 +56,7 @@ Spec := [].{
 					("package_env", Array(e.package_env.map(package_variable))),
 					("pure", Boolean(e.pure)),
 					("aliases", Array(e.aliases.map(alias))),
+					("roc_packages", texts(e.roc_packages.map(Project.roc_package_fetch))),
 					(
 						"rust_toolchain",
 						match e.rust_toolchain {
@@ -283,6 +284,10 @@ empty_sha256 = "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
 
 linux = "x86_64-linux"
 
+roc_hash = "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS"
+
+roc_package = "https://example.com/1.0/${roc_hash}.tar.zst"
+
 project : List(Config.Setting)
 project = [
 	Name("spec"),
@@ -308,7 +313,11 @@ project = [
 	FetchUnavailable("tool", ["aarch64-linux"]),
 	Environment(
 		"dev",
-		[Tools(["git", "stable#hello", "jq#jq", "tool#tool"]), Expect(["make"])],
+		[
+			Tools(["git", "stable#hello", "jq#jq", "tool#tool"]),
+			Expect(["make"]),
+			RocPackages([roc_package]),
+		],
 	),
 	Shell("default", [Use("dev")]),
 	Environment("make", [Tools(["gnumake"])]),
@@ -320,7 +329,8 @@ project = [
 ]
 
 # Tools say where they come from: a package source, a download, or the
-# machine; fetch files carry the key the lock's direct section uses.
+# machine; fetch files carry the key the lock's direct section uses, and an
+# environment's RocPackages are fetches on every system.
 expect {
 	tools = ["environments", "0", "tools"]
 	locked_file = ["fetches", "1", "files", "0"]
@@ -351,5 +361,9 @@ expect {
 		(["workflows", "0", "steps", "1", "action"], String("build")),
 		(["workflows", "0", "steps", "1", "may_fail"], Boolean(Bool.True)),
 		(["shells", "0", "environment"], String("dev")),
+		(["environments", "0", "roc_packages", "0"], String("roc-${roc_hash}")),
+		(["fetches", "2", "pinned_by"], String("lock")),
+		(["fetches", "2", "files", "1", "system"], String("aarch64-linux")),
+		(["fetches", "2", "files", "1", "archive_path"], String("main.roc")),
 	].all(|(path, expected)| spec_at(project, path) == Ok(expected))
 }

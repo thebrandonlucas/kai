@@ -23,7 +23,7 @@ left out.
 |---|---|
 | `section` | The lock section that pins it: `nix` or `direct`. |
 | `kind` | `nix`: `package_source`, `overlay`, `flake_input`, `source` or `transitive`. `direct`: `file`. |
-| `name` | The identifier [`kai spec`](spec.md) uses: package sources, overlays, flake inputs and sources by `name`, and downloaded files by `key` (`<fetch>/<system>`). A `transitive` input is named by its path from a root input, such as `roc/nixpkgs`. |
+| `name` | The identifier [`kai spec`](spec.md) uses: package sources, overlays, flake inputs and sources by `name`, and downloaded files, `RocPackages` bundles included, by `key` (`<fetch>/<system>`, such as `roc-<hash>/x86_64-linux`). A `transitive` input is named by its path from a root input, such as `roc/nixpkgs`. |
 | `url` | The reference as declared: a Nix flake reference (for `transitive`, the one the depending flake names), or a downloaded file's URL. |
 | `revision` | The locked commit: Nix's `rev` for Git-based inputs. |
 | `hash` | `algorithm` (`sha256`), `of` (`nar` for a NAR serialization of a tree, `file` for a file's bytes), `encoding` (`sri` as in `sha256-…`, or `hex`) and `value`, as the section records it: Nix inputs by NAR hash, downloaded files by SHA-256. |

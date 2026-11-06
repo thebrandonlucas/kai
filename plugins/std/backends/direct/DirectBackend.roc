@@ -145,7 +145,12 @@ DirectBackend := [].{
 		environment = project.environments.find_first(|e| e.name == name)
 			.map_err(|_| Plan.fail("unknown environment: ${name}"))?
 		entering = DirectBackend.entering(
-			{ project, environment, tools: environment.tools },
+			{
+				project,
+				environment,
+				tools: environment.tools,
+				roc_packages: environment.roc_packages,
+			},
 			system,
 			layout,
 			lock,
@@ -201,31 +206,40 @@ DirectBackend := [].{
 	login : List(Str)
 	login = ["sh", "-c", "exec \"\${KAI_OPERATOR_SHELL:-/bin/sh}\""]
 
-	## A validated project, as it is on a system, one of its environments, and
-	## the tools of the environment that are downloads.
+	## A validated project, as it is on a system, one of its environments, the
+	## tools of the environment that are downloads and the RocPackages bundle
+	## URLs kai places in Roc's package cache.
 	Entering : {
 		project : Model,
 		environment : Model.Environment,
 		tools : List(Model.Tool),
+		roc_packages : List(Str),
 	}
 
 	## What runs before a shell or task enters a validated environment of the
 	## project, as it is on `system`: a step finding every program it expects
 	## on the machine, failing naming all that are missing, before anything is
-	## downloaded, then `tools`, its downloads, made ready first on PATH.
+	## downloaded, then `tools`, its downloads, made ready first on PATH, and
+	## `roc_packages` placed in Roc's package cache.
 	entering : Entering, Str, Layout, Lock -> Try(List(Plan.Step), Plan.Failure)
-	entering = |{ project, environment, tools }, system, layout, lock| {
+	entering = |downloads, system, layout, lock| {
+		{ project, environment, tools, roc_packages } = downloads
 		{ name, expected, .. } = environment
-		pins = if (tools.is_empty()) [] else DirectBackend.pins(lock)?
+		pinned = !tools.is_empty() or !roc_packages.is_empty()
+		pins = if (pinned) DirectBackend.pins(lock)? else []
 		programs = tools.map_try(
 			|tool| DirectBackend.program(project, tool, system, pins),
+		)?
+		bundles = roc_packages.map_try(
+			|url| DirectBackend.roc_package(project, url, system, pins),
 		)?
 		bin = Project.downloads_bin(layout.workspace, name)
 		description = "environment ${name}"
 		check = ExpectPrograms({ description, programs: expected })
 		Ok(
 			(if (expected.is_empty()) [] else [check])
-				.concat(if (programs.is_empty()) [] else [Realise({ bin, programs })]),
+				.concat(if (programs.is_empty()) [] else [Realise({ bin, programs })])
+				.concat(if (bundles.is_empty()) [] else [PlaceRocPackages(bundles)]),
 		)
 	}
 
@@ -251,6 +265,40 @@ DirectBackend := [].{
 		{ url, sha256, size, .. } = pin
 		urls = [url].concat(file.mirrors)
 		Ok({ name: tool.name, urls, sha256, size, unpack: file.unpack })
+	}
+
+	## A RocPackages bundle, named by its URL's hash, by what the lock holds
+	## for this system.
+	roc_package : Model, Str, Str, List(Pin) -> Try(Plan.Program, Plan.Failure)
+	roc_package = |model, url, system, locked_pins| {
+		hash = Project.roc_package_hash(url) ?? ""
+		bundle = { source: Project.roc_package_fetch(url), name: hash }
+		DirectBackend.program(model, bundle, system, locked_pins)
+	}
+
+	## The model with the SHA-256 the lock pins on `system` for each
+	## RocPackages bundle of `environments`, so that Nix fetches each as a
+	## fixed-output file.
+	pin_roc_packages : Model, List(Str), Str, Lock -> Try(Model, Plan.Failure)
+	pin_roc_packages = |model, environments, system, lock| {
+		urls = model.environments.keep_if(|e| environments.contains(e.name))
+			.join_map(|e| e.roc_packages)
+		pins = if (urls.is_empty()) [] else DirectBackend.pins(lock)?
+		bundles = urls.map_try(
+			|url|
+				DirectBackend.roc_package(model, url, system, pins)
+					.map_ok(|p| (Project.roc_package_fetch(url), p.sha256)),
+		)?
+		pinned = |fetch, file|
+			match bundles.find_first(|(name, _)| name == fetch.name) {
+				Ok((_, sha256)) if file.system == system =>
+					{ ..file, hash: Project.sri_sha256(sha256) ?? "" }
+				_ => file
+			}
+		fetches = model.fetches.map(
+			|fetch| { ..fetch, files: fetch.files.map(|file| pinned(fetch, file)) },
+		)
+		Ok({ ..model, fetches })
 	}
 
 	## A lock problem that `kai --backend direct update` fixes.
@@ -322,7 +370,8 @@ DirectBackend := [].{
 	## Phase 0 asks kai to measure every file the lock has no current pin
 	## for, and every file of the Fetches `names` lists, so a file already
 	## pinned is not fetched or changed unless named; phase 1 checks what kai
-	## measured and publishes the section, keeping the others.
+	## measured and publishes the section, keeping the others. A URL several
+	## systems share, as FetchAll's and RocPackages' do, is measured once.
 	update :
 		Model, List(Str), Layout, Lock, U64, List(Observed) -> Try(Plan, Plan.Failure)
 	update = |model, names, layout, lock, phase, observed| {
@@ -332,10 +381,12 @@ DirectBackend := [].{
 			!names.contains(fetch)
 				and kept.any(|p| p.key == key and DirectBackend.current(file, p))
 		wanted = DirectBackend.files(model)
+		shares_url = |f, url| wanted.any(|w| w.key == f.key and w.file.url == url)
+		once = |seen, f| if (seen.any(|s| s.urls == f.urls)) seen else seen.append(f)
 		if phase == 0 {
-			measured = wanted.drop_if(pinned).map(
-				|{ key, file, .. }| { key, urls: DirectBackend.file_urls(file) },
-			)
+			measured = wanted.drop_if(pinned)
+				.map(|{ key, file, .. }| { key, urls: DirectBackend.file_urls(file) })
+				.fold([], once)
 			return Ok(
 				Plan.{
 					steps: [Measure({ files: measured, result })],
@@ -357,7 +408,8 @@ DirectBackend := [].{
 		)
 		next = wanted.map_try(
 			|{ key, file, .. }|
-				match fresh.find_first(|f| f.key == key) {
+				# Its own measurement, or one under another key with the same URL.
+				match fresh.find_first(|f| f.key == key or shares_url(f, file.url)) {
 					Ok({ sha256, size, .. }) => {
 						pin = { key, url: file.url, sha256, size }
 						if (DirectBackend.current(file, pin))
@@ -417,6 +469,7 @@ environment = {
 	aliases: [],
 	rust_toolchain: None,
 	package_env: [],
+	roc_packages: [],
 	on_systems: [],
 	expected: ["git", "gh"],
 }
@@ -610,4 +663,51 @@ expect {
 	checked(environment) == Ok({})
 		and checked({ ..environment, tools: hello }) == Err(refused)
 		and checked({ ..environment, on_systems: [linux_only] }) == Ok({})
+}
+
+# A task places its RocPackages bundles, as the lock pins them, after making
+# its tools ready; update measures a bundle every system shares once and pins
+# it on each.
+expect {
+	hash = "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS"
+	url = "https://example.com/1.0/${hash}.tar.zst"
+	bundle = |system|
+		{ system, url, hash: "", mirrors: [], unpack: Archive("main.roc") }
+	name = Project.roc_package_fetch(url)
+	key = "${name}/x86_64-linux"
+	with_bundle = {
+		..model,
+		environments: [{ ..environment, roc_packages: [url] }],
+		fetches: model.fetches.append(
+			{ name, files: [bundle("x86_64-linux")], unavailable: [] },
+		),
+	}
+	lock = locked(both.append(pin(key, url)))
+	planned_steps = DirectBackend.plan(
+		with_bundle,
+		Request.Run("t", []),
+		"x86_64-linux",
+		layout,
+		lock,
+	)
+	placing = match planned_steps.map_ok(|p| p.steps) {
+		Ok([ExpectPrograms(_), Realise(_), PlaceRocPackages([placed]), Run(_)]) =>
+			placed.name == hash and placed.urls == [url] and placed.sha256 == sha256
+		_ => Bool.False
+	}
+	everywhere = [bundle("x86_64-linux"), bundle("aarch64-linux")]
+	two = { ..model, fetches: [{ name, files: everywhere, unavailable: [] }] }
+	result = "/p/.kai/generated/direct/measured"
+	measured = match DirectBackend.update(two, [], layout, Absent, 0, []) {
+		Ok({ steps: [Measure({ files, .. })], .. }) => files.map(|f| f.key) == [key]
+		_ => Bool.False
+	}
+	observed = [{ path: result, contents: Text("${key} ${sha256} 9\n") }]
+	pinned = match DirectBackend.update(two, [], layout, Absent, 1, observed) {
+		Ok({ steps: [PublishLock({ contents, .. })], .. }) =>
+			DirectBackend.pins(Present(contents)).map_ok(|found| found.map(|p| p.key))
+				== Ok([key, "${name}/aarch64-linux"])
+		_ => Bool.False
+	}
+	placing and measured and pinned
 }

@@ -412,23 +412,26 @@ Std := [].{
 		# FetchLocked tools made ready, before a shell or task enters.
 		validated = Project.validate(model).map_err(Plan.fail)?
 		project = Project.for_system(validated, target)
-		entering = Std.entered(model, wanted).map_try(
+		entered = Std.entered(model, wanted)
+		entering = entered.map_try(
 			|name| {
 				environment = project.environments.find_first(|e| e.name == name)
 					.map_err(|_| Plan.fail("unknown environment: ${name}"))?
 				tools = environment.tools
 					.keep_if(|t| Project.locked_fetch(project, t.source))
-				downloads = { project, environment, tools }
+				# Nix fetches the RocPackages bundles itself.
+				downloads = { project, environment, tools, roc_packages: [] }
 				steps = DirectBackend.entering(downloads, target, layout, ctx.lock)?
 				Ok({ environment: name, steps })
 			},
 		)?
+		pinned = DirectBackend.pin_roc_packages(model, entered, target, ctx.lock)?
 		continued = { phase: ctx.phase, observed: ctx.observed }
 		planned = match wanted {
 			Request.Build(name, { mode: Plan, .. }) =>
 				NixBackend.plan_build(model, name, target, layout, locks, continued)
 			_ =>
-				NixBackend.plan_entering(model, wanted, target, layout, locks, entering)
+				NixBackend.plan_entering(pinned, wanted, target, layout, locks, entering)
 		}
 		planned.map_err(rendering)
 	}
@@ -962,6 +965,51 @@ expect {
 				and DirectBackend.fit(model, both)
 					== Err("${not_downloads}default#hello")
 				and sandboxed
+		}
+		Err(_) => Bool.False
+	}
+}
+
+# On Nix, an environment's RocPackages bundles are fetched as fixed-output
+# files by the SHA-256 the lock pins, and sh places them in Roc's package
+# cache before the task runs; the lock must pin them.
+expect {
+	hash = "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS"
+	url = "https://example.com/1.0/${hash}.tar.zst"
+	settings = planning.concat([
+		Environment("scripts", [Tools(["hello"]), RocPackages([url])]),
+		Task("check", [Use("scripts"), Run(["roc", "check.roc"])]),
+	])
+	sha256 = "ab".repeat(32)
+	bundle_pin = { key: "roc-${hash}/x86_64-linux", url, sha256, size: 3 }
+	section = DirectBackend.section([bundle_pin])
+	pinned = Present(LockFile.splice(nix_lock, "direct", section) ?? "")
+	sri = Project.sri_sha256(sha256) ?? ""
+	match ConfigToModel.convert(settings) {
+		Ok(model) => {
+			check = Request.Run("check", [])
+			planned_with = |lock| Std.plan_nix(model, check, { ..context, lock })
+			placed = match planned_with(pinned).map_ok(|p| p.steps) {
+				Ok(steps) => {
+					written = steps.join_map(
+						|step|
+							match step {
+								Write(files) => files.map(|f| f.contents)
+								_ => []
+							},
+					)
+					argv = match steps.last() {
+						Ok(Run(task)) => task.argv
+						_ => []
+					}
+					written.any(|text| text.contains("hash = \"${sri}\""))
+						and written.any(|text| text.contains("KAI_ROC_PACKAGES"))
+						and argv.any(|arg| arg.starts_with(NixBackend.place_roc_packages))
+						and argv.take_last(2) == ["roc", "check.roc"]
+				}
+				Err(_) => Bool.False
+			}
+			placed and failed(planned_with(nix_lock)) == "missing_direct_lock"
 		}
 		Err(_) => Bool.False
 	}

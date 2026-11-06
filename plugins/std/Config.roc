@@ -108,6 +108,10 @@ Config :: [].{
 	## OnSystems(systems, settings) adds tools and variables on the named
 	## declared systems only: its Tools after the environment's own, its Env
 	## overriding the environment's. Nix evaluates only the host's.
+	## RocPackages lists released Roc package bundle URLs, each `https://` and
+	## ending in `<hash>.tar.zst`, that are placed in Roc's package cache before
+	## a shell or task starts, so Roc resolves them without downloading. The
+	## lock pins each file's SHA-256, and Extend inherits them.
 	EnvironmentSetting : [
 		Tools(List(Tool)),
 		Overlays(List(InputName)),
@@ -120,6 +124,7 @@ Config :: [].{
 		PackageEnv(List((Str, PackageValue))),
 		Expect(List(Str)),
 		OnSystems(List(System), List(SystemSetting)),
+		RocPackages(List(Str)),
 	]
 
 	## What RustToolchainWith adds: rustup components, such as

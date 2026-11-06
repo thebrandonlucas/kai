@@ -239,10 +239,21 @@ Load := [].{
 		if ["", ".", ".."].contains(hash) {
 			return Err(InvalidBundle(bundle))
 		}
-		store = "${Load.cache!()?}/roc/packages"
-		if Load.path("${store}/${hash}/main.roc").exists!()? {
+		if Load.cached!(hash)? {
 			return Ok({})
 		}
+		Load.place!(bundle, hash)
+	}
+
+	# Whether Roc's package cache has package `hash` with its main.roc.
+	cached! : Str => Try(Bool, _)
+	cached! = |hash|
+		Load.path("${Load.cache!()?}/roc/packages/${hash}/main.roc").exists!()
+
+	# Copies an unpacked bundle into Roc's package cache as `hash`.
+	place! : Str, Str => Try({}, _)
+	place! = |bundle, hash| {
+		store = "${Load.cache!()?}/roc/packages"
 		Load.path(store).create_all!()?
 		staging = "${store}/${hash}.${Random.seed_u64!()?.to_str()}.tmp"
 		Load.path(staging).create_dir!()?

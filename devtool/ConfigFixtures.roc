@@ -688,6 +688,38 @@ ConfigFixtures := [].{
 				\\ Environment("dev", [Expect(["git"]), Expect(["gh"])])]
 		},
 		{
+			name: "RocPackages",
+			expected: Valid,
+			body: \\config = [Name("roc-packages"),
+				\\ Environment("scripts", [RocPackages([
+				\\  "https://e.co/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst"
+				\\ ])]),
+				\\ Environment("more", [Extend("scripts"), Tools(["hello"])]),
+				\\ Task("check", [Use("more"), Run(["true"])])]
+		},
+		{
+			name: "RocPackagesNotBundle",
+			expected: Rejected("RocPackages needs https://.../<hash>.tar.zst"),
+			body: \\config = [Name("bad"),
+				\\ Environment("scripts",
+				\\  [RocPackages(["https://example.com/pkg.tar.gz"])])]
+		},
+		{
+			name: "RocPackagesBuild",
+			expected: Rejected("RocPackages are for shells and tasks"),
+			body: \\config = [Name("bad"),
+				\\ Environment("scripts", [RocPackages([
+				\\  "https://e.co/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst"
+				\\ ])]),
+				\\ Build("app", [Use("scripts"), Run(["true"]), Output("out")])]
+		},
+		{
+			name: "DuplicateRocPackages",
+			expected: Rejected("DuplicateRocPackages: environment dev"),
+			body: \\config = [Name("bad"),
+				\\ Environment("dev", [RocPackages([]), RocPackages([])])]
+		},
+		{
 			name: "FetchUnavailableNoFetch",
 			expected: Rejected("FetchUnavailable tool names no Fetch"),
 			body: \\config = [Name("bad"), FetchUnavailable("tool", ["x86_64-linux"])]

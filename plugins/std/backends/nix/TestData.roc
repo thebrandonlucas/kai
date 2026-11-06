@@ -23,6 +23,7 @@ TestData :: [].{
 		rust_toolchain: None,
 		expected: [],
 		package_env: [],
+		roc_packages: [],
 		on_systems: [],
 	}
 
