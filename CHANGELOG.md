@@ -21,6 +21,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 - **Breaking:** std serves only Nix and the direct backend. Guix needs the guix plugin, and `GuixChannel` moves from std's settings to the plugin's `Channel`; `kai --backend guix` without the plugin fails.
 - `install.sh` runs nothing unless it downloaded in full, so a connection that drops while it is piped to `sh` no longer runs part of it. The README shows how to check the script against the release's `SHA256SUMS` and read it before running it.
+- Outside a git repository, Kai uses only the current directory's `Kaifile.roc` and no longer searches the directories above it, where one, such as in the home directory, may belong to another project. Inside a repository, it still uses the nearest one up to the repository's root.
 
 ### Fixed
 
