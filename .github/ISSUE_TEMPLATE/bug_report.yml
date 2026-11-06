@@ -1,0 +1,50 @@
+name: Bug report
+description: Kai does something wrong, fails or crashes.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please search [existing issues](https://github.com/thebrandonlucas/kai/issues) first, and report a security problem privately as [SECURITY.md](https://github.com/thebrandonlucas/kai/blob/master/SECURITY.md) describes.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected and what Kai did instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Kai version
+      description: The output of `kai --version`.
+      placeholder: kai 0.0.11
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: The operating system and architecture, and the Nix or Guix version (`nix --version` or `guix --version`).
+      placeholder: NixOS 25.05, x86_64-linux, nix 2.31
+    validations:
+      required: true
+  - type: textarea
+    id: kaifile
+    attributes:
+      label: Kaifile.roc
+      description: The project's `Kaifile.roc`, or better, the smallest one that shows the problem.
+      render: roc
+    validations:
+      required: true
+  - type: textarea
+    id: json-error
+    attributes:
+      label: Error with --json
+      description: The error Kai prints when you rerun the command with `--json`, such as `kai --json run test`.
+      render: json
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Other output, logs or context that helps.

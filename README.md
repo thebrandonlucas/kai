@@ -612,51 +612,7 @@ runs them), and `error` is one of these codes:
 
 ## Development
 
-```sh
-git clone https://github.com/thebrandonlucas/kai.git
-cd kai
-kai shell default -- zig build ci    # or `kai shell`, then `zig build ci`
-```
-
-`zig build ci` includes the end-to-end tests, which run a built kai against
-real Nix and, when it is installed, Guix (with the guix plugin), so it needs
-network access or a warm Nix cache. `zig build e2e -- --nix` or `-- --guix` runs them on one backend,
-and `zig build e2e-run` (or `-build`, `-workflow`, `-update`, ...) runs one;
-`zig build guix-integration` runs every Guix test and fails without Guix. If
-the shell is missing a dependency, please open an issue.
-
-To try a checkout's kai on another project, build it and the platform host
-it links Kaifiles with:
-
-```sh
-kai build kai-x64musl --out-link /tmp/kai-dev    # kai at /tmp/kai-dev/kai
-kai shell default -- sh -c 'cd platform && zig build --release'
-```
-
-`kai-arm64musl` is the aarch64 build. The project's Kaifile.roc then names
-the checkout's platform and std by relative path, as `examples/` do, such as
-`pf: platform "../kai/platform/main.roc"` and
-`std: "../kai/plugins/std/main.roc"`: Roc refuses an absolute platform path.
-
-The code follows the pipeline:
-
-- `platform`: Kai's plugin platform, the Roc platform `Kaifile.roc` builds
-  on and the API every plugin uses: commands, backends, implementations,
-  plans and the protocol kai speaks. It validates the Kaifile's plugins at
-  compile time.
-- `plugins/std`: the std plugin. It lowers its settings to its project model
-  at compile time.
-  - `plugins/std/model`: std's project model and its validation.
-  - `plugins/std/backends/nix`, `plugins/std/backends/direct`: std's pure
-    backends that plan files and argv from the model.
-- `plugins/guix`: the guix plugin, which plans std's commands on Guix
-  from std's model, as any backend plugin would.
-- `plugins/sbom`: the sbom plugin, `kai sbom`, which writes a release's
-  SBOMs from std's model and the lock.
-- `cli`: `kai` itself. It asks the compiled Kaifile for the command's
-  candidate plans, chooses a backend, checks the plan and runs it.
-- `devtool`: checks, integration tests and release tooling; see
-  [devtool/README.md](devtool/README.md) and [RELEASE.md](docs/RELEASE.md).
+How to build, test and propose changes is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Design
 
@@ -678,7 +634,7 @@ See [design.md](docs/design.md).
 
 ### Contributing
 
-If you would like to contribute, I would love for you to open an issue!
+If you would like to contribute, I would love for you to open an issue! [CONTRIBUTING.md](CONTRIBUTING.md) explains how to build Kai and propose changes, and questions are welcome in [Discussions](https://github.com/thebrandonlucas/kai/discussions) or on the Discord.
 
 ### Looking Ahead
 

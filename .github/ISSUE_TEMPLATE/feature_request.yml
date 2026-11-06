@@ -1,0 +1,27 @@
+name: Feature request
+description: Something Kai should let you do.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For an open-ended idea, a [discussion](https://github.com/thebrandonlucas/kai/discussions/categories/ideas) may suit better.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to do, and what stops you today. A real project and its `Kaifile.roc` help.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What Kai could do instead, such as the Kaifile setting or command you would write.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Workarounds you use today, or other ways to solve it.
