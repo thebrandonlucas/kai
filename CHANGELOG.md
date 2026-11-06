@@ -4,6 +4,8 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-11-06
+
 ### Added
 
 - The guix plugin serves Guix: add `Guix.plugin(project, settings)` beside `Std.plugin(project)` in `Kaifile.new([...])` to run shells, tasks, workflows, builds and `kai update` on Guix. Each release publishes its bundle, and its notes give the line that adds it.
