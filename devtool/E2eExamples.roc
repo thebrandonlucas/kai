@@ -161,10 +161,10 @@ E2eExamples := [].{
 
 	## Run each command in order and return their stdout, apart from update's
 	## report. `update` locks only Nix, so a host with Guix too never waits for
-	## a Guix lock, except in the direct, mixed and roc-packages examples,
-	## whose downloads direct pins.
+	## a Guix lock, except in the direct, downloads, mixed and roc-packages
+	## examples, whose downloads direct pins.
 	run_in! = |kai, project, name, lines| {
-		pinned_by_direct = ["direct", "mixed", "roc-packages"]
+		pinned_by_direct = ["direct", "downloads", "mixed", "roc-packages"]
 		var $stdout = ""
 		for line in lines {
 			args = line.split_on(" ").keep_if(|arg| !arg.is_empty())

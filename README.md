@@ -421,6 +421,28 @@ zig's files again. `kai run test` then
 checks that every `Expect` program is on `PATH`, makes the downloads ready, and
 runs the task with them first on `PATH`.
 
+std's `Downloads` module writes such lists for downloads many projects pin.
+`Downloads.roc_nightly(tag, systems)` is the Roc compiler of a
+[roc-lang/nightlies](https://github.com/roc-lang/nightlies/releases) release,
+such as `nightly-2026-10-21-5349569`, on each listed system it is built for,
+and `Downloads.file(template, systems)` a program released as one file per
+system, whose URL template names the system as `{system}`, or its parts as
+`{arch}` and `{os}`:
+
+```roc
+import std.Downloads
+
+systems = ["x86_64-linux", "aarch64-darwin"]
+
+releases = "https://example.org/releases/1.0"
+
+# In Std.kaifile([...]):
+FetchLocked("roc", Downloads.roc_nightly("nightly-2026-10-21-5349569", systems)),
+FetchLocked("tool", Downloads.file("${releases}/tool-{system}", systems)),
+```
+
+See [examples/downloads](examples/downloads).
+
 Downloads go over HTTPS with no credentials into `kai/v1` in the cache
 directory, named by SHA-256, and are hashed again before every use. An archive
 is unpacked whole, after listing it: one with an absolute name, a `..`, a

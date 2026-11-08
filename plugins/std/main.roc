@@ -2,6 +2,7 @@
 package
 	[
 		Config,
+		Downloads,
 		EnvName,
 		FlakeRef,
 		InputName,
