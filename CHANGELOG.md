@@ -7,6 +7,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 ### Added
 
 - std's `Downloads` module writes `FetchLocked` files for the declared systems: `Downloads.roc_nightly(tag, systems)` for the Roc compiler of a nightly by its tag, and `Downloads.file(template, systems)` for a program released as one file per system, its URL naming the system as `{system}`, `{arch}` and `{os}`.
+- The setup-kai action's `version` is optional: without it, the action installs the release whose platform `Kaifile.roc`'s header names, and says to set `version` when that platform is a local path. Its new `cache-key` input keeps a separate download cache for each job that sets one.
 
 ## [0.0.12] - 2026-11-06
 

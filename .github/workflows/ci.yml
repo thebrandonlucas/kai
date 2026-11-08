@@ -333,7 +333,8 @@ jobs:
           kai shell default -- zig build $STEPS -Dkai="$PWD/dist/kai" -- --nix
 
   # The setup-kai action as another repository's workflow uses it: it
-  # installs the release it names, with its download cache and no Nix.
+  # installs the release Kaifile.roc names, with its download cache and no
+  # Nix, and refuses to guess a version from a Kaifile on a local platform.
   e2e-setup-kai:
     name: e2e (setup-kai)
     needs: e2e-changes
@@ -346,13 +347,32 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Kai
+        id: setup
         uses: ./.github/actions/setup-kai
         with:
-          version: 0.0.11
+          cache-key: e2e
           nix: "false"
 
       - name: Run the installed kai
-        run: test "$(kai --version)" = 0.0.11
+        env:
+          VERSION: ${{ steps.setup.outputs.version }}
+        run: |
+          test "$(kai --version)" = "$VERSION"
+          grep -qF "releases/download/v$VERSION/" Kaifile.roc
+
+      - name: Use a Kaifile on a local platform
+        run: cp examples/shell/Kaifile.roc Kaifile.roc
+
+      - name: Set up Kai from it
+        id: local
+        continue-on-error: true
+        uses: ./.github/actions/setup-kai
+        with:
+          cache: "false"
+          nix: "false"
+
+      - name: The version was refused
+        run: test "${{ steps.local.outcome }}" = failure
 
   # The e2e check: green when every end-to-end job passed, or when a pull
   # request changes only docs and they are skipped.
