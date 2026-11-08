@@ -8,15 +8,22 @@ description: >-
 inputs:
   version:
     description: >-
-      The Kai release to install, such as 0.0.11. Required, so that a run
-      installs the same kai until the workflow changes it.
-    required: true
+      The Kai release to install, such as 0.0.12. By default, the release
+      whose platform Kaifile.roc's header names (`pf:`), so that a run
+      installs the kai the Kaifile was written for.
+    default: ""
   cache:
     description: >-
       Whether to cache ~/.cache/kai (the direct backend's store and the Roc
       compiler Kai downloads), keyed by the version, the runner's OS and
-      architecture, and .kai/lock.json.
+      architecture, cache-key and .kai/lock.json.
     default: "true"
+  cache-key:
+    description: >-
+      Part of the cache's key, such as the job's name, for jobs that make
+      different parts of the lock ready to keep separate cache entries
+      rather than share and overwrite one.
+    default: ""
   nix:
     description: >-
       Whether to install Nix, which every backend but the direct one needs.
@@ -28,6 +35,9 @@ inputs:
     default: ${{ github.token }}
 
 outputs:
+  version:
+    description: The Kai release installed.
+    value: ${{ steps.check.outputs.version }}
   cache-hit:
     description: Whether the cache held exactly this key.
     value: ${{ steps.cache.outputs.cache-hit }}
@@ -41,16 +51,32 @@ runs:
       env:
         VERSION: ${{ inputs.version }}
         CACHE: ${{ inputs.cache }}
+        CACHE_KEY: ${{ inputs.cache-key }}
         NIX: ${{ inputs.nix }}
       run: |
         set -euo pipefail
-        [ -n "$VERSION" ] || { echo "setup-kai: set version, such as 0.0.11" >&2; exit 1; }
         for input in "cache=$CACHE" "nix=$NIX"; do
           case ${input#*=} in
           true | false) ;;
           *) echo "setup-kai: ${input%%=*} must be true or false" >&2; exit 1 ;;
           esac
         done
+        case $CACHE_KEY in
+        *[!A-Za-z0-9._-]*) echo "setup-kai: cache-key may hold only letters, digits, '.', '_' and '-'" >&2; exit 1 ;;
+        esac
+        # The release Kaifile.roc's platform URL names, as in
+        # pf: platform "https://github.com/thebrandonlucas/kai/releases/download/v0.0.12/<hash>.tar.zst",
+        if [ -z "$VERSION" ]; then
+          [ -f Kaifile.roc ] || { echo "setup-kai: no Kaifile.roc here to read the version from; set version, such as 0.0.12" >&2; exit 1; }
+          platform=$(sed -n 's/^[[:space:]]*pf:[[:space:]]*platform[[:space:]]*"\([^"]*\)".*/\1/p' Kaifile.roc | head -n 1)
+          case $platform in
+          https://*/releases/download/v*/*) VERSION=${platform#*/releases/download/v}; VERSION=${VERSION%%/*} ;;
+          "") echo "setup-kai: Kaifile.roc names no platform (pf:); set version, such as 0.0.12" >&2; exit 1 ;;
+          *) echo "setup-kai: Kaifile.roc's platform is \"$platform\", not a Kai release's URL, so it names no version; set version, such as 0.0.12" >&2; exit 1 ;;
+          esac
+        fi
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "cache-key=setup-kai-$VERSION-$RUNNER_OS-$RUNNER_ARCH-${CACHE_KEY:+$CACHE_KEY-}" >> "$GITHUB_OUTPUT"
         if [ "$NIX" = true ] && ! command -v nix >/dev/null; then
           echo "install-nix=true" >> "$GITHUB_OUTPUT"
         fi
@@ -67,15 +93,15 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/kai
-        key: setup-kai-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.kai/lock.json') }}
-        restore-keys: setup-kai-${{ inputs.version }}-${{ runner.os }}-${{ runner.arch }}-
+        key: ${{ steps.check.outputs.cache-key }}${{ hashFiles('.kai/lock.json') }}
+        restore-keys: ${{ steps.check.outputs.cache-key }}
 
     # No --yes: Nix, when wanted, is installed above, and without a terminal
     # install.sh only says how to install it.
     - name: Install Kai
       shell: bash
       env:
-        VERSION: ${{ inputs.version }}
+        VERSION: ${{ steps.check.outputs.version }}
       run: |
         set -euo pipefail
         dir="$RUNNER_TEMP/setup-kai"

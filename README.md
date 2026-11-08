@@ -89,20 +89,23 @@ a Kai release with the install script, and caches Kai's downloads:
 steps:
   - uses: actions/checkout@v7
   - uses: thebrandonlucas/kai/.github/actions/setup-kai@COMMIT
-    with:
-      version: 0.0.11
   - run: kai run test
 ```
 
-Pin the action by a full commit SHA, or by a release tag from 0.0.12 on.
-`version` is required, so that a run installs the same kai until the workflow
-changes it. `cache` (default `true`) caches `~/.cache/kai`, the direct
+Pin the action by a full commit SHA, or by a release tag from 0.0.12 on. It
+installs the release whose platform `Kaifile.roc`'s header names, so a run
+installs the kai the Kaifile was written for; `version`, such as `0.0.12`,
+names another, and is needed when the platform is a local path, which names
+no release. `cache` (default `true`) caches `~/.cache/kai`, the direct
 backend's store and the Roc compiler Kai downloads, by the version, the
-runner's OS and architecture, and `.kai/lock.json`. `nix` (default `true`)
-installs Nix unless it is on `PATH`; set it to `false` for a project whose
-environments are all [pinned downloads](#running-without-nix-or-guix). It runs
-on Linux runners, and on Apple Silicon macOS runners, such as `macos-15`, with a
-`version` from 0.0.12 on.
+runner's OS and architecture, `cache-key` and `.kai/lock.json`. Jobs that make
+different parts of the lock ready, such as one testing on Nix and one on
+downloads, set a `cache-key` each, such as the job's name, to keep separate
+cache entries. `nix` (default `true`) installs Nix unless it is on `PATH`; set
+it to `false` for a project whose environments are all
+[pinned downloads](#running-without-nix-or-guix). It runs on Linux runners,
+and on Apple Silicon macOS runners, such as `macos-15`, with a `version` from
+0.0.12 on.
 
 ## Getting started
 
