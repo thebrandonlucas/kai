@@ -491,11 +491,17 @@ kaifile = Kaifile.new([Std.plugin(project), Sbom.plugin(project)])
 
 ```sh
 kai sbom inputs                      # the inputs a composition disposes of
-kai sbom inspect --composition composition.json --output inventory.json -- source
+kai sbom members --output members.json -- dist/app.tar.zst
+kai sbom inspect --composition composition.json --members members.json \
+  --output inventory.json -- source
 kai sbom bind --inventory inventory.json --subject subject.json \
   --context context.json --artifact dist/app.tar.zst
 kai sbom check --manifest dist/app.tar.zst.sbom-manifest.json
 ```
+
+`check` hashes the release file beside the manifest, and works outside any
+project too: in a directory with no Kaifile.roc, kai runs the sbom plugin of
+its own release, so anyone can check a downloaded release's sidecars.
 
 It follows roc-blueprint's SBOM profile, so a project moving from
 roc-blueprint keeps its reviewed composition and publishes the same

@@ -8,6 +8,7 @@ import pf.Random
 import pf.Stderr
 import pf.System
 
+import api.Layout
 import api.Plan
 import api.Protocol
 import api.Sexpr
@@ -16,6 +17,8 @@ import "../.roc-downloads" as roc_downloads : Str
 import "../.roc-version" as compiler_version : Str
 import "../.roc-overlay" as roc_overlay : Str
 import "../platform-release" as platform_release : Str
+import "../plugins/sbom-release" as sbom_release : Str
+import "../plugins/std-release" as std_release : Str
 
 import Output
 import Store
@@ -49,6 +52,41 @@ Load := [].{
 		canonical = Load.path(location).canonicalize!()?.to_str()?
 		Ok(Load.split_file(canonical))
 	}
+
+	# Outside any project, `kai sbom` runs the sbom plugin of kai's release
+	# from a Kaifile.roc kai keeps in its cache, with its workspace there and
+	# files named from the directory kai runs in.
+	standalone! : () => Try((Location, Layout), _)
+	standalone! = || {
+		directory = "${Load.cache!()?}/kai/v1/sbom"
+		workspace = "${directory}/.kai"
+		Load.path(workspace).create_all!()?
+		file = "${directory}/${Load.default_file}"
+		if (Path.read_utf8!(Load.path(file)) ?? "") != Load.standalone_kaifile {
+			Workspace.atomic_write!(file, Load.standalone_kaifile)?
+		}
+		layout = Layout.{
+			project_root: Env.cwd!()?.to_str()?,
+			workspace,
+			generated_root: "${workspace}/generated",
+			lock_path: "${workspace}/lock.json",
+		}
+		Layout.validate(layout).map_err(|message| InvalidWorkspace(message))?
+		Ok(({ root: directory, file: Load.default_file }, layout))
+	}
+
+	standalone_kaifile =
+		\\app [kaifile] {
+		\\	pf: platform "${platform_release.trim()}",
+		\\	std: "${std_release.trim()}",
+		\\	sbom: "${sbom_release.trim()}",
+		\\}
+		\\
+		\\import pf.Kaifile
+		\\import sbom.Sbom
+		\\
+		\\kaifile = Kaifile.new([Sbom.plugin([Name("sbom")])])
+		\\
 
 	# The Kaifile.roc `nearest` picks from `cwd` and the directories above it,
 	# or else the one in `cwd`, which may be missing.
@@ -800,3 +838,10 @@ expect {
 expect Load.ancestors("/srv/app") == ["/srv/app", "/srv", ""]
 	and Load.ancestors("/") == [""]
 	and Load.resolve("", Load.default_file) == "/Kaifile.roc"
+
+# Outside a project, kai sbom runs the sbom plugin of kai's own release.
+expect [platform_release, std_release, sbom_release].all(
+	|url| url.trim().starts_with("https://")
+		and Load.standalone_kaifile.contains("\"${url.trim()}\""),
+)
+	and Load.standalone_kaifile.contains("Sbom.plugin(")

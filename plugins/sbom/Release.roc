@@ -335,6 +335,7 @@ context = |args, phase, observed| {
 		"artifact",
 		"output",
 		"manifest",
+		"artifacts",
 	]
 	named = |word| paths.contains(word.drop_prefix("--"))
 	var $parsed = []
@@ -381,38 +382,61 @@ context = |args, phase, observed| {
 }
 
 ## The plan `kai sbom` makes for `args` on weaver, phase by phase, with
-## `files` the contents of the paths it names.
-planned : List(Str), List((Str, Str)) -> Try(Plan, Plan.Failure)
-planned = |args, files| {
+## `files` the contents of the paths it names or the generated files it
+## observes, and `hashes` the SHA-256 and size of the files kai hashes.
+planned :
+	List(Str), List((Str, Str)), List((Str, Str, U64)) -> Try(Plan, Plan.Failure)
+planned = |args, files, hashes| {
 	plugin = Sbom.plugin(Release.weaver)
 	plan_of = |ctx| {
 		found = plugin.implementations.first().map_err(|_| Plan.fail("none"))?
 		(found.plan)(ctx)
 	}
+	hash_lines = |hashed|
+		Str.join_with(
+			hashes.keep_if(|(path, _, _)| hashed.contains(path))
+				.map(|(path, sha256, size)| "${sha256} ${size.to_str()} ${path}\n"),
+			"",
+		)
 	var $plan = plan_of(context(args, 0, []))?
 	var $phase = 1
+	# What kai wrote into the generated root stays there for later phases.
+	var $earlier = []
 	while $plan.next != Done {
-		observed = match $plan.next {
-			Observe(copies) =>
-				copies.map(
-					|copy| {
-						# Each copy's source is the cp step that writes it.
-						source = $plan.steps.keep_oks(
-							|step|
-								match step {
-									Run({ argv: ["cp", "--", from, to], .. }) if to == copy => Ok(from)
-									_ => Err({})
-								},
-						).first() ?? ""
-						contents = files.find_first(|(path, _)| path == source)
-							.map_ok(|(_, text)| Text(text))
-							?? Missing
-						{ path: copy, contents }
-					},
-				)
+		copies = match $plan.next {
+			Observe(paths) => paths
 			Done => []
 		}
-		$plan = plan_of(context(args, $phase, observed))?
+		steps = $plan.steps
+		earlier = $earlier
+		var $observed = []
+		for copy in copies {
+			# Each copy's source is the cp step that writes it, or the files a
+			# Hash step hashes into it.
+			from = steps.keep_oks(
+				|step|
+					match step {
+						Run({ argv: ["cp", "--", source, to], .. }) if to == copy =>
+							Ok(Copied(source))
+						Hash({ files: hashed, result }) if result == copy =>
+							Ok(Hashed(hashed))
+						_ => Err({})
+					},
+			).first() ?? Copied(copy)
+			contents = match from {
+				Hashed(hashed) => Text(hash_lines(hashed))
+				Copied(source) =>
+					match files.find_first(|(path, _)| path == source) {
+						Ok((_, text)) => Text(text)
+						Err(_) =>
+							earlier.find_first(|o| o.path == copy).map_ok(|o| o.contents)
+								?? Missing
+					}
+			}
+			$observed = $observed.append({ path: copy, contents })
+		}
+		$earlier = $earlier.concat($observed)
+		$plan = plan_of(context(args, $phase, $observed))?
 		$phase = $phase + 1
 	}
 	Ok($plan)
@@ -458,6 +482,7 @@ expect {
 			"source",
 		],
 		[("/s/c.json", Release.weaver_composition), ("/s/m.json", weaver_members)],
+		[],
 	)?
 	inventory = (written(inspect).first()?).1
 	bind = |generator|
@@ -478,6 +503,7 @@ expect {
 				("/s/s.json", Release.weaver_subject),
 				("/s/x.json", Release.weaver_context(generator)),
 			],
+			[],
 		)
 	bound = written(bind("Tool: blueprint-sbom-0.11.0")?)
 	renamed = written(bind("Tool: kai-sbom-0.0.12")?)
@@ -487,16 +513,27 @@ expect {
 			text.replace_each("blueprint-sbom-0.11.0", "kai-sbom-0.0.12"),
 		),
 	)
-	check = planned(
-		[
-			"check",
-			"--manifest",
-			"${dist}.sbom-manifest.json",
-			"--inventory",
-			"/s/i.json",
-		],
-		bound.append(("/s/i.json", inventory)),
-	)?
+	# kai hashes the bundle beside the manifest, or in --artifacts.
+	check = |options, hashes|
+		planned(
+			["check", "--manifest", "${dist}.sbom-manifest.json"]
+				.concat(["--inventory", "/s/i.json"])
+				.concat(options),
+			bound.append(("/s/i.json", inventory)),
+			hashes,
+		)
+	subject_sha256 = "d77a3cf330aa09b7688900a11765d4760f6625887ca73bdac3e4b8bb08f"
+		.concat("55234")
+	checked = check([], [(dist, subject_sha256, 39622)])?
+	moved = check(
+		["--artifacts", "/release", "--", "dist/${bundle}.cdx.json"],
+		[("/release/${bundle}", subject_sha256, 39622)],
+	)
+	tampered = check([], [(dist, "0".repeat(64), 39622)])
+	missing = match check([], []) {
+		Err(failure) => failure.message.contains("no regular file ${dist}")
+		Ok(_) => Bool.False
+	}
 	digest(inventory) == "2d116bb7982bd7c2d0b79008ab5aee6cda417b491a5c5e9375f2d21"
 		.concat("d0396c062")
 		and bound.map(|(path, text)| (path, digest(text)))
@@ -517,8 +554,56 @@ expect {
 		and renamed.map(|(path, _)| path) == same_but_name.map(|(path, _)| path)
 		and renamed.take_first(2) == same_but_name.take_first(2)
 		and
-		check.steps
+		checked.steps
 			.any(
 				|s| s == Print("${dist}.sbom-manifest.json: manifest of ${bundle} checks"),
 			)
+		and moved.is_ok()
+		and tampered.is_err()
+		and missing
 }
+
+# `members` lists an archive's regular members in archive order with the
+# digests kai hashed, as the listing `inspect --members` reads.
+expect {
+	members = "/project/.kai/generated/sbom/members"
+	tree = "${members}/${"a".repeat(64)}"
+	listed = planned(
+		["members", "--", "dist/app.tar.zst"],
+		[
+			("${members}/names", "src/\nsrc/Main.roc\nLICENSE\n"),
+			(
+				"${members}/kinds",
+				"drwxr-xr-x 0/0 0 src/\n-rw-r--r-- 0/0 3 src/Main.roc\n"
+					.concat("-rw-r--r-- 0/0 2 LICENSE\n"),
+			),
+		],
+		[
+			("/project/dist/app.tar.zst", "a".repeat(64), 100),
+			("${tree}/src/Main.roc", "b".repeat(64), 3),
+			("${tree}/LICENSE", "c".repeat(64), 2),
+		],
+	)?
+	listing : Try(Profile.Listing, _)
+	listing = match listed.steps {
+		[Print(text)] => Json.parse(text)
+		_ => Err(NotPrinted)
+	}
+	listing
+		== Ok({
+			archive: "app.tar.zst",
+			sha256: "a".repeat(64),
+			members: [
+				{ name: "src/Main.roc", size: 3, sha256: "b".repeat(64) },
+				{ name: "LICENSE", size: 2, sha256: "c".repeat(64) },
+			],
+		})
+}
+
+# An archive with a link, an unsafe name or a member listed twice is refused.
+expect [
+	(["a", "a"], ["-rw", "-rw"], "member a appears twice"),
+	(["../a"], ["-rw"], "unsafe member name ../a"),
+	(["a"], ["lrwx"], "member a is not a regular file"),
+	(["a"], [], "tar listed 1 members and 0 kinds"),
+].all(|(names, kinds, why)| Sbom.regular_members(names, kinds) == Err(why))

@@ -208,6 +208,7 @@ binary_script = |target, prepare, finish|
 		\\bundle() { basename "$KAI_ARTIFACTS/$1"/*.tar.zst; }
 		\\echo "$base/$(bundle kai-platform)" > platform-release
 		\\echo "$base/std-$(bundle kai-std)" > plugins/std-release
+		\\echo "$base/sbom-$(bundle kai-sbom)" > plugins/sbom-release
 		\\flags="--opt=size --target=${target} --jobs=1"
 		\\"$roc" build cli/main.roc $flags --output=kai
 		\\
@@ -255,6 +256,7 @@ binary_files = [
 	".roc-downloads",
 	"platform-release",
 	"plugins/std-release",
+	"plugins/sbom-release",
 ]
 
 binary = |name, script, extra_inputs|
@@ -263,7 +265,7 @@ binary = |name, script, extra_inputs|
 		[
 			Use("build"),
 			Inputs(roc_inputs.concat(inputs(cli_packages)).concat(extra_inputs)),
-			Needs(["kai-platform", "kai-std"]),
+			Needs(["kai-platform", "kai-std", "kai-sbom"]),
 			Run(["sh", "-c", script]),
 			Output("bin"),
 			Files(binary_files),

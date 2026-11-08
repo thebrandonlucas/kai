@@ -1,6 +1,7 @@
 # SBOMs of a release with the sbom plugin: `kai sbom` inventories a reviewed
 # composition, composition.json, against what this project downloads and
-# declares, and writes SPDX and CycloneDX sidecars of a release file.
+# declares, writes SPDX and CycloneDX sidecars of a release file,
+# greeting.tar.zst, and checks them against it.
 #
 #     kai sbom inputs     # the inputs composition.json disposes of
 #     kai sbom pins       # the locked downloads, for supplier SBOM fetchers
@@ -10,12 +11,14 @@
 #       --context context.json --artifact greeting.tar.zst
 #     kai sbom check --manifest greeting.tar.zst.sbom-manifest.json \
 #       --inventory inventory.json
+#     kai sbom members greeting.tar.zst   # its members, for inspect --members
 #
 # `path` is a dependency fetched by its published SHA-256 on every
 # system, a file source (`source:path`); `jq` is a program per system, here
 # pinned by its SHA-256 (`program:jq:<system>`); the task is `task:check`.
-# subject.json states the release file's digest and size, which kai never
-# reads, and context.json the documents' namespace, author and generator.
+# subject.json states the release file's digest and size, which `check`
+# hashes again, and context.json the documents' namespace, author and
+# generator.
 app [kaifile] {
 	pf: platform "../../platform/main.roc",
 	sbom: "../../plugins/sbom/main.roc",

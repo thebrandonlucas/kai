@@ -164,6 +164,7 @@ A plan is a list of steps and what comes next:
 | `VerifyPath`, `CheckSource`, `Snapshot`, `InstallRunner` | std's checks and build sandbox steps |
 | `Realise({ bin, programs })` | make each `Plan.Program`, a file or tar.gz/tar.xz archive pinned by SHA-256 and size, ready in kai's store, and link it into `bin` in the workspace; the `Run`s after it have `bin` first on `PATH`, until the next `Realise` or `Stage` |
 | `Measure({ files, result })` | download each `{ key, urls }` into the store and write `<key> <sha256> <size>` lines to `result`, a generated file a continuation observes |
+| `Hash({ files, result })` | hash each regular file of `files`, absolute paths anywhere, and write `<sha256> <size> <path>` lines to `result`, a generated file a continuation observes; another file gets no line |
 | `PlaceRocPackages(programs)` | make each Roc package bundle, a `Plan.Program` named by the hash its URL ends in and unpacking to `main.roc`, ready in kai's store, and copy it into Roc's package cache (`roc/packages/<hash>` under `$XDG_CACHE_HOME`, or `~/.cache`) unless that directory already has its `main.roc`, so Roc resolves the URL offline |
 | `ExpectPrograms({ description, programs })` | fail unless every program is on `PATH`, naming each missing one; the error is `missing_programs`, and with `--json` its `programs` lists them |
 | `PublishLock({ previous, contents })` | replace the lock, only for the lock owner |
