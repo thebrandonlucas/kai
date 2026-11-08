@@ -7,7 +7,7 @@ that lists them. A maintainer reviews a *composition* (what the release
 holds and depends on, and what became of every input); `kai sbom inspect`
 checks it against the project and writes an *inventory*; `kai sbom bind`
 renders the inventory for one release file; `kai sbom check` holds the
-sidecars to the profile, the inventory and the manifest.
+sidecars to the profile, the inventory, the manifest and the release file.
 
 The documents follow roc-blueprint's SBOM profile, `blueprint-spdx-3.0-v2`:
 the same compositions, inventories, identities and renderings, so a project
@@ -57,7 +57,8 @@ small project with a reviewed composition.
 | `inspect --composition FILE [--members FILE] [--output FILE] -- TARGET` | Checks the composition against the project for `TARGET` and writes the inventory to `--output`, or prints it. With `--members`, a `source` inventory must account for every member of the archive listing. |
 | `bind --inventory FILE --subject FILE --context FILE --artifact FILE` | Writes `ARTIFACT.spdx.json` (SPDX 3.0.1), `ARTIFACT.cdx.json` (CycloneDX 1.7) and the manifest `ARTIFACT.sbom-manifest.json` beside the artifact. |
 | `bind … --artifact FILE --output FILE [--spdx-2-3 \| --cyclonedx] [--manifest FILE]` | Writes one document to `--output`: SPDX 3.0.1, or SPDX 2.3 or CycloneDX 1.7 with a flag, and with `--manifest` the manifest of that one sidecar. |
-| `check [--manifest FILE] [--inventory FILE] [-- DOCUMENT...]` | Checks each document, and each sidecar the manifest lists: valid in its format, one described subject, evidence that is the inventory's, one package graph across renderings, and the manifest's digests and sizes. |
+| `check [--manifest FILE] [--inventory FILE] [--artifacts DIR] [-- DOCUMENT...]` | Checks each document, and each sidecar the manifest lists: valid in its format, one described subject, evidence that is the inventory's, one package graph across renderings, and the manifest's digests and sizes, which kai hashes again from the release file beside the manifest (or in `--artifacts`), the sidecars and the inventory. With `--artifacts`, each document's subject is also the file of its name in `DIR`, byte for byte. |
+| `members [--output FILE] [--] ARCHIVE` | Lists the archive's regular members in archive order, each with its size and SHA-256, as the member listing `inspect --members` reads, to `--output` or stdout. An archive with a link, a device, an unsafe name or a member listed twice is refused. |
 
 Each prints the paths it writes, as `blueprint-sbom` does. Every document
 is rendered before any is written, so a refusal writes nothing. The
@@ -105,8 +106,8 @@ All are JSON, at most 1 MiB:
   [SBOM guide](https://github.com/lukewilliamboswell/roc-blueprint/blob/main/docs/sbom.adoc)
   describes them.
 - **Member listing**: `archive`, `sha256` and `members`, each `name`,
-  `size` and `sha256`, in archive order: what `blueprint-sbom members`
-  writes for a `.tar.zst`.
+  `size` and `sha256`, in archive order: what `kai sbom members` writes,
+  as `blueprint-sbom members` does for a `.tar.zst`.
 - **Inventory**: what `inspect` writes; `bind` and `check` read it.
 - **Subject**: `filename`, `version`, `target` and `url`, with the
   release file's `sha256` and, for a manifest, its `size` in bytes. `kind`,
@@ -118,20 +119,36 @@ All are JSON, at most 1 MiB:
   The generator is the one name a document gives its tool; for Kai's,
   `Tool: kai-sbom-<kai version>`.
 
+## Outside a project
+
+`kai sbom` also runs in a directory with no Kaifile.roc, such as one holding
+a downloaded release: kai then uses the sbom plugin of its own release, from
+a Kaifile.roc it keeps in its cache, with its generated files there too. It
+has no project, so `check`, `members` and `bind` are the actions that help;
+paths, after `--` too, are relative to the directory kai runs in. To check a
+release's sidecars against the release file beside them:
+
+```sh
+kai sbom check --manifest app.tar.zst.sbom-manifest.json
+```
+
 ## Purity, and what a release workflow does itself
 
 Plugins are pure: kai performs a plan's effects. `kai sbom` reads the files
 it is given by having kai copy each into `.kai/generated/sbom/input` with
 `cp` and read the copy back, and writes each output into
 `.kai/generated/sbom/output` before copying it to its path, so
-`kai --dry-run sbom …` shows every step. It needs `cp`, and never reads a
-release file's bytes. So:
+`kai --dry-run sbom …` shows every step. A release file and an archive's
+members are hashed by kai itself (a plan's `Hash` step), never read by the
+plugin. It needs `cp`, and `members` needs `sh` and a `tar` that reads the
+archive (GNU tar with `zstd` for a `.tar.zst`, or bsdtar). So:
 
 - **The subject's digest and size** come from the subject file, which the
-  workflow writes after hashing the release file. `check` reports the
-  SHA-256 the manifest states, for the workflow to compare.
-- **The member listing** of a source bundle comes from the workflow:
-  list the archive (for example `tar --zstd -tf`), and hash each member.
+  workflow writes after hashing the release file; `check` hashes the
+  release file again and holds the manifest to it.
+- **The member listing** of a source bundle comes from `kai sbom members`,
+  which lists the archive with `tar`, unpacks it into
+  `.kai/generated/sbom/members` and hashes each member.
 - **Supplier SBOMs** are fetched by the workflow, as roc-automation's
   `fetch-dependency-sboms` does from `kai sbom pins`: it finds each
   supplier's sidecar beside the pinned URL and records it in
@@ -144,11 +161,11 @@ For a release workflow such as roc-automation's `sbom-sidecars`, each
 |---|---|
 | `blueprint spec` and `Blueprint.lock`, passed to `inspect` | the Kaifile and `.kai/lock.json`, which kai reads itself |
 | `blueprint lock show --json` | `kai sbom pins` |
-| `blueprint-sbom members ARCHIVE OUT` | the workflow's own listing |
+| `blueprint-sbom members ARCHIVE OUT` | `kai sbom members --output OUT -- ARCHIVE` |
 | `blueprint-sbom inspect SPEC LOCK COMPOSITION TARGET OUT [--members L]` | `kai sbom inspect --composition COMPOSITION --output OUT [--members L] -- TARGET` |
 | `blueprint-sbom bind INVENTORY SUBJECT CONTEXT ARTIFACT` | `kai sbom bind --inventory INVENTORY --subject SUBJECT --context CONTEXT --artifact ARTIFACT` |
 | `… ARTIFACT OUT --spdx-2.3` | `… --artifact ARTIFACT --output OUT --spdx-2-3` |
-| `blueprint-sbom check --manifest M --inventory I --artifacts DIR DOC…` | `kai sbom check --manifest M --inventory I -- DOC…`, and the workflow compares the release file's SHA-256 |
+| `blueprint-sbom check --manifest M --inventory I --artifacts DIR DOC…` | `kai sbom check --manifest M --inventory I --artifacts DIR -- DOC…` |
 
 ## Identifiers that keep Blueprint's name
 

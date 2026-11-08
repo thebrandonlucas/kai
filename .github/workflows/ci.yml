@@ -167,7 +167,7 @@ jobs:
             ~/.cache/roc
             ~/.cache/zig
             .zig-cache
-          key: e2e-kai-${{ hashFiles('.roc-version', 'build.zig', 'build.zig.zon') }}-${{ hashFiles('cli/**', 'platform/*.roc', 'VERSION', 'platform-release', 'plugins/std-release') }}
+          key: e2e-kai-${{ hashFiles('.roc-version', 'build.zig', 'build.zig.zon') }}-${{ hashFiles('cli/**', 'platform/*.roc', 'VERSION', 'platform-release', 'plugins/std-release', 'plugins/sbom-release') }}
           restore-keys: e2e-kai-${{ hashFiles('.roc-version', 'build.zig', 'build.zig.zon') }}-
 
       - name: Build kai

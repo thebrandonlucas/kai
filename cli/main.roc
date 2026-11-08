@@ -126,13 +126,15 @@ run! = |shown, mode| {
 			Output.event("check", valid, [("file", Output.text(project.file))]),
 		)
 	}
-	project = match located {
-		Ok(found) => found
+	standalone = command_word(shown) == Ok("sbom")
+		and requested_file(shown).is_err()
+	(project, layout) = match located {
+		Ok(found) => (found, Workspace.locate!(found.root)?)
+		Err(NoKaifile(_)) if standalone => Load.standalone!()?
 		Err(NoKaifile(_)) if asks_help(shown) =>
 			return Stdout.line!(Help.generic(version, Help.starter))
 		Err(err) => return Err(err)
 	}
-	layout = Workspace.locate!(project.root)?
 	style = Help.text_style({
 		terminal: is_terminal!("1") and is_terminal!("2"),
 		no_color: Variables.read!(Variables.no_color) ?? "",

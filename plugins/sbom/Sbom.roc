@@ -57,8 +57,8 @@ Sbom := [].{
 			}),
 			Trailing({
 				name: "words",
-				help: "inspect: the target; inputs: the target (source if none); check: "
-					.concat("the documents"),
+				help: "inspect: the target; inputs: the target (source if none); "
+					.concat("members: the archive; check: the documents"),
 				choices: [],
 			}),
 			Path({
@@ -88,7 +88,14 @@ Sbom := [].{
 			Path({
 				name: "output",
 				short: "",
-				help: "inspect, bind: where to write; stdout when absent for inspect",
+				help: "inspect, bind, members: where to write; stdout when absent "
+					.concat("for inspect and members"),
+			}),
+			Path({
+				name: "artifacts",
+				short: "",
+				help: "check: the directory holding the release file, if not "
+					.concat("beside the manifest"),
 			}),
 			Path({
 				name: "manifest",
@@ -122,6 +129,10 @@ Sbom := [].{
 		),
 		choice("bind", "Render an inventory as SBOM sidecars of a release file"),
 		choice("check", "Check SBOM sidecars, their inventory and their manifest"),
+		choice(
+			"members",
+			"List an archive's members with their SHA-256, for inspect --members",
+		),
 	]
 
 	page : Command.Page
@@ -169,6 +180,7 @@ Sbom := [].{
 			"inspect" => Sbom.inspect(model, ctx, words)
 			"bind" => Sbom.bind(ctx, words)
 			"check" => Sbom.check(ctx, words)
+			"members" => Sbom.members(ctx, words)
 			other => Err(Plan.fail("unknown sbom action: ${other}"))
 		}
 	}
@@ -379,17 +391,21 @@ Sbom := [].{
 	}
 
 	## `check`: each document held to the profile and to the inventory, the
-	## manifest to the sidecars it lists and the inventory, and the
-	## renderings of one subject to one graph. The subject's own bytes are
-	## not read: compare its SHA-256 with what the manifest states.
+	## manifest to the files it lists, each hashed again: the release file
+	## beside it, or in --artifacts, its sidecars and the inventory; and the
+	## renderings of one subject to one graph. With --artifacts, each
+	## document's subject is also the file of its name there.
 	check : Implementation.Context, List(Str) -> Try(Plan, Plan.Failure)
 	check = |ctx, documents| {
 		manifest = Command.path(ctx.args, "manifest")
 		inventory = Command.path(ctx.args, "inventory")
+		artifacts = Command.path(ctx.args, "artifacts")
 		if documents.is_empty() and manifest.is_err() {
 			return Err(Plan.fail("check needs at least one SBOM document"))
 		}
-		named = documents.map_with_index(|path, i| ("document-${i.to_str()}", path))
+		named = documents.map_with_index(
+			|path, i| ("document-${i.to_str()}", Sbom.absolute(ctx, path)),
+		)
 		given = named
 			.concat(
 				match manifest {
@@ -406,39 +422,62 @@ Sbom := [].{
 		if ctx.phase == 0 {
 			return Ok(staged(ctx, given))
 		}
-		listed = match manifest {
+		(listed, subject) = match manifest {
 			Ok(path) => {
 				text = read(ctx, "manifest")?
 				found = Manifest.read(text).map_err(|why| Plan.fail("${path}: ${why}"))?
-				found.sidecars.map_with_index(
+				sidecars = found.sidecars.map_with_index(
 					|entry, i| ("listed-${i.to_str()}", Manifest.beside(path, entry.filename)),
 				)
+				(sidecars, [Sbom.subject_file(path, artifacts, found.subject.filename)])
 			}
-			Err(_) => []
+			Err(_) => ([], [])
 		}
-		if ctx.phase == 1 and !listed.is_empty() {
-			return Ok(staged(ctx, given.concat(listed)))
+		if ctx.phase == 1 and (manifest.is_ok() or artifacts.is_ok()) {
+			# A document that does not read is reported once all are read.
+			subjects = match artifacts {
+				Ok(directory) =>
+					named.keep_oks(
+						|(role, _)|
+							match read(ctx, role).map_ok(Sidecar.check) {
+								Ok(Ok(one)) => Ok("${directory}/${one.subject.name}")
+								_ => Err(Unread)
+							},
+					)
+				Err(_) => []
+			}
+			staged_again = staged(ctx, given.concat(listed))
+			return Ok(hashing(staged_again, ctx, "hashes", subject.concat(subjects)))
 		}
-		Sbom.checked(ctx, named, listed, manifest, inventory)
+		Sbom.checked(ctx, { named, listed, manifest, inventory, artifacts })
 	}
 
-	## The checks of `check`, once every file is read.
+	## The release file a manifest names: in the directory --artifacts names,
+	## or beside the manifest.
+	subject_file : Str, Try(Str, [NoValue]), Str -> Str
+	subject_file = |manifest, artifacts, filename|
+		match artifacts {
+			Ok(directory) => "${directory}/${filename}"
+			Err(_) => Manifest.beside(manifest, filename)
+		}
+
+	## The checks of `check`, once every file is read and hashed.
 	checked :
 		Implementation.Context,
-		List((Str, Str)),
-		List((Str, Str)),
-		Try(
-			Str,
-			[NoValue],
-		),
-		Try(Str, [NoValue]) -> Try(Plan, Plan.Failure)
-	checked = |ctx, named, listed, manifest_path, inventory_path| {
+		{
+			named : List((Str, Str)),
+			listed : List((Str, Str)),
+			manifest : Try(Str, [NoValue]),
+			inventory : Try(Str, [NoValue]),
+			artifacts : Try(Str, [NoValue]),
+		} -> Try(Plan, Plan.Failure)
+	checked = |ctx, { named, listed, manifest, inventory, artifacts }| {
 		fail = |path, why| Plan.fail("${path}: ${why}")
-		inventory_text = match inventory_path {
+		inventory_text = match inventory {
 			Ok(_) => Ok(read(ctx, "inventory")?)
 			Err(_) => Err(NoInventory)
 		}
-		inventory = match (inventory_path, inventory_text) {
+		stated_inventory = match (inventory, inventory_text) {
 			(Ok(path), Ok(text)) => {
 				parsed : Try(Profile.Inventory, _)
 				parsed = Json.parse(
@@ -453,7 +492,7 @@ Sbom := [].{
 			}
 			_ => Err(NoInventory)
 		}
-		verified = match manifest_path {
+		verified = match manifest {
 			Ok(path) => {
 				text = read(ctx, "manifest")?
 				found = Manifest.read(text).map_err(|why| fail(path, why))?
@@ -471,11 +510,11 @@ Sbom := [].{
 					Ok(t) => Measured(digest(t))
 					Err(_) => Unmeasured
 				}
-				observed = {
-					subject: { sha256: found.subject.sha256, size: found.subject.size },
-					inventory: measured,
-					sidecars,
-				}
+				file = Sbom.subject_file(path, artifacts, found.subject.filename)
+				subject = hashed(ctx, "hashes", file).map_err(
+					|_| fail(path, "no regular file ${file} to hold its subject to"),
+				)?
+				observed = { subject, inventory: measured, sidecars }
 				Ok(Manifest.check(text, observed).map_err(|why| fail(path, why))?)
 			}
 			Err(_) => Err(NoManifest)
@@ -486,13 +525,23 @@ Sbom := [].{
 		var $lines = []
 		for (role, path) in order {
 			one = Sidecar.check(read(ctx, role)?).map_err(|why| fail(path, why))?
-			match inventory {
+			match stated_inventory {
 				Ok(stated) => Sidecar.against_inventory(one, stated).map_err(
 					|why| fail(
 						path,
 						why,
 					),
 				)?
+				Err(_) => {}
+			}
+			match artifacts {
+				Ok(directory) => {
+					file = "${directory}/${one.subject.name}"
+					measured = hashed(ctx, "hashes", file).map_ok(|h| h.sha256)
+					if measured != Ok(one.subject.sha256) {
+						return Err(fail(path, "subject bytes differ from ${file}"))
+					}
+				}
 				Err(_) => {}
 			}
 			match verified {
@@ -524,18 +573,125 @@ Sbom := [].{
 				),
 			)
 		}
-		tail = match (manifest_path, verified) {
+		tail = match (manifest, verified) {
 			(Ok(path), Ok(m)) => [
 				Print("${path}: manifest of ${m.subject.filename} checks"),
-				Note(
-					"kai sbom: ${m.subject.filename} itself was not read; compare its "
-						.concat("SHA-256 with ${m.subject.sha256}"),
-				),
 			]
 			_ => []
 		}
 		Ok(Plan.{ steps: $lines.concat(tail), next: Done })
 	}
+
+	## `members`: the archive's regular members in archive order, each with
+	## its size and SHA-256, as the listing `inspect --members` reads. kai
+	## lists the archive with `tar`, unpacks it into the generated root and
+	## hashes each member; links, devices and unsafe names are refused.
+	members : Implementation.Context, List(Str) -> Try(Plan, Plan.Failure)
+	members = |ctx, words| {
+		archive = match words {
+			[one] => Sbom.absolute(ctx, one)
+			_ => return Err(Plan.fail("kai sbom members needs the archive"))
+		}
+		directory = "${ctx.layout.generated_root}/sbom/members"
+		names = "${directory}/names"
+		kinds = "${directory}/kinds"
+		if ctx.phase == 0 {
+			list = "tar -tf \"$1\" > \"$2\" && tar -tvf \"$1\" > \"$3\""
+			listing_plan = Plan.{
+				steps: [
+					Write([{ path: "${directory}/.keep", contents: "" }]),
+					shell("list ${archive}", list, [archive, names, kinds]),
+				],
+				next: Observe([names, kinds]),
+			}
+			return Ok(hashing(listing_plan, ctx, "archive", [archive]))
+		}
+		listed = |path|
+			match ctx.observed.find_first(|o| o.path == path) {
+				Ok({ contents: Text(text), .. }) =>
+					Ok(text.split_on("\n").drop_if(Str.is_empty))
+				_ => Err(Plan.fail("kai did not list ${archive}"))
+			}
+		regular = Sbom.regular_members(listed(names)?, listed(kinds)?)
+			.map_err(|why| Plan.fail("${archive}: ${why}"))?
+		sha256 = hashed(ctx, "archive", archive)
+			.map_err(|_| Plan.fail("${archive} is not a regular file"))?
+			.sha256
+		tree = "${directory}/${sha256}"
+		if ctx.phase == 1 {
+			# A tree unpacked before may hold read-only directories.
+			unpack = "[ ! -d \"$2\" ] || chmod -R u+w \"$2\"; rm -rf \"$2\" && "
+				.concat("mkdir \"$2\" && tar -xf \"$1\" -C \"$2\"")
+			listing_plan = Plan.{
+				steps: [shell("unpack ${archive}", unpack, [archive, tree])],
+				next: Observe([names, kinds, copy_of(ctx, "archive")]),
+			}
+			files = regular.map(|name| "${tree}/${name}")
+			return Ok(hashing(listing_plan, ctx, "members", files))
+		}
+		found = regular.map_try(
+			|name|
+				hashed(ctx, "members", "${tree}/${name}")
+					.map_ok(|h| { name, size: h.size, sha256: h.sha256 })
+					.map_err(
+						|_| Plan.fail("${archive}: member ${name} did not unpack as a file"),
+					),
+		)?
+		listing : Profile.Listing
+		listing = { archive: Manifest.file_name_of(archive), sha256, members: found }
+		written = "${Json.to_str(listing)}\n"
+		match Command.path(ctx.args, "output") {
+			Ok(output) => Ok(emitted(ctx, [{ path: output, contents: written }]))
+			Err(_) => Ok(printed(written.drop_suffix("\n")))
+		}
+	}
+
+	## The regular members of an archive, from `tar -tf` and `tar -tvf`
+	## listings line for line, once every member is a directory or a regular
+	## file with a safe name, at most 4096 of them, each listed once.
+	regular_members : List(Str), List(Str) -> Try(List(Str), Str)
+	regular_members = |names, kinds| {
+		if names.len() != kinds.len() {
+			counts = "${names.len().to_str()} members and ${kinds.len().to_str()}"
+			return Err("tar listed ${counts} kinds")
+		}
+		if names.len() > 4096 {
+			return Err("more than 4096 members")
+		}
+		var $regular = []
+		for (name, kind) in List.map2(names, kinds, |n, k| (n, k)) {
+			match kind.to_utf8().first() {
+				Ok('d') if Sbom.safe_member(name.drop_suffix("/")) => {}
+				Ok('-') if Sbom.safe_member(name) and !$regular.contains(name) => {
+					$regular = $regular.append(name)
+				}
+				Ok('-') if $regular.contains(name) =>
+					return Err("member ${name} appears twice")
+				Ok('d') | Ok('-') => return Err("unsafe member name ${name}")
+				_ => return Err("member ${name} is not a regular file")
+			}
+		}
+		Ok($regular)
+	}
+
+	## A member name `tar` creates only below the directory it unpacks into,
+	## and an identity can carry: no empty, `.` or `..` part, no control,
+	## space, backslash or `?` byte.
+	safe_member : Str -> Bool
+	safe_member = |name| {
+		parts = name.split_on("/")
+		bytes = name.to_utf8()
+		!name.is_empty()
+			and bytes.len() <= 512
+			and !parts.any(|part| part.is_empty() or part == "." or part == "..")
+			and bytes.all(|b| b > 32 and b != 127 and b != '\\' and b != '?')
+	}
+
+	## A path given after `--`, absolute: a relative one is the project
+	## root's, where kai runs plan commands.
+	absolute : Implementation.Context, Str -> Str
+	absolute = |ctx, path|
+		if (path.starts_with("/")) path else "${ctx.layout.project_root}/${path}"
 
 	## The lock report supplier SBOM fetchers read, `blueprint lock show
 	## --json`'s format 2: each file source by name with its flat SHA-256,
@@ -689,3 +845,53 @@ target_known = |inputs, target|
 			suggestions: Plan.closest(target, inputs.systems.append("source")),
 		})
 	}
+
+## `script` run by `sh` with `args` as its `$1`, `$2` and on.
+shell : Str, Str, List(Str) -> Plan.Step
+shell = |description, script, args|
+	Run({
+		description,
+		argv: ["sh", "-c", script, "sh"].concat(args),
+		output: Quiet,
+		secrets: [],
+		removed_environment_variables: [],
+		kept_environment_variables: [],
+	})
+
+## `plan`, with kai hashing `files` too, for `hashed` to read back under
+## `role`.
+hashing : Plan, Implementation.Context, Str, List(Str) -> Plan
+hashing = |plan, ctx, role, files| {
+	result = copy_of(ctx, role)
+	next = match plan.next {
+		Observe(paths) => Observe(paths.append(result))
+		Done => Observe([result])
+	}
+	Plan.{ steps: plan.steps.append(Hash({ files, result })), next }
+}
+
+## What kai measured of a file.
+Hashed : { sha256 : Str, size : U64 }
+
+## The SHA-256 and size kai measured of `file` under `role`; none when it
+## is not a regular file.
+hashed :
+	Implementation.Context, Str, Str -> Try(Hashed, [NotHashed])
+hashed = |ctx, role, file| {
+	text = match ctx.observed.find_first(|o| o.path == copy_of(ctx, role)) {
+		Ok({ contents: Text(lines), .. }) => lines
+		_ => return Err(NotHashed)
+	}
+	for line in text.split_on("\n") {
+		match line.split_first(" ") {
+			Ok({ before: sha256, after }) =>
+				match after.split_first(" ") {
+					Ok({ before: size, after: path }) if path == file =>
+						return Ok({ sha256, size: U64.from_str(size) ?? 0 })
+					_ => {}
+				}
+			_ => {}
+		}
+	}
+	Err(NotHashed)
+}

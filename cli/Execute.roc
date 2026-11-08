@@ -508,6 +508,15 @@ Execute := [].{
 				} else {
 					Err("writes outside the generated files: ${result}")
 				}
+			Hash({ files, result }) =>
+				if !under(result, layout.generated_root) {
+					Err("writes outside the generated files: ${result}")
+				} else {
+					match files.find_first(|f| !f.starts_with("/")) {
+						Ok(file) => Err("hashes a file by a relative path: ${file}")
+						Err(_) => Ok({})
+					}
+				}
 			Run(run_step) => {
 				names = run_step.secrets
 					.concat(run_step.removed_environment_variables)
@@ -555,8 +564,8 @@ Execute := [].{
 	uses_workspace : Plan.Step -> Bool
 	uses_workspace = |step|
 		match step {
-			Write(_) | Snapshot(_) | InstallRunner(_) | Realise(_) | Measure(_) =>
-				Bool.True
+			Write(_) | Snapshot(_) | InstallRunner(_) | Realise(_) => Bool.True
+			Measure(_) | Hash(_) => Bool.True
 			_ => Bool.False
 		}
 
@@ -613,6 +622,17 @@ Execute := [].{
 				for { key, urls } in files {
 					{ sha256, size } = Store.measure!(cache, key, urls, mode)?
 					$lines = $lines.append("${key} ${sha256} ${size.to_str()}\n")
+				}
+				contents = Str.join_with($lines, "")
+				Workspace.stage!([{ path: result, contents }], layout)
+			}
+			Hash({ files, result }) => {
+				var $lines = []
+				for file in files {
+					if Workspace.path(file).type!() == Ok(IsFile) {
+						{ sha256, size } = Store.measure_file!(file)?
+						$lines = $lines.append("${sha256} ${size.to_str()} ${file}\n")
+					}
 				}
 				contents = Str.join_with($lines, "")
 				Workspace.stage!([{ path: result, contents }], layout)
@@ -999,6 +1019,7 @@ expect
 			files: [{ key: "tool", urls: pinned.urls }],
 			result: "/p/.kai/generated/direct/measured",
 		}),
+		Hash({ files: ["/tmp/app.tar.zst"], result: "/p/.kai/generated/hashed" }),
 		Write([{ path: "/p/.kai/generated/flake.nix", contents: "" }]),
 		run(["/bin/nix", "build"], ["TOKEN"], ["OTHER"], ["VERSION"]),
 		Note("n"),
@@ -1028,6 +1049,8 @@ expect [
 		files: [{ key: "tool", urls: ["http://example.com/tool"] }],
 		result: "/p/.kai/generated/measured",
 	}),
+	Hash({ files: [], result: "/p/.kai/lock.json" }),
+	Hash({ files: ["app.tar.zst"], result: "/p/.kai/generated/hashed" }),
 	run([], [], [], []),
 	run([""], [], [], []),
 	run(["-c"], [], [], []),

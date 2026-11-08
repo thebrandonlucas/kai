@@ -55,6 +55,11 @@ Plan := { steps : List(Step), next : Next }.{
 		## continuation to observe.
 		Measure({ files : List({ key : Str, urls : List(Str) }), result : Str }),
 
+		## Writes a line `<sha256> <size> <path>` to `result`, a generated file
+		## for a continuation to observe, for each of `files`, absolute paths,
+		## that is a regular file; another gets no line.
+		Hash({ files : List(Str), result : Str }),
+
 		## Makes each Roc package bundle, a tar.zst named by the hash its URL ends
 		## in and unpacking to `main.roc` and the rest, ready in kai's store and
 		## places it in Roc's package cache as that directory, unless the cache
@@ -215,6 +220,7 @@ expect {
 				files: [{ key: "tool", urls: ["https://example.com/tool"] }],
 				result: "/g/measured",
 			}),
+			Hash({ files: ["/p/dist/app.tar.zst"], result: "/g/hashed" }),
 			PlaceRocPackages([
 				{
 					name: "7j6K",

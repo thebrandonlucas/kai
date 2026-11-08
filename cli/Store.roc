@@ -219,15 +219,22 @@ Store := [].{
 	retryable : U16 -> Bool
 	retryable = |status| status == 408 or status == 429 or status >= 500
 
-	# A file's SHA-256, read in bounded chunks.
+	# A file's SHA-256.
 	digest! : Str => Try(Str, _)
-	digest! = |file| {
+	digest! = |file| Store.measure_file!(file).map_ok(|measured| measured.sha256)
+
+	# A file's SHA-256 and size, read in bounded chunks.
+	measure_file! : Str => Try({ sha256 : Str, size : U64 }, _)
+	measure_file! = |file| {
 		reader = File.open_reader_with_capacity!(Workspace.path(file), 65536)?
 		var $hasher = Crypto.SHA256.Hasher.empty()
+		var $size = 0
 		for! chunk in reader.chunks() {
-			$hasher = $hasher.write(chunk?)
+			bytes = chunk?
+			$hasher = $hasher.write(bytes)
+			$size = $size + bytes.len()
 		}
-		Ok($hasher.finish().to_hex())
+		Ok({ sha256: $hasher.finish().to_hex(), size: $size })
 	}
 
 	# A fresh directory beside `file`, on one filesystem with it.
