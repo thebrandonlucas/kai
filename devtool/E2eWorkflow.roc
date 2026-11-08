@@ -144,6 +144,11 @@ E2eWorkflow := [].{
 		)?
 		marked!("one\ntwo\n")?
 		built!(ordered, [library])?
+		# Each step's start names the backend serving it.
+		started = ordered.keep_if(|e| E2eWorkflow.text(e, "type") == "step_started")
+		if !started.all(|e| E2eWorkflow.text(e, "backend") == "nix") {
+			return Err(WrongBackend(started.map(LockJson.encode)))
+		}
 		# The failing step's exit code is kai's; later steps never run.
 		stopped = json!(
 			["workflow", "stops"],

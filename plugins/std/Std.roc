@@ -337,20 +337,39 @@ Std := [].{
 
 	## Whether Nix can serve the requested closure, a workflow's tasks
 	## included; unrelated shells, tasks and builds never matter. Nix planning
-	## checks builds itself.
+	## checks builds itself. Nix serves a workflow whose tasks it serves, or
+	## one mixing tasks only it serves with tasks only direct serves, which
+	## direct then runs; a workflow direct serves whole is left to direct.
 	fit_nix : Model, Request -> Try({}, Str)
 	fit_nix = |model, wanted| {
 		environment = match wanted {
 			Request.Workflow(name) => {
 				# Planning reports an unknown workflow, with the names it may mean.
 				steps = Project.workflow_steps(model, name) ?? []
+				var $refusal = ""
+				var $needs_nix = Bool.False
 				for step in steps {
 					match step {
-						RunTask(task, args) => Std.fit_nix(model, Request.Run(task, args))?
-						_ => {}
+						RunTask(task, args) => {
+							run = Request.Run(task, args)
+							on_nix = Std.fit_nix(model, run)
+							on_direct = DirectBackend.fit(model, run)
+							if on_nix.is_err() and on_direct.is_err() {
+								return on_nix
+							}
+							$refusal = match on_nix {
+								Err(why) if $refusal.is_empty() => why
+								_ => $refusal
+							}
+							$needs_nix = $needs_nix or on_direct.is_err()
+						}
+						BuildArtifact(_) => {
+							$needs_nix = Bool.True
+						}
+						MayFail(_) => {}
 					}
 				}
-				return Ok({})
+				return if ($needs_nix or $refusal.is_empty()) Ok({}) else Err($refusal)
 			}
 			Request.Shell(name, _) =>
 				model.shells.find_first(|s| s.name == name)
@@ -384,6 +403,21 @@ Std := [].{
 	## Nix plans read the lock authority; its absence is a planning failure.
 	plan_nix : Model, Request, Implementation.Context -> Try(Plan, Plan.Failure)
 	plan_nix = |declared, wanted, ctx| {
+		match wanted {
+			Request.Workflow(name) => {
+				steps = Project.workflow_steps(declared, name) ?? []
+				on_direct = |step|
+					match step {
+						RunTask(task, args) =>
+							Std.fit_nix(declared, Request.Run(task, args)).is_err()
+						_ => Bool.False
+					}
+				if steps.any(on_direct) {
+					return Std.plan_mixed(declared, steps, ctx)
+				}
+			}
+			_ => {}
+		}
 		model = StdModel.revised(Std.on_nix(declared), ctx)
 		layout = Std.nix_layout(ctx.layout)
 		target = ctx.host.system
@@ -420,6 +454,38 @@ Std := [].{
 
 	rendering : Str -> Plan.Failure
 	rendering = |message| Plan.fail("cannot generate the Nix files: ${message}")
+
+	## A workflow whose tasks need Nix and direct: each step planned as `kai
+	## run` or `kai build` plans it alone, on Nix where Nix serves it and
+	## otherwise on direct, staged with the backend serving it.
+	plan_mixed :
+		Model, List(Model.AtomicStep), Implementation.Context -> Try(Plan, _)
+	plan_mixed = |model, steps, ctx| {
+		{ host, layout, lock, .. } = ctx
+		staged = |label, backend, part|
+			[StageOn({ label, backend })].concat(part.steps)
+		var $planned = []
+		for step in steps {
+			added = match step {
+				MayFail(count) => [MayFail(count)]
+				RunTask(task, args) => {
+					run = Request.Run(task, args)
+					if Std.fit_nix(model, run).is_ok() {
+						staged("run ${task}", "nix", Std.plan_nix(model, run, ctx)?)
+					} else {
+						direct = DirectBackend.plan(model, run, host.system, layout, lock)?
+						staged("run ${task}", "direct", direct)
+					}
+				}
+				BuildArtifact(build) => {
+					built = Std.plan_nix(model, Request.build(build), ctx)?
+					staged("build ${build}", "nix", built)
+				}
+			}
+			$planned = $planned.concat(added)
+		}
+		Ok(Plan.{ steps: $planned, next: Done })
+	}
 
 	## The lock's Nix pins, or why they are missing, unreadable or stale.
 	nix_locks : Model, Implementation.Context -> Try(Locks, Plan.Failure)
@@ -1132,6 +1198,55 @@ expect {
 			Std.on_nix(model).systems == ["x86_64-linux"]
 				and update(model) == [Bool.True]
 				and Std.checked_model([both, Name("bad"), nix_only]) == Err(refused)
+		Err(_) => Bool.False
+	}
+}
+
+# A workflow mixing tasks only Nix serves with a task only direct serves
+# runs each step on the backend that serves it, staged with that backend:
+# Nix fits it, as direct alone cannot.
+expect {
+	file = {
+		system: "x86_64-linux",
+		url: "https://example.com/t",
+		mirrors: [],
+		program: File,
+	}
+	steps = [
+		RunTask("greet", []),
+		MayFail(RunTask("fetched", [])),
+		BuildArtifact("app"),
+	]
+	settings = planning.concat([
+		FetchLocked("tool", [file]),
+		Environment("downloads", [Tools(["tool#tool"])]),
+		Task("fetched", [Use("downloads"), Run(["tool"])]),
+		Workflow("mixed", steps),
+	])
+	sha256 = "ab".repeat(32)
+	pin = { key: "tool/x86_64-linux", url: file.url, sha256, size: 3 }
+	section = DirectBackend.section([pin])
+	lock = Present(LockFile.splice(nix_lock, "direct", section) ?? "")
+	shown = |step|
+		match step {
+			StageOn(stage) => Ok("${stage.label} on ${stage.backend}")
+			MayFail(count) => Ok("next ${count.to_str()} may fail")
+			_ => Err({})
+		}
+	match ConfigToModel.convert(settings) {
+		Ok(model) => {
+			mixed = Request.Workflow("mixed")
+			Std.plan_nix(model, mixed, { ..context, lock })
+				.map_ok(|plan| plan.steps.keep_oks(shown))
+				== Ok([
+					"run greet on nix",
+					"next 1 may fail",
+					"run fetched on direct",
+					"build app on nix",
+				])
+				and Std.fit_nix(model, mixed).is_ok()
+				and DirectBackend.fit(model, mixed).is_err()
+		}
 		Err(_) => Bool.False
 	}
 }

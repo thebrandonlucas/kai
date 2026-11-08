@@ -8,6 +8,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 - std's `Downloads` module writes `FetchLocked` files for the declared systems: `Downloads.roc_nightly(tag, systems)` for the Roc compiler of a nightly by its tag, and `Downloads.file(template, systems)` for a program released as one file per system, its URL naming the system as `{system}`, `{arch}` and `{os}`.
 - The setup-kai action's `version` is optional: without it, the action installs the release whose platform `Kaifile.roc`'s header names, and says to set `version` when that platform is a local path. Its new `cache-key` input keeps a separate download cache for each job that sets one.
+- `kai workflow` runs each step on the backend that serves it, as `kai run` would choose: a workflow mixing tasks that need Nix with tasks whose environments are all downloads now runs, rather than failing with "no backend can serve this request". With `--json`, each `step_started` and `step_finished` event names the step's `backend`.
 - `kai sbom members ARCHIVE` lists a release archive's members with their sizes and SHA-256, as the member listing `kai sbom inspect --members` reads.
 - `kai sbom` works outside any project: in a directory with no `Kaifile.roc`, kai runs the sbom plugin of its own release, so `kai sbom check --manifest FILE` checks a downloaded release's sidecars against the release file beside them.
 - For plugin authors: a plan's `Hash` step has kai hash files and write their SHA-256 and size for a continuation to read. Plans using it need a kai of this release.

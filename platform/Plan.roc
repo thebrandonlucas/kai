@@ -17,6 +17,10 @@ Plan := { steps : List(Step), next : Next }.{
 		Print(Str),
 		Stage(Str),
 
+		## A Stage of a workflow step that `backend` serves, where the plan
+		## mixes backends; a Stage is the chosen backend's.
+		StageOn({ label : Str, backend : Str }),
+
 		## The next n Stages may fail as one: when a Run in them fails, kai
 		## notes it, skips the rest of them and continues the plan.
 		MayFail(U64),
@@ -180,6 +184,7 @@ expect {
 			Note("n"),
 			Print("p"),
 			Stage("run test"),
+			StageOn({ label: "run fmt", backend: "direct" }),
 			MayFail(1),
 			Confirm("go?"),
 			Write([{ path: "/g/flake.nix", contents: "{ }\n" }]),

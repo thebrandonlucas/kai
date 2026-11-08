@@ -475,6 +475,13 @@ downloads, and a build cannot use it, as its sandbox sees neither the
 lock's direct pins nor the machine's programs. See
 [examples/mixed](examples/mixed).
 
+A workflow may mix tasks only Nix serves with tasks whose environments are
+all downloads, which only direct serves: `kai workflow` runs each step on
+the backend `kai run` would choose for it, and refuses only a step no
+installed backend serves. With `--json`, each `step_started` and
+`step_finished` event names the step's `backend`. examples/mixed's
+`kai workflow both` runs one task on each.
+
 ## SBOMs
 
 The sbom plugin, `plugins/sbom`, writes a release's SBOMs from the same
