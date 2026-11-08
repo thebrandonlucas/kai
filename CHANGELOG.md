@@ -4,6 +4,10 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 ## [Unreleased]
 
+### Added
+
+- std's `Downloads` module writes `FetchLocked` files for the declared systems: `Downloads.roc_nightly(tag, systems)` for the Roc compiler of a nightly by its tag, and `Downloads.file(template, systems)` for a program released as one file per system, its URL naming the system as `{system}`, `{arch}` and `{os}`.
+
 ## [0.0.12] - 2026-11-06
 
 ### Added
