@@ -98,10 +98,15 @@ Output := [].{
 		)
 	}
 
+	# The workflow kai was given, and the backend serving its steps unless a
+	# step names its own.
+	Reported : { workflow : Str, backend : Str }
+
 	# One workflow step, numbered from 1. Its label is what it runs: a verb,
-	# then the name it acts on ("build app").
-	step : Str, U64, U64, Str -> { human : Str, started : Str, finished : Str }
-	step = |workflow, index, count, what| {
+	# then the name it acts on ("build app"); `backend` serves it.
+	step :
+		Reported, U64, U64, Str -> { human : Str, started : Str, finished : Str }
+	step = |{ workflow, backend }, index, count, what| {
 		(verb, name) = match what.split_first(" ") {
 			Ok({ before, after }) => (before, after)
 			Err(_) => (what, "")
@@ -113,6 +118,7 @@ Output := [].{
 			("steps", LockJson.Number(count.to_str())),
 			("action", LockJson.String(verb)),
 			("name", LockJson.String(name)),
+			("backend", LockJson.String(backend)),
 		]
 		{
 			human: "kai: workflow ${workflow} step ${position}: ${what}",
@@ -168,7 +174,7 @@ expect {
 
 # Workflow steps say which step of how many runs what, for both audiences.
 expect {
-	planned = Output.step("ci", 2, 3, "build app")
+	planned = Output.step({ workflow: "ci", backend: "nix" }, 2, 3, "build app")
 	planned.human == "kai: workflow ci step 2/3: build app"
 		and decoded(planned.started)
 			== [
@@ -179,6 +185,7 @@ expect {
 				("steps", LockJson.Number("3")),
 				("action", LockJson.String("build")),
 				("name", LockJson.String("app")),
+				("backend", LockJson.String("nix")),
 			]
 		and planned.finished.starts_with("{\"type\":\"step_finished\"")
 }

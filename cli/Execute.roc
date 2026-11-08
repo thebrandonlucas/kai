@@ -105,7 +105,7 @@ Execute := [].{
 	# Run a plan and every continuation it asks for, on one backend.
 	follow! = |which, current, phase, resume!, layout, mode, options| {
 		{ backend, lock, workflow } = which
-		Execute.run!(current, lock, layout, mode, options, workflow)?
+		Execute.run!(current, lock, layout, mode, options, { workflow, backend })?
 		match current.next {
 			Done => Ok({})
 			Observe(_) if options.dry_run => Ok({})
@@ -211,8 +211,9 @@ Execute := [].{
 	# stops the plan. Each Stage opens a numbered workflow step that the next
 	# Stage or the end closes. A Run failing within a MayFail's Stages is
 	# noted, and the plan continues after them.
-	run! : Plan, Lock, Layout, Output.Mode, Options, Str => Try({}, _)
-	run! = |plan, lock, layout, mode, options, workflow| {
+	run! :
+		Plan, Lock, Layout, Output.Mode, Options, Output.Reported => Try({}, _)
+	run! = |plan, lock, layout, mode, options, reported| {
 		Execute.validate(plan, layout, lock)?
 		if options.dry_run {
 			text = Sexpr.to_str(plan)
@@ -223,7 +224,7 @@ Execute := [].{
 		if plan.steps.any(Execute.uses_workspace) {
 			Workspace.prepare!(layout)?
 		}
-		Execute.steps!(plan, layout, mode, workflow, options)
+		Execute.steps!(plan, layout, mode, reported, options)
 	}
 
 	# A symbolic link in the workspace naming its holder's process ID is the
@@ -322,11 +323,11 @@ Execute := [].{
 		Ok({ stdout, succeeded: ran.status == Exited(0) })
 	}
 
-	steps! : Plan, Layout, Output.Mode, Str, Options => Try({}, _)
-	steps! = |plan, layout, mode, workflow, options| {
+	steps! : Plan, Layout, Output.Mode, Output.Reported, Options => Try({}, _)
+	steps! = |plan, layout, mode, reported, options| {
 		count = plan.steps.count_if(
 			|step| match step {
-				Stage(_) => Bool.True
+				Stage(_) | StageOn(_) => Bool.True
 				_ => Bool.False
 			},
 		)
@@ -349,7 +350,7 @@ Execute := [].{
 		var $skip_through = 0
 		for step in plan.steps {
 			match step {
-				Stage(label) => {
+				Stage(_) | StageOn(_) => {
 					Execute.finish!(mode, $finished)?
 					$index = $index + 1
 					$may_fail = $may_fail.keep_if(|last| last >= $index)
@@ -357,7 +358,13 @@ Execute := [].{
 					$finished = ""
 					$path = ""
 					if !$skipping {
-						progress = Output.step(workflow, $index, count, label)
+						(label, backend) = match step {
+							StageOn(stage) => (stage.label, stage.backend)
+							Stage(text) => (text, reported.backend)
+							_ => ("", reported.backend)
+						}
+						served = { ..reported, backend }
+						progress = Output.step(served, $index, count, label)
 						Output.note!(mode, progress.human, progress.started)?
 						$finished = progress.finished
 					}
@@ -538,7 +545,8 @@ Execute := [].{
 					OwnsLock => Ok({})
 					ReadsLock => Err("only a command that owns the lock publishes it")
 				}
-			Note(_) | Print(_) | Stage(_) | MayFail(_) | Confirm(_) => Ok({})
+			Note(_) | Print(_) | Stage(_) | StageOn(_) | MayFail(_) | Confirm(_) =>
+				Ok({})
 			ExpectPrograms(_) => Ok({})
 		}
 	}
@@ -582,7 +590,7 @@ Execute := [].{
 				event = Output.event("result", text, [])
 				Output.step_result!(mode, shares_stdout, text, event)
 			}
-			Stage(_) | MayFail(_) => Ok({})
+			Stage(_) | StageOn(_) | MayFail(_) => Ok({})
 			Write(files) => Workspace.stage!(files, layout)
 			VerifyPath({ path, argv, stdout, update }) => {
 				Workspace.safe_source!(path)?
