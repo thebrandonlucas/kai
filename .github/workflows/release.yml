@@ -114,7 +114,7 @@ jobs:
   darwin:
     name: Verify aarch64-darwin
     needs: darwin-archive
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 45
     outputs:
       verified-commit: ${{ steps.verified.outputs.commit }}

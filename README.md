@@ -101,7 +101,7 @@ backend's store and the Roc compiler Kai downloads, by the version, the
 runner's OS and architecture, and `.kai/lock.json`. `nix` (default `true`)
 installs Nix unless it is on `PATH`; set it to `false` for a project whose
 environments are all [pinned downloads](#running-without-nix-or-guix). It runs
-on Linux runners, and on Apple Silicon macOS runners, such as `macos-14`, with a
+on Linux runners, and on Apple Silicon macOS runners, such as `macos-15`, with a
 `version` from 0.0.12 on.
 
 ## Getting started
