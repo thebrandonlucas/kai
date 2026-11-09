@@ -348,11 +348,11 @@ jobs:
       - name: Set up Kai
         uses: ./.github/actions/setup-kai
         with:
-          version: 0.0.11
+          version: 0.0.12
           nix: "false"
 
       - name: Run the installed kai
-        run: test "$(kai --version)" = 0.0.11
+        run: test "$(kai --version)" = 0.0.12
 
   # The e2e check: green when every end-to-end job passed, or when a pull
   # request changes only docs and they are skipped.
