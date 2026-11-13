@@ -4,7 +4,7 @@
     1. Check whether it has already been fixed upstream.
     2. If fixed and a pinned dependency (Roc, basic-cli, a Roc package) can be upgraded to include the fix, upgrade it, along with any blocking downstream dependency.
     3. Otherwise implement a workaround. Its comment links the upstream issue and fix (if any) and names the upgrade that allows removing it.
-    4. If it isn't reported upstream, add a reproduction to the roc-issues-repro repo and list it for the user to report. Never file issues yourself.
+    4. If it isn't reported upstream, add a reproduction to the roc-issues repo (https://github.com/thebrandonlucas/roc-issues; see its AGENTS.md for where a draft goes) and list it for the user to report. Never file issues yourself.
 - Read the following for relevant context:
     - [rules.md](./docs/rules.md) for development rules
     - [design.md](./docs/design.md) for design and architecture
