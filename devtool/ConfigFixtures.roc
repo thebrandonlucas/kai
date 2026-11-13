@@ -38,10 +38,10 @@ ConfigFixtures := [].{
 		"app [kaifile] {\n\tpf: platform \"${pf}\",\n\tstd: \"${std}\",\n}"
 	}
 
-	# `header`, naming this checkout's guix, sbom and nixos plugins too when
+	# `header`, naming this checkout's guix, sbom and machine plugins too when
 	# `kaifile`'s header names them.
 	header_for = |root, dir, kaifile|
-		["guix", "sbom", "nixos"]
+		["guix", "sbom", "machine"]
 			.keep_if(|plugin| kaifile.contains("\n\t${plugin}: \""))
 			.fold(
 				ConfigFixtures.header(root, dir),
@@ -153,24 +153,24 @@ ConfigFixtures := [].{
 				\\kaifile = Kaifile.new([Std.plugin(config), extra])
 		}
 
-	# The nixos plugin's machines beside a std project with an environment.
-	nixos_kaifile = |machines|
+	# The machine plugin's machines beside a std project with an environment.
+	machine_kaifile = |machines|
 		\\import pf.Kaifile
 		\\import std.Config
 		\\import std.Std
-		\\import nixos.Nixos
+		\\import machine.Machine
 		\\
 		\\config : List(Config.Setting)
 		\\config = [Name("machines"), Environment("ops", [Tools(["htop"])])]
 		\\
 		\\kaifile = Kaifile.new([Std.plugin(config),
-		\\  Nixos.plugin(config, [${machines}])])
+		\\  Machine.plugin(config, [${machines}])])
 
-	# Machines the nixos plugin accepts or refuses as Kaifile.roc compiles.
-	nixos_fixtures : List(Fixture)
-	nixos_fixtures = [
+	# Machines the machine plugin accepts or refuses as Kaifile.roc compiles.
+	machine_fixtures : List(Fixture)
+	machine_fixtures = [
 		{
-			name: "NixosMachine",
+			name: "Machine",
 			expected: Valid,
 			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
 				\\  User("admin", [SshKeys(["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 a@b"]),
@@ -178,14 +178,14 @@ ConfigFixtures := [].{
 				\\  TimeZone("Etc/UTC"), Use("ops"), Modules(["nixos/web.nix"])])
 		},
 		{
-			name: "NixosDarwinMachine",
+			name: "MachineDarwinMachine",
 			expected: Rejected(
 				"machine mac: System x86_64-darwin is not x86_64-linux or aarch64-linux",
 			),
 			body: \\Machine("mac", [System("x86_64-darwin"), StateVersion("25.05")])
 		},
 		{
-			name: "NixosModuleOutside",
+			name: "MachineModuleOutside",
 			expected: Rejected(
 				"machine web: module ../web.nix is no .nix file inside the project",
 			),
@@ -193,17 +193,17 @@ ConfigFixtures := [].{
 				\\  Modules(["../web.nix"])])
 		},
 		{
-			name: "NixosSshWithoutKeys",
+			name: "MachineSshWithoutKeys",
 			expected: Rejected("machine web: Ssh needs a User with SshKeys"),
 			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
 				\\  User("admin", []), Ssh])
 		},
 		{
-			name: "NixosSystemName",
+			name: "MachineSystemName",
 			expected: RejectedName("\"linux\" is not a system"),
 			body: \\Machine("web", [System("linux"), StateVersion("25.05")])
 		},
-	].map(|f| { ..f, body: ConfigFixtures.nixos_kaifile(f.body) })
+	].map(|f| { ..f, body: ConfigFixtures.machine_kaifile(f.body) })
 
 	registry_fixtures : List(Fixture)
 	registry_fixtures = [
@@ -1365,7 +1365,7 @@ ConfigFixtures := [].{
 		apps = ConfigFixtures.fixtures
 			.map(|f| { ..f, body: ConfigFixtures.std_kaifile(f.body) })
 			.concat(ConfigFixtures.registry_fixtures)
-			.concat(ConfigFixtures.nixos_fixtures)
+			.concat(ConfigFixtures.machine_fixtures)
 			.append(
 				{ name: "Composed", body: composed, expected: Valid },
 			)
@@ -1378,14 +1378,14 @@ ConfigFixtures := [].{
 		app_header = ConfigFixtures.header(root, workspace)
 		# The composition fixture adds the guix plugin.
 		composed_header = ConfigFixtures.header_for(root, workspace, kaifile)
-		nixos = "\n\tnixos: \""
-		nixos_header = ConfigFixtures.header_for(root, workspace, nixos)
+		machine = "\n\tmachine: \""
+		machine_header = ConfigFixtures.header_for(root, workspace, machine)
 		for fixture in apps {
 			chosen =
 				if fixture.name == "Composed" {
 					composed_header
-				} else if fixture.body.contains("import nixos.Nixos") {
-					nixos_header
+				} else if fixture.body.contains("import machine.Machine") {
+					machine_header
 				} else {
 					app_header
 				}

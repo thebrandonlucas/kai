@@ -1,20 +1,21 @@
 # Machines
 
-The nixos plugin declares NixOS machines in Kaifile.roc, beside std's
-environments, shells, tasks and builds. It is Nix only, and lives in
-`plugins/nixos`.
+The machine plugin declares machines in Kaifile.roc, beside std's
+environments, shells, tasks and builds, and lives in `plugins/machine`. It
+implements `kai machine` on the nix backend, where each machine is a NixOS
+system; `Modules` is Nix's alone.
 
 ```roc
 app [kaifile] {
 	pf: platform "<platform URL>",
 	std: "<std URL>",
-	nixos: "<nixos plugin URL>",
+	machine: "<machine plugin URL>",
 }
 
 import pf.Kaifile
 import std.Config
 import std.Std
-import nixos.Nixos
+import machine.Machine
 
 project : List(Config.Setting)
 project = [
@@ -24,7 +25,7 @@ project = [
 
 kaifile = Kaifile.new([
 	Std.plugin(project),
-	Nixos.plugin(project, [
+	Machine.plugin(project, [
 		Machine("web", [
 			System("x86_64-linux"),
 			StateVersion("25.05"),
@@ -39,9 +40,9 @@ kaifile = Kaifile.new([
 ```
 
 The plugin takes std's settings as well as its own, as the guix plugin does:
-machines use the project's environments and its locked inputs. The nixos
+machines use the project's environments and its locked inputs. The machine
 plugin URL is the plugin bundled for your kai's release: `kai bundle-plugin
-plugins/nixos` in a checkout of that release makes it, to host as
+plugins/machine` in a checkout of that release makes it, to host as
 [plugin.md](plugin.md#publishing-a-plugin) describes.
 
 ## Settings

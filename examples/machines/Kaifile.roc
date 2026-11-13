@@ -1,4 +1,4 @@
-# A NixOS machine beside the project's environments, from the nixos plugin.
+# A NixOS machine beside the project's environments, from the machine plugin.
 # Its typed settings cover the common core: the system, a user with an SSH
 # key, OpenSSH with key logins only, the firewall and the time zone; Use puts
 # the ops environment's tools on its PATH, and Modules adds plain NixOS
@@ -7,7 +7,7 @@
 # path. Run on the machine itself, `kai machine switch web` also makes it
 # the running system; the example only prints that plan.
 app [kaifile] {
-	nixos: "../../plugins/nixos/main.roc",
+	machine: "../../plugins/machine/main.roc",
 	pf: platform "../../platform/main.roc",
 	std: "../../plugins/std/main.roc",
 }
@@ -15,7 +15,7 @@ app [kaifile] {
 import pf.Kaifile
 import std.Config
 import std.Std
-import nixos.Nixos
+import machine.Machine
 
 project : List(Config.Setting)
 project = [
@@ -29,7 +29,7 @@ admin = "ssh-ed25519 "
 
 kaifile = Kaifile.new([
 	Std.plugin(project),
-	Nixos.plugin(
+	Machine.plugin(
 		project,
 		[
 			Machine(

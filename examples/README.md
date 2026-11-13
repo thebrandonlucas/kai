@@ -44,7 +44,7 @@ Examples run using `wisecow`, a custom program which is a combination of the [`f
 | [modules](modules) | Settings shared through an ordinary Roc module | `kai run moo` |
 | [guix](guix) | The guix plugin: packages from a Guix channel beside the default source | `kai shell guix` |
 | [sbom](sbom) | The sbom plugin: a reviewed composition inspected into an inventory, bound to a release file as SPDX and CycloneDX sidecars with a manifest, and checked | `kai sbom inputs` |
-| [machines](machines) | The nixos plugin: a NixOS machine with a user, OpenSSH, the firewall, an environment's tools and a module file | `kai machine build web`, `kai --dry-run machine switch web` |
+| [machines](machines) | The machine plugin: a NixOS machine with a user, OpenSSH, the firewall, an environment's tools and a module file | `kai machine build web`, `kai --dry-run machine switch web` |
 | [agenix](agenix) | A tool from another flake's overlay, encrypting and decrypting a secret | `kai run round-trip` |
 | [rust-toolchain](rust-toolchain) | A Rust toolchain pinned by `rust-toolchain.toml`, plus a component and a target it does not pin, and the host's target triple | `kai shell`, `kai run wasm-target`, `kai run host-target` |
 | [plugins/deploy](plugins/deploy) | A third-party plugin adding `kai deploy` | see [plugin.md](../docs/plugin.md) |
