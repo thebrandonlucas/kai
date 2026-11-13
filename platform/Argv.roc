@@ -326,6 +326,7 @@ Argv := [].{
 					|arg|
 						match arg {
 							Path(p) => ["--${p.name}", "-${p.short}"]
+							Value(v) => ["--${v.name}", "-${v.short}"]
 							_ => []
 						},
 				),
@@ -368,7 +369,7 @@ Argv := [].{
 					_ => Bool.False
 				},
 		)
-		# Weaver lists flags and paths as options.
+		# Weaver lists flags, paths and values as options.
 		rows = List.keep_oks(
 			args,
 			|arg|
@@ -429,8 +430,8 @@ Argv := [].{
 		Builder.from_arg_parser(|args| Ok({ data: [], remaining_args: args }))
 
 	# One command: a name chosen from its choices (each a subcommand, so help
-	# lists them) or any name, then the words after `--`; flags and paths
-	# anywhere before `--`.
+	# lists them) or any name, then the words after `--`; flags, paths and
+	# values anywhere before `--`.
 	subcommand = |command, directory| {
 		description = Argv.describe(command.name, command.help)
 		given = |name, value| [{ name, value: Present(value) }]
@@ -452,6 +453,16 @@ Argv := [].{
 								match value {
 									Ok(path) if path.starts_with("/") => found.concat(given(p.name, path))
 									Ok(path) => found.concat(given(p.name, "${directory}/${path}"))
+									Err(NoValue) => found
+								},
+						)
+					Value(v) =>
+						Cli.weave(
+							builder,
+							Opt.maybe_str({ short: v.short, long: v.name, help: v.help }),
+							|found, value|
+								match value {
+									Ok(text) => found.concat(given(v.name, text))
 									Err(NoValue) => found
 								},
 						)
@@ -765,6 +776,39 @@ expect {
 		and usage_of(toy, ["shell", "--help"]).contains(
 			"kai shell [-h/--help] [-V/--version] [<shell>] [-- <command>...]\n",
 		)
+}
+
+# A `Value` is taken exactly where a `Path` resolves against kai's directory,
+# and neither option's value is mistaken for the command's name.
+expect {
+	switch = Command.{
+		name: "switch",
+		summary: "",
+		help: page,
+		args: [
+			Name({ name: "name", help: "", choices: [], default: Required }),
+			Path({ name: "out-link", short: "", help: "" }),
+			Value({ name: "to", short: "", help: "" }),
+		],
+		lock: ReadsLock,
+	}
+	parse_switch = |argv| Argv.parse(page, [switch], Plain, "/work", argv)
+	argv = ["switch", "web", "--to", "admin@a/b", "--out-link", "c"]
+	given = match parse_switch(argv) {
+		Ok({ args, .. }) => {
+			to = Command.value(args, "to")
+			(Command.name(args, "name"), to, Command.path(args, "out-link"))
+		}
+		Err(_) => ("", Err(NoValue), Err(NoValue))
+	}
+	help = match parse_switch(["switch", "--help"]) {
+		Err(Help(text)) => text
+		_ => ""
+	}
+	given == ("web", Ok("admin@a/b"), Ok("/work/c"))
+		and parse_switch(["switch", "--to", "web"])
+			== Err(Usage("kai switch needs a name"))
+		and help.contains("[--to STR]")
 }
 
 # A command's page lists each choice's summary; the choice's own page shows

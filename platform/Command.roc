@@ -15,7 +15,7 @@ Command := {
 	Page : { description : Str, examples : List(Str), config : List(Str) }
 
 	## At most one `Name` then at most one `Trailing`, in that order, and
-	## any `Flag`s and `Path`s, given anywhere before `--`.
+	## any `Flag`s, `Path`s and `Value`s, given anywhere before `--`.
 	Arg := [
 		## A name chosen from the project; each choice becomes a subcommand
 		## so help lists it. No choices means any name.
@@ -38,6 +38,9 @@ Command := {
 		## `--name PATH`, optional. A relative PATH is resolved against the
 		## directory kai runs in, so plugins see it absolute.
 		Path({ name : Str, short : Str, help : Str }),
+
+		## `--name VALUE`, optional, taken exactly, such as an SSH target.
+		Value({ name : Str, short : Str, help : Str }),
 	]
 
 	## One project entry, for help: `kai run test --help` shows `details`.
@@ -60,9 +63,13 @@ Command := {
 
 	## The absolute path a `Path` argument names, if given.
 	path : Args, Str -> Try(Str, [NoValue])
-	path = |args, wanted|
+	path = |args, wanted| Command.value(args, wanted)
+
+	## The text a `Value` argument was given, exactly, if given.
+	value : Args, Str -> Try(Str, [NoValue])
+	value = |args, wanted|
 		match args.find_first(|a| a.name == wanted) {
-			Ok({ value: Present(value), .. }) => Ok(value)
+			Ok({ value: Present(given), .. }) => Ok(given)
 			_ => Err(NoValue)
 		}
 
