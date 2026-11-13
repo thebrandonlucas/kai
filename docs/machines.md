@@ -29,6 +29,7 @@ kaifile = Kaifile.new([
 		Machine("web", [
 			System("x86_64-linux"),
 			StateVersion("25.05"),
+			Host("admin@web.example.com"),
 			User("admin", [SshKeys(["ssh-ed25519 AAAA... admin@example"]), Groups(["wheel"])]),
 			Ssh,
 			Firewall([Tcp([80, 443])]),
@@ -54,6 +55,7 @@ Every setting but `User` occurs at most once in a machine.
 | `System(system)` | Required. `x86_64-linux` or `aarch64-linux`, and one of the project's `Systems`. |
 | `StateVersion(release)` | Required. NixOS's `system.stateVersion`, a release such as `"25.05"`: the release whose state formats the machine keeps. Set it once, when the machine is installed. |
 | `HostName(name)` | `networking.hostName`. Optional (default: the machine's name). |
+| `Host(target)` | The SSH target, `user@host` or `host`, that `switch`, `rollback` and `generations` act on; see [Remote machines](#remote-machines). Optional (default: the host kai runs on). |
 | `User(name, [...])` | An ordinary user, with `SshKeys([...])`, its authorized OpenSSH public keys, and `Groups([...])`, its supplementary groups such as `wheel`. `User("root", [SshKeys([...])])` authorizes keys for root, which takes no groups. |
 | `Ssh` | OpenSSH, with key logins only: no passwords or keyboard-interactive logins, and root only with keys when root has some. It needs a `User` with `SshKeys`, and opens its port in the firewall. |
 | `Firewall([Tcp([...]), Udp([...])])` | Ports the firewall opens, beside OpenSSH's. NixOS's firewall is on either way. |
@@ -64,7 +66,8 @@ Every setting but `User` occurs at most once in a machine.
 `kai check` refuses, as Kaifile.roc compiles, a machine name that is not a
 letter followed by letters, digits, `-` or `_`; a missing or non-Linux
 `System`, or one the project does not declare; a malformed `StateVersion`,
-`HostName` or `TimeZone`; user and group names NixOS would refuse; a key that
+`HostName` or `TimeZone`; a `Host` that is no SSH target; user and group
+names NixOS would refuse; a key that
 is no OpenSSH public key; `Ssh` with no keys to log in with; port 0; an
 unknown environment; and a module path that is absolute, uses `.` or `..`
 segments, or is not a `.nix` file.
@@ -116,12 +119,12 @@ see [examples/machines](../examples/machines).
 
 ### Switching this host
 
-`kai machine switch NAME`, `rollback NAME` and `generations NAME` act on the
-host kai runs on, which must be the machine: kai refuses a host of another
-system than the machine's `System` before planning, and the plan's first step
-checks that `uname -n` is the machine's `HostName`, failing otherwise. To
-change another host, run kai there; `kai deploy`, for remote hosts, comes
-next.
+Without `Host` or `--to`, `kai machine switch NAME`, `rollback NAME` and
+`generations NAME` act on the host kai runs on, which must be the machine:
+kai refuses a host of another system than the machine's `System` before
+planning, and the plan's first step checks that `uname -n` is the machine's
+`HostName`, failing otherwise. To change another host, run kai there, or
+reach it over SSH as [Remote machines](#remote-machines) describes.
 
 `kai machine switch NAME` builds the system as `build` does, leaving an
 out-link at `.kai/machines/NAME`, then asks for confirmation and runs
@@ -156,9 +159,67 @@ or `--yes`. A rollback changes only the host, not `.kai/lock.json`: the next
 switch builds from the lock again. `kai --dry-run machine switch NAME` prints the whole plan, the host
 check, the build and the confirmation included, and runs none of it.
 
+### Remote machines
+
+A machine with `Host("admin@web.example.com")` lives on that server, and
+`kai machine switch`, `rollback` and `generations` act on it over SSH from
+wherever kai runs. `--to TARGET` overrides `Host`, or gives a machine
+without one a target, so a tool that has just created a server can pass its
+address without editing the Kaifile:
+
+```console
+$ kai machine switch web
+$ kai machine switch web --to admin@203.0.113.7
+$ kai machine rollback web --to root@203.0.113.7
+```
+
+A target is `host` or `user@host`, where host is a name, such as an alias
+from `~/.ssh/config`, or an IPv4 or IPv6 address. It takes no port: set one,
+and any other SSH option, in `~/.ssh/config`. kai refuses a `Host` that is no
+target as Kaifile.roc compiles, and a `--to` that is none before planning.
+`kai machine build` always builds here: it ignores `Host` and refuses
+`--to`.
+
+`kai machine switch NAME` on a remote machine needs `nix` and `ssh` on
+`PATH`. Its plan first checks over SSH that the target's `uname -m` is the
+machine's architecture and that it runs NixOS (`/etc/NIXOS`); otherwise it
+fails, saying to install NixOS with `kai machine install`. It then builds the
+system here as a local switch does, leaving `.kai/machines/NAME`, asks for
+confirmation naming the target, and runs
+
+```sh
+nix copy --substitute-on-destination --to ssh-ng://TARGET .kai/machines/NAME
+ssh TARGET -- sudo nix --extra-experimental-features nix-command \
+  build --no-link --profile /nix/var/nix/profiles/system STORE_PATH
+ssh TARGET -- sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
+```
+
+where STORE_PATH is the system the out-link names, read as the step runs.
+The target downloads what it can from its own substituters and receives the
+rest. `kai machine rollback NAME` checks the target, asks, then runs
+
+```sh
+ssh TARGET -- sudo nix --extra-experimental-features nix-command \
+  profile rollback --profile /nix/var/nix/profiles/system
+ssh TARGET -- sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
+```
+
+and `kai machine generations NAME` checks it and runs `ssh TARGET --
+nixos-rebuild list-generations`. When the target logs in as `root`, nothing
+goes through `sudo`.
+
+A user other than root needs two things on the target: `sudo` that asks for
+no password, since the commands run without a terminal (for example
+`security.sudo.wheelNeedsPassword = false;` in a module, with the user in
+`wheel`), and the Nix daemon's trust, since only a trusted user may copy in a
+system nobody signed. When `Host`'s user is a `User` of the machine, kai adds
+it to `nix.settings.trusted-users`, beside root, so the first switch as root
+or from the machine itself makes later ones as that user work. A `--to` user
+must be root or already trusted.
+
 ## Not yet
 
-Deploying to a remote host, services from the project's own builds, secrets,
-disks and installation, and images come next; see
-[#288](https://github.com/thebrandonlucas/kai/issues/288). Guix System is
+Installing NixOS on a server, disks, services from the project's own
+builds, secrets and images come next; see
+[#463](https://github.com/thebrandonlucas/kai/issues/463). Guix System is
 not planned yet, though only `Modules` in the settings is Nix-specific.

@@ -6,6 +6,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 ### Added
 
+- `kai machine switch`, `rollback` and `generations` act on a remote NixOS server over SSH: give the machine `Host("admin@web.example.com")`, or pass `--to admin@203.0.113.7`, which overrides `Host`. kai builds the system locally, checks that the server runs NixOS on the machine's architecture, asks, copies the system with `nix copy` and activates it there, through `sudo` unless the target logs in as root. When `Host`'s user is one of the machine's `User`s, the machine trusts it to receive systems (`nix.settings.trusted-users`); a `--to` user must be root or already trusted. Without `Host` or `--to`, the commands act on the local host as before.
 - For plugin authors: a command can take a `Value` argument, `--name VALUE`, read exactly as given with `Command.value(args, "name")`, where a `Path` would resolve it against the working directory.
 
 ### Changed

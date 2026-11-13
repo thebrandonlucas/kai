@@ -18,7 +18,9 @@ Machine := [].{
 	Setting : [Machine(Str, List(MachineSetting))]
 
 	## System and StateVersion are required, and every setting but User
-	## occurs at most once. HostName defaults to the machine's name. Ssh runs
+	## occurs at most once. HostName defaults to the machine's name. Host is
+	## the SSH target, `user@host` or `host`, that switch, rollback and
+	## generations act on instead of the host kai runs on. Ssh runs
 	## OpenSSH with key logins only, root's only when root has keys. Firewall
 	## opens ports beside OpenSSH's. Use puts a std environment's tools on
 	## the system's PATH. Modules are NixOS module files relative to the
@@ -26,6 +28,7 @@ Machine := [].{
 	MachineSetting : [
 		System(System),
 		HostName(Str),
+		Host(Str),
 		User(Str, List(UserSetting)),
 		Ssh,
 		Firewall(List(FirewallSetting)),
@@ -73,11 +76,16 @@ Machine := [].{
 					help: "What to do with the machine.",
 					choices: [
 						("build", "Build the machine's system and print its store path."),
-						("switch", "Build the machine's system and switch this host to it."),
-						("rollback", "Switch this host back to its previous system."),
-						("generations", "List this host's system generations."),
+						("switch", "Build the machine's system and switch its host to it."),
+						("rollback", "Switch the machine's host back to its previous system."),
+						("generations", "List the system generations of the machine's host."),
 					].map(|(value, summary)| { value, summary, details: [] }),
 					default: Required,
+				}),
+				Value({
+					name: "to",
+					short: "",
+					help: "Act on this SSH target, user@host, not the machine's Host.",
 				}),
 				Trailing({
 					name: "machine",
@@ -96,11 +104,13 @@ Machine := [].{
 		examples: [
 			"kai machine build web",
 			"kai --dry-run machine switch web",
+			"kai machine switch web --to admin@203.0.113.7",
 			"kai machine rollback web",
 			"kai machine generations web",
 		],
 		config: [
 			"Machine(\"web\", [System(\"x86_64-linux\"), StateVersion(\"25.05\"),",
+			"  Host(\"admin@web.example.com\"),",
 			"  User(\"admin\", [SshKeys([\"ssh-ed25519 AAAA...\"])]), Ssh,",
 			"  Modules([\"nixos/web.nix\"])]),",
 		],
@@ -120,8 +130,18 @@ Machine := [].{
 			given = parts
 				.map(Machine.setting_name)
 				.drop_if(|s| s == "User")
+			# An empty Host folds to none, so it is found here.
+			empty_host = parts.any(
+				|part|
+					match part {
+						Host(target) => target.is_empty()
+						_ => Bool.False
+					},
+			)
+			empty = "Host is empty; ${MachineModel.target_form}"
 			found = Machine.repeated(given)
 				.map(|s| "${s} is given more than once")
+				.concat(if (empty_host) [empty] else [])
 				.concat(Machine.problems(model, m))
 				.concat(NixosBackend.problems(m))
 			$problems = $problems.concat(found.map(|p| "machine ${name}: ${p}"))
@@ -151,6 +171,7 @@ Machine := [].{
 		match setting {
 			System(_) => "System"
 			HostName(_) => "HostName"
+			Host(_) => "Host"
 			User(_, _) => "User"
 			Ssh => "Ssh"
 			Firewall(_) => "Firewall"
@@ -169,6 +190,7 @@ Machine := [].{
 				name,
 				system: "",
 				host_name: name,
+				host: "",
 				users: [],
 				ssh: Bool.False,
 				tcp_ports: [],
@@ -182,6 +204,7 @@ Machine := [].{
 				match part {
 					System(system) => { ..m, system: system.to_str() }
 					HostName(host_name) => { ..m, host_name }
+					Host(host) => { ..m, host }
 					User(user, user_settings) => {
 						..m,
 						users: m.users.append(Machine.user(user, user_settings)),
@@ -255,6 +278,11 @@ Machine := [].{
 					.concat("use letters, digits, - or _"),
 			)
 		}
+		if !m.host.is_empty() and !MachineModel.valid_target(m.host) {
+			$found = $found.append(
+				"Host ${m.host} is no SSH target; ${MachineModel.target_form}",
+			)
+		}
 		if !Machine.valid_time_zone(m.time_zone) {
 			$found = $found.append(
 				"TimeZone ${m.time_zone} is no time zone, such as \"Etc/UTC\"",
@@ -264,13 +292,13 @@ Machine := [].{
 			$found = $found.append("user ${name} is declared more than once")
 		}
 		for u in m.users {
-			if !Machine.valid_account(u.name) {
+			if !MachineModel.valid_account(u.name) {
 				$found = $found.append("user ${u.name} is no user name")
 			}
 			if u.name == "root" and !u.groups.is_empty() {
 				$found = $found.append("root takes no Groups")
 			}
-			for group in u.groups.drop_if(Machine.valid_account) {
+			for group in u.groups.drop_if(MachineModel.valid_account) {
 				$found = $found.append("user ${u.name}: ${group} is no group name")
 			}
 			for key in u.keys.drop_if(Machine.valid_ssh_key) {
@@ -342,19 +370,6 @@ Machine := [].{
 		zone.to_utf8().all(
 			|b| Machine.letter(b) or Machine.digit(b) or "/_+-".to_utf8().contains(b),
 		)
-
-	## A user or group name: a-z or _, then at most 31 of a-z, 0-9, _ or -.
-	valid_account : Str -> Bool
-	valid_account = |name| {
-		lower = |b| b >= 'a' and b <= 'z'
-		match name.to_utf8() {
-			[first, .. as rest] =>
-				(lower(first) or first == '_')
-					and rest.len() < 32
-					and rest.all(|b| lower(b) or Machine.digit(b) or b == '_' or b == '-')
-			[] => Bool.False
-		}
-	}
 
 	## A NixOS release such as "25.05".
 	valid_state_version : Str -> Bool
@@ -477,10 +492,17 @@ published = |settings| {
 # The plan of `kai machine ACTION web` on a host of `system`, after the
 # implementation fits.
 planned : Str, Str -> Try(Plan, Plan.Failure)
-planned = |action, system| {
-	plugin = Machine.plugin(project, [Machine("web", web)])
+planned = |action, system| planned_with(web, action, system, "")
+
+# The plan of `kai machine ACTION web --to TO` ("" for no --to) for machine
+# web's `settings`, on a host of `system`.
+planned_with : List(MachineSetting), Str, Str, Str -> Try(Plan, Plan.Failure)
+planned_with = |settings, action, system, to| {
+	plugin = Machine.plugin(project, [Machine("web", settings)])
+	options = if (to.is_empty()) [] else [{ name: "to", value: Present(to) }]
 	args = [{ name: "action", value: Present(action) }]
 		.append({ name: "machine", value: Many(["web"]) })
+		.concat(options)
 	found = plugin.implementations
 		.first()
 		.map_err(|_| Plan.fail("no implementation"))?
@@ -603,11 +625,161 @@ expect {
 		["sh", "-c", script, "sh", "www", why] =>
 			!script.contains("www")
 				and why
-					== "kai machine switch acts on the host it runs on; run it on www, "
-						.concat("or use kai deploy for another host")
+					== "kai machine switch without Host or --to acts on the host it "
+						.concat("runs on; run it on www, or name its SSH target with ")
+						.concat("Host or --to")
 		_ => Bool.False
 	}
 	["switch", "rollback", "generations"].all(other) and checked
+}
+
+# Machine web living at an SSH target, and the remote nix command.
+remote_web = web.append(Host("admin@web.example.com"))
+
+remote_nix = ["nix", "--extra-experimental-features", "nix-command"]
+
+# A remote switch expects nix and ssh, checks the target, builds here as a
+# local switch does, confirms naming the target, copies the system there,
+# sets its profile to the store path and activates it, through sudo for a
+# user other than root.
+expect {
+	target = "admin@web.example.com"
+	link = "/work/machines/web"
+	copy = ["nix", "copy", "--substitute-on-destination", "--to"]
+		.concat(["ssh-ng://${target}", link])
+	profile_command = ["sudo"]
+		.concat(remote_nix)
+		.concat(["build", "--no-link", "--profile", profile])
+	set = NixosBackend.remote_profile(link, target, profile_command)
+	activate = ["ssh", target, "--", "sudo"]
+		.concat(["${profile}/bin/switch-to-configuration", "switch"])
+	machine = Machine.machine("web", remote_web)
+	match planned_with(remote_web, "switch", "x86_64-linux", "") {
+		Ok({ steps, next: Done }) =>
+			match steps {
+				[ExpectPrograms(tools), Run(check), _, _, Run(built), .. as rest] =>
+					tools.programs == ["nix", "ssh"]
+						and check.argv == NixosBackend.remote_check(machine, target)
+						and built.argv.contains(link)
+						and match rest {
+							[Confirm(prompt), ..] =>
+								prompt.starts_with("Switch ${target} to machine web,")
+							_ => Bool.False
+						}
+						and argvs(rest) == [copy, set, activate]
+						and set.last()
+							== Ok(
+								"sudo nix --extra-experimental-features nix-command build "
+									.concat("--no-link --profile ${profile}"),
+							)
+				_ => Bool.False
+			}
+		_ => Bool.False
+	}
+}
+
+# --to overrides Host; as root, a remote rollback and listing run nothing
+# through sudo. Rollback confirms first; generations only lists.
+expect {
+	target = "root@203.0.113.7"
+	on_target = |argv| ["ssh", target, "--"].concat(argv)
+	back = on_target(
+		remote_nix.concat(["profile", "rollback", "--profile", profile]),
+	)
+	activate = on_target(["${profile}/bin/switch-to-configuration", "switch"])
+	on = |action| planned_with(remote_web, action, "x86_64-linux", target)
+	rolled_back = match on("rollback").map_ok(|plan| plan.steps) {
+		Ok([ExpectPrograms(tools), Run(check), Confirm(prompt), .. as rest]) =>
+			tools.programs == ["ssh"]
+				and check.argv.get(4) == Ok(target)
+				and prompt.starts_with("Switch ${target} back")
+				and argvs(rest) == [back, activate]
+		_ => Bool.False
+	}
+	listed = match on("generations") {
+		Ok({ steps: [ExpectPrograms(_), Run(_), Run({ argv, .. })], next: Done }) =>
+			argv == on_target(["nixos-rebuild", "list-generations"])
+		_ => Bool.False
+	}
+	rolled_back and listed
+}
+
+# The remote check passes the target, architecture and messages as the
+# script's arguments, and the profile step quotes its command for the remote
+# shell while the store path stays an argument too.
+expect {
+	target = "admin@web.example.com"
+	machine = Machine.machine("web", remote_web)
+	checked = match NixosBackend.remote_check(machine, target) {
+		["sh", "-c", script, "sh", "admin@web.example.com", "x86_64", is, then] =>
+			!script.contains(target)
+				and is == "machine web is x86_64-linux"
+				and then == "run kai machine install web --to ${target} first"
+		_ => Bool.False
+	}
+	command = ["a b", "it's", "c"]
+	set = match NixosBackend.remote_profile("/work/x", target, command) {
+		["sh", "-c", script, "sh", "/work/x", "admin@web.example.com", quoted] =>
+			!script.contains(target) and quoted == "'a b' 'it'\\''s' c"
+		_ => Bool.False
+	}
+	checked and set
+}
+
+# A build stays here: it ignores Host and refuses --to, and a --to that is no
+# SSH target is refused before planning.
+expect {
+	refused = |action, to|
+		match planned_with(remote_web, action, "x86_64-linux", to) {
+			Err({ message, .. }) => message
+			Ok(_) => ""
+		}
+	built = match planned_with(remote_web, "build", "x86_64-linux", "") {
+		Ok({ steps: [CheckSource(_), Write(_), Run(_)], .. }) => Bool.True
+		_ => Bool.False
+	}
+	built
+		and refused("build", "root@203.0.113.7")
+			== "kai machine build builds here and takes no --to"
+		and refused("switch", "-oProxyCommand=x")
+			== "--to -oProxyCommand=x is no SSH target; ${MachineModel.target_form}"
+}
+
+# SSH targets are a host, a name or an IPv4 or IPv6 address, after an
+# optional account name; never an option, a port, spaces or control
+# characters. A bad Host is refused as Kaifile.roc compiles.
+expect {
+	valid = ["web", "root@203.0.113.7", "admin@web.example.com"]
+		.append("root@2001:db8::1")
+	invalid = [
+		"",
+		"-oProxyCommand=x",
+		"admin@-web",
+		"Admin@web",
+		"@web",
+		"admin@",
+		"web:22",
+		"web example",
+		"web\n",
+		"a@b@c",
+	]
+	required = [System("x86_64-linux"), StateVersion("25.05")]
+	valid.all(MachineModel.valid_target)
+		and !invalid.any(MachineModel.valid_target)
+		and problems_of(required.append(Host("web:22")))
+			== ["machine web: Host web:22 is no SSH target; ${MachineModel.target_form}"]
+		and problems_of(required.append(Host("")))
+			== ["machine web: Host is empty; ${MachineModel.target_form}"]
+		and problems_of(required.concat([Host("a"), Host("b")]))
+			== ["machine web: Host is given more than once"]
+}
+
+# Host's user, when declared and not root, is trusted to copy systems in.
+expect {
+	trusted = |user| "nix.settings.trusted-users = [ \"root\" \"${user}\" ];"
+	renders(remote_web, [trusted("admin")])
+		and !renders(web.append(Host("root@web")), [trusted("root")])
+		and !renders(web.append(Host("deploy@web")), [trusted("deploy")])
 }
 
 # A machine is nixosSystem of the default source: one module of its typed

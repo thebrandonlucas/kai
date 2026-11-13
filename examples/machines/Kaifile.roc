@@ -5,7 +5,9 @@
 # module files, here the disk and boot loader a system needs. `kai machine
 # build web` builds the system from the locked nixpkgs and prints its store
 # path. Run on the machine itself, `kai machine switch web` also makes it
-# the running system; the example only prints that plan.
+# the running system, and `--to admin@203.0.113.7` makes it that server's
+# over SSH, as a Host("admin@...") setting would; the example only prints
+# those plans.
 app [kaifile] {
 	machine: "../../plugins/machine/main.roc",
 	pf: platform "../../platform/main.roc",
