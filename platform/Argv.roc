@@ -463,9 +463,10 @@ Argv := [].{
 				Cli.weave(options, builder, |found, parsed| parsed.concat(found)),
 				{ name: command.name, description, mapper: |args| (command.name, args) },
 			)
-		# List.keep_oks as a function, not a method: nightly-2026-10-21-5349569
-		# gives two calls of one method on one value the same type (roc-issues
-		# BUG-016, not reported upstream yet). Use the method once Roc fixes it.
+		# List.keep_oks as a function, not a method: since roc-lang/roc#12369,
+		# calls of one method on a value whose type is inferred share one type,
+		# as intended (roc-lang/roc#12553; roc-issues
+		# archive/BUG-016-method-on-inferred-type-unified-across-calls).
 		named = List.keep_oks(
 			command.args,
 			|arg|
@@ -514,7 +515,7 @@ Argv := [].{
 					}
 				}
 				choices = n.choices.map(choice)
-				# List.map as a function: see the BUG-016 note above.
+				# List.map as a function: see the List.keep_oks note above.
 				values = List.map(n.choices, |c| c.value)
 				# A word that names no choice reaches `parse`, which lists the
 				# choices; a required name cannot be left out.

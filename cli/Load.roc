@@ -638,8 +638,11 @@ Load := [].{
 	}
 
 	# Decoding here, in a module importing api.Sexpr, avoids a roc check
-	# segfault on nightly-2026-09-26-d6267b4 (roc-issues-repro BUG-013, not
-	# reported upstream yet); the decode errors are flattened for describe.
+	# segfault on nightly-2026-09-26-d6267b4 (roc-issues
+	# archive/BUG-013-unimported-codec-module-segfault, never filed); the
+	# decode errors are flattened for describe. Fixed in
+	# nightly-2026-10-02-bba1acc, which the pinned nightly-2026-10-21-5349569
+	# includes, so the decoding no longer has to live here.
 	# An answer beyond answer_limit bytes is refused before decoding, so a
 	# runaway plan (such as a workflow repeating a large build thousands of
 	# times) fails with a clear message instead of stalling kai.
