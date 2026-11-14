@@ -76,7 +76,8 @@ Machine := [].{
 	Machines : List(MachineModel.Machine)
 
 	## `project` is std's settings, whose environments and inputs machines
-	## use; a machine's System must be one of its Systems.
+	## use; a machine's System must be one of its Systems. Machines keep
+	## std's "default" package source locked, which they are built from.
 	plugin : List(Config.Setting), List(Setting) -> Plugin
 	plugin = |project, settings|
 		match Machine.checked(project, settings) {
@@ -92,6 +93,7 @@ Machine := [].{
 						NixosBackend.secret_implementation(project, machines),
 					],
 				})
+					.locking(if (machines.is_empty()) [] else [Source("default")])
 			Err(problems) => Plugin.invalid("machine", problems)
 		}
 
@@ -665,6 +667,7 @@ Machine := [].{
 import pf.Implementation
 import pf.Layout
 import pf.Plan
+import pf.Kaifile
 import std.Std
 
 # The flake.lock nix flake update writes for the project's nixpkgs.
@@ -779,6 +782,7 @@ context = {
 	lock: Absent,
 	phase: 0,
 	observed: [],
+	lock_requests: [],
 }
 
 # The project with disko declared, which a machine with a Disk needs.
@@ -1739,4 +1743,39 @@ expect {
 		|(settings, expected)|
 			problems_of(settings) == expected.map(|p| "machine web: ${p}"),
 	)
+}
+
+# The flake files std's update writes for `settings`, given every lock
+# request of `plugins`, std's among them.
+update_files : List(Config.Setting), List(Plugin) -> List(Str)
+update_files = |settings, plugins| {
+	requests = Kaifile.lock_requests(Kaifile.new(plugins))
+	update = Std.plugin(settings).implementations
+		.find_first(|i| i.command == "update" and i.backend == On("nix"))
+	match update.map_ok(|i| (i.plan)({ ..context, lock_requests: requests })) {
+		Ok(Ok(plan)) =>
+			plan.steps.join_map(
+				|step|
+					match step {
+						Write(files) => files.map(|f| f.contents)
+						_ => []
+					},
+			)
+		_ => []
+	}
+}
+
+# Machines keep std's "default" source locked, as they are built from it,
+# even when no environment uses it; without machines std leaves it out.
+expect {
+	bare = [Name("site"), Systems(["x86_64-linux"])]
+	minimal = [System("x86_64-linux"), StateVersion("25.05")]
+	machine = Machine.plugin(bare, [Machine("web", minimal)])
+	locks_default = |plugins|
+		update_files(bare, plugins).any(|text| text.contains("\"default\" = {"))
+	machine.lock_requests == [Source("default")]
+		and Machine.plugin(bare, []).lock_requests == []
+		and Kaifile.validate(Kaifile.new([Std.plugin(bare), machine])).is_ok()
+		and locks_default([Std.plugin(bare), machine])
+		and !locks_default([Std.plugin(bare), Machine.plugin(bare, [])])
 }

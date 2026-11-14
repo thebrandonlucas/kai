@@ -341,6 +341,7 @@ expect {
 		lock,
 		phase: 0,
 		observed: [],
+		lock_requests: [],
 	}
 	code = |lock|
 		match LockReport.plan(context(lock)) {

@@ -12,12 +12,14 @@ import WorkflowName
 Config :: [].{
 
 	## Named sources describe provider intent, not host discovery. Omitting the
-	## "default" source is equivalent to `Packages("default", Auto)`.
+	## "default" source is equivalent to `Packages("default", Auto)` when a
+	## tool, an environment without package tools or a Follows uses it, and
+	## leaves it out, unlocked, otherwise.
 	## Overlay inputs apply only where an environment selects them.
 	## CargoVendor takes the text of a Cargo.lock and vendors its crates.
-	## `Follows(overlay, input, source)` makes the overlay's own flake input
-	## `input` the project's Nix package source `source`, so it is not locked
-	## separately.
+	## `Follows(overlay, input, source)` makes an Overlay's or Input's own
+	## flake input `input` the project's Nix package source `source`, so it is
+	## not locked separately.
 	## `Custom` and `Raw` retain consumer-specific extension data.
 	## BuildRoot names, as `..` segments such as "../..", the directory above
 	## the project that builds copy instead of the project's own; their Files,

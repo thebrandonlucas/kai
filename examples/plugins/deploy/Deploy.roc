@@ -173,6 +173,7 @@ context = {
 	lock: Absent,
 	phase: 0,
 	observed: [],
+	lock_requests: [],
 }
 
 # The plan `plugin`'s Nix implementation of `command` makes for the context.

@@ -266,10 +266,10 @@ A machine to install needs:
   `Modules` must then not define the root file system or the boot loader.
 - `Input("disko", "github:nix-community/disko")` in std's settings, which
   the Disk's module comes from, locked by `kai update`; kai refuses a Disk
-  without it as Kaifile.roc compiles. std's `Follows` only makes an
-  `Overlay`'s inputs follow a package source, so disko's own nixpkgs is
-  locked apart from the project's; the system, disko's module included,
-  still builds from the project's `default` source.
+  without it as Kaifile.roc compiles. `Follows("disko", "nixpkgs",
+  "default")` makes disko's own nixpkgs the project's instead of a second
+  one locked apart; the system, disko's module included, builds from the
+  project's `default` source either way.
 - `Ssh` and a `User` with `SshKeys`, since those keys are how you reach the
   server once it runs the machine. Logging in as root afterwards needs
   `User("root", [SshKeys([...])])`; a user other than root needs
