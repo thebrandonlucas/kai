@@ -26,7 +26,8 @@ Machine := [].{
 	## OpenSSH with key logins only, root's only when root has keys. Firewall
 	## opens ports beside OpenSSH's. Use puts a std environment's tools on
 	## the system's PATH. Disk is the disk layout `kai machine install`
-	## partitions, which the system mounts and boots from. Operators are the
+	## partitions, which the system mounts and boots from, its drivers from
+	## the hardware facts the install records. Operators are the
 	## age recipients or SSH public keys of whoever may decrypt the machine's
 	## host key and Secrets, which `kai secret set` writes and the system
 	## decrypts into /run/secrets. Services are the typed services it runs,
@@ -869,11 +870,14 @@ installed = |settings, to| {
 # An install expects nix and ssh, builds as `build` does, confirms naming
 # the target and the disk it erases, then runs nixos-anywhere from the
 # project's locked nixpkgs on the generated flake, read impurely as a build
-# reads it.
+# reads it, recording the server's hardware facts in the project and saying
+# so.
 expect {
 	target = "root@203.0.113.7"
 	flake = "path:/generated/nix"
+	facts = "/project/machines/web/facter.json"
 	anywhere = ["--flake", "${flake}#web", "--target-host", target]
+		.concat(["--generate-hardware-config", "nixos-facter", facts])
 	toplevel = "nixosConfigurations.web.config.system.build.toplevel"
 	match installed(installed_web, target) {
 		Ok({ steps, next: Done }) =>
@@ -881,8 +885,10 @@ expect {
 				[ExpectPrograms(tools), CheckSource(_), .. as rest] =>
 					tools.programs == ["nix", "ssh"]
 						and match rest.drop_first(1) {
-							[Run(built), Confirm(prompt), Run(install)] =>
+							[Run(built), Confirm(prompt), Run(install), Note(wrote)] =>
 								built.argv.last() == Ok("${flake}#${toplevel}")
+									and wrote
+										== "wrote ${facts}, the machine's hardware facts; commit it"
 									and prompt
 										== "Install machine web on ${target}, ERASING its disk "
 											.concat("/dev/sda and everything on it?")
@@ -929,8 +935,14 @@ expect {
 
 # A Disk renders disko's module and nixos-anywhere's layout on the device:
 # a BIOS boot partition, an EFI system partition at /boot and an ext4 root,
-# with GRUB installed for BIOS and UEFI. Without a Disk, neither renders.
+# with GRUB installed for BIOS and UEFI, and the hardware facts install
+# records, once they exist. Without a Disk, none of them renders.
 expect {
+	facts = "/. + \"/project/machines/web/facter.json\""
+	facter = [
+		"hardware.facter.reportPath = let report = ${facts}; in",
+		"if builtins.pathExists report then report else null;",
+	]
 	layout = [
 		"imports = [ inputs.\"disko\".nixosModules.disko ];",
 		"disko.devices.disk.main = {",
@@ -949,9 +961,10 @@ expect {
 		"efiSupport = true;",
 		"efiInstallAsRemovable = true;",
 	]
-	renders(installed_web, layout)
+	renders(installed_web, layout.concat(facter))
 		and !renders(web, ["disko.devices.disk.main = {"])
 		and !renders(web, ["efiSupport = true;"])
+		and !renders(web, facter.take_first(1))
 }
 
 # A Disk is a /dev path of plain characters, given once; each is refused as
@@ -1523,6 +1536,7 @@ expect {
 expect {
 	target = "root@203.0.113.7"
 	flake = "path:/generated/nix"
+	facts = "/project/machines/web/facter.json"
 	match planned_in(agenix_locked, secret_web, "install", target) {
 		Ok({ steps, next: Done }) =>
 			match argvs(steps).last() {
@@ -1533,6 +1547,7 @@ expect {
 								and given
 									== [flake, "", "/project/secrets", "web", "${operator}\n${key}"]
 										.concat(["--flake", "${flake}#web", "--target-host", target])
+										.concat(["--generate-hardware-config", "nixos-facter", facts])
 								and script.contains("--extra-files \"$files\"")
 								and script.contains("ssh-keygen -q -t ed25519 -N ''")
 								and script.contains("age -d -i \"$identity\" -o \"$key\"")

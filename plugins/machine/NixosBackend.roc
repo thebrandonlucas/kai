@@ -181,7 +181,8 @@ NixosBackend :: [].{
 	## logs in over SSH as root or with sudo, and installs the machine with
 	## nixos-anywhere from the project's locked nixpkgs. The system is
 	## built here first, so what fails to build fails before anything is
-	## erased.
+	## erased. nixos-anywhere then records the server's hardware with
+	## nixos-facter in the project, and builds the system again with it.
 	install : Project, List(Machine), Machine, Context, Str -> Planned
 	install = |project, machines, m, ctx, target| {
 		description = "machine install ${m.name} on ${target}"
@@ -199,9 +200,11 @@ NixosBackend :: [].{
 		} else {
 			NixosBackend.keyed_install(ctx, flake, m, target)
 		}
-		steps = [tools]
-			.concat(built.steps)
-			.concat([Confirm(prompt), NixosBackend.run(description, Inherit, anywhere)])
+		facts = NixosBackend.facts_file(m, ctx.layout.project_root)
+		recording = ["--generate-hardware-config", "nixos-facter", facts]
+		run = NixosBackend.run(description, Inherit, anywhere.concat(recording))
+		wrote = Note("wrote ${facts}, the machine's hardware facts; commit it")
+		steps = [tools].concat(built.steps).concat([Confirm(prompt), run, wrote])
 		Ok(Plan.{ steps, next: Done })
 	}
 
@@ -520,6 +523,11 @@ NixosBackend :: [].{
 		)
 	}
 
+	## Where install records machine `m`'s hardware facts, beneath
+	## `project_root`.
+	facts_file : Machine, Str -> Str
+	facts_file = |m, project_root| "${project_root}/machines/${m.name}/facter.json"
+
 	## Where secret `s` of machine `m` is encrypted, beneath `project_root`.
 	secret_file : Machine, MachineModel.Secret, Str -> Str
 	secret_file = |m, s, project_root|
@@ -643,6 +651,13 @@ NixosBackend :: [].{
 		imported = when(m.disk != NoDisk, [disko])
 			.concat(when(!m.secrets.is_empty(), [agenix]))
 		import_line = "imports = ${NixosBackend.list(imported)};"
+		# The facts install records, once it has: NixOS's facter module loads
+		# the kernel modules and firmware the server's hardware needs.
+		facts = "/. + ${quote(NixosBackend.facts_file(m, project_root))}"
+		facter = [
+			"hardware.facter.reportPath = let report = ${facts}; in",
+			"  if builtins.pathExists report then report else null;",
+		]
 		# agenix decrypts each secret with the host key install placed, or
 		# the one OpenSSH made, into /run/secrets.
 		file = |s| "(/. + ${quote(NixosBackend.secret_file(m, s, project_root))})"
@@ -679,6 +694,7 @@ NixosBackend :: [].{
 			.concat(when(!m.environment.is_empty(), system_packages))
 			.concat(when(!imported.is_empty(), [import_line]))
 			.concat(NixosBackend.disk(m.disk))
+			.concat(when(m.disk != NoDisk, facter))
 			.concat(when(!m.secrets.is_empty(), secrets))
 			.concat(m.services.join_map(|Caddy(server)| NixosBackend.caddy(server)))
 	}

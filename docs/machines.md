@@ -62,11 +62,11 @@ Every setting but `User` occurs at most once in a machine.
 | `Firewall([Tcp([...]), Udp([...])])` | Ports the firewall opens, beside OpenSSH's. NixOS's firewall is on either way. |
 | `TimeZone(zone)` | `time.timeZone`, such as `"Etc/UTC"`. Optional (default NixOS's, UTC). |
 | `Use(environment)` | Puts a std environment's tools on the system's `PATH` (`environment.systemPackages`). The environment's variables stay in its shells and tasks. It cannot be one only the direct backend serves. |
-| `Disk(SingleDisk(device))` | The disk `kai machine install` partitions and the system boots from, the whole of `device`, an absolute `/dev/...` path such as `"/dev/sda"` or `"/dev/disk/by-id/..."`; see [Installing on a server](#installing-on-a-server). kai pins disko, the Disk's module, itself. Optional (default: the file systems and boot loader come from `Modules`). |
+| `Disk(SingleDisk(device))` | The disk `kai machine install` partitions and the system boots from, the whole of `device`, an absolute `/dev/...` path such as `"/dev/sda"` or `"/dev/disk/by-id/..."`; see [Installing on a server](#installing-on-a-server). kai pins disko, the Disk's module, itself, and the install records the server's hardware in `machines/NAME/facter.json`. Optional (default: the file systems, boot loader and hardware come from `Modules`). |
 | `Operators([...])` | The public keys of whoever may decrypt the machine's host key and secrets: age recipients (`age1...`) or `ssh-ed25519` and `ssh-rsa` public keys, at least one; see [Secrets](#secrets). Optional. |
 | `Secrets([Secret(name, [...])])` | Files the system decrypts into `/run/secrets/NAME` as it activates, with `Owner(user)` (default `root`), `Group(group)` (default `root`) and `Mode("0400")`, an octal mode (default `"0400"`); see [Secrets](#secrets). They need `Operators`; kai pins agenix, which decrypts them, itself. Optional. |
 | `Services([...])` | Typed services the machine runs, each at most once: for now `Caddy([...])`, which serves sites over HTTPS; see [Services](#services). Optional. |
-| `Modules([...])` | NixOS module files, relative to the project and inside it, for everything else: services, hardware, and the disks and boot loader when there is no `Disk`. They receive the flake's `inputs` as a module argument, so a module can import another flake's module, such as `inputs.home-manager.nixosModules.home-manager` after `Input("home-manager", "github:nix-community/home-manager")` in std's settings. |
+| `Modules([...])` | NixOS module files, relative to the project and inside it, for everything else: services, and the hardware, disks and boot loader when there is no `Disk`. They receive the flake's `inputs` as a module argument, so a module can import another flake's module, such as `inputs.home-manager.nixosModules.home-manager` after `Input("home-manager", "github:nix-community/home-manager")` in std's settings. |
 
 `kai check` refuses, as Kaifile.roc compiles, a machine name that is not a
 letter followed by letters, digits, `-` or `_`; a missing or non-Linux
@@ -100,7 +100,7 @@ nixosConfigurations."web" = inputs."default".lib.nixosSystem {
 ```
 
 The system comes from the project's `default` package source, so
-`Packages("default", From(NixPackages("github:NixOS/nixpkgs/nixos-25.05")))`
+`Packages("default", From(NixPackages("github:NixOS/nixpkgs/nixos-25.11")))`
 picks the NixOS release, and `kai update` moves it with the rest of the
 lock. Machines need no `Input` lines: the plugin asks std's `kai update` to
 lock the `default` source, and for a machine with a `Disk`
@@ -129,8 +129,11 @@ files by their absolute paths; remote builders stay allowed, so a host with a
 builder for the machine's system can build it. `kai --dry-run machine build
 NAME` prints the plan, the generated flake included, instead.
 
-A system needs a root file system and a boot loader, which come from `Disk`
-or from a module such as the `hardware-configuration.nix` that
+A system needs a root file system, a boot loader and the kernel modules its
+hardware needs. On a machine with `Disk`, they come from the layout and the
+hardware facts `kai machine install` records; see [Hardware
+facts](#hardware-facts). On one kai does not install, they come from a
+module such as the `hardware-configuration.nix` that
 `nixos-generate-config` writes; see [examples/machines](../examples/machines).
 
 ### Switching this host
@@ -287,7 +290,8 @@ nixpkgs, with no separate install:
 
 ```sh
 nix run --inputs-from path:.kai/generated/nix default#nixos-anywhere -- \
-  --flake path:.kai/generated/nix#NAME --target-host TARGET
+  --flake path:.kai/generated/nix#NAME --target-host TARGET \
+  --generate-hardware-config nixos-facter PROJECT/machines/NAME/facter.json
 ```
 
 It runs with `pure-eval = false` added to any `NIX_CONFIG` you have, which lets nixos-anywhere's own `nix build` read the machine's
@@ -305,6 +309,36 @@ command needs `--identity` when your key is not `~/.ssh/id_ed25519`.
 Afterwards the server runs the machine, and `kai machine switch NAME --to
 USER@ADDRESS`, or `Host`, changes it as [Remote machines](#remote-machines)
 describes.
+
+### Hardware facts
+
+A server's hardware decides which kernel modules its system needs, such as
+virtio's on most virtual servers or NVMe's, and kai learns it as it
+installs, so a machine with `Disk` needs no hand-written hardware module.
+nixos-anywhere runs [nixos-facter](https://github.com/nix-community/nixos-facter)
+on the server once it has booted the installer, writes its report to
+`machines/NAME/facter.json` in the project, and only then builds the
+system it installs, so that system has the facts. kai then prints that it
+wrote the file: commit it, since later builds and switches read it from
+there. When the project is a git work tree, nixos-anywhere also marks the
+file with `git add --intent-to-add`.
+
+A machine with `Disk` sets NixOS's `hardware.facter.reportPath` to that
+file when it exists, so NixOS loads the drivers, firmware and CPU
+microcode the report calls for. Until the first install, and in the build
+the install runs before erasing anything, the file is missing and the
+machine builds without it. NixOS has this module from 25.11 on, so the
+project's `default` package source must be at least that release, as
+`Auto`'s nixpkgs unstable is; an older one fails to build a machine with
+`Disk`, saying the option `hardware.facter` does not exist.
+
+Installing again detects the hardware again and replaces the file, since
+the server behind the address may have changed. The report holds hardware
+facts only: the architecture, the kind of virtualisation, UEFI support,
+each device's model and drivers, and the firmware's vendor and version.
+It holds no keys or passwords, and nixos-facter leaves out the firmware's
+serial numbers and UUIDs, though a device such as a disk may report its
+own serial number, so it is safe to commit.
 
 ## Secrets
 
