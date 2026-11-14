@@ -374,6 +374,29 @@ pub fn build(b: *std.Build) void {
         check_step.dependOn(&check_roc.step);
     }
 
+    // `roc docs` exits 1 when a doc comment links to an item that does not
+    // exist, after listing each broken link. Roc then also reports the
+    // BrokenDocLinks error as unreported, which it is not; this is not yet
+    // reported upstream.
+    const docs_step = b.step(
+        "docs",
+        "Generate std's and the platform's API docs into zig-out/docs",
+    );
+    for ([_][2][]const u8{
+        .{ "std", "plugins/std/main.roc" },
+        .{ "platform", "platform/main.roc" },
+        .{ "platform-api", "platform/api.roc" },
+    }) |docs_root| {
+        const docs = b.addSystemCommand(&.{ "roc", "docs" });
+        docs.has_side_effects = true;
+        docs.step.dependOn(&build_platform_host.step);
+        const output = b.getInstallPath(.prefix, b.fmt("docs/{s}", .{docs_root[0]}));
+        docs.addArg(b.fmt("--output={s}", .{output}));
+        docs.addArg(docs_root[1]);
+        docs_step.dependOn(&docs.step);
+    }
+    check_step.dependOn(docs_step);
+
     // Mutating format step. Convenience for devs who don't have
     // editor config for Roc, Zig, and Nix all setup.
     //
