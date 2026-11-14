@@ -285,7 +285,7 @@ Release := [].{
 	# against the release's own platform and std bundles: Kaifile.roc's
 	# kai-NAME build makes the bundle, and plugin_file(NAME) records its URL.
 	# A release build refuses a plugins/ directory this list leaves out.
-	plugins = ["guix", "nixos", "sbom"]
+	plugins = ["guix", "machine", "sbom"]
 
 	# The file recording the URL a release publishes plugin `name`'s bundle at.
 	plugin_file : Str -> Str

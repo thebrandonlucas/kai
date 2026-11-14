@@ -458,9 +458,9 @@ pub fn build(b: *std.Build) void {
     test_deploy.step.dependOn(check_step);
     test_step.dependOn(&test_deploy.step);
 
-    const test_nixos = b.addSystemCommand(&.{ "roc", "test", "plugins/nixos/main.roc" });
-    test_nixos.step.dependOn(check_step);
-    test_step.dependOn(&test_nixos.step);
+    const test_machine = b.addSystemCommand(&.{ "roc", "test", "plugins/machine/main.roc" });
+    test_machine.step.dependOn(check_step);
+    test_step.dependOn(&test_machine.step);
 
     const test_cli = b.addSystemCommand(&.{ "roc", "test", "cli/main.roc" });
     test_cli.step.dependOn(check_step);
@@ -592,7 +592,7 @@ pub fn build(b: *std.Build) void {
     var previous_build: *std.Build.Step = e2e_step;
     for ([_][]const u8{
         "kai-guix",
-        "kai-nixos",
+        "kai-machine",
         "kai-sbom",
         "release-x86-64-linux",
         "release-aarch64-linux",

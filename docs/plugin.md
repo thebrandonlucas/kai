@@ -86,10 +86,12 @@ Arguments are data; the platform builds kai's parser and help from them.
 A command takes at most one `Name` (a project entry; each choice becomes a
 subcommand, so help and usage errors list the project's names; no choices
 means any name) and at most one `Trailing` (everything after `--`,
-exact; with choices, only the project's names), and any `Flag` (`--name`, or `-short`) and `Path` (`--name PATH`,
-made absolute against the directory kai runs in), given anywhere before
-`--`. `Command.name(args, "host")`, `Command.trailing(args, "args")`,
-`Command.flag(args, "name")` and `Command.path(args, "name")` read the
+exact; with choices, only the project's names), and any `Flag` (`--name`,
+or `-short`), `Path` (`--name PATH`, made absolute against the directory kai
+runs in) and `Value` (`--name VALUE`, taken exactly, such as an SSH target),
+given anywhere before `--`. `Command.name(args, "host")`,
+`Command.trailing(args, "args")`, `Command.flag(args, "name")`,
+`Command.path(args, "name")` and `Command.value(args, "name")` read the
 parsed values. Only the one command that owns the lock
 (`OwnsLock`, std's `update`) may publish it.
 
@@ -205,7 +207,7 @@ system`, the definition of each of `environments`: a function from extra
 `mkShell` attributes to the environment's shell. They may not use the names
 std writes (`devShells`, `packages`, `kaiArtifacts`) or add inputs, which
 would leave the lock stale; they read files by absolute path, which
-`--impure` allows. The nixos plugin, `plugins/nixos`, builds its machines this
+`--impure` allows. The machine plugin, `plugins/machine`, builds its machines this
 way.
 
 ## Implementing std's commands on another backend

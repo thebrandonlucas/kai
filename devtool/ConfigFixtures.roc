@@ -38,10 +38,10 @@ ConfigFixtures := [].{
 		"app [kaifile] {\n\tpf: platform \"${pf}\",\n\tstd: \"${std}\",\n}"
 	}
 
-	# `header`, naming this checkout's guix, sbom and nixos plugins too when
+	# `header`, naming this checkout's guix, sbom and machine plugins too when
 	# `kaifile`'s header names them.
 	header_for = |root, dir, kaifile|
-		["guix", "sbom", "nixos"]
+		["guix", "sbom", "machine"]
 			.keep_if(|plugin| kaifile.contains("\n\t${plugin}: \""))
 			.fold(
 				ConfigFixtures.header(root, dir),
@@ -153,39 +153,53 @@ ConfigFixtures := [].{
 				\\kaifile = Kaifile.new([Std.plugin(config), extra])
 		}
 
-	# The nixos plugin's machines beside a std project with an environment.
-	nixos_kaifile = |machines|
+	# The machine plugin's machines beside a std project with an environment.
+	machine_kaifile = |machines| ConfigFixtures.machine_kaifile_with("", machines)
+
+	# The machine plugin's machines beside a std project with an environment
+	# and the settings `extra`, each followed by a comma.
+	machine_kaifile_with = |extra, machines|
 		\\import pf.Kaifile
 		\\import std.Config
 		\\import std.Std
-		\\import nixos.Nixos
+		\\import machine.Machine
 		\\
 		\\config : List(Config.Setting)
-		\\config = [Name("machines"), Environment("ops", [Tools(["htop"])])]
+		\\config = [Name("machines"), ${extra}Environment("ops", [Tools(["htop"])])]
 		\\
 		\\kaifile = Kaifile.new([Std.plugin(config),
-		\\  Nixos.plugin(config, [${machines}])])
+		\\  Machine.plugin(config, [${machines}])])
 
-	# Machines the nixos plugin accepts or refuses as Kaifile.roc compiles.
-	nixos_fixtures : List(Fixture)
-	nixos_fixtures = [
+	# Machines the machine plugin accepts or refuses as Kaifile.roc compiles.
+	machine_fixtures : List(Fixture)
+	machine_fixtures = [
 		{
-			name: "NixosMachine",
+			name: "Machine",
 			expected: Valid,
 			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+				\\  Host("admin@web.example.com"),
 				\\  User("admin", [SshKeys(["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 a@b"]),
 				\\   Groups(["wheel"])]), Ssh, Firewall([Tcp([80, 443])]),
 				\\  TimeZone("Etc/UTC"), Use("ops"), Modules(["nixos/web.nix"])])
 		},
 		{
-			name: "NixosDarwinMachine",
+			name: "MachineHostOption",
+			expected: Rejected(
+				"machine web: Host -oProxyCommand=x is no SSH target; "
+					.concat("use user@host or host, without a port"),
+			),
+			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+				\\  Host("-oProxyCommand=x")])
+		},
+		{
+			name: "MachineDarwinMachine",
 			expected: Rejected(
 				"machine mac: System x86_64-darwin is not x86_64-linux or aarch64-linux",
 			),
 			body: \\Machine("mac", [System("x86_64-darwin"), StateVersion("25.05")])
 		},
 		{
-			name: "NixosModuleOutside",
+			name: "MachineModuleOutside",
 			expected: Rejected(
 				"machine web: module ../web.nix is no .nix file inside the project",
 			),
@@ -193,17 +207,95 @@ ConfigFixtures := [].{
 				\\  Modules(["../web.nix"])])
 		},
 		{
-			name: "NixosSshWithoutKeys",
+			name: "MachineSshWithoutKeys",
 			expected: Rejected("machine web: Ssh needs a User with SshKeys"),
 			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
 				\\  User("admin", []), Ssh])
 		},
 		{
-			name: "NixosSystemName",
+			name: "MachineSystemName",
 			expected: RejectedName("\"linux\" is not a system"),
 			body: \\Machine("web", [System("linux"), StateVersion("25.05")])
 		},
-	].map(|f| { ..f, body: ConfigFixtures.nixos_kaifile(f.body) })
+	]
+		.map(|f| { ..f, body: ConfigFixtures.machine_kaifile(f.body) })
+		.concat(ConfigFixtures.disk_fixtures)
+		.concat(ConfigFixtures.secret_fixtures)
+		.concat(ConfigFixtures.caddy_fixtures)
+
+	# A machine with a Disk, accepted beside the disko input it needs and
+	# refused without it.
+	disk_fixtures : List(Fixture)
+	disk_fixtures = {
+		disko = "Input(\"disko\", \"github:nix-community/disko\"), "
+		machine =
+			\\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+			\\  User("admin", [SshKeys(["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 a@b"])]),
+			\\  Ssh, Disk(SingleDisk("/dev/disk/by-path/pci-0000:00:04.0"))])
+		[
+			{
+				name: "MachineDisk",
+				expected: Valid,
+				body: ConfigFixtures.machine_kaifile_with(disko, machine),
+			},
+			{
+				name: "MachineDiskWithoutDisko",
+				expected: Rejected(
+					"machine web: Disk needs disko; add "
+						.concat("Input(\"disko\", \"github:nix-community/disko\") ")
+						.concat("to std's settings"),
+				),
+				body: ConfigFixtures.machine_kaifile(machine),
+			},
+		]
+	}
+
+	# A machine with Operators and Secrets, accepted beside the agenix input
+	# it needs and refused without it.
+	secret_fixtures : List(Fixture)
+	secret_fixtures = {
+		agenix = "Input(\"agenix\", \"github:ryantm/agenix\"), "
+		machine =
+			\\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+			\\  Operators(["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 a@b"]),
+			\\  Secrets([Secret("app-key", [Owner("root"), Mode("0440")])])])
+		[
+			{
+				name: "MachineSecrets",
+				expected: Valid,
+				body: ConfigFixtures.machine_kaifile_with(agenix, machine),
+			},
+			{
+				name: "MachineSecretsWithoutAgenix",
+				expected: Rejected(
+					"machine web: Secrets needs agenix; add "
+						.concat("Input(\"agenix\", \"github:ryantm/agenix\") ")
+						.concat("to std's settings"),
+				),
+				body: ConfigFixtures.machine_kaifile(machine),
+			},
+		]
+	}
+
+	# A machine serving sites with Caddy, accepted, and refused without any.
+	caddy_fixtures : List(Fixture)
+	caddy_fixtures = [
+		{
+			name: "MachineCaddy",
+			expected: Valid,
+			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+				\\  Services([Caddy([Email("admin@example.com"),
+				\\    Site("example.com", ReverseProxy("localhost:8080")),
+				\\    Site("files.example.com", Files("/srv/files"))])])])
+		},
+		{
+			name: "MachineCaddyWithoutSites",
+			expected: Rejected("machine web: Caddy needs at least one Site"),
+			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+				\\  Services([Caddy([Email("admin@example.com")])])])
+		},
+	]
+		.map(|f| { ..f, body: ConfigFixtures.machine_kaifile(f.body) })
 
 	registry_fixtures : List(Fixture)
 	registry_fixtures = [
@@ -1365,7 +1457,7 @@ ConfigFixtures := [].{
 		apps = ConfigFixtures.fixtures
 			.map(|f| { ..f, body: ConfigFixtures.std_kaifile(f.body) })
 			.concat(ConfigFixtures.registry_fixtures)
-			.concat(ConfigFixtures.nixos_fixtures)
+			.concat(ConfigFixtures.machine_fixtures)
 			.append(
 				{ name: "Composed", body: composed, expected: Valid },
 			)
@@ -1378,14 +1470,14 @@ ConfigFixtures := [].{
 		app_header = ConfigFixtures.header(root, workspace)
 		# The composition fixture adds the guix plugin.
 		composed_header = ConfigFixtures.header_for(root, workspace, kaifile)
-		nixos = "\n\tnixos: \""
-		nixos_header = ConfigFixtures.header_for(root, workspace, nixos)
+		machine = "\n\tmachine: \""
+		machine_header = ConfigFixtures.header_for(root, workspace, machine)
 		for fixture in apps {
 			chosen =
 				if fixture.name == "Composed" {
 					composed_header
-				} else if fixture.body.contains("import nixos.Nixos") {
-					nixos_header
+				} else if fixture.body.contains("import machine.Machine") {
+					machine_header
 				} else {
 					app_header
 				}

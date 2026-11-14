@@ -479,14 +479,15 @@ documents. See [docs/sbom.md](docs/sbom.md) and
 
 ## Machines
 
-The nixos plugin, `plugins/nixos`, declares NixOS machines beside the
-project's environments, added like the [guix plugin](#guix), from the
-`nixos:` line in the release notes of each release after 0.0.11:
+The machine plugin, `plugins/machine`, declares machines beside the
+project's environments, built as NixOS on the nix backend. Add it like the
+[guix plugin](#guix), from the `machine:` line in the release notes of each
+release after 0.0.12 (0.0.12 published it as the nixos plugin):
 
 ```roc
 kaifile = Kaifile.new([
 	Std.plugin(project),
-	Nixos.plugin(project, [
+	Machine.plugin(project, [
 		Machine("web", [
 			System("x86_64-linux"),
 			StateVersion("25.05"),
