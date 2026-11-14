@@ -136,8 +136,8 @@ kaifile = Std.kaifile([
 ])
 ```
 
-`kai --help` prints the header for the installed version: the platform and
-std must come from the same release. Then:
+`kai --help` prints the header for the installed version, in a project or
+not: the platform and std must come from the same release. Then:
 
 ```sh
 kai check                         # compile and validate Kaifile.roc
@@ -574,6 +574,9 @@ replace direnv's shell hook with
   progress and errors to stderr. Output from shells and tasks passes through
   unchanged; when a command runs one, stdout is only theirs, and its results
   go to stderr too, where Kai's events are the lines that start with `{`.
+- `--dry-run`: print the plan, every step with its exact argv, instead of
+  running it. A file a step writes shows as its path and size; with `--json`,
+  the `plan` field has the whole plan, file contents included.
 - `--no-color`, or a non-empty `NO_COLOR`: plain text.
 - `--backend nix|direct`, or `guix` with the guix plugin: see
   [Backends](#backends).

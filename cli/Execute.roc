@@ -215,15 +215,31 @@ Execute := [].{
 	run! = |plan, lock, layout, mode, options, workflow| {
 		Execute.validate(plan, layout, lock)?
 		if options.dry_run {
-			text = Sexpr.to_str(plan)
-			fields = [("plan", Output.text(text))]
-			return Output.result!(mode, text, Output.event("plan", "dry run", fields))
+			shown = Sexpr.to_str(Execute.sized(plan))
+			fields = [("plan", Output.text(Sexpr.to_str(plan)))]
+			return Output.result!(mode, shown, Output.event("plan", "dry run", fields))
 		}
 		Execute.confirmable(plan, options)?
 		if plan.steps.any(Execute.uses_workspace) {
 			Workspace.prepare!(layout)?
 		}
 		Execute.steps!(plan, layout, mode, workflow, options)
+	}
+
+	# The plan a person's --dry-run shows: each written file's size in place of
+	# its contents, such as a whole flake.lock, which would bury the steps.
+	# --json keeps the contents.
+	sized : Plan -> Plan
+	sized = |plan| {
+		size = |file| "<${file.contents.count_utf8_bytes().to_str()} bytes>"
+		steps = plan.steps.map(
+			|step|
+				match step {
+					Write(files) => Write(files.map(|file| { ..file, contents: size(file) }))
+					_ => step
+				},
+		)
+		Plan.{ steps, next: plan.next }
 	}
 
 	# A symbolic link in the workspace naming its holder's process ID is the
@@ -1127,6 +1143,13 @@ expect {
 	guix = "builder for `/gnu/store/x.drv' failed with exit code 4\n"
 	[(old, 3), (new.concat(log), 5), (guix, 4), ("error: no flake\n", 1)]
 		.all(|(report, exit)| Execute.builder_code(report.to_utf8(), 1) == exit)
+}
+
+# A person's dry run shows a written file's path and size, not its contents.
+expect {
+	written = |contents| Write([{ path: "/p/.kai/generated/flake.nix", contents }])
+	plan = |step| Plan.{ steps: [Note("n"), step], next: Done }
+	Execute.sized(plan(written("{ }\n"))) == plan(written("<4 bytes>"))
 }
 
 # A dotenv file gives exact values: comments and blank lines are skipped, one
