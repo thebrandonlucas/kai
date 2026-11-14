@@ -23,6 +23,11 @@ All notable changes to Kai are documented in this file. The format is based on [
 - `kai machine switch` and `rollback` say what they are doing in kai's words, such as `copying machine web's system to admin@web.example.com` and `activating it on admin@web.example.com`, instead of printing the logs of `nix copy` and the activation, which kai shows only when a step fails; they end by naming the generation the host now runs. `kai machine generations` prints its own listing, `generation 43  2026-11-14 10:03  (current)`, one `result` event per generation with `--json`, read from the system profile's links instead of `nixos-rebuild list-generations`. `kai machine install` still shows nixos-anywhere's progress, after a note that it erases the disk and takes several minutes.
 - When a step fails after saying why, such as an environment naming a tool its package source lacks, Kai's error ends with that reason, `kai: evaluating the environment of shell dev failed: tool helloo not found in source default of environment dev`, instead of a separate `exited with code 1` line.
 - `KAI_ROC` chooses the Roc compiler that evaluates `Kaifile.roc`, so a project's own `ROC`, for the compiler its tasks build with, no longer clashes with Kai's: Kai no longer refuses a `ROC` set to another Roc version, and tasks see the project's `ROC` unchanged. `ROC` is deprecated for Kai's compiler: for one more release Kai still uses it when it is the pinned version and the `roc` on `PATH` is not, and says to set `KAI_ROC` instead.
+- A build that refuses a symbolic link in the project says where the link points, why, and how to fix it: `snapshot refuses symlink …/stray -> /etc/passwd, which is outside …; point it inside …, or ignore it in .gitignore or leave it out of the build's Files`.
+
+### Fixed
+
+- Builds leave every Kai workspace out of the project's copy, not only their own: another `KAI_DIR` beside the project's, or a nested project's `.kai`, no longer breaks the build with the links inside it.
 
 ### Fixed
 
