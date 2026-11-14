@@ -157,7 +157,8 @@ which does what `nixos-rebuild switch` does once it has built: the system
 becomes a new generation of the system profile (already built, it is only
 recorded), is activated, restarting the services that changed, and is the
 boot default. The build runs as you; only
-these two commands run as root, through `sudo`. Switching the system that was
+these two commands run as root, through `sudo`, which asks for your
+password on the terminal when it needs it. Switching the system that was
 just built, rather than having `nixos-rebuild` evaluate the flake again,
 means what kai printed is what runs.
 
@@ -169,14 +170,44 @@ sudo nix profile rollback --profile /nix/var/nix/profiles/system
 sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
 ```
 
-`kai machine generations NAME` lists the system generations with
-`nixos-rebuild list-generations`, which needs no root and, unlike `nix
-profile history`, shows each generation's NixOS version and kernel.
+`kai machine generations NAME` lists the system generations from the
+profile's links, `/nix/var/nix/profiles/system-*-link`, with the time each
+was made and the current one marked. It needs no root.
 
 Switch and rollback ask before changing the system, so they need a terminal
 or `--yes`. A rollback changes only the host, not `.kai/lock.json`: the next
 switch builds from the lock again. `kai --dry-run machine switch NAME` prints the whole plan, the host
 check, the build and the confirmation included, and runs none of it.
+
+### What kai prints
+
+The machine commands say what they do in kai's words, and show the output
+of the commands they run, such as `nix copy` or the activation's, only
+when one fails, just before kai's error:
+
+```console
+$ kai machine switch web
+building web: nixosConfigurations.web.config.system.build.toplevel (output out)
+/nix/store/...-nixos-system-web-25.11
+built web: nixosConfigurations.web.config.system.build.toplevel -> /nix/store/...
+kai: Switch admin@web.example.com to machine web, restarting changed services and booting it by default? [y/N] y
+kai: copying machine web's system to admin@web.example.com
+kai: activating it on admin@web.example.com
+kai: machine web is now running generation 43 on admin@web.example.com
+$ kai machine generations web
+generation 42  2026-11-13 18:20
+generation 43  2026-11-14 10:03  (current)
+```
+
+A rollback ends with the generation the host now runs. `generations`
+prints one line per generation, oldest first, with the time in the host's
+time zone; with `--json`, each is a `result` event. The last step of each
+writes what it read of the profile to `.kai/generated/machine/generations`,
+which kai reads back to print it.
+
+`kai machine install` is the exception: it shows nixos-anywhere's
+progress as it runs, since an install takes several minutes, and a stalled
+one should be visible.
 
 ### Remote machines
 
@@ -223,9 +254,11 @@ ssh TARGET -- sudo nix --extra-experimental-features nix-command \
 ssh TARGET -- sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
 ```
 
-and `kai machine generations NAME` checks it and runs `ssh TARGET --
-nixos-rebuild list-generations`. When the target logs in as `root`, nothing
-goes through `sudo`.
+and `kai machine generations NAME` checks it and lists the target's
+generations as a local one does, over one SSH connection. The activation
+and the listing run in a short `sh` script on the target, which also reads
+which generation the profile now is. When the target logs in as `root`,
+nothing goes through `sudo`.
 
 A user other than root needs two things on the target: `sudo` that asks for
 no password, since the commands run without a terminal (for example

@@ -39,6 +39,8 @@ NixosBackend :: [].{
 						Remote(target) => NixosBackend.install(project, machines, m, ctx, target)
 						Here => Err(Plan.fail("kai machine install needs --to"))
 					}
+				} else if ctx.phase > 0 {
+					NixosBackend.report(m, ctx, action, destination)
 				} else {
 					match destination {
 						Here => NixosBackend.on_host(project, machines, m, ctx, action)
@@ -82,7 +84,9 @@ NixosBackend :: [].{
 
 	## Switching, rolling back and listing act on this host, which must be
 	## the machine: its System now, its HostName as the plan runs. Only the
-	## profile and the activation run as root.
+	## profile and the activation run as root, through sudo, which asks for
+	## a password on the terminal itself, so they stay quiet. Each records
+	## the generations for `report`.
 	on_host : Project, List(Machine), Machine, Context, Str -> Planned
 	on_host = |project, machines, m, ctx, action| {
 		if ctx.host.system != m.system {
@@ -97,8 +101,13 @@ NixosBackend :: [].{
 		system_profile = NixosBackend.profile
 		check = NixosBackend.host_check(action, m)
 		here = NixosBackend.run("${description}: host check", Quiet, check)
-		sudo = |argv| NixosBackend.run(description, Inherit, ["sudo"].concat(argv))
-		activate = sudo(["${system_profile}/bin/switch-to-configuration", "switch"])
+		sudo = |argv| NixosBackend.run(description, Quiet, ["sudo"].concat(argv))
+		file = NixosBackend.generations_file(ctx)
+		recording = |script, as_root| {
+			argv = ["sh", "-c", script, "sh", system_profile].concat(as_root)
+			NixosBackend.run(description, Quiet, NixosBackend.recorded(file, argv))
+		}
+		activate = recording(NixosBackend.activation, ["sudo"])
 		restarting = "restarting changed services and booting it by default?"
 		steps = match action {
 			"switch" => {
@@ -106,27 +115,29 @@ NixosBackend :: [].{
 				built = NixosBackend.build(project, machines, m, ctx, link)?
 				prompt = "Switch this host to machine ${m.name}, ${restarting}"
 				set = sudo(["nix", "build", "--no-link", "--profile", system_profile, link])
-				[here].concat(built.steps).concat([Confirm(prompt), set, activate])
+				activating = Note("activating machine ${m.name}'s system on this host")
+				[here]
+					.concat(built.steps)
+					.concat([Confirm(prompt), activating, set, activate])
 			}
 			"rollback" => {
 				prompt = "Switch this host back to its previous system, ${restarting}"
 				# Steps the profile's link back a generation, as `nix-env
 				# --rollback` does: it needs no `nix profile` manifest.
 				back = sudo(["nix", "profile", "rollback", "--profile", system_profile])
-				[here, Confirm(prompt), back, activate]
+				activating = Note("activating this host's previous system")
+				[here, Confirm(prompt), activating, back, activate]
 			}
-			_ => {
-				listed = ["nixos-rebuild", "list-generations"]
-				[here, NixosBackend.run(description, Inherit, listed)]
-			}
+			_ => [here, recording(NixosBackend.listing, [])]
 		}
-		Ok(Plan.{ steps, next: Done })
+		Ok(Plan.{ steps, next: Observe([file]) })
 	}
 
 	## Switching, rolling back and listing act on `target` over SSH, which
 	## must run NixOS on the machine's architecture. The system is built
 	## here and copied there; only the profile and the activation run as
-	## root there, through sudo unless the target logs in as root.
+	## root there, through sudo unless the target logs in as root. Each
+	## records the generations for `report`.
 	on_remote : Project, List(Machine), Machine, Context, Str, Str -> Planned
 	on_remote = |project, machines, m, ctx, action, target| {
 		description = "machine ${action} ${m.name} on ${target}"
@@ -140,12 +151,15 @@ NixosBackend :: [].{
 		# The remote nix may not enable `nix profile` and `nix build`.
 		nix = ["nix", "--extra-experimental-features", "nix-command"]
 		# ssh joins the words for the remote shell, so each is quoted for it.
-		remote = |argv| {
-			words = ["ssh", target, "--"].concat(argv.map(NixosBackend.shell_quote))
-			NixosBackend.run(description, Inherit, words)
+		remote = |argv|
+			["ssh", target, "--"].concat(argv.map(NixosBackend.shell_quote))
+		quiet = |argv| NixosBackend.run(description, Quiet, argv)
+		file = NixosBackend.generations_file(ctx)
+		recording = |script, sudo| {
+			argv = remote(["sh", "-c", script, "sh", system_profile].concat(sudo))
+			quiet(NixosBackend.recorded(file, argv))
 		}
-		activation = ["${system_profile}/bin/switch-to-configuration", "switch"]
-		activate = remote(as_root(activation))
+		activate = recording(NixosBackend.activation, as_root([]))
 		restarting = "restarting changed services and booting it by default?"
 		steps = match action {
 			"switch" => {
@@ -161,21 +175,99 @@ NixosBackend :: [].{
 					.concat(built.steps)
 					.concat([
 						Confirm(prompt),
-						NixosBackend.run(description, Inherit, copy),
-						NixosBackend.run(description, Inherit, set),
+						Note("copying machine ${m.name}'s system to ${target}"),
+						quiet(copy),
+						Note("activating it on ${target}"),
+						quiet(set),
 						activate,
 					])
 			}
 			"rollback" => {
 				prompt = "Switch ${target} back to its previous system, ${restarting}"
 				rollback = ["profile", "rollback", "--profile", system_profile]
-				back = remote(as_root(nix.concat(rollback)))
-				[tools, there, Confirm(prompt), back, activate]
+				back = quiet(remote(as_root(nix.concat(rollback))))
+				activating = Note("activating the previous system on ${target}")
+				[tools, there, Confirm(prompt), activating, back, activate]
 			}
-			_ => [tools, there, remote(["nixos-rebuild", "list-generations"])]
+			_ => [tools, there, recording(NixosBackend.listing, [])]
+		}
+		Ok(Plan.{ steps, next: Observe([file]) })
+	}
+
+	## Where a switch, rollback or listing records the system profile's
+	## generations for `report`: the link the profile points at, such as
+	## system-43-link, then, when listing, each generation's link and the
+	## time it was made, oldest first.
+	generations_file : Context -> Str
+	generations_file = |ctx| "${ctx.layout.generated_root}/machine/generations"
+
+	## Activates the system profile `$1` as root through the words after it,
+	## sudo or none, its output on stderr, then prints the profile's link.
+	activation =
+		\\profile=$1
+		\\shift
+		\\"$@" "$profile/bin/switch-to-configuration" switch >&2 || exit
+		\\readlink "$profile"
+
+	## Prints the system profile `$1`'s link, then each generation's link
+	## and the time it was made, oldest first.
+	listing =
+		\\readlink "$1" || exit
+		\\cd "$(dirname "$1")" || exit
+		\\stat -c '%n %y' "$(basename "$1")"-*-link | sort -t- -k2,2n
+
+	## `argv` with its stdout written to `file`, which is in the generated
+	## root, so that a continuation reads it.
+	recorded : Str, List(Str) -> List(Str)
+	recorded = |file, argv| {
+		script =
+			\\file=$1
+			\\shift
+			\\mkdir -p "$(dirname "$file")" || exit
+			\\"$@" >"$file"
+		["sh", "-c", script, "sh", file].concat(argv)
+	}
+
+	## What a switch or rollback at `destination` says once it has run, or
+	## the generations a listing prints, from what it recorded.
+	report : Machine, Context, Str, [Here, Remote(Str)] -> Planned
+	report = |m, ctx, action, destination| {
+		file = NixosBackend.generations_file(ctx)
+		lines = match ctx.observed.find_first(|o| o.path == file) {
+			Ok({ contents: Text(text), .. }) => text.split_on("\n").drop_if(Str.is_empty)
+			_ => return Err(Plan.fail("kai machine ${action} recorded no ${file}"))
+		}
+		current = lines.first() ?? ""
+		place = match destination {
+			Here => "this host"
+			Remote(target) => target
+		}
+		generation = NixosBackend.generation(current)
+		running = "is now running generation ${generation}"
+		steps = if action == "generations" {
+			lines.drop_first(1).map(
+				|line| {
+					(link, made) = match line.split_first(" ") {
+						Ok({ before, after }) => (before, after)
+						Err(_) => (line, "")
+					}
+					# stat's time, such as 2026-11-14 10:03:12.5 +0000, to the minute.
+					minute = Str.join_with(made.split_on(":").take_first(2), ":")
+					marker = if (link == current) "  (current)" else ""
+					Print("generation ${NixosBackend.generation(link)}  ${minute}${marker}")
+				},
+			)
+		} else if action == "switch" {
+			[Note("machine ${m.name} ${running} on ${place}")]
+		} else {
+			[Note("${place} ${running}")]
 		}
 		Ok(Plan.{ steps, next: Done })
 	}
+
+	## The generation a system profile's link names: 43 for system-43-link.
+	generation : Str -> Str
+	generation = |link| link.drop_prefix("system-").drop_suffix("-link")
 
 	## Installing erases the Disk of the server at `target`, any Linux that
 	## logs in over SSH as root or with sudo, and installs the machine with
@@ -202,9 +294,16 @@ NixosBackend :: [].{
 		}
 		facts = NixosBackend.facts_file(m, ctx.layout.project_root)
 		recording = ["--generate-hardware-config", "nixos-facter", facts]
+		# nixos-anywhere's progress shows, as it runs for minutes and may stall.
 		run = NixosBackend.run(description, Inherit, anywhere.concat(recording))
+		installing = Note(
+			"installing machine ${m.name} on ${target}: this erases ${device} "
+				.concat("and takes several minutes"),
+		)
 		wrote = Note("wrote ${facts}, the machine's hardware facts; commit it")
-		steps = [tools].concat(built.steps).concat([Confirm(prompt), run, wrote])
+		steps = [tools]
+			.concat(built.steps)
+			.concat([Confirm(prompt), installing, run, wrote])
 		Ok(Plan.{ steps, next: Done })
 	}
 

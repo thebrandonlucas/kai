@@ -17,6 +17,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 ### Changed
 
 - **Breaking:** The nixos plugin is now the machine plugin, so that another backend can implement `kai machine` later. In `Kaifile.roc`, name it `machine:` in the header instead of `nixos:`, `import machine.Machine` instead of `nixos.Nixos`, and write `Machine.plugin(...)` instead of `Nixos.plugin(...)`; its settings and commands are unchanged. Releases publish it as `machine-<hash>.tar.zst`.
+- `kai machine switch` and `rollback` say what they are doing in kai's words, such as `copying machine web's system to admin@web.example.com` and `activating it on admin@web.example.com`, instead of printing the logs of `nix copy` and the activation, which kai shows only when a step fails; they end by naming the generation the host now runs. `kai machine generations` prints its own listing, `generation 43  2026-11-14 10:03  (current)`, one `result` event per generation with `--json`, read from the system profile's links instead of `nixos-rebuild list-generations`. `kai machine install` still shows nixos-anywhere's progress, after a note that it erases the disk and takes several minutes.
 
 ### Fixed
 

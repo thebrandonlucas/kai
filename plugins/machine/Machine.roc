@@ -868,10 +868,10 @@ installed = |settings, to| {
 }
 
 # An install expects nix and ssh, builds as `build` does, confirms naming
-# the target and the disk it erases, then runs nixos-anywhere from the
-# project's locked nixpkgs on the generated flake, read impurely as a build
-# reads it, recording the server's hardware facts in the project and saying
-# so.
+# the target and the disk it erases, says what it is doing, then runs
+# nixos-anywhere from the project's locked nixpkgs on the generated flake,
+# read impurely as a build reads it, with its progress shown, recording the
+# server's hardware facts in the project and saying so.
 expect {
 	target = "root@203.0.113.7"
 	flake = "path:/generated/nix"
@@ -885,14 +885,18 @@ expect {
 				[ExpectPrograms(tools), CheckSource(_), .. as rest] =>
 					tools.programs == ["nix", "ssh"]
 						and match rest.drop_first(1) {
-							[Run(built), Confirm(prompt), Run(install), Note(wrote)] =>
+							[Run(built), Confirm(prompt), Note(saying), Run(ran), Note(wrote)] =>
 								built.argv.last() == Ok("${flake}#${toplevel}")
 									and wrote
 										== "wrote ${facts}, the machine's hardware facts; commit it"
 									and prompt
 										== "Install machine web on ${target}, ERASING its disk "
 											.concat("/dev/sda and everything on it?")
-									and match install.argv {
+									and saying
+										== "installing machine web on ${target}: this erases "
+											.concat("/dev/sda and takes several minutes")
+									and ran.output == Inherit
+									and match ran.argv {
 										["sh", "-c", script, "sh", .. as given] =>
 											given == [flake].concat(anywhere)
 												and script.contains("\$NIX_CONFIG\npure-eval = false")
@@ -1016,43 +1020,71 @@ argvs = |steps|
 			},
 	)
 
+# Where switch, rollback and generations record the generations, and the
+# script, sh -c SCRIPT sh PROFILE AS_ROOT..., each runs to activate or list,
+# recording its stdout there.
+generations = "/generated/machine/generations"
+
+recording = |script, as_root|
+	NixosBackend.recorded(
+		generations,
+		["sh", "-c", script, "sh", profile].concat(as_root),
+	)
+
+# Run steps' outputs, in order.
+outputs : List(Plan.Step) -> List(Plan.Output)
+outputs = |steps|
+	steps.keep_oks(
+		|step|
+			match step {
+				Run({ output, .. }) => Ok(output)
+				_ => Err({})
+			},
+	)
+
 # A switch checks the host first, builds as `build` does but leaves an
-# out-link, confirms, then sets the system profile to it and activates it as
-# root. The whole plan is known up front, so --dry-run prints all of it.
+# out-link, confirms, says what it does, then quietly sets the system
+# profile to it and activates it as root, recording the generation it is.
+# The whole plan is known up front, so --dry-run prints all of it.
 expect {
-	activate = ["sudo", "${profile}/bin/switch-to-configuration", "switch"]
+	activate = recording(NixosBackend.activation, ["sudo"])
 	link = "/work/machines/web"
 	set = ["sudo", "nix", "build", "--no-link", "--profile", profile, link]
 	plan = planned("switch", "x86_64-linux")
-	done = plan.map_ok(|p| p.next) == Ok(Done)
+	observes = plan.map_ok(|p| p.next) == Ok(Observe([generations]))
 	match plan.map_ok(|p| p.steps) {
-		Ok([Run(check), _, _, Run(built), Confirm(prompt), .. as rest]) =>
-			done
+		Ok([Run(check), _, _, Run(built), Confirm(prompt), Note(note), .. as rest]) =>
+			observes
 				and check.argv == NixosBackend.host_check("switch", web_machine)
 				and built.argv.contains("--out-link")
 				and built.argv.contains(link)
 				and !built.argv.contains("--no-link")
 				and prompt.starts_with("Switch this host to machine web,")
+				and note == "activating machine web's system on this host"
 				and argvs(rest) == [set, activate]
+				and outputs(rest) == [Quiet, Quiet]
 		_ => Bool.False
 	}
 }
 
 # A rollback checks the host and confirms before rolling the profile back and
 # activating it; generations only lists, with nothing to confirm or run as
-# root.
+# root. Each runs quietly and records the generations.
 expect {
-	activate = ["sudo", "${profile}/bin/switch-to-configuration", "switch"]
+	activate = recording(NixosBackend.activation, ["sudo"])
 	back = ["sudo", "nix", "profile", "rollback", "--profile", profile]
+	observes = Observe([generations])
 	rolled_back = match planned("rollback", "x86_64-linux") {
-		Ok({ steps: [Run(check), Confirm(_), .. as rest], next: Done }) =>
+		Ok({ steps: [Run(check), Confirm(_), Note(_), .. as rest], next }) =>
 			check.argv == NixosBackend.host_check("rollback", web_machine)
 				and argvs(rest) == [back, activate]
+				and outputs(rest) == [Quiet, Quiet]
+				and next == observes
 		_ => Bool.False
 	}
 	listed = match planned("generations", "x86_64-linux") {
-		Ok({ steps: [Run(_), Run({ argv, .. })], next: Done }) =>
-			argv == ["nixos-rebuild", "list-generations"]
+		Ok({ steps: [Run(_), Run({ argv, output: Quiet, .. })], next }) =>
+			argv == recording(NixosBackend.listing, []) and next == observes
 		_ => Bool.False
 	}
 	rolled_back and listed
@@ -1089,9 +1121,10 @@ remote_web = web.append(Host("admin@web.example.com"))
 remote_nix = ["nix", "--extra-experimental-features", "nix-command"]
 
 # A remote switch expects nix and ssh, checks the target, builds here as a
-# local switch does, confirms naming the target, copies the system there,
-# sets its profile to the store path and activates it, through sudo for a
-# user other than root.
+# local switch does, confirms naming the target, then quietly copies the
+# system there, sets its profile to the store path and activates it, through
+# sudo for a user other than root, recording the generation it is. A note
+# says what each does.
 expect {
 	target = "admin@web.example.com"
 	link = "/work/machines/web"
@@ -1101,14 +1134,22 @@ expect {
 		.concat(remote_nix)
 		.concat(["build", "--no-link", "--profile", profile])
 	set = NixosBackend.remote_profile(link, target, profile_command)
-	activate = ["ssh", target, "--", "sudo"]
-		.concat(["${profile}/bin/switch-to-configuration", "switch"])
+	activation = ["sh", "-c", NixosBackend.activation, "sh", profile, "sudo"]
+	activate = NixosBackend.recorded(
+		generations,
+		["ssh", target, "--"].concat(activation.map(NixosBackend.shell_quote)),
+	)
 	machine = Machine.machine("web", remote_web)
+	notes = [
+		"copying machine web's system to ${target}",
+		"activating it on ${target}",
+	]
 	match planned_with(remote_web, "switch", "x86_64-linux", "") {
-		Ok({ steps, next: Done }) =>
+		Ok({ steps, next: Observe([observed]) }) =>
 			match steps {
 				[ExpectPrograms(tools), Run(check), _, _, Run(built), .. as rest] =>
 					tools.programs == ["nix", "ssh"]
+						and observed == generations
 						and check.argv == NixosBackend.remote_check(machine, target)
 						and built.argv.contains(link)
 						and match rest {
@@ -1117,6 +1158,15 @@ expect {
 							_ => Bool.False
 						}
 						and argvs(rest) == [copy, set, activate]
+						and outputs(rest) == [Quiet, Quiet, Quiet]
+						and rest.keep_oks(
+							|step|
+								match step {
+									Note(note) => Ok(note)
+									_ => Err({})
+								},
+						)
+							== notes
 						and set.last()
 							== Ok(
 								"sudo nix --extra-experimental-features nix-command build "
@@ -1129,29 +1179,79 @@ expect {
 }
 
 # --to overrides Host; as root, a remote rollback and listing run nothing
-# through sudo. Rollback confirms first; generations only lists.
+# through sudo. Rollback confirms first; generations only lists. Both run
+# quietly and record the generations.
 expect {
 	target = "root@203.0.113.7"
 	on_target = |argv| ["ssh", target, "--"].concat(argv)
+	remote_recording = |script|
+		NixosBackend.recorded(
+			generations,
+			on_target(
+				["sh", "-c", script, "sh", profile].map(NixosBackend.shell_quote),
+			),
+		)
 	back = on_target(
 		remote_nix.concat(["profile", "rollback", "--profile", profile]),
 	)
-	activate = on_target(["${profile}/bin/switch-to-configuration", "switch"])
+	activate = remote_recording(NixosBackend.activation)
 	on = |action| planned_with(remote_web, action, "x86_64-linux", target)
 	rolled_back = match on("rollback").map_ok(|plan| plan.steps) {
 		Ok([ExpectPrograms(tools), Run(check), Confirm(prompt), .. as rest]) =>
 			tools.programs == ["ssh"]
 				and check.argv.get(4) == Ok(target)
 				and prompt.starts_with("Switch ${target} back")
+				and rest.first() == Ok(Note("activating the previous system on ${target}"))
 				and argvs(rest) == [back, activate]
+				and outputs(rest) == [Quiet, Quiet]
 		_ => Bool.False
 	}
 	listed = match on("generations") {
-		Ok({ steps: [ExpectPrograms(_), Run(_), Run({ argv, .. })], next: Done }) =>
-			argv == on_target(["nixos-rebuild", "list-generations"])
+		Ok({ steps: [ExpectPrograms(_), Run(_), Run({ argv, output, .. })], .. }) =>
+			argv == remote_recording(NixosBackend.listing)
+				and output == Quiet
 		_ => Bool.False
 	}
 	rolled_back and listed
+}
+
+# The plan of `kai machine ACTION web --to TO` continuing once its last step
+# recorded `text` as the generations.
+reported : Str, Str, Str -> Try(Plan, Plan.Failure)
+reported = |action, to, text| {
+	plugin = Machine.plugin(project, [Machine("web", remote_web)])
+	args = [{ name: "action", value: Present(action) }]
+		.append({ name: "machine", value: Many(["web"]) })
+		.concat(if (to.is_empty()) [] else [{ name: "to", value: Present(to) }])
+	observed = [{ path: generations, contents: Text(text) }]
+	found = plugin.implementations
+		.first()
+		.map_err(|_| Plan.fail("no implementation"))?
+	(found.plan)({ ..context, args, phase: 1, observed })
+}
+
+# Once it has run, a switch says which generation the machine now runs and
+# where, a rollback which generation the host now runs, and generations
+# prints one line each, oldest first, marking the current one, to the
+# minute.
+expect {
+	listing =
+		\\system-43-link
+		\\system-9-link 2026-11-01 08:15:42.123456789 +0000
+		\\system-43-link 2026-11-14 10:03:12.000000000 +0000
+	target = "root@203.0.113.7"
+	steps = |action, to, text| reported(action, to, text).map_ok(|p| p.steps)
+	running = "is now running generation"
+	steps("switch", "", "system-43-link\n")
+		== Ok([Note("machine web ${running} 43 on admin@web.example.com")])
+		and steps("rollback", target, "system-42-link\n")
+			== Ok([Note("${target} ${running} 42")])
+		and steps("generations", "", listing)
+			== Ok([
+				Print("generation 9  2026-11-01 08:15"),
+				Print("generation 43  2026-11-14 10:03  (current)"),
+			])
+		and reported("switch", "", "").map_ok(|p| p.next) == Ok(Done)
 }
 
 # The remote check passes the target, architecture and messages as the
