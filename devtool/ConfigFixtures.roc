@@ -1161,6 +1161,32 @@ ConfigFixtures := [].{
 				\\ [OnSystems(["x86_64-linux"], [Tools(["a"]), Tools(["b"])])])]
 		},
 		{
+			name: "OnSystemsPackageEnv",
+			expected: Valid,
+			body: \\config = [Name("on-systems-package-env"),
+				\\ Systems(["x86_64-linux", "aarch64-darwin"]),
+				\\ Environment("dev", [Env([("LIBS", "")]),
+				\\  OnSystems(["x86_64-linux"], [Tools(["wayland"]),
+				\\   PackageEnv([("LIBS", LibraryPath(["wayland"]))])])])]
+		},
+		{
+			name: "PackageEnvOtherSystemTool",
+			expected: Rejected(
+				"PackageEnv's LIBS names wayland, which environment dev lacks "
+					.concat("on aarch64-darwin"),
+			),
+			body: \\config = [Name("bad"),
+				\\ Systems(["x86_64-linux", "aarch64-darwin"]),
+				\\ Environment("dev", [PackageEnv([("LIBS", LibraryPath(["wayland"]))]),
+				\\  OnSystems(["x86_64-linux"], [Tools(["wayland"])])])]
+		},
+		{
+			name: "DuplicateOnSystemsPackageEnv",
+			expected: Rejected("DuplicatePackageEnv: OnSystems in environment dev"),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [OnSystems(["x86_64-linux"], [PackageEnv([]), PackageEnv([])])])]
+		},
+		{
 			name: "RawEnvironment",
 			expected: Valid,
 			body: \\config = [Name("raw-environment"), Environment("dev", []),

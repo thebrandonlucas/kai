@@ -52,6 +52,7 @@ DirectBackend := [].{
 		provider = !environment.overlays.is_empty()
 			or !environment.aliases.is_empty()
 			or !environment.package_env.is_empty()
+			or environment.on_systems.any(|on| !on.package_env.is_empty())
 			or environment.rust_toolchain != None
 		tools = Project.environment_tools(environment)
 		foreign = Project.package_tools(tools, project.fetches)
@@ -702,7 +703,12 @@ expect {
 		fetches: model.fetches.map(on_windows),
 	}
 	hello = [{ source: "default", name: "hello" }]
-	linux_only = { systems: ["x86_64-linux"], tools: hello, env: [] }
+	linux_only = {
+		systems: ["x86_64-linux"],
+		tools: hello,
+		env: [],
+		package_env: [],
+	}
 	having = |changed| { ..two_systems, environments: [changed] }
 	checked = |changed|
 		DirectBackend.check_system(having(changed), "x86_64-windows")

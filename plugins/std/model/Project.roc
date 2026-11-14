@@ -292,11 +292,15 @@ Project :: [].{
 			environment.tools
 				.concat(environment.aliases.map(|alias| alias.tool))
 				.concat(environment.package_env.join_map(|v| package_tools_of(v.value)))
-				.concat(environment.on_systems.join_map(|o| o.tools)),
+				.concat(
+					environment.on_systems.join_map(
+						|o| o.tools.concat(o.package_env.join_map(|v| package_tools_of(v.value))),
+					),
+				),
 		)
 
 	## OnSystems names only declared systems, at least one, and sets variables
-	## as Env does.
+	## as Env and PackageEnv do.
 	check_on_systems : Model.Environment, List(Str) -> Try({}, Str)
 	check_on_systems = |environment, systems| {
 		declaration = "OnSystems in environment ${environment.name}"
@@ -310,19 +314,56 @@ Project :: [].{
 				}
 			}
 			check_env(on.env, declaration)?
+			check_package_env(on.env, on.package_env, declaration)?
+		}
+		Ok({})
+	}
+
+	## A PackageEnv names a tool the environment has only through OnSystems
+	## Tools only on the systems that add it, as Nix evaluates no other.
+	check_package_tools : Model.Environment, List(Str) -> Try({}, Str)
+	check_package_tools = |environment, systems| {
+		everywhere = environment.tools.concat(environment.aliases.map(|a| a.tool))
+		some_systems = environment.on_systems.join_map(|on| on.tools)
+			.keep_if(|t| !everywhere.contains(t))
+		for system in systems {
+			on = on_system(environment, system)
+			for variable in on.package_env {
+				for t in package_tools_of(variable.value) {
+					if some_systems.contains(t) and !on.tools.contains(t) {
+						return Err(
+							"PackageEnv's ${variable.name} names ${t.name}, which environment "
+								.concat("${environment.name} lacks on ${system}"),
+						)
+					}
+				}
+			}
 		}
 		Ok({})
 	}
 
 	## An environment as it is on `system`: what its OnSystems add there, the
-	## tools after its own and the variables overriding its own, in order.
+	## tools after its own and the variables overriding its own by name, in
+	## order.
 	on_system : Model.Environment, Str -> Model.Environment
 	on_system = |environment, system| {
 		chosen = environment.on_systems.keep_if(|on| on.systems.contains(system))
+		(env, package_env) = chosen.fold(
+			(environment.env, environment.package_env),
+			|(env_so_far, package_env_so_far), on| {
+				set = on.env.map(|v| v.name).concat(on.package_env.map(|v| v.name))
+				(
+					env_so_far.keep_if(|v| !set.contains(v.name)).concat(on.env),
+					package_env_so_far.keep_if(|v| !set.contains(v.name))
+						.concat(on.package_env),
+				)
+			},
+		)
 		{
 			..environment,
 			tools: unique(environment.tools.concat(chosen.join_map(|on| on.tools))),
-			env: chosen.fold(environment.env, |env, on| merge_env(env, on.env)),
+			env,
+			package_env,
 			on_systems: [],
 		}
 	}
@@ -342,15 +383,15 @@ Project :: [].{
 			PackagePath(one) => [one]
 		}
 
-	## The variables an environment's PackageEnv sets, checked like Env's, and
-	## never one its Env sets too.
-	check_package_env : Model.Environment -> Try({}, Str)
-	check_package_env = |environment| {
-		declaration = "environment ${environment.name}"
-		names = environment.package_env.map(|v| { name: v.name, value: "" })
+	## The variables a PackageEnv sets, checked like Env's, and never one the
+	## Env beside it sets too.
+	check_package_env :
+		List(Model.Variable), List(Model.PackageVariable), Str -> Try({}, Str)
+	check_package_env = |env, package_env, declaration| {
+		names = package_env.map(|v| { name: v.name, value: "" })
 		check_env(names, declaration)?
-		for variable in environment.package_env {
-			if environment.env.any(|v| v.name == variable.name) {
+		for variable in package_env {
+			if env.any(|v| v.name == variable.name) {
 				return Err("Env and PackageEnv both set ${variable.name} in ${declaration}")
 			}
 		}
@@ -602,7 +643,7 @@ Project :: [].{
 		var $environments = []
 		for env in model.environments {
 			check_env(env.env, "environment ${env.name}")?
-			check_package_env(env)?
+			check_package_env(env.env, env.package_env, "environment ${env.name}")?
 			match env.rust_toolchain {
 				Toml({ text, .. }) if text.is_empty() or text.to_utf8().contains(0) =>
 					return Err("invalid RustToolchain in environment ${env.name}")
@@ -620,13 +661,7 @@ Project :: [].{
 			}
 			check_on_systems(env, model.systems)?
 			resolved = resolve(model.environments, env.name, [])?
-			for variable in resolved.on_systems.join_map(|o| o.env) {
-				if resolved.package_env.any(|v| v.name == variable.name) {
-					return Err(
-						"Env and PackageEnv both set ${variable.name} in environment ${env.name}",
-					)
-				}
-			}
+			check_package_tools(resolved, model.systems)?
 			check_aliases(resolved.aliases, env.name)?
 			for t in environment_tools(resolved) {
 				parsed = tool("${t.source}#${t.name}")?
@@ -1127,11 +1162,13 @@ Project :: [].{
 					on_systems: base.on_systems
 						.map(
 							|on| {
-								..on,
-								env: on.env.keep_if(
-									|b| !env.env.any(|o| o.name == b.name)
-										and !env.package_env.any(|o| o.name == b.name),
-								),
+								own_names = env.env.map(|o| o.name)
+									.concat(env.package_env.map(|o| o.name))
+								{
+									..on,
+									env: on.env.keep_if(|b| !own_names.contains(b.name)),
+									package_env: on.package_env.keep_if(|b| !own_names.contains(b.name)),
+								}
 							},
 						)
 						.concat(env.on_systems),
@@ -1153,7 +1190,10 @@ Project :: [].{
 		}
 		# Nix makes a FetchLocked tool ready only for PATH.
 		named = env.aliases.map(|a| a.tool)
-			.concat(env.package_env.join_map(|v| package_tools_of(v.value)))
+			.concat(
+				env.package_env.concat(env.on_systems.join_map(|on| on.package_env))
+					.join_map(|v| package_tools_of(v.value)),
+			)
 		match named.find_first(|t| locked_fetch(project, t.source)) {
 			Ok(t) => return Err(
 				"an Alias or PackageEnv names FetchLocked ${t.source}: environment ${name}",
@@ -2332,6 +2372,7 @@ expect {
 		systems: ["x86_64-linux"],
 		tools: [wayland],
 		env: [{ name, value }],
+		package_env: [],
 	}
 	parent = {
 		..base,
@@ -2360,6 +2401,47 @@ expect {
 		and env_on(overriding, "x86_64-linux") == [[{ name: "A", value: "dev" }]]
 		and Project.validate(fixture([parent, undeclared]))
 			== Err("OnSystems in environment dev names undeclared system aarch64-darwin")
+}
+
+# OnSystems' PackageEnv overrides the environment's variables by name on its
+# systems, and a child's own Env overrides it on every system. A PackageEnv
+# names a tool the environment has only through OnSystems only there.
+expect {
+	wayland = { source: "default", name: "wayland" }
+	libraries = { name: "LIBS", value: LibraryPath([wayland]) }
+	linux = {
+		systems: ["x86_64-linux"],
+		tools: [wayland],
+		env: [],
+		package_env: [libraries],
+	}
+	parent = { ..base, env: [{ name: "LIBS", value: "/x" }], on_systems: [linux] }
+	two = |environments| {
+		..fixture(environments),
+		systems: ["x86_64-linux", "aarch64-darwin"],
+	}
+	variables_on = |dev, system|
+		match Project.validate(two([parent, dev])) {
+			Ok(model) =>
+				model.environments.keep_if(|e| e.name == "dev")
+					.map(
+						|e| {
+							on = Project.on_system(e, system)
+							(on.env, on.package_env)
+						},
+					)
+			Err(_) => []
+		}
+	overriding = { ..child, env: [{ name: "LIBS", value: "/y" }] }
+	everywhere = { ..child, package_env: [libraries] }
+	refused = "PackageEnv's LIBS names wayland, which environment dev lacks "
+		.concat("on aarch64-darwin")
+	variables_on(child, "x86_64-linux") == [([], [libraries])]
+		and variables_on(child, "aarch64-darwin")
+			== [([{ name: "LIBS", value: "/x" }], [])]
+		and variables_on(overriding, "x86_64-linux")
+			== [([{ name: "LIBS", value: "/y" }], [])]
+		and Project.validate(two([parent, everywhere])) == Err(refused)
 }
 
 # A Fetch may be unavailable on declared systems it has no file for; an
