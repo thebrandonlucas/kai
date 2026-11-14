@@ -175,6 +175,11 @@ Config :: [].{
 	## Builds require Use, Run and one relative Output. Optional Inputs select
 	## non-flake Sources, Fetches or CargoVendors; Needs selects build
 	## artifacts, not tasks.
+	## Output's file or directory is the artifact itself, not a tree holding
+	## it: `Output("bin")` gives `result/voltage`, not `result/bin/voltage`,
+	## at `kai build --out-link result` and in `$KAI_ARTIFACTS/<name>`. To
+	## keep a layout, gather it in one directory, such as `out/bin`, and
+	## output that: `Output("out")`. `.` is refused.
 	## Sources and artifacts remain separate read-only inputs, never merged.
 	## Files limits the project copy to the given project-relative paths.
 	## Revision sets KAI_REVISION, the project's `git describe --tags --always
