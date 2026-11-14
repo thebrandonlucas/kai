@@ -34,6 +34,8 @@ Plan := { steps : List(Step), next : Next }.{
 		## Copies only the relative paths `files` selects, what lies inside
 		## them and the directories above them. Symlinks into `store`, such as
 		## a build's out-link, are left out rather than refused.
+		## Directories that are Kai workspaces, such as a nested project's
+		## `.kai`, are left out too.
 		Snapshot(
 			{
 				root : Str,

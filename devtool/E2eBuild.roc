@@ -127,9 +127,27 @@ E2eBuild := [].{
 		_ = link!("src/message.txt")?
 		built!("library", "SECOND REVISION\n")?
 		Path.delete!(file("link"))?
+		# Other Kai workspaces stay out of the snapshot, links and all.
+		workspaces = ["nested/.kai", "kai-other"]
+		for workspace in workspaces {
+			Path.create_all!(file(workspace))?
+			escape = ["-s", "/", "${workspace}/escape"]
+			_ = Exec.output!(Exec.cmd("ln").args(Exec.strs(escape)).cwd(project))?
+		}
+		Path.write_utf8!(file("nested/Kaifile.roc"), "")?
+		marker = "Kai project workspace\n"
+		Path.write_utf8!(file("kai-other/.kai-workspace"), marker)?
+		built!("library", "SECOND REVISION\n")?
+		for workspace in workspaces {
+			if Path.exists!(snapshot(workspace))? {
+				return Err(NotExcluded(workspace))
+			}
+		}
+		Path.delete_all!(file("nested"))?
+		Path.delete_all!(file("kai-other"))?
 		witness = Path.read_bytes!(file(".kai/snapshot.isolation.json"))?
 		_ = link!("..")?
-		stderr = refused!("library", "snapshot refuses symlink: ")?
+		stderr = refused!("library", "/link -> .., which is outside ")?
 		if stderr.contains("building ") {
 			return Err(BuiltPastSymlink(stderr))
 		}
