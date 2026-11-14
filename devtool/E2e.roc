@@ -159,7 +159,7 @@ E2e := [].{
 	skipped! = |what| Stdout.line!("SKIPPED: ${what} on Guix: guix not installed")
 
 	## The bare kai on a Guix project, with only `path` on PATH; Roc stays
-	## reachable through ROC.
+	## reachable through KAI_ROC.
 	guix_kai! = |kai, project, path, args| {
 		roc = "${E2e.which!("roc")?}/roc"
 		Exec.output!(
@@ -167,7 +167,7 @@ E2e := [].{
 				.args(Exec.strs(args))
 				.cwd(project)
 				.env(OsStr.from_str("PATH"), OsStr.from_str(Path.display(path)))
-				.env(OsStr.from_str("ROC"), OsStr.from_str(roc)),
+				.env(OsStr.from_str("KAI_ROC"), OsStr.from_str(roc)),
 		)
 	}
 

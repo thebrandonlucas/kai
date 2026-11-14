@@ -67,7 +67,7 @@ kai --version
 
 The archive contains only the `kai` binary. Kai evaluates `Kaifile.roc` with
 the Roc compiler named in [`.roc-version`](.roc-version): one on `PATH` or set
-as `ROC=/path/to/roc`, or else one it gets with Nix from
+as `KAI_ROC=/path/to/roc`, or else one it gets with Nix from
 [roc-overlay](https://github.com/roc-lang/roc-overlay). Without Nix, it
 downloads the nightly, by the digests in [`.roc-downloads`](.roc-downloads),
 into its cache. Roc downloads the platform the first time it checks a `Kaifile.roc`.
@@ -568,8 +568,11 @@ replace direnv's shell hook with
 - `--no-color`, or a non-empty `NO_COLOR`: plain text.
 - `--backend nix|direct`, or `guix` with the guix plugin: see
   [Backends](#backends).
-- `ROC`: the Roc compiler that evaluates `Kaifile.roc` (default: `roc`). It
-  must be the pinned version; Kai says which one otherwise.
+- `KAI_ROC`: the Roc compiler that evaluates `Kaifile.roc` (default: `roc`).
+  It must be the pinned version; Kai says which one otherwise. Kai leaves
+  `ROC` to the project, for its own tasks. For one more release Kai still
+  reads the deprecated `ROC` when it is the pinned version and the `roc` on
+  `PATH` is not, and then says to set `KAI_ROC` instead.
 
 ## Exit codes and errors
 
