@@ -4,6 +4,10 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** The nixos plugin is now the machine plugin, so that another backend can implement `kai machine` later. In `Kaifile.roc`, name it `machine:` in the header instead of `nixos:`, `import machine.Machine` instead of `nixos.Nixos`, and write `Machine.plugin(...)` instead of `Nixos.plugin(...)`; its settings and commands are unchanged. Releases publish it as `machine-<hash>.tar.zst`.
+
 ## [0.0.12] - 2026-11-06
 
 ### Added

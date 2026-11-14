@@ -1,21 +1,20 @@
-# The nixos plugin: `Machine(name, [...])` settings beside std's, each a
-# NixOS system from a small typed core plus plain NixOS module files, and
-# `kai machine build NAME`, which builds its toplevel from std's flake.
+# The machine plugin: `Machine(name, [...])` settings beside std's, each a
+# system from a small typed core, and the `kai machine` command, which
+# NixosBackend implements on the nix backend from MachineModel.
 import pf.Command
-import pf.Implementation
-import pf.Plan
 import pf.Plugin
 import std.Config
 import std.EnvName
-import std.Std
 import std.StdModel exposing [Model]
 import std.System
+import MachineModel
 import NixosBackend
 
-Nixos := [].{
+Machine := [].{
 
-	## A NixOS machine, rendered as `nixosConfigurations.<name>` in std's
-	## generated flake from its "default" package source.
+	## A machine. On the nix backend it is a NixOS system, rendered as
+	## `nixosConfigurations.<name>` in std's generated flake from its
+	## "default" package source.
 	Setting : [Machine(Str, List(MachineSetting))]
 
 	## System and StateVersion are required, and every setting but User
@@ -43,38 +42,31 @@ Nixos := [].{
 	## Ports the firewall opens.
 	FirewallSetting : [Tcp(List(U16)), Udp(List(U16))]
 
-	Machine : NixosBackend.Machine
-
-	## std's settings, which machines use.
-	Project : List(Config.Setting)
-
-	Planned : Try(Plan, Plan.Failure)
-
-	Context : Implementation.Context
+	Machines : List(MachineModel.Machine)
 
 	## `project` is std's settings, whose environments and inputs machines
 	## use; a machine's System must be one of its Systems.
 	plugin : List(Config.Setting), List(Setting) -> Plugin
 	plugin = |project, settings|
-		match Nixos.checked(project, settings) {
+		match Machine.checked(project, settings) {
 			Ok(machines) =>
 				Plugin.new({
-					name: "nixos",
+					name: "machine",
 					version: "",
 					describe: "",
-					commands: [Nixos.command(machines)],
+					commands: [Machine.command(machines)],
 					backends: [],
-					implementations: [Nixos.implementation(project, machines)],
+					implementations: [NixosBackend.implementation(project, machines)],
 				})
-			Err(problems) => Plugin.invalid("nixos", problems)
+			Err(problems) => Plugin.invalid("machine", problems)
 		}
 
-	command : List(Machine) -> Command
+	command : Machines -> Command
 	command = |machines|
 		Command.{
 			name: "machine",
-			summary: Nixos.page.description,
-			help: Nixos.page,
+			summary: Machine.page.description,
+			help: Machine.page,
 			args: [
 				Name({
 					name: "action",
@@ -114,138 +106,8 @@ Nixos := [].{
 		],
 	}
 
-	implementation : List(Config.Setting), List(Machine) -> Implementation
-	implementation = |project, machines|
-		Implementation.{
-			command: "machine",
-			backend: On("nix"),
-			fit: |args| Nixos.requested(machines, args).map_ok(|_| {}),
-			plan: |ctx| {
-				m = Nixos.requested(machines, ctx.args).map_err(Plan.fail)?
-				action = Command.name(ctx.args, "action")
-				if action == "build" {
-					Nixos.build(project, machines, m, ctx, "")
-				} else {
-					Nixos.on_host(project, machines, m, ctx, action)
-				}
-			},
-		}
-
-	## NixOS's system profile, whose generations are the host's systems.
-	profile = "/nix/var/nix/profiles/system"
-
-	## Switching, rolling back and listing act on this host, which must be
-	## the machine: its System now, its HostName as the plan runs. Only the
-	## profile and the activation run as root.
-	on_host : Project, List(Machine), Machine, Context, Str -> Planned
-	on_host = |project, machines, m, ctx, action| {
-		if ctx.host.system != m.system {
-			return Err(
-				Plan.fail(
-					"machine ${m.name} is ${m.system}, but this host is ${ctx.host.system}: "
-						.concat(Nixos.local_only(action, m)),
-				),
-			)
-		}
-		description = "machine ${action} ${m.name}"
-		check = Nixos.host_check(action, m)
-		here = Nixos.run("${description}: host check", Quiet, check)
-		sudo = |argv| Nixos.run(description, Inherit, ["sudo"].concat(argv))
-		activate = sudo(["${Nixos.profile}/bin/switch-to-configuration", "switch"])
-		restarting = "restarting changed services and booting it by default?"
-		steps = match action {
-			"switch" => {
-				link = "${ctx.layout.workspace}/machines/${m.name}"
-				built = Nixos.build(project, machines, m, ctx, link)?
-				prompt = "Switch this host to machine ${m.name}, ${restarting}"
-				set = sudo(["nix", "build", "--no-link", "--profile", Nixos.profile, link])
-				[here].concat(built.steps).concat([Confirm(prompt), set, activate])
-			}
-			"rollback" => {
-				prompt = "Switch this host back to its previous system, ${restarting}"
-				# Steps the profile's link back a generation, as `nix-env
-				# --rollback` does: it needs no `nix profile` manifest.
-				back = sudo(["nix", "profile", "rollback", "--profile", Nixos.profile])
-				[here, Confirm(prompt), back, activate]
-			}
-			_ => {
-				listed = ["nixos-rebuild", "list-generations"]
-				[here, Nixos.run(description, Inherit, listed)]
-			}
-		}
-		Ok(Plan.{ steps, next: Done })
-	}
-
-	## `kai machine build`'s plan, leaving `out_link` ("" for none).
-	build : Project, List(Machine), Machine, Context, Str -> Planned
-	build = |project, machines, machine, ctx, out_link| {
-		root = ctx.layout.project_root
-		attribute = "nixosConfigurations.${machine.name}"
-			.concat(".config.system.build.toplevel")
-		built = Std.build_flake_output(
-			project,
-			ctx,
-			{
-				outputs: NixosBackend.outputs(machines, root),
-				environments: machines
-					.keep_if(|m| !m.environment.is_empty())
-					.map(|m| m.environment),
-				attribute,
-				name: machine.name,
-				description: "machine build ${machine.name}",
-				out_link,
-			},
-		)?
-		checks = machine.modules.map(|path| CheckSource("${root}/${path}"))
-		Ok(Plan.{ steps: checks.concat(built.steps), next: built.next })
-	}
-
-	## Why `action` refuses another host than `m`.
-	local_only : Str, Machine -> Str
-	local_only = |action, m|
-		"kai machine ${action} acts on the host it runs on; run it on "
-			.concat("${m.host_name}, or use kai deploy for another host")
-
-	## A shell check, as the switch runs, that this host's name is the
-	## machine's HostName. The names and the message are arguments, never
-	## part of the script.
-	host_check : Str, Machine -> List(Str)
-	host_check = |action, m| {
-		script =
-			\\host=$(uname -n)
-			\\[ "$host" = "$1" ] && exit 0
-			\\echo "this host is $host, not $1: $2" >&2
-			\\exit 1
-		["sh", "-c", script, "sh", m.host_name, Nixos.local_only(action, m)]
-	}
-
-	run : Str, Plan.Output, List(Str) -> Plan.Step
-	run = |description, output, argv|
-		Run({
-			description,
-			argv,
-			output,
-			secrets: [],
-			removed_environment_variables: [],
-			kept_environment_variables: [],
-		})
-
-	## The machine `kai machine ACTION NAME` names.
-	requested : List(Machine), Command.Args -> Try(Machine, Str)
-	requested = |machines, args| {
-		name = match Command.trailing(args, "machine") {
-			[one] => one
-			_ => return Err(Nixos.name_one)
-		}
-		machines
-			.find_first(|m| m.name == name)
-			.map_err(|_| "unknown machine: ${name}")
-	}
-
-	name_one = "name one machine: kai machine ACTION NAME"
-
 	## The machines, or every problem with the settings.
-	checked : List(Config.Setting), List(Setting) -> Try(List(Machine), List(Str))
+	checked : List(Config.Setting), List(Setting) -> Try(Machines, List(Str))
 	checked = |project, settings| {
 		model = StdModel.from_settings(project).map_err(|why| [why])?
 		var $machines = []
@@ -254,17 +116,18 @@ Nixos := [].{
 			(name, parts) = match setting {
 				Machine(machine_name, machine_settings) => (machine_name, machine_settings)
 			}
-			m = Nixos.machine(name, parts)
+			m = Machine.machine(name, parts)
 			given = parts
-				.map(Nixos.setting_name)
+				.map(Machine.setting_name)
 				.drop_if(|s| s == "User")
-			found = Nixos.repeated(given)
+			found = Machine.repeated(given)
 				.map(|s| "${s} is given more than once")
-				.concat(Nixos.problems(model, m))
+				.concat(Machine.problems(model, m))
+				.concat(NixosBackend.problems(m))
 			$problems = $problems.concat(found.map(|p| "machine ${name}: ${p}"))
 			$machines = $machines.append(m)
 		}
-		duplicated = Nixos.repeated($machines.map(|m| m.name))
+		duplicated = Machine.repeated($machines.map(|m| m.name))
 			.map(|name| "machine ${name} is declared more than once")
 		problems = $problems.concat(duplicated)
 		if (problems.is_empty()) Ok($machines) else Err(problems)
@@ -299,7 +162,7 @@ Nixos := [].{
 
 	## A machine's settings folded into its fields; a later one wins, and
 	## `checked` reports it.
-	machine : Str, List(MachineSetting) -> Machine
+	machine : Str, List(MachineSetting) -> MachineModel.Machine
 	machine = |name, parts|
 		parts.fold(
 			{
@@ -321,7 +184,7 @@ Nixos := [].{
 					HostName(host_name) => { ..m, host_name }
 					User(user, user_settings) => {
 						..m,
-						users: m.users.append(Nixos.user(user, user_settings)),
+						users: m.users.append(Machine.user(user, user_settings)),
 					}
 					Ssh => { ..m, ssh: Bool.True }
 					Firewall(ports) => {
@@ -348,7 +211,7 @@ Nixos := [].{
 				},
 		)
 
-	user : Str, List(UserSetting) -> NixosBackend.User
+	user : Str, List(UserSetting) -> MachineModel.User
 	user = |name, settings|
 		settings.fold(
 			{ name, keys: [], groups: [] },
@@ -359,11 +222,12 @@ Nixos := [].{
 				},
 		)
 
-	## What is wrong with machine `m`, checked as Kaifile.roc compiles.
-	problems : Model, Machine -> List(Str)
+	## What is wrong with machine `m` on any backend, checked as Kaifile.roc
+	## compiles.
+	problems : Model, MachineModel.Machine -> List(Str)
 	problems = |model, m| {
 		var $found = []
-		if !Nixos.valid_machine_name(m.name) {
+		if !Machine.valid_machine_name(m.name) {
 			$found = $found.append(
 				"a machine name is a letter, then letters, digits, - or _",
 			)
@@ -380,36 +244,36 @@ Nixos := [].{
 				"System ${m.system} is not among the project's Systems",
 			)
 		}
-		if !Nixos.valid_state_version(m.state_version) {
+		if !Machine.valid_state_version(m.state_version) {
 			$found = $found.append(
 				"StateVersion is required, as a release such as \"25.05\"",
 			)
 		}
-		if !Nixos.valid_host_name(m.host_name) {
+		if !Machine.valid_host_name(m.host_name) {
 			$found = $found.append(
 				"HostName ${m.host_name} is no host name; "
 					.concat("use letters, digits, - or _"),
 			)
 		}
-		if !Nixos.valid_time_zone(m.time_zone) {
+		if !Machine.valid_time_zone(m.time_zone) {
 			$found = $found.append(
 				"TimeZone ${m.time_zone} is no time zone, such as \"Etc/UTC\"",
 			)
 		}
-		for name in Nixos.repeated(m.users.map(|u| u.name)) {
+		for name in Machine.repeated(m.users.map(|u| u.name)) {
 			$found = $found.append("user ${name} is declared more than once")
 		}
 		for u in m.users {
-			if !Nixos.valid_account(u.name) {
+			if !Machine.valid_account(u.name) {
 				$found = $found.append("user ${u.name} is no user name")
 			}
 			if u.name == "root" and !u.groups.is_empty() {
 				$found = $found.append("root takes no Groups")
 			}
-			for group in u.groups.drop_if(Nixos.valid_account) {
+			for group in u.groups.drop_if(Machine.valid_account) {
 				$found = $found.append("user ${u.name}: ${group} is no group name")
 			}
-			for key in u.keys.drop_if(Nixos.valid_ssh_key) {
+			for key in u.keys.drop_if(Machine.valid_ssh_key) {
 				$found = $found.append(
 					"user ${u.name}: \"${key}\" is no SSH public key",
 				)
@@ -435,11 +299,6 @@ Nixos := [].{
 				Ok(_) => {}
 			}
 		}
-		for path in m.modules.drop_if(Nixos.valid_module_path) {
-			$found = $found.append(
-				"module ${path} is no .nix file inside the project",
-			)
-		}
 		$found
 	}
 
@@ -455,9 +314,9 @@ Nixos := [].{
 	valid_machine_name = |name|
 		match name.to_utf8() {
 			[first, .. as rest] =>
-				Nixos.letter(first)
+				Machine.letter(first)
 					and rest.all(
-						|b| Nixos.letter(b) or Nixos.digit(b) or b == '-' or b == '_',
+						|b| Machine.letter(b) or Machine.digit(b) or b == '-' or b == '_',
 					)
 			[] => Bool.False
 		}
@@ -467,7 +326,7 @@ Nixos := [].{
 	valid_host_name : Str -> Bool
 	valid_host_name = |name| {
 		bytes = name.to_utf8()
-		alphanumeric = |b| Nixos.letter(b) or Nixos.digit(b)
+		alphanumeric = |b| Machine.letter(b) or Machine.digit(b)
 		ends = match (bytes.first(), bytes.last()) {
 			(Ok(first), Ok(last)) => alphanumeric(first) and alphanumeric(last)
 			_ => Bool.False
@@ -481,7 +340,7 @@ Nixos := [].{
 	valid_time_zone : Str -> Bool
 	valid_time_zone = |zone|
 		zone.to_utf8().all(
-			|b| Nixos.letter(b) or Nixos.digit(b) or "/_+-".to_utf8().contains(b),
+			|b| Machine.letter(b) or Machine.digit(b) or "/_+-".to_utf8().contains(b),
 		)
 
 	## A user or group name: a-z or _, then at most 31 of a-z, 0-9, _ or -.
@@ -492,7 +351,7 @@ Nixos := [].{
 			[first, .. as rest] =>
 				(lower(first) or first == '_')
 					and rest.len() < 32
-					and rest.all(|b| lower(b) or Nixos.digit(b) or b == '_' or b == '-')
+					and rest.all(|b| lower(b) or Machine.digit(b) or b == '_' or b == '-')
 			[] => Bool.False
 		}
 	}
@@ -501,7 +360,7 @@ Nixos := [].{
 	valid_state_version : Str -> Bool
 	valid_state_version = |version| {
 		two_digits = |part|
-			part.count_utf8_bytes() == 2 and part.to_utf8().all(Nixos.digit)
+			part.count_utf8_bytes() == 2 and part.to_utf8().all(Machine.digit)
 		match version.split_on(".") {
 			[year, month] => two_digits(year) and two_digits(month)
 			_ => Bool.False
@@ -522,7 +381,7 @@ Nixos := [].{
 			"sk-ecdsa-sha2-nistp256@openssh.com",
 		]
 		base64 = |b|
-			Nixos.letter(b) or Nixos.digit(b) or b == '+' or b == '/' or b == '='
+			Machine.letter(b) or Machine.digit(b) or b == '+' or b == '/' or b == '='
 		one_line = key.to_utf8().all(|b| b >= 32 and b != 127)
 		match key.split_on(" ") {
 			[kind, data, ..] =>
@@ -533,15 +392,12 @@ Nixos := [].{
 			_ => Bool.False
 		}
 	}
-
-	## A relative path to a .nix file that stays inside the project.
-	valid_module_path : Str -> Bool
-	valid_module_path = |path|
-		path.ends_with(".nix")
-			and path.split_on("/").all(|s| !s.is_empty() and s != "." and s != "..")
 }
 
+import pf.Implementation
 import pf.Layout
+import pf.Plan
+import std.Std
 
 # The flake.lock nix flake update writes for the project's nixpkgs.
 flake_lock =
@@ -622,7 +478,7 @@ published = |settings| {
 # implementation fits.
 planned : Str, Str -> Try(Plan, Plan.Failure)
 planned = |action, system| {
-	plugin = Nixos.plugin(project, [Machine("web", web)])
+	plugin = Machine.plugin(project, [Machine("web", web)])
 	args = [{ name: "action", value: Present(action) }]
 		.append({ name: "machine", value: Many(["web"]) })
 	found = plugin.implementations
@@ -636,7 +492,7 @@ planned = |action, system| {
 # Whether machine web's rendered lines, trimmed, hold `expected` in order.
 renders : List(MachineSetting), List(Str) -> Bool
 renders = |settings, expected| {
-	rendered = NixosBackend.outputs([Nixos.machine("web", settings)], "/project")
+	rendered = NixosBackend.outputs([Machine.machine("web", settings)], "/project")
 	remaining = rendered
 		.split_on("\n")
 		.map(Str.trim)
@@ -654,13 +510,13 @@ renders = |settings, expected| {
 # The problems the plugin reports for machine web's settings.
 problems_of : List(MachineSetting) -> List(Str)
 problems_of = |settings|
-	Nixos.plugin(project, [Machine("web", settings)]).problems
+	Machine.plugin(project, [Machine("web", settings)]).problems
 
 # A build checks the machine's modules, writes std's flake with the machine
 # in nixosConfigurations, and builds its toplevel, printing the store path.
 expect {
 	toplevel = "nixosConfigurations.web.config.system.build.toplevel"
-	outputs = NixosBackend.outputs([Nixos.machine("web", web)], "/project")
+	outputs = NixosBackend.outputs([Machine.machine("web", web)], "/project")
 	match planned("build", "x86_64-linux").map_ok(|plan| plan.steps) {
 		Ok([CheckSource(checked), Write([flake, ..]), Run({ argv, output, .. })]) =>
 			checked == "/project/nixos/web.nix"
@@ -671,6 +527,11 @@ expect {
 		_ => Bool.False
 	}
 }
+
+# NixOS's system profile, and machine web as its settings fold.
+profile = NixosBackend.profile
+
+web_machine = Machine.machine("web", web)
 
 # Run steps' argv, in order.
 argvs : List(Plan.Step) -> List(List(Str))
@@ -687,15 +548,15 @@ argvs = |steps|
 # out-link, confirms, then sets the system profile to it and activates it as
 # root. The whole plan is known up front, so --dry-run prints all of it.
 expect {
-	activate = ["sudo", "${Nixos.profile}/bin/switch-to-configuration", "switch"]
+	activate = ["sudo", "${profile}/bin/switch-to-configuration", "switch"]
 	link = "/work/machines/web"
-	set = ["sudo", "nix", "build", "--no-link", "--profile", Nixos.profile, link]
+	set = ["sudo", "nix", "build", "--no-link", "--profile", profile, link]
 	plan = planned("switch", "x86_64-linux")
 	done = plan.map_ok(|p| p.next) == Ok(Done)
 	match plan.map_ok(|p| p.steps) {
 		Ok([Run(check), _, _, Run(built), Confirm(prompt), .. as rest]) =>
 			done
-				and check.argv == Nixos.host_check("switch", Nixos.machine("web", web))
+				and check.argv == NixosBackend.host_check("switch", web_machine)
 				and built.argv.contains("--out-link")
 				and built.argv.contains(link)
 				and !built.argv.contains("--no-link")
@@ -709,11 +570,11 @@ expect {
 # activating it; generations only lists, with nothing to confirm or run as
 # root.
 expect {
-	activate = ["sudo", "${Nixos.profile}/bin/switch-to-configuration", "switch"]
-	back = ["sudo", "nix", "profile", "rollback", "--profile", Nixos.profile]
+	activate = ["sudo", "${profile}/bin/switch-to-configuration", "switch"]
+	back = ["sudo", "nix", "profile", "rollback", "--profile", profile]
 	rolled_back = match planned("rollback", "x86_64-linux") {
 		Ok({ steps: [Run(check), Confirm(_), .. as rest], next: Done }) =>
-			check.argv == Nixos.host_check("rollback", Nixos.machine("web", web))
+			check.argv == NixosBackend.host_check("rollback", web_machine)
 				and argvs(rest) == [back, activate]
 		_ => Bool.False
 	}
@@ -734,11 +595,11 @@ expect {
 			Err({ message, .. }) =>
 				message
 					== "machine web is x86_64-linux, but this host is aarch64-linux: "
-						.concat(Nixos.local_only(action, Nixos.machine("web", web)))
+						.concat(NixosBackend.local_only(action, Machine.machine("web", web)))
 			Ok(_) => Bool.False
 		}
-	www = Nixos.machine("web", web.append(HostName("www")))
-	checked = match Nixos.host_check("switch", www) {
+	www = Machine.machine("web", web.append(HostName("www")))
+	checked = match NixosBackend.host_check("switch", www) {
 		["sh", "-c", script, "sh", "www", why] =>
 			!script.contains("www")
 				and why
@@ -800,10 +661,10 @@ expect {
 
 # An unknown machine, or none, is refused before planning.
 expect {
-	machines = [Nixos.machine("web", web)]
+	machines = [Machine.machine("web", web)]
 	db = [{ name: "machine", value: Many(["db"]) }]
-	Nixos.requested(machines, db) == Err("unknown machine: db")
-		and Nixos.requested(machines, []) == Err(Nixos.name_one)
+	MachineModel.requested(machines, db) == Err("unknown machine: db")
+		and MachineModel.requested(machines, []) == Err(MachineModel.name_one)
 }
 
 # Settings are checked as Kaifile.roc compiles: systems, users, keys, the
@@ -847,7 +708,7 @@ expect {
 			["TimeZone is given more than once"],
 		),
 	]
-	twice = Nixos.plugin(project, [Machine("web", web), Machine("web", web)])
+	twice = Machine.plugin(project, [Machine("web", web), Machine("web", web)])
 	checks.all(
 		|(settings, expected)|
 			problems_of(settings) == expected.map(|p| "machine web: ${p}"),

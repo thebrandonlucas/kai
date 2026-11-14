@@ -205,7 +205,7 @@ system`, the definition of each of `environments`: a function from extra
 `mkShell` attributes to the environment's shell. They may not use the names
 std writes (`devShells`, `packages`, `kaiArtifacts`) or add inputs, which
 would leave the lock stale; they read files by absolute path, which
-`--impure` allows. The nixos plugin, `plugins/nixos`, builds its machines this
+`--impure` allows. The machine plugin, `plugins/machine`, builds its machines this
 way.
 
 ## Implementing std's commands on another backend
