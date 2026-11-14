@@ -41,7 +41,7 @@ dist/SHA256SUMS
 
 The build fails with `StaleBundleUrl` unless `platform-release`, `plugins/std-release` and each `plugins/<name>-release` name exactly the bundles just built, for the `origin` repository and `VERSION`, so a missing or stale URL file is refused. Any change to `platform` or a plugin changes its bundle's hash, and since each plugin's header names the platform and std URLs, a platform or std change changes every plugin's; `zig build release` rewrites the files. `zig build platform-bundle` builds the platform bundle into `zig-out/kai-platform` for inspection, and `kai build kai-std`, `kai build kai-guix` or `kai build kai-sbom` a plugin's, against the platform and std bundles of this checkout.
 
-Each archive contains only the `kai` binary. At runtime it needs Nix, and loads `Kaifile.roc` with the Roc compiler named in `.roc-version`: on `PATH`, as `ROC`, or else fetched with Nix; Roc downloads the platform bundle from the recorded URL. The x86_64 archive is checked by running `kai --version`; the aarch64-linux and aarch64-darwin archives, cross-built on x86_64, are checked here only for their architecture, and the release workflow runs them natively before publishing.
+Each archive contains only the `kai` binary. At runtime it needs Nix, and loads `Kaifile.roc` with the Roc compiler named in `.roc-version`: on `PATH`, as `KAI_ROC`, or else fetched with Nix; Roc downloads the platform bundle from the recorded URL. The x86_64 archive is checked by running `kai --version`; the aarch64-linux and aarch64-darwin archives, cross-built on x86_64, are checked here only for their architecture, and the release workflow runs them natively before publishing.
 
 ## Release another plugin
 
