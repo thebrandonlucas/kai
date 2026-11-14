@@ -1,6 +1,7 @@
 # `kai lock`: every input .kai/lock.json pins, as the documented JSON of
 # docs/lock.md, for tools such as SBOM generators. Read-only: it reads the
-# lock text kai passes, and needs no backend or network.
+# lock text kai passes, and needs no backend or network. `kai update` notes
+# what it changed by the same entries.
 import pf.Implementation
 import pf.Layout
 import pf.LockFile
@@ -45,6 +46,62 @@ LockReport := [].{
 			),
 		)
 	}
+
+	## What an update changed in the lock's Nix or direct section, from the
+	## lock it started from to the text it publishes: one line per entry, by
+	## the name `kai lock` gives it.
+	changes : [Nix, Direct], [Absent, Present(Str)], Str -> List(Str)
+	changes = |section, previous, current| {
+		read = |lock_text| {
+			found = match section {
+				Nix => nix(lock_text)
+				Direct => direct(lock_text)
+			}
+			(found ?? []).map(|e| { name: e.name, pin: pin(e) })
+		}
+		before = match previous {
+			Present(text) => read(text)
+			Absent => []
+		}
+		LockReport.lines(before, read(current))
+	}
+
+	## One line per entry added, moved or removed between two lists of pins,
+	## each shortened to 8 characters: `default 1d060086 → 7dcdd873`,
+	## `tools added at 4975466d`, `tools/nixpkgs removed`; or `no input
+	## changed`.
+	lines : List(Pinned), List(Pinned) -> List(Str)
+	lines = |before, after| {
+		short = |full| Str.from_utf8_lossy(full.to_utf8().take_first(8))
+		pin_in = |list, name|
+			list.find_first(|p| p.name == name).map_ok(|p| short(p.pin))
+		var $lines = []
+		for named in after.concat(before) {
+			line = match (pin_in(before, named.name), pin_in(after, named.name)) {
+				(Ok(old), Ok(new)) if old != new => "${named.name} ${old} → ${new}"
+				(Err(_), Ok(new)) => "${named.name} added at ${new}"
+				(Ok(_), Err(_)) => "${named.name} removed"
+				_ => ""
+			}
+			if line != "" and !$lines.contains(line) {
+				$lines = $lines.append(line)
+			}
+		}
+		if ($lines.is_empty()) ["no input changed"] else $lines
+	}
+
+	## A lock entry's name and its pin: a commit, or else a content hash.
+	Pinned : { name : Str, pin : Str }
+}
+
+## An entry's locked revision, else its hash without an SRI prefix.
+pin : Entry -> Str
+pin = |e| {
+	full = match (e.revision, e.hash) {
+		(String(revision), _) => revision
+		(_, found) => LockJson.string(LockJson.field(found, "value") ?? Null) ?? ""
+	}
+	full.drop_prefix("sha256-")
 }
 
 Entry : {
@@ -358,4 +415,34 @@ expect {
 		and code(Absent) == "missing_lock"
 		and code(Present("{\"version\":2,\"direct\":{}}")) == "invalid_lock"
 		and code(Present(lock_text)) == ""
+}
+
+# Making `tools/utils` follow `default` drops its node, and an update says
+# so; a direct file no longer declared is removed too, and the first pins
+# are added at their hashes.
+expect {
+	followed = lock_text.replace_first(
+		"{\"utils\":\"utils\",",
+		"{\"utils\":[\"default\"],",
+	)
+	data = ",{\"key\":\"data\",\"sha256\":\"${hex}\","
+		.concat("\"size\":7,\"url\":\"https://example.com/data\"}")
+	dropped = lock_text.replace_first(data, "")
+	LockReport.changes(Nix, Present(lock_text), followed)
+		== ["tools/utils removed"]
+		and LockReport.changes(Nix, Present(lock_text), lock_text)
+			== ["no input changed"]
+		and LockReport.changes(Direct, Present(lock_text), dropped)
+			== ["data removed"]
+		and LockReport.changes(Direct, Absent, lock_text)
+			== ["tool/x86_64-linux added at abababab", "data added at abababab"]
+}
+
+# Pins are compared and shown by their first 8 characters, each change once.
+expect {
+	before = [{ name: "a", pin: "1d060086ff" }, { name: "b", pin: "00" }]
+	after = [{ name: "a", pin: "7dcdd873ee" }, { name: "c", pin: "11" }]
+	LockReport.lines(before, after)
+		== ["a 1d060086 → 7dcdd873", "c added at 11", "b removed"]
+		and LockReport.lines(before, before) == ["no input changed"]
 }
