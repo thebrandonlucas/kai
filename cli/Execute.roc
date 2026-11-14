@@ -388,6 +388,8 @@ Execute := [].{
 					failed = match result {
 						Err(ChildExited(description, code)) =>
 							Ok("${description} failed with code ${code.to_str()}")
+						Err(ChildFailed(description, _, reason)) =>
+							Ok("${description} failed: ${reason}")
 						Err(MissingPrograms(description, missing)) =>
 							Ok(Execute.missing_programs(description, missing))
 						_ => Err({})
@@ -767,7 +769,8 @@ Execute := [].{
 
 	# Run a child process prepared by `process_command!`, which also sets its
 	# working directory to the project root, with inherited stdio; a captured
-	# stderr is shown only when the child fails.
+	# stderr is shown only when the child fails, and the reason it gives
+	# there ends kai's error in place of its exit code.
 	child! = |process_command, description, stderr| {
 		ran = process_command.inherit_stdio().stderr(stderr).run!()?
 		if ran.status != Exited(0) {
@@ -775,7 +778,11 @@ Execute := [].{
 		}
 		match ran.status {
 			Exited(0) => Ok({})
-			Exited(code) => Err(ChildExited(description, code))
+			Exited(code) =>
+				match Execute.reported_reason(ran.stderr_bytes) {
+					Ok(reason) => Err(ChildFailed(description, code, reason))
+					Err(_) => Err(ChildExited(description, code))
+				}
 			Signaled(signal) =>
 				Err(ChildExited(description, Execute.signal_status(signal)))
 		}
@@ -919,6 +926,21 @@ Execute := [].{
 		$found
 	}
 
+	# Nix ends an evaluation's trace with its innermost error, such as the
+	# message of a `throw` that names a missing tool, on an "error: " line;
+	# the last such line is the reason the child failed.
+	reported_reason : List(U8) -> Try(Str, [NotReported])
+	reported_reason = |stderr| {
+		var $found = Err(NotReported)
+		for line in Str.from_utf8_lossy(stderr).split_on("\n") {
+			reason = line.trim().drop_prefix("error: ").trim()
+			if line.trim().starts_with("error: ") and !reason.is_empty() {
+				$found = Ok(reason)
+			}
+		}
+		$found
+	}
+
 	leading_number : Str -> Try(I32, _)
 	leading_number = |text| {
 		var $digits = []
@@ -936,6 +958,24 @@ Execute := [].{
 	# such as a signal report, become a generic failure.
 	exit_code : I32 -> I32
 	exit_code = |code| if (code > 0 and code < 256) code else 1
+}
+
+# A failed child's reason is Nix's innermost error; without an "error: "
+# line it gave none.
+expect {
+	trace =
+		\\error:
+		\\       … while evaluating the attribute 'drvPath'
+		\\
+		\\       error: tool helloo not found in source default of environment dev
+	missing = "tool helloo not found in source default of environment dev"
+	[
+		(trace, Ok(missing)),
+		("error: no flake\nwarning: dirty\n", Ok("no flake")),
+		("error:\n", Err(NotReported)),
+		("fatal: no repository\n", Err(NotReported)),
+		("", Err(NotReported)),
+	].all(|(report, reason)| Execute.reported_reason(report.to_utf8()) == reason)
 }
 
 # A failing child's status is kept rather than collapsed to 1.
