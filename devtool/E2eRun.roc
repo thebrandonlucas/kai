@@ -162,7 +162,7 @@ E2eRun := [].{
 			Cmd.new(Path.to_os_str(kai)).args(Exec.strs(args))
 				.cwd(project)
 				.env(OsStr.from_str("PATH"), OsStr.from_str(Path.display(stubs)))
-				.env(OsStr.from_str("ROC"), OsStr.from_str(roc))
+				.env(OsStr.from_str("KAI_ROC"), OsStr.from_str(roc))
 				.env(OsStr.from_str("KAI_STUB_LOG"), OsStr.from_str(Path.display(log))),
 		)
 		command = ["hello", "--greeting", "two words"]

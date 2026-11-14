@@ -42,7 +42,7 @@ Help := [].{
 	# The last lines of every help page kai prints itself.
 	tips =
 		\\Put arguments for a shell command or task after --.
-		\\Set ROC to choose the Roc compiler (default: roc).
+		\\Set KAI_ROC to choose the Roc compiler (default: roc).
 
 	# What kai's help in a project ends with.
 	notes =
@@ -221,3 +221,11 @@ expect
 
 # A project name is quoted as a Roc string, whatever its directory is called.
 expect Help.kaifile("a\"b\\c$d").contains("Name(\"a\\\"b\\\\c\\$d\"),")
+
+# Help names KAI_ROC as kai's compiler and ROC only as its deprecated name.
+expect {
+	lines = Help.environment.split_on("\n")
+	named = |name, text|
+		lines.any(|line| line.starts_with("  ${name} ") and line.contains(text))
+	named("KAI_ROC", "Kaifile.roc") and named("ROC", "Deprecated")
+}

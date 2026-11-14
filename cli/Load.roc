@@ -112,10 +112,11 @@ Load := [].{
 	}
 
 	# Choose the Roc compiler that evaluates Kaifile.roc. It must be the version
-	# .roc-version pins. If the ROC environment variable is set, kai uses only
-	# that compiler. Otherwise it uses the `roc` on PATH if that is the pinned
-	# version, or else gets the pinned version with Nix or without it (see
-	# `fetched!`).
+	# .roc-version pins. If the KAI_ROC environment variable is set, kai uses
+	# only that compiler. Otherwise it uses the `roc` on PATH if that is the
+	# pinned version, then the deprecated ROC if that is (see `deprecated!`),
+	# or else gets the pinned version with Nix or without it (see `fetched!`).
+	# Kai never sets ROC or KAI_ROC, so tasks see the project's own ROC.
 	compiler! : () => Try(Str, _)
 	compiler! = || {
 		bundle_variables = [
@@ -128,18 +129,9 @@ Load := [].{
 				_ = Load.seed!(bundle)
 			}
 		}
-		match Variables.read!(Variables.roc) {
-			# A command such as `roc`, an absolute path, or a path relative to
-			# the directory kai was started in, such as `./bin/roc`.
-			Ok(requested_compiler_override) => {
-				relative = requested_compiler_override.contains("/")
-					and !requested_compiler_override.starts_with("/")
-				compiler = if relative {
-					current_working_directory = Env.cwd!()?.to_str()?
-					"${current_working_directory}/${requested_compiler_override}"
-				} else {
-					requested_compiler_override
-				}
+		match Variables.read!(Variables.kai_roc) {
+			Ok(requested) => {
+				compiler = Load.requested!(requested)?
 				Load.pinned!(compiler)?
 				Ok(compiler)
 			}
@@ -147,9 +139,39 @@ Load := [].{
 				if Load.pinned!("roc").is_ok() {
 					Ok("roc")
 				} else {
-					Load.fetched!()
+					match Load.deprecated!() {
+						Ok(compiler) => Ok(compiler)
+						Err(_) => Load.fetched!()
+					}
 				}
 		}
+	}
+
+	# A compiler named the way KAI_ROC names one: a command such as `roc`, an
+	# absolute path, or a path relative to the directory kai was started in,
+	# such as `./bin/roc`.
+	requested! : Str => Try(Str, _)
+	requested! = |requested| {
+		relative = requested.contains("/") and !requested.starts_with("/")
+		if relative {
+			current_working_directory = Env.cwd!()?.to_str()?
+			Ok("${current_working_directory}/${requested}")
+		} else {
+			Ok(requested)
+		}
+	}
+
+	# The compiler ROC names, kai's old name for KAI_ROC, used for one more
+	# release with a note. Projects set ROC for their own tasks' compiler, so
+	# kai uses it only when it is the pinned version, and otherwise leaves it
+	# to the project without complaint.
+	deprecated! : () => Try(Str, _)
+	deprecated! = || {
+		compiler = Load.requested!(Variables.read!(Variables.deprecated_roc)?)?
+		Load.pinned!(compiler)?
+		note = "kai: ROC is deprecated for choosing kai's Roc; set KAI_ROC"
+		_ = Stderr.line!(note)
+		Ok(compiler)
 	}
 
 	# Whether `compiler` runs and is the Roc version .roc-version pins.

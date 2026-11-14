@@ -599,7 +599,7 @@ unbuilt = |output|
 
 needs_compiler =
 	"kai evaluates Kaifile.roc with Roc ${Load.pinned_compiler}; put it on "
-		.concat("PATH or set ROC to its path; otherwise kai gets it with Nix, ")
+		.concat("PATH or set KAI_ROC to its path; otherwise kai gets it with Nix, ")
 		.concat("or downloads it without Nix")
 
 # --file is found where the parser reads it, and never after --.

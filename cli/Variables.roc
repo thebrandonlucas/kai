@@ -5,9 +5,15 @@ import pf.OsStr
 Variables := [].{
 	Variable : { name : Str, description : Str }
 
-	roc = {
-		name: "ROC",
+	kai_roc = {
+		name: "KAI_ROC",
 		description: "The Roc compiler for Kaifile.roc (default: roc).",
+	}
+
+	# Kai's old name for KAI_ROC, which projects also use for their own Roc.
+	deprecated_roc = {
+		name: "ROC",
+		description: "Deprecated for KAI_ROC; used only at the pinned version.",
 	}
 
 	kai_dir = {
@@ -67,7 +73,8 @@ Variables := [].{
 
 	all : List(Variable)
 	all = [
-		Variables.roc,
+		Variables.kai_roc,
+		Variables.deprecated_roc,
 		Variables.kai_dir,
 		Variables.kai_no_cache,
 		Variables.no_color,
