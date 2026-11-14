@@ -64,6 +64,8 @@ Every setting but `User` occurs at most once in a machine.
 | `TimeZone(zone)` | `time.timeZone`, such as `"Etc/UTC"`. Optional (default NixOS's, UTC). |
 | `Use(environment)` | Puts a std environment's tools on the system's `PATH` (`environment.systemPackages`). The environment's variables stay in its shells and tasks. It cannot be one only the direct backend serves. |
 | `Disk(SingleDisk(device))` | The disk `kai machine install` partitions and the system boots from, the whole of `device`, an absolute `/dev/...` path such as `"/dev/sda"` or `"/dev/disk/by-id/..."`; see [Installing on a server](#installing-on-a-server). It needs `Input("disko", "github:nix-community/disko")` in std's settings. Optional (default: the file systems and boot loader come from `Modules`). |
+| `Operators([...])` | The public keys of whoever may decrypt the machine's host key and secrets: age recipients (`age1...`) or `ssh-ed25519` and `ssh-rsa` public keys, at least one; see [Secrets](#secrets). Optional. |
+| `Secrets([Secret(name, [...])])` | Files the system decrypts into `/run/secrets/NAME` as it activates, with `Owner(user)` (default `root`), `Group(group)` (default `root`) and `Mode("0400")`, an octal mode (default `"0400"`); see [Secrets](#secrets). They need `Operators` and `Input("agenix", "github:ryantm/agenix")` in std's settings. Optional. |
 | `Modules([...])` | NixOS module files, relative to the project and inside it, for everything else: services, hardware, and the disks and boot loader when there is no `Disk`. They receive the flake's `inputs` as a module argument, so a module can import another flake's module, such as `inputs.disko.nixosModules.disko` after `Input("disko", "github:nix-community/disko")` in std's settings. |
 
 `kai check` refuses, as Kaifile.roc compiles, a machine name that is not a
@@ -73,8 +75,13 @@ letter followed by letters, digits, `-` or `_`; a missing or non-Linux
 names NixOS would refuse; a key that
 is no OpenSSH public key; `Ssh` with no keys to log in with; port 0; an
 unknown environment; a `Disk` device that is no `/dev/...` path of letters,
-digits and `._:+-`, or a `Disk` without the `disko` input; and a module
-path that is absolute, uses `.` or `..` segments, or is not a `.nix` file.
+digits and `._:+-`, or a `Disk` without the `disko` input; an operator
+that is no age recipient, `ssh-ed25519` or `ssh-rsa` key, or empty
+`Operators`; `Secrets` without `Operators` or without the `agenix` input,
+a secret name that is not a letter followed by letters, digits, `-`, `_` or
+`.`, a secret declared twice, an owner or group NixOS would refuse, or a
+mode that is not three or four octal digits; and a module path that is
+absolute, uses `.` or `..` segments, or is not a `.nix` file.
 
 ## How a machine reaches the flake
 
@@ -97,7 +104,7 @@ The system comes from the project's `default` package source, so
 picks the NixOS release, and `kai update` moves it with the rest of the
 lock. Machines add no inputs of their own, so the lock std's `kai update`
 writes serves them; a `Disk` uses the `disko` input std's settings declare,
-which `kai update` locks with the rest.
+and `Secrets` the `agenix` input, which `kai update` locks with the rest.
 
 A plugin adds outputs through std's public API, `Std.build_flake_output`,
 described in [plugin.md](plugin.md#building-from-stds-flake).
@@ -288,13 +295,111 @@ build`. The install asks before erasing anything, so it needs a terminal or
 `--yes`; `kai --dry-run machine install NAME --to TARGET` prints the whole
 plan and runs none of it.
 
+A machine with `Operators` installs inside one script under age and
+ssh-keygen from the locked nixpkgs, as [Secrets](#secrets) describes: it
+decrypts or makes the machine's SSH host key in a private temporary
+directory and passes nixos-anywhere `--extra-files` with it, so the
+command needs `--identity` when your key is not `~/.ssh/id_ed25519`.
+
 Afterwards the server runs the machine, and `kai machine switch NAME --to
 USER@ADDRESS`, or `Host`, changes it as [Remote machines](#remote-machines)
 describes.
 
+## Secrets
+
+A machine's secrets, such as an API key a service reads, are encrypted
+files in the project, decrypted on the machine as it activates by
+[agenix](https://github.com/ryantm/agenix):
+
+```roc
+project = [
+	Name("site"),
+	Input("disko", "github:nix-community/disko"),
+	Input("agenix", "github:ryantm/agenix"),
+]
+
+Machine("web", [
+	...,
+	Operators(["age1...", "ssh-ed25519 AAAA... admin@example"]),
+	Secrets([Secret("app-key", [Owner("app"), Mode("0400")])]),
+])
+```
+
+`Operators` are the public keys of the people, or the CI, who may read and
+change the secrets: age recipients or OpenSSH `ssh-ed25519` and `ssh-rsa`
+keys. Three kinds of file live under `secrets/` in the project:
+
+| File | Holds |
+|---|---|
+| `secrets/hosts/NAME.pub` | The machine's SSH host public key, in plaintext. |
+| `secrets/hosts/NAME.age` | Its private host key, encrypted to the Operators. |
+| `secrets/NAME/SECRET.age` | Each secret, encrypted to the Operators and the host key. |
+
+```console
+$ printf %s "$API_KEY" | kai secret set web app-key
+$ kai secret rekey web
+$ kai secret rekey web --identity ~/.ssh/admin_ed25519
+```
+
+`kai secret set MACHINE SECRET` encrypts what it reads on stdin, refusing a
+machine or secret the Kaifile does not declare. `kai secret rekey MACHINE`
+decrypts each of `secrets/MACHINE/*.age` and encrypts it again to the
+current Operators and host key, and the host key again to the Operators:
+run it after changing `Operators`. Each writes std's flake first and runs
+age and ssh-keygen from the project's locked nixpkgs, so they need only
+`nix` on `PATH`:
+
+```sh
+nix shell --inputs-from path:.kai/generated/nix default#age default#openssh \
+  --command sh -c SCRIPT sh ...
+```
+
+Whatever decrypts, `rekey` and `kai machine install`, uses `--identity
+PATH` (`-i`), an age identity file or an SSH private key matching one of the
+Operators, by default `~/.ssh/id_ed25519`.
+
+On the machine, each secret is `age.secrets."SECRET"`, decrypted with the
+host key `/etc/ssh/ssh_host_ed25519_key` into `/run/secrets/SECRET`, owned
+by its `Owner` and `Group` with its `Mode`. `kai machine build`, `switch`
+and `install` check that every declared secret's file exists before
+building, and fail naming `kai secret set` for the missing one.
+
+### The host key comes first
+
+A secret encrypted to a machine's host key cannot be written until that key
+exists, so kai makes it. `kai machine install` with `Operators` generates an
+ed25519 host key here, stores it as `secrets/hosts/NAME.age` and `.pub`,
+encrypts any secrets already in `secrets/NAME/` again to it, and places it
+at `/etc/ssh/ssh_host_ed25519_key` with nixos-anywhere's `--extra-files`,
+so the machine boots able to decrypt its secrets. Installing again reuses
+the stored key. Before the first install, `kai secret set` encrypts to the
+Operators only and says so; the install then adds the host key. For a
+machine installed some other way, copy its
+`/etc/ssh/ssh_host_ed25519_key.pub` to `secrets/hosts/NAME.pub` and run
+`kai secret rekey NAME`.
+
+### What is safe to commit
+
+The Kaifile and everything under `secrets/` are safe to commit: the only
+plaintext file there is the host's public key. Plaintext secrets and the
+private host key exist only in the temporary directory of the step that
+needs them, which it makes private and removes however it ends; `kai
+secret set` pipes stdin straight to age. Nothing in plaintext enters the
+Nix store, `.kai/` or the project: the store holds only the encrypted
+files, and agenix decrypts them on the machine into `/run/secrets`, which
+is in memory. Anyone holding an Operator's private key, or the machine's
+host key, can read the secrets. Losing every Operator's private key loses
+the secrets and the stored host key for good, so keep more than one
+Operator, or a backup of one.
+
+kai uses agenix rather than sops-nix because one encrypted file per secret
+matches one `Secret(name)` each, needs no YAML or JSON document, and keeps
+`kai secret set` to one value at a time; sops-nix's several values per file
+is no advantage when each secret is declared on its own.
+
 ## Not yet
 
-Services from the project's own builds, secrets, more disk layouts and
-images come next; see
+Services from the project's own builds, more disk layouts and images come
+next; see
 [#463](https://github.com/thebrandonlucas/kai/issues/463). Guix System is
 not planned yet, though only `Modules` in the settings is Nix-specific.

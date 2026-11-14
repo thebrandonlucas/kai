@@ -220,6 +220,7 @@ ConfigFixtures := [].{
 	]
 		.map(|f| { ..f, body: ConfigFixtures.machine_kaifile(f.body) })
 		.concat(ConfigFixtures.disk_fixtures)
+		.concat(ConfigFixtures.secret_fixtures)
 
 	# A machine with a Disk, accepted beside the disko input it needs and
 	# refused without it.
@@ -241,6 +242,33 @@ ConfigFixtures := [].{
 				expected: Rejected(
 					"machine web: Disk needs disko; add "
 						.concat("Input(\"disko\", \"github:nix-community/disko\") ")
+						.concat("to std's settings"),
+				),
+				body: ConfigFixtures.machine_kaifile(machine),
+			},
+		]
+	}
+
+	# A machine with Operators and Secrets, accepted beside the agenix input
+	# it needs and refused without it.
+	secret_fixtures : List(Fixture)
+	secret_fixtures = {
+		agenix = "Input(\"agenix\", \"github:ryantm/agenix\"), "
+		machine =
+			\\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+			\\  Operators(["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 a@b"]),
+			\\  Secrets([Secret("app-key", [Owner("root"), Mode("0440")])])])
+		[
+			{
+				name: "MachineSecrets",
+				expected: Valid,
+				body: ConfigFixtures.machine_kaifile_with(agenix, machine),
+			},
+			{
+				name: "MachineSecretsWithoutAgenix",
+				expected: Rejected(
+					"machine web: Secrets needs agenix; add "
+						.concat("Input(\"agenix\", \"github:ryantm/agenix\") ")
 						.concat("to std's settings"),
 				),
 				body: ConfigFixtures.machine_kaifile(machine),

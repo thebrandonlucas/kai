@@ -1,6 +1,7 @@
-# The machine command on the nix backend: each machine is a NixOS system in
-# std's generated flake, built from it, switched to here or over SSH, and
-# installed on a server with nixos-anywhere.
+# The machine and secret commands on the nix backend: each machine is a
+# NixOS system in std's generated flake, built from it, switched to here or
+# over SSH, installed on a server with nixos-anywhere, and given secrets
+# that agenix decrypts.
 import pf.Command
 import pf.Implementation
 import pf.Plan
@@ -53,24 +54,35 @@ NixosBackend :: [].{
 		modules = m.modules
 			.drop_if(NixosBackend.valid_module_path)
 			.map(|path| "module ${path} is no .nix file inside the project")
-		disko = project.any(
-			|setting|
-				match setting {
-					Input(name, _) => name.to_str() == "disko"
-					_ => Bool.False
-				},
-		)
-		if m.disk != NoDisk and !disko {
-			modules.append(
-				"Disk needs disko; add ${NixosBackend.disko_input} to std's settings",
+		declared = |input|
+			project.any(
+				|setting|
+					match setting {
+						Input(name, _) => name.to_str() == input
+						_ => Bool.False
+					},
 			)
-		} else {
-			modules
-		}
+		missing = |needed, setting, input|
+			if needed and !declared(input) {
+				declaration = NixosBackend.input(input)
+				["${setting} needs ${input}; add ${declaration} to std's settings"]
+			} else {
+				[]
+			}
+		modules
+			.concat(missing(m.disk != NoDisk, "Disk", "disko"))
+			.concat(missing(!m.secrets.is_empty(), "Secrets", "agenix"))
 	}
 
-	## The std setting declaring the flake input a Disk's module comes from.
-	disko_input = "Input(\"disko\", \"github:nix-community/disko\")"
+	## The std setting declaring the flake input a Disk's or Secrets' module
+	## comes from.
+	input : Str -> Str
+	input = |name|
+		if name == "disko" {
+			"Input(\"disko\", \"github:nix-community/disko\")"
+		} else {
+			"Input(\"agenix\", \"github:ryantm/agenix\")"
+		}
 
 	## A relative path to a .nix file that stays inside the project.
 	valid_module_path : Str -> Bool
@@ -195,7 +207,11 @@ NixosBackend :: [].{
 		prompt = "Install machine ${m.name} on ${target}, ERASING its disk "
 			.concat("${device} and everything on it?")
 		flake = "path:${Std.nix_layout(ctx.layout).generated_root}"
-		anywhere = NixosBackend.nixos_anywhere(flake, m.name, target)
+		anywhere = if m.operators.is_empty() {
+			NixosBackend.nixos_anywhere(flake, m.name, target)
+		} else {
+			NixosBackend.keyed_install(ctx, flake, m, target)
+		}
 		steps = [tools]
 			.concat(built.steps)
 			.concat([Confirm(prompt), NixosBackend.run(description, Inherit, anywhere)])
@@ -209,17 +225,193 @@ NixosBackend :: [].{
 	nixos_anywhere : Str, Str, Str -> List(Str)
 	nixos_anywhere = |flake, name, target| {
 		script =
-			\\case $NIX_CONFIG in
-			\\'') NIX_CONFIG='pure-eval = false' ;;
-			\\*) NIX_CONFIG="$NIX_CONFIG
-			\\pure-eval = false" ;;
-			\\esac
-			\\export NIX_CONFIG
 			\\flake=$1
 			\\shift
 			\\exec nix run --inputs-from "$flake" default#nixos-anywhere -- "$@"
-		["sh", "-c", script, "sh", flake]
+		["sh", "-c", Str.join_with([NixosBackend.impure, script], "\n"), "sh", flake]
 			.concat(["--flake", "${flake}#${name}", "--target-host", target])
+	}
+
+	## Adds `pure-eval = false` to any NIX_CONFIG the user has.
+	impure =
+		\\case $NIX_CONFIG in
+		\\'') NIX_CONFIG='pure-eval = false' ;;
+		\\*) NIX_CONFIG="$NIX_CONFIG
+		\\pure-eval = false" ;;
+		\\esac
+		\\export NIX_CONFIG
+
+	## nixos-anywhere as `nixos_anywhere` runs it, placing machine `m`'s SSH
+	## host key with `--extra-files`. The key is decrypted from
+	## secrets/hosts/NAME.age with the operator's identity, or else made
+	## here, encrypted to the Operators there, its public key written to
+	## secrets/hosts/NAME.pub, and the machine's secrets encrypted again to
+	## it. The key exists in plaintext only in the script's own temporary
+	## directory, which holds the files nixos-anywhere copies in a
+	## directory of its own.
+	keyed_install : Context, Str, Machine, Str -> List(Str)
+	keyed_install = |ctx, flake, m, target| {
+		arguments =
+			\\flake=$1 identity=$2 secrets=$3 name=$4 operators=$5
+			\\shift 5
+		installing =
+			\\echo "$operators" >"$work/operators"
+			\\files=$work/files
+			\\mkdir -p "$files/etc/ssh" || exit
+			\\chmod 755 "$files" "$files/etc" "$files/etc/ssh"
+			\\key=$files/etc/ssh/ssh_host_ed25519_key
+			\\stored=$secrets/hosts/$name
+			\\if [ -e "$stored.age" ]; then
+			\\  age -d -i "$identity" -o "$key" "$stored.age" || exit
+			\\  ssh-keygen -y -f "$key" >"$key.pub" || exit
+			\\  [ -e "$stored.pub" ] || cp "$key.pub" "$stored.pub" || exit
+			\\else
+			\\  ssh-keygen -q -t ed25519 -N '' -C "root@$name" -f "$key" || exit
+			\\  cat "$work/operators" "$key.pub" >"$work/recipients" || exit
+			\\  for secret in "$secrets/$name"/*.age; do
+			\\    [ -e "$secret" ] && reencrypt "$secret" "$work/recipients"
+			\\  done
+			\\  age -R "$work/operators" -o "$work/host.age" "$key" || exit
+			\\  mkdir -p "$secrets/hosts" || exit
+			\\  mv "$work/host.age" "$stored.age" || exit
+			\\  cp "$key.pub" "$stored.pub" || exit
+			\\  echo "wrote $stored.age, the new host key encrypted to Operators" >&2
+			\\  echo "wrote $stored.pub, its public key" >&2
+			\\fi
+			\\chmod 600 "$key"
+			\\chmod 644 "$key.pub"
+			\\anywhere=default#nixos-anywhere
+			\\nix run --inputs-from "$flake" "$anywhere" -- "$@" --extra-files "$files"
+		script = [arguments, NixosBackend.decrypting, NixosBackend.impure, installing]
+		identity = Command.path(ctx.args, "identity") ?? ""
+		secrets = "${ctx.layout.project_root}/secrets"
+		NixosBackend.with_age(flake, Str.join_with(script, "\n"))
+			.concat([flake, identity, secrets, m.name, Str.join_with(m.operators, "\n")])
+			.concat(["--flake", "${flake}#${m.name}", "--target-host", target])
+	}
+
+	## `sh -c script sh` with age and ssh-keygen from the locked nixpkgs of
+	## `flake` on PATH; the script's arguments follow.
+	with_age : Str, Str -> List(Str)
+	with_age = |flake, script|
+		["nix", "shell", "--inputs-from", flake, "default#age", "default#openssh"]
+			.concat(["--command", "sh", "-c", script, "sh"])
+
+	## A private temporary directory, `$work`, removed however the script
+	## ends; plaintext lives only there.
+	temporary =
+		\\umask 077
+		\\work=$(mktemp -d) || exit
+		\\trap 'rm -rf "$work"' EXIT
+		\\trap 'exit 1' HUP INT TERM
+
+	## `temporary`, the operator's `$identity`, ~/.ssh/id_ed25519 when "",
+	## and `reencrypt FILE RECIPIENTS`, which decrypts FILE with it into
+	## `$work` and encrypts it again, in place, to the keys in RECIPIENTS.
+	decrypting = {
+		reencrypt =
+			\\[ -n "$identity" ] || identity=$HOME/.ssh/id_ed25519
+			\\reencrypt() {
+			\\  age -d -i "$identity" -o "$work/plain" "$1" || exit
+			\\  age -R "$2" -o "$work/encrypted" "$work/plain" || exit
+			\\  rm -f "$work/plain"
+			\\  mv "$work/encrypted" "$1" || exit
+			\\  echo "re-encrypted $1" >&2
+			\\}
+		Str.join_with([NixosBackend.temporary, reencrypt], "\n")
+	}
+
+	## Writes `$work/operators` and `$work/recipients`: the Operators, and
+	## the host public key too when it is known; else says so and `$5`.
+	recipients =
+		\\echo "$operators" >"$work/operators"
+		\\cp "$work/operators" "$work/recipients" || exit
+		\\host=$secrets/hosts/$name.pub
+		\\if [ -e "$host" ]; then
+		\\  cat "$host" >>"$work/recipients" || exit
+		\\else
+		\\  echo "$host does not exist, so this encrypts to Operators only: $5" >&2
+		\\fi
+
+	## `kai secret set` and `kai secret rekey` for the machine and secret
+	## `kai secret` names: each writes std's flake, whose locked nixpkgs
+	## provides age, then runs its script. Neither builds the machine.
+	secret_implementation : Project, List(Machine) -> Implementation
+	secret_implementation = |project, machines|
+		Implementation.{
+			command: "secret",
+			backend: On("nix"),
+			# Unknown names are refused while planning, with suggestions.
+			fit: |_| Ok({}),
+			plan: |ctx| {
+				(m, secret) = MachineModel.secret_target(machines, ctx.args)?
+				action = Command.name(ctx.args, "action")
+				description = "secret ${action} ${m.name}"
+				tools = ExpectPrograms({ description, programs: ["nix"] })
+				flake = NixosBackend.flake_output(project, machines, m, ctx, "")?
+				written = flake.steps.drop_if(
+					|step|
+						match step {
+							Run(_) => Bool.True
+							_ => Bool.False
+						},
+				)
+				nix_flake = "path:${Std.nix_layout(ctx.layout).generated_root}"
+				secrets = "${ctx.layout.project_root}/secrets"
+				operators = Str.join_with(m.operators, "\n")
+				unknown_host = NixosBackend.without_host_key(m.name)
+				argv = if action == "set" {
+					NixosBackend.with_age(nix_flake, NixosBackend.set_script)
+						.concat([secrets, m.name, secret, operators, unknown_host])
+				} else {
+					identity = Command.path(ctx.args, "identity") ?? ""
+					NixosBackend.with_age(nix_flake, NixosBackend.rekey_script)
+						.concat([identity, secrets, m.name, operators, unknown_host])
+				}
+				steps = [tools]
+					.concat(written)
+					.append(NixosBackend.run(description, Inherit, argv))
+				Ok(Plan.{ steps, next: Done })
+			},
+		}
+
+	## Why a machine without a host public key cannot decrypt its secrets
+	## yet, and what fixes it.
+	without_host_key : Str -> Str
+	without_host_key = |name|
+		"kai machine install ${name} makes the machine's host key and encrypts "
+			.concat("its secrets to it; for a machine installed otherwise, write ")
+			.concat("its /etc/ssh/ssh_host_ed25519_key.pub there and run kai ")
+			.concat("secret rekey ${name}")
+
+	## Encrypts stdin, which never touches a disk, to the recipients, as
+	## secrets/NAME/SECRET.age.
+	set_script = {
+		arguments =
+			\\secrets=$1 name=$2 secret=$3 operators=$4
+		encrypt =
+			\\age -R "$work/recipients" -o "$work/encrypted" || exit
+			\\mkdir -p "$secrets/$name" || exit
+			\\mv "$work/encrypted" "$secrets/$name/$secret.age" || exit
+			\\echo "wrote $secrets/$name/$secret.age" >&2
+		parts = [arguments, NixosBackend.temporary, NixosBackend.recipients, encrypt]
+		Str.join_with(parts, "\n")
+	}
+
+	## Encrypts each of the machine's secrets again to the recipients, and
+	## its host key to the Operators.
+	rekey_script = {
+		arguments =
+			\\identity=$1 secrets=$2 name=$3 operators=$4
+		rekey =
+			\\for secret in "$secrets/$name"/*.age; do
+			\\  [ -e "$secret" ] && reencrypt "$secret" "$work/recipients"
+			\\done
+			\\if [ -e "$secrets/hosts/$name.age" ]; then
+			\\  reencrypt "$secrets/hosts/$name.age" "$work/operators"
+			\\fi
+		parts = [arguments, NixosBackend.decrypting, NixosBackend.recipients, rekey]
+		Str.join_with(parts, "\n")
 	}
 
 	## The machine's architecture, as `uname -m` prints it.
@@ -291,17 +483,45 @@ NixosBackend :: [].{
 		}
 	}
 
-	## `kai machine build`'s plan, leaving `out_link` ("" for none).
+	## `kai machine build`'s plan, leaving `out_link` ("" for none). A
+	## missing secret fails before the build, naming the command that sets
+	## it.
 	build : Project, List(Machine), Machine, Context, Str -> Planned
 	build = |project, machines, machine, ctx, out_link| {
 		root = ctx.layout.project_root
+		built = NixosBackend.flake_output(project, machines, machine, ctx, out_link)?
+		checks = machine.modules.map(|path| CheckSource("${root}/${path}"))
+		files = machine.secrets.map(|s| NixosBackend.secret_file(machine, s, root))
+		found = if files.is_empty() {
+			[]
+		} else {
+			script =
+				\\name=$1
+				\\shift
+				\\for file; do
+				\\  [ -e "$file" ] && continue
+				\\  secret=$(basename "$file" .age)
+				\\  echo "$file does not exist: run kai secret set $name $secret" >&2
+				\\  exit 1
+				\\done
+			description = "machine build ${machine.name}: secrets"
+			argv = ["sh", "-c", script, "sh", machine.name].concat(files)
+			checked = files.map(|file| CheckSource(file))
+			[NixosBackend.run(description, Quiet, argv)].concat(checked)
+		}
+		Ok(Plan.{ steps: checks.concat(found).concat(built.steps), next: built.next })
+	}
+
+	## std's flake with every machine, and the build of `machine`'s system.
+	flake_output : Project, List(Machine), Machine, Context, Str -> Planned
+	flake_output = |project, machines, machine, ctx, out_link| {
 		attribute = "nixosConfigurations.${machine.name}"
 			.concat(".config.system.build.toplevel")
-		built = Std.build_flake_output(
+		Std.build_flake_output(
 			project,
 			ctx,
 			{
-				outputs: NixosBackend.outputs(machines, root),
+				outputs: NixosBackend.outputs(machines, ctx.layout.project_root),
 				environments: machines
 					.keep_if(|m| !m.environment.is_empty())
 					.map(|m| m.environment),
@@ -310,10 +530,13 @@ NixosBackend :: [].{
 				description: "machine build ${machine.name}",
 				out_link,
 			},
-		)?
-		checks = machine.modules.map(|path| CheckSource("${root}/${path}"))
-		Ok(Plan.{ steps: checks.concat(built.steps), next: built.next })
+		)
 	}
+
+	## Where secret `s` of machine `m` is encrypted, beneath `project_root`.
+	secret_file : Machine, MachineModel.Secret, Str -> Str
+	secret_file = |m, s, project_root|
+		"${project_root}/secrets/${m.name}/${s.name}.age"
 
 	## Why `action` refuses another host than `m`.
 	local_only : Str, Machine -> Str
@@ -362,6 +585,7 @@ NixosBackend :: [].{
 	machine : Machine, Str -> Str
 	machine = |m, project_root| {
 		file = |path| "(/. + ${NixosBackend.quote("${project_root}/${path}")})"
+		settings = NixosBackend.settings(m, project_root)
 		NixosBackend.lines(
 			[
 				"        ${NixosBackend.quote(m.name)} = "
@@ -370,7 +594,7 @@ NixosBackend :: [].{
 				"          modules = [",
 				"            {",
 			]
-				.concat(NixosBackend.settings(m).map(|line| "              ${line}"))
+				.concat(settings.map(|line| "              ${line}"))
 				.append("            }")
 				.concat(m.modules.map(|path| "            ${file(path)}"))
 				.concat(["          ];", "        };"]),
@@ -378,8 +602,8 @@ NixosBackend :: [].{
 	}
 
 	## The typed settings as NixOS option definitions.
-	settings : Machine -> List(Str)
-	settings = |m| {
+	settings : Machine, Str -> List(Str)
+	settings = |m, project_root| {
 		quote = NixosBackend.quote
 		strings = |items| NixosBackend.list(items.map(quote))
 		ports = |items| NixosBackend.list(items.map(U16.to_str))
@@ -425,6 +649,28 @@ NixosBackend :: [].{
 		trusted = host_user != "root" and m.users.any(|u| u.name == host_user)
 		trusted_users = "nix.settings.trusted-users = "
 			.concat("${strings(["root", host_user])};")
+		disko = "inputs.\"disko\".nixosModules.disko"
+		agenix = "inputs.\"agenix\".nixosModules.default"
+		imported = when(m.disk != NoDisk, [disko])
+			.concat(when(!m.secrets.is_empty(), [agenix]))
+		import_line = "imports = ${NixosBackend.list(imported)};"
+		# agenix decrypts each secret with the host key install placed, or
+		# the one OpenSSH made, into /run/secrets.
+		file = |s| "(/. + ${quote(NixosBackend.secret_file(m, s, project_root))})"
+		secrets = ["age.identityPaths = [ \"/etc/ssh/ssh_host_ed25519_key\" ];"]
+			.concat(
+				m.secrets.join_map(
+					|s| [
+						"age.secrets.${quote(s.name)} = {",
+						"  file = ${file(s)};",
+						"  owner = ${quote(s.owner)};",
+						"  group = ${quote(s.group)};",
+						"  mode = ${quote(s.mode)};",
+						"  path = ${quote("/run/secrets/${s.name}")};",
+						"};",
+					],
+				),
+			)
 		[
 			"nixpkgs.hostPlatform = ${quote(m.system)};",
 			"networking.hostName = ${quote(m.host_name)};",
@@ -442,7 +688,9 @@ NixosBackend :: [].{
 			.concat(when(!m.tcp_ports.is_empty(), [firewall("TCP", m.tcp_ports)]))
 			.concat(when(!m.udp_ports.is_empty(), [firewall("UDP", m.udp_ports)]))
 			.concat(when(!m.environment.is_empty(), system_packages))
+			.concat(when(!imported.is_empty(), [import_line]))
 			.concat(NixosBackend.disk(m.disk))
+			.concat(when(!m.secrets.is_empty(), secrets))
 	}
 
 	## A Disk as disko's NixOS module and its layout, with GRUB booting on
@@ -453,7 +701,6 @@ NixosBackend :: [].{
 		match layout {
 			NoDisk => []
 			SingleDisk(device) => [
-				"imports = [ inputs.\"disko\".nixosModules.disko ];",
 				"disko.devices.disk.main = {",
 				"  type = \"disk\";",
 				"  device = ${NixosBackend.quote(device)};",
