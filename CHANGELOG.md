@@ -12,6 +12,11 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 - When a step fails after saying why, such as an environment naming a tool its package source lacks, Kai's error ends with that reason, `kai: evaluating the environment of shell dev failed: tool helloo not found in source default of environment dev`, instead of a separate `exited with code 1` line.
 - `KAI_ROC` chooses the Roc compiler that evaluates `Kaifile.roc`, so a project's own `ROC`, for the compiler its tasks build with, no longer clashes with Kai's: Kai no longer refuses a `ROC` set to another Roc version, and tasks see the project's `ROC` unchanged. `ROC` is deprecated for Kai's compiler: for one more release Kai still uses it when it is the pinned version and the `roc` on `PATH` is not, and says to set `KAI_ROC` instead.
+- A build that refuses a symbolic link in the project says where the link points, why, and how to fix it: `snapshot refuses symlink …/stray -> /etc/passwd, which is outside …; point it inside …, or ignore it in .gitignore or leave it out of the build's Files`.
+
+### Fixed
+
+- Builds leave every Kai workspace out of the project's copy, not only their own: another `KAI_DIR` beside the project's, or a nested project's `.kai`, no longer breaks the build with the links inside it.
 
 ## [0.0.12] - 2026-11-06
 
