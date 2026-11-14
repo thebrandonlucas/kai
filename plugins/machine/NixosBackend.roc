@@ -1,5 +1,5 @@
 # The machine command on the nix backend: each machine is a NixOS system in
-# std's generated flake, built from it, and switched to on this host.
+# std's generated flake, built from it, and switched to here or over SSH.
 import pf.Command
 import pf.Implementation
 import pf.Plan
@@ -27,10 +27,15 @@ NixosBackend :: [].{
 			plan: |ctx| {
 				m = MachineModel.requested(machines, ctx.args).map_err(Plan.fail)?
 				action = Command.name(ctx.args, "action")
+				destination = MachineModel.destination(m, ctx.args).map_err(Plan.fail)?
 				if action == "build" {
 					NixosBackend.build(project, machines, m, ctx, "")
 				} else {
-					NixosBackend.on_host(project, machines, m, ctx, action)
+					match destination {
+						Here => NixosBackend.on_host(project, machines, m, ctx, action)
+						Remote(target) =>
+							NixosBackend.on_remote(project, machines, m, ctx, action, target)
+					}
 				}
 			},
 		}
@@ -94,6 +99,129 @@ NixosBackend :: [].{
 		Ok(Plan.{ steps, next: Done })
 	}
 
+	## Switching, rolling back and listing act on `target` over SSH, which
+	## must run NixOS on the machine's architecture. The system is built
+	## here and copied there; only the profile and the activation run as
+	## root there, through sudo unless the target logs in as root.
+	on_remote : Project, List(Machine), Machine, Context, Str, Str -> Planned
+	on_remote = |project, machines, m, ctx, action, target| {
+		description = "machine ${action} ${m.name} on ${target}"
+		system_profile = NixosBackend.profile
+		programs = if (action == "switch") ["nix", "ssh"] else ["ssh"]
+		tools = ExpectPrograms({ description, programs })
+		check = NixosBackend.remote_check(m, target)
+		there = NixosBackend.run("${description}: host check", Quiet, check)
+		root = MachineModel.target_user(target) == "root"
+		as_root = |argv| if (root) argv else ["sudo"].concat(argv)
+		# The remote nix may not enable `nix profile` and `nix build`.
+		nix = ["nix", "--extra-experimental-features", "nix-command"]
+		# ssh joins the words for the remote shell, so each is quoted for it.
+		remote = |argv| {
+			words = ["ssh", target, "--"].concat(argv.map(NixosBackend.shell_quote))
+			NixosBackend.run(description, Inherit, words)
+		}
+		activation = ["${system_profile}/bin/switch-to-configuration", "switch"]
+		activate = remote(as_root(activation))
+		restarting = "restarting changed services and booting it by default?"
+		steps = match action {
+			"switch" => {
+				link = "${ctx.layout.workspace}/machines/${m.name}"
+				built = NixosBackend.build(project, machines, m, ctx, link)?
+				prompt = "Switch ${target} to machine ${m.name}, ${restarting}"
+				store = "ssh-ng://${target}"
+				copy = ["nix", "copy", "--substitute-on-destination", "--to", store, link]
+				set_profile = ["build", "--no-link", "--profile", system_profile]
+				set_command = as_root(nix.concat(set_profile))
+				set = NixosBackend.remote_profile(link, target, set_command)
+				[tools, there]
+					.concat(built.steps)
+					.concat([
+						Confirm(prompt),
+						NixosBackend.run(description, Inherit, copy),
+						NixosBackend.run(description, Inherit, set),
+						activate,
+					])
+			}
+			"rollback" => {
+				prompt = "Switch ${target} back to its previous system, ${restarting}"
+				rollback = ["profile", "rollback", "--profile", system_profile]
+				back = remote(as_root(nix.concat(rollback)))
+				[tools, there, Confirm(prompt), back, activate]
+			}
+			_ => [tools, there, remote(["nixos-rebuild", "list-generations"])]
+		}
+		Ok(Plan.{ steps, next: Done })
+	}
+
+	## The machine's architecture, as `uname -m` prints it.
+	architecture : Machine -> Str
+	architecture = |m|
+		match m.system.split_first("-") {
+			Ok({ before, .. }) => before
+			Err(_) => m.system
+		}
+
+	## A shell check, as the switch runs, that `target` runs NixOS on the
+	## machine's architecture. The target and the messages are arguments,
+	## never part of the script; when ssh fails, it exits with ssh's status.
+	remote_check : Machine, Str -> List(Str)
+	remote_check = |m, target| {
+		script =
+			\\found=$(ssh "$1" -- 'uname -m && test -e /etc/NIXOS')
+			\\status=$?
+			\\[ "$status" -gt 1 ] && exit "$status"
+			\\if [ "$found" != "$2" ]; then
+			\\  echo "$1 is $found, not $2: $3" >&2
+			\\  exit 1
+			\\fi
+			\\[ "$status" = 0 ] && exit 0
+			\\echo "$1 does not run NixOS: $4" >&2
+			\\exit 1
+		[
+			"sh",
+			"-c",
+			script,
+			"sh",
+			target,
+			NixosBackend.architecture(m),
+			"machine ${m.name} is ${m.system}",
+			"run kai machine install ${m.name} --to ${target} first",
+		]
+	}
+
+	## A shell step setting `target`'s system profile to the store path
+	## `link` names, known only once the build has run: `command`, quoted
+	## for the remote shell, then the store path, which holds no quote.
+	remote_profile : Str, Str, List(Str) -> List(Str)
+	remote_profile = |link, target, command| {
+		script =
+			\\store_path=$(readlink -f "$1") || exit
+			\\case $store_path in
+			\\/nix/store/*[!A-Za-z0-9/+._?=-]*) ;;
+			\\/nix/store/?*) exec ssh "$2" -- "$3 '$store_path'" ;;
+			\\esac
+			\\echo "unexpected store path: $store_path" >&2
+			\\exit 1
+		quoted = Str.join_with(command.map(NixosBackend.shell_quote), " ")
+		["sh", "-c", script, "sh", link, target, quoted]
+	}
+
+	## `word` as one word for a POSIX shell: bare when it holds only plain
+	## characters, else single-quoted.
+	shell_quote : Str -> Str
+	shell_quote = |word| {
+		plain = |b|
+			(b >= 'a' and b <= 'z')
+				or (b >= 'A' and b <= 'Z')
+				or (b >= '0' and b <= '9')
+				or "/._-+=:@,%".to_utf8().contains(b)
+		if !word.is_empty() and word.to_utf8().all(plain) {
+			word
+		} else {
+			"'${word.replace_each("'", "'\\''")}'"
+		}
+	}
+
 	## `kai machine build`'s plan, leaving `out_link` ("" for none).
 	build : Project, List(Machine), Machine, Context, Str -> Planned
 	build = |project, machines, machine, ctx, out_link| {
@@ -121,8 +249,9 @@ NixosBackend :: [].{
 	## Why `action` refuses another host than `m`.
 	local_only : Str, Machine -> Str
 	local_only = |action, m|
-		"kai machine ${action} acts on the host it runs on; run it on "
-			.concat("${m.host_name}, or use kai deploy for another host")
+		"kai machine ${action} without Host or --to acts on the host it runs "
+			.concat("on; run it on ${m.host_name}, or name its SSH target with ")
+			.concat("Host or --to")
 
 	## A shell check, as the switch runs, that this host's name is the
 	## machine's HostName. The names and the message are arguments, never
@@ -221,6 +350,12 @@ NixosBackend :: [].{
 			"  (${shell}).nativeBuildInputs;",
 		]
 		when = |present, lines| if (present) lines else []
+		# Host's user copies the system in with `nix copy`, which only a
+		# trusted user may do; root stays trusted.
+		host_user = MachineModel.target_user(m.host)
+		trusted = host_user != "root" and m.users.any(|u| u.name == host_user)
+		trusted_users = "nix.settings.trusted-users = "
+			.concat("${strings(["root", host_user])};")
 		[
 			"nixpkgs.hostPlatform = ${quote(m.system)};",
 			"networking.hostName = ${quote(m.host_name)};",
@@ -233,6 +368,7 @@ NixosBackend :: [].{
 				),
 			)
 			.concat(users)
+			.concat(when(trusted, [trusted_users]))
 			.concat(when(m.ssh, ssh))
 			.concat(when(!m.tcp_ports.is_empty(), [firewall("TCP", m.tcp_ports)]))
 			.concat(when(!m.udp_ports.is_empty(), [firewall("UDP", m.udp_ports)]))

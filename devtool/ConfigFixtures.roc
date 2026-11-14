@@ -173,9 +173,19 @@ ConfigFixtures := [].{
 			name: "Machine",
 			expected: Valid,
 			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+				\\  Host("admin@web.example.com"),
 				\\  User("admin", [SshKeys(["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 a@b"]),
 				\\   Groups(["wheel"])]), Ssh, Firewall([Tcp([80, 443])]),
 				\\  TimeZone("Etc/UTC"), Use("ops"), Modules(["nixos/web.nix"])])
+		},
+		{
+			name: "MachineHostOption",
+			expected: Rejected(
+				"machine web: Host -oProxyCommand=x is no SSH target; "
+					.concat("use user@host or host, without a port"),
+			),
+			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+				\\  Host("-oProxyCommand=x")])
 		},
 		{
 			name: "MachineDarwinMachine",

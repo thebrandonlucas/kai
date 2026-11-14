@@ -5,11 +5,13 @@ import pf.Command
 MachineModel :: [].{
 
 	## A machine's settings, folded. Modules is Nix's alone: the nix
-	## implementation checks it, and another backend would refuse it.
+	## implementation checks it, and another backend would refuse it. `host`
+	## is the SSH target it lives at, "" for the host kai runs on.
 	Machine : {
 		name : Str,
 		system : Str,
 		host_name : Str,
+		host : Str,
 		users : List(User),
 		ssh : Bool,
 		tcp_ports : List(U16),
@@ -35,4 +37,70 @@ MachineModel :: [].{
 	}
 
 	name_one = "name one machine: kai machine ACTION NAME"
+
+	## Where `kai machine ACTION` acts on machine `m`: `--to`, else its Host,
+	## else the host kai runs on. A build is always made here.
+	destination : Machine, Command.Args -> Try([Here, Remote(Str)], Str)
+	destination = |m, args|
+		match Command.value(args, "to") {
+			Ok(_) if Command.name(args, "action") == "build" =>
+				Err("kai machine build builds here and takes no --to")
+			Ok(to) if !MachineModel.valid_target(to) =>
+				Err("--to ${to} is no SSH target; ${MachineModel.target_form}")
+			Ok(to) => Ok(Remote(to))
+			Err(NoValue) if m.host.is_empty() => Ok(Here)
+			Err(NoValue) => Ok(Remote(m.host))
+		}
+
+	target_form = "use user@host or host, without a port"
+
+	## An SSH target both `ssh` and `nix copy --to ssh-ng://` take: `host` or
+	## `user@host`, where host is a name or an IPv4 or IPv6 address, and a
+	## port comes from ~/.ssh/config. It never starts with `-`, so ssh cannot
+	## read it as an option.
+	valid_target : Str -> Bool
+	valid_target = |target| {
+		(user, host) = match target.split_first("@") {
+			Ok({ before, after }) => (Ok(before), after)
+			Err(_) => (Err(NoUser), target)
+		}
+		host_byte = |b|
+			(b >= 'a' and b <= 'z')
+				or (b >= 'A' and b <= 'Z')
+				or (b >= '0' and b <= '9')
+				or ".-_:".to_utf8().contains(b)
+		# A single colon is a port, which ssh would read as part of the name.
+		colons = host.to_utf8().keep_if(|b| b == ':').len()
+		valid_user = match user {
+			Ok(name) => MachineModel.valid_account(name)
+			Err(NoUser) => Bool.True
+		}
+		valid_user
+			and !host.is_empty()
+			and !host.starts_with("-")
+			and host.to_utf8().all(host_byte)
+			and colons != 1
+	}
+
+	## The user a target names, or "" when ssh chooses it.
+	target_user : Str -> Str
+	target_user = |target|
+		match target.split_first("@") {
+			Ok({ before, .. }) => before
+			Err(_) => ""
+		}
+
+	## A user or group name: a-z or _, then at most 31 of a-z, 0-9, _ or -.
+	valid_account : Str -> Bool
+	valid_account = |name| {
+		lower = |b| b >= 'a' and b <= 'z'
+		digit = |b| b >= '0' and b <= '9'
+		match name.to_utf8() {
+			[first, .. as rest] =>
+				(lower(first) or first == '_')
+					and rest.len() < 32
+					and rest.all(|b| lower(b) or digit(b) or b == '_' or b == '-')
+			[] => Bool.False
+		}
+	}
 }
