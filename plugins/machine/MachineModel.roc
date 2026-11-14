@@ -6,7 +6,8 @@ MachineModel :: [].{
 
 	## A machine's settings, folded. Modules is Nix's alone: the nix
 	## implementation checks it, and another backend would refuse it. `host`
-	## is the SSH target it lives at, "" for the host kai runs on.
+	## is the SSH target it lives at, "" for the host kai runs on. `disk` is
+	## the layout install partitions and the system mounts.
 	Machine : {
 		name : Str,
 		system : Str,
@@ -19,8 +20,12 @@ MachineModel :: [].{
 		environment : Str,
 		time_zone : Str,
 		state_version : Str,
+		disk : Disk,
 		modules : List(Str),
 	}
+
+	## No disk layout, or the whole disk at a device path.
+	Disk : [NoDisk, SingleDisk(Str)]
 
 	User : { name : Str, keys : List(Str), groups : List(Str) }
 
@@ -39,17 +44,46 @@ MachineModel :: [].{
 	name_one = "name one machine: kai machine ACTION NAME"
 
 	## Where `kai machine ACTION` acts on machine `m`: `--to`, else its Host,
-	## else the host kai runs on. A build is always made here.
+	## else the host kai runs on. A build is always made here, and an
+	## install, which erases a disk, goes only where `--to` says.
 	destination : Machine, Command.Args -> Try([Here, Remote(Str)], Str)
-	destination = |m, args|
+	destination = |m, args| {
+		action = Command.name(args, "action")
 		match Command.value(args, "to") {
-			Ok(_) if Command.name(args, "action") == "build" =>
+			Ok(_) if action == "build" =>
 				Err("kai machine build builds here and takes no --to")
 			Ok(to) if !MachineModel.valid_target(to) =>
 				Err("--to ${to} is no SSH target; ${MachineModel.target_form}")
 			Ok(to) => Ok(Remote(to))
+			Err(NoValue) if action == "install" =>
+				Err(
+					"kai machine install ${m.name} needs --to TARGET, such as "
+						.concat("root@203.0.113.7: it erases the target's disk, so ")
+						.concat("it never defaults to Host"),
+				)
 			Err(NoValue) if m.host.is_empty() => Ok(Here)
 			Err(NoValue) => Ok(Remote(m.host))
+		}
+	}
+
+	## Why machine `m` cannot be installed on a server, if it cannot: an
+	## install partitions its Disk, and the server must accept SSH logins
+	## afterwards.
+	installable : Machine -> Try({}, Str)
+	installable = |m|
+		if m.disk == NoDisk {
+			Err(
+				"kai machine install needs Disk(...) on machine ${m.name}, "
+					.concat("the disk it partitions and installs on"),
+			)
+		} else if !m.ssh {
+			# Ssh needs a User with SshKeys, so this checks both.
+			Err(
+				"kai machine install needs Ssh and a User with SshKeys on machine "
+					.concat("${m.name}, or the server cannot be reached once installed"),
+			)
+		} else {
+			Ok({})
 		}
 
 	target_form = "use user@host or host, without a port"

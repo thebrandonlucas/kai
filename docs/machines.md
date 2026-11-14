@@ -20,6 +20,7 @@ import machine.Machine
 project : List(Config.Setting)
 project = [
 	Name("site"),
+	Input("disko", "github:nix-community/disko"),
 	Environment("ops", [Tools(["htop"])]),
 ]
 
@@ -34,7 +35,8 @@ kaifile = Kaifile.new([
 			Ssh,
 			Firewall([Tcp([80, 443])]),
 			Use("ops"),
-			Modules(["nixos/hardware.nix", "nixos/web.nix"]),
+			Disk(SingleDisk("/dev/sda")),
+			Modules(["nixos/web.nix"]),
 		]),
 	]),
 ])
@@ -61,7 +63,8 @@ Every setting but `User` occurs at most once in a machine.
 | `Firewall([Tcp([...]), Udp([...])])` | Ports the firewall opens, beside OpenSSH's. NixOS's firewall is on either way. |
 | `TimeZone(zone)` | `time.timeZone`, such as `"Etc/UTC"`. Optional (default NixOS's, UTC). |
 | `Use(environment)` | Puts a std environment's tools on the system's `PATH` (`environment.systemPackages`). The environment's variables stay in its shells and tasks. It cannot be one only the direct backend serves. |
-| `Modules([...])` | NixOS module files, relative to the project and inside it, for everything else: services, disks, the boot loader, hardware. They receive the flake's `inputs` as a module argument, so a module can import another flake's module, such as `inputs.disko.nixosModules.disko` after `Input("disko", "github:nix-community/disko")` in std's settings. |
+| `Disk(SingleDisk(device))` | The disk `kai machine install` partitions and the system boots from, the whole of `device`, an absolute `/dev/...` path such as `"/dev/sda"` or `"/dev/disk/by-id/..."`; see [Installing on a server](#installing-on-a-server). It needs `Input("disko", "github:nix-community/disko")` in std's settings. Optional (default: the file systems and boot loader come from `Modules`). |
+| `Modules([...])` | NixOS module files, relative to the project and inside it, for everything else: services, hardware, and the disks and boot loader when there is no `Disk`. They receive the flake's `inputs` as a module argument, so a module can import another flake's module, such as `inputs.disko.nixosModules.disko` after `Input("disko", "github:nix-community/disko")` in std's settings. |
 
 `kai check` refuses, as Kaifile.roc compiles, a machine name that is not a
 letter followed by letters, digits, `-` or `_`; a missing or non-Linux
@@ -69,8 +72,9 @@ letter followed by letters, digits, `-` or `_`; a missing or non-Linux
 `HostName` or `TimeZone`; a `Host` that is no SSH target; user and group
 names NixOS would refuse; a key that
 is no OpenSSH public key; `Ssh` with no keys to log in with; port 0; an
-unknown environment; and a module path that is absolute, uses `.` or `..`
-segments, or is not a `.nix` file.
+unknown environment; a `Disk` device that is no `/dev/...` path of letters,
+digits and `._:+-`, or a `Disk` without the `disko` input; and a module
+path that is absolute, uses `.` or `..` segments, or is not a `.nix` file.
 
 ## How a machine reaches the flake
 
@@ -83,7 +87,6 @@ nixosConfigurations."web" = inputs."default".lib.nixosSystem {
   specialArgs = { inherit inputs; };
   modules = [
     { nixpkgs.hostPlatform = "x86_64-linux"; ... }   # the typed settings
-    (/. + "/path/to/project/nixos/hardware.nix")
     (/. + "/path/to/project/nixos/web.nix")
   ];
 };
@@ -92,8 +95,9 @@ nixosConfigurations."web" = inputs."default".lib.nixosSystem {
 The system comes from the project's `default` package source, so
 `Packages("default", From(NixPackages("github:NixOS/nixpkgs/nixos-25.05")))`
 picks the NixOS release, and `kai update` moves it with the rest of the
-lock. Machines add no inputs, so the lock std's `kai update` writes serves
-them.
+lock. Machines add no inputs of their own, so the lock std's `kai update`
+writes serves them; a `Disk` uses the `disko` input std's settings declare,
+which `kai update` locks with the rest.
 
 A plugin adds outputs through std's public API, `Std.build_flake_output`,
 described in [plugin.md](plugin.md#building-from-stds-flake).
@@ -113,9 +117,9 @@ files by their absolute paths; remote builders stay allowed, so a host with a
 builder for the machine's system can build it. `kai --dry-run machine build
 NAME` prints the plan, the generated flake included, instead.
 
-A system needs a root file system and a boot loader, which come from a module
-such as the `hardware-configuration.nix` that `nixos-generate-config` writes;
-see [examples/machines](../examples/machines).
+A system needs a root file system and a boot loader, which come from `Disk`
+or from a module such as the `hardware-configuration.nix` that
+`nixos-generate-config` writes; see [examples/machines](../examples/machines).
 
 ### Switching this host
 
@@ -217,9 +221,80 @@ it to `nix.settings.trusted-users`, beside root, so the first switch as root
 or from the machine itself makes later ones as that user work. A `--to` user
 must be root or already trusted.
 
+### Installing on a server
+
+`kai machine install NAME --to TARGET` erases a server's disk and installs
+the machine there with [nixos-anywhere](https://github.com/nix-community/nixos-anywhere).
+The server can run any Linux, as long as `TARGET` logs in as root over SSH,
+or as a user with password-less `sudo`, and it has about 1 GB of RAM:
+nixos-anywhere boots a NixOS installer into memory with kexec, partitions
+the disk with [disko](https://github.com/nix-community/disko), copies the
+system and reboots into it. kexec fails in containers (LXC, OpenVZ) and on
+some ARM and Secure Boot hosts.
+
+kai needs only that SSH target. Creating the server, adding your SSH key to
+it, DNS, snapshots and destroying it are the provider's, through its own
+tools or a provider plugin, which hand kai the address:
+
+```text
+a provider tool or a person          kai
+---------------------------          ----------------------------------------
+create server, add SSH key   --->    kai machine install web --to root@203.0.113.7
+DNS, snapshots, billing              kai machine switch web
+destroy server
+```
+
+What a provider needs of the machine itself, such as DigitalOcean's metadata
+networking or a disk named `/dev/vda` rather than `/dev/sda`, is a NixOS
+module file the Kaifile includes with `Modules([...])`, not a kai setting.
+
+A machine to install needs:
+
+- `Disk(SingleDisk(device))`, the disk to erase. It partitions the disk as
+  GPT with a 1 MiB BIOS boot partition, a 512 MiB EFI system partition
+  mounted at `/boot` and an ext4 root filling the rest, and boots it with
+  GRUB on both BIOS and UEFI, which is nixos-anywhere's own example layout.
+  `Modules` must then not define the root file system or the boot loader.
+- `Input("disko", "github:nix-community/disko")` in std's settings, which
+  the Disk's module comes from, locked by `kai update`; kai refuses a Disk
+  without it as Kaifile.roc compiles. std's `Follows` only makes an
+  `Overlay`'s inputs follow a package source, so disko's own nixpkgs is
+  locked apart from the project's; the system, disko's module included,
+  still builds from the project's `default` source.
+- `Ssh` and a `User` with `SshKeys`, since those keys are how you reach the
+  server once it runs the machine. Logging in as root afterwards needs
+  `User("root", [SshKeys([...])])`; a user other than root needs
+  password-less `sudo` for later switches, as above.
+
+`--to` is required and `Host` is never used instead: an install erases the
+disk, and its target is usually a fresh server's root address, not where
+the machine will be reached afterwards. kai refuses an install without
+`--to`, of a machine without `Disk`, or without `Ssh`, before planning.
+
+The plan needs `nix` and `ssh` on `PATH`. It writes the flake and builds the
+system as `kai machine build` does, so a system that fails to build fails
+before anything is erased, then asks for confirmation naming the target and
+the disk it will erase, and runs nixos-anywhere from the project's locked
+nixpkgs, with no separate install:
+
+```sh
+nix run --inputs-from path:.kai/generated/nix default#nixos-anywhere -- \
+  --flake path:.kai/generated/nix#NAME --target-host TARGET
+```
+
+It runs with `pure-eval = false` added to any `NIX_CONFIG` you have, which lets nixos-anywhere's own `nix build` read the machine's
+module files by their absolute paths, as `--impure` does for `kai machine
+build`. The install asks before erasing anything, so it needs a terminal or
+`--yes`; `kai --dry-run machine install NAME --to TARGET` prints the whole
+plan and runs none of it.
+
+Afterwards the server runs the machine, and `kai machine switch NAME --to
+USER@ADDRESS`, or `Host`, changes it as [Remote machines](#remote-machines)
+describes.
+
 ## Not yet
 
-Installing NixOS on a server, disks, services from the project's own
-builds, secrets and images come next; see
+Services from the project's own builds, secrets, more disk layouts and
+images come next; see
 [#463](https://github.com/thebrandonlucas/kai/issues/463). Guix System is
 not planned yet, though only `Modules` in the settings is Nix-specific.

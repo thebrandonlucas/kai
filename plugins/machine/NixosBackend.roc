@@ -1,5 +1,6 @@
 # The machine command on the nix backend: each machine is a NixOS system in
-# std's generated flake, built from it, and switched to here or over SSH.
+# std's generated flake, built from it, switched to here or over SSH, and
+# installed on a server with nixos-anywhere.
 import pf.Command
 import pf.Implementation
 import pf.Plan
@@ -30,6 +31,12 @@ NixosBackend :: [].{
 				destination = MachineModel.destination(m, ctx.args).map_err(Plan.fail)?
 				if action == "build" {
 					NixosBackend.build(project, machines, m, ctx, "")
+				} else if action == "install" {
+					MachineModel.installable(m).map_err(Plan.fail)?
+					match destination {
+						Remote(target) => NixosBackend.install(project, machines, m, ctx, target)
+						Here => Err(Plan.fail("kai machine install needs --to"))
+					}
 				} else {
 					match destination {
 						Here => NixosBackend.on_host(project, machines, m, ctx, action)
@@ -40,12 +47,30 @@ NixosBackend :: [].{
 			},
 		}
 
-	## What only Nix can honour that is wrong with machine `m`.
-	problems : Machine -> List(Str)
-	problems = |m|
-		m.modules
+	## What only Nix can honour that is wrong with machine `m` in `project`.
+	problems : Project, Machine -> List(Str)
+	problems = |project, m| {
+		modules = m.modules
 			.drop_if(NixosBackend.valid_module_path)
 			.map(|path| "module ${path} is no .nix file inside the project")
+		disko = project.any(
+			|setting|
+				match setting {
+					Input(name, _) => name.to_str() == "disko"
+					_ => Bool.False
+				},
+		)
+		if m.disk != NoDisk and !disko {
+			modules.append(
+				"Disk needs disko; add ${NixosBackend.disko_input} to std's settings",
+			)
+		} else {
+			modules
+		}
+	}
+
+	## The std setting declaring the flake input a Disk's module comes from.
+	disko_input = "Input(\"disko\", \"github:nix-community/disko\")"
 
 	## A relative path to a .nix file that stays inside the project.
 	valid_module_path : Str -> Bool
@@ -151,6 +176,50 @@ NixosBackend :: [].{
 			_ => [tools, there, remote(["nixos-rebuild", "list-generations"])]
 		}
 		Ok(Plan.{ steps, next: Done })
+	}
+
+	## Installing erases the Disk of the server at `target`, any Linux that
+	## logs in over SSH as root or with sudo, and installs the machine with
+	## nixos-anywhere from the project's locked nixpkgs. The system is
+	## built here first, so what fails to build fails before anything is
+	## erased.
+	install : Project, List(Machine), Machine, Context, Str -> Planned
+	install = |project, machines, m, ctx, target| {
+		description = "machine install ${m.name} on ${target}"
+		tools = ExpectPrograms({ description, programs: ["nix", "ssh"] })
+		built = NixosBackend.build(project, machines, m, ctx, "")?
+		device = match m.disk {
+			SingleDisk(path) => path
+			NoDisk => ""
+		}
+		prompt = "Install machine ${m.name} on ${target}, ERASING its disk "
+			.concat("${device} and everything on it?")
+		flake = "path:${Std.nix_layout(ctx.layout).generated_root}"
+		anywhere = NixosBackend.nixos_anywhere(flake, m.name, target)
+		steps = [tools]
+			.concat(built.steps)
+			.concat([Confirm(prompt), NixosBackend.run(description, Inherit, anywhere)])
+		Ok(Plan.{ steps, next: Done })
+	}
+
+	## nixos-anywhere from the locked nixpkgs on machine `name` of `flake`. The
+	## machine's module files are read by their absolute paths, which pure
+	## evaluation refuses, as `kai machine build`'s --impure allows: the script
+	## adds `pure-eval = false` to any NIX_CONFIG the user has.
+	nixos_anywhere : Str, Str, Str -> List(Str)
+	nixos_anywhere = |flake, name, target| {
+		script =
+			\\case $NIX_CONFIG in
+			\\'') NIX_CONFIG='pure-eval = false' ;;
+			\\*) NIX_CONFIG="$NIX_CONFIG
+			\\pure-eval = false" ;;
+			\\esac
+			\\export NIX_CONFIG
+			\\flake=$1
+			\\shift
+			\\exec nix run --inputs-from "$flake" default#nixos-anywhere -- "$@"
+		["sh", "-c", script, "sh", flake]
+			.concat(["--flake", "${flake}#${name}", "--target-host", target])
 	}
 
 	## The machine's architecture, as `uname -m` prints it.
@@ -373,7 +442,52 @@ NixosBackend :: [].{
 			.concat(when(!m.tcp_ports.is_empty(), [firewall("TCP", m.tcp_ports)]))
 			.concat(when(!m.udp_ports.is_empty(), [firewall("UDP", m.udp_ports)]))
 			.concat(when(!m.environment.is_empty(), system_packages))
+			.concat(NixosBackend.disk(m.disk))
 	}
+
+	## A Disk as disko's NixOS module and its layout, with GRUB booting on
+	## BIOS and UEFI: nixos-anywhere's example layout. disko adds the disk
+	## to GRUB's devices and defines the file systems.
+	disk : MachineModel.Disk -> List(Str)
+	disk = |layout|
+		match layout {
+			NoDisk => []
+			SingleDisk(device) => [
+				"imports = [ inputs.\"disko\".nixosModules.disko ];",
+				"disko.devices.disk.main = {",
+				"  type = \"disk\";",
+				"  device = ${NixosBackend.quote(device)};",
+				"  content = {",
+				"    type = \"gpt\";",
+				"    partitions = {",
+				"      boot = { size = \"1M\"; type = \"EF02\"; };",
+				"      ESP = {",
+				"        size = \"512M\";",
+				"        type = \"EF00\";",
+				"        content = {",
+				"          type = \"filesystem\";",
+				"          format = \"vfat\";",
+				"          mountpoint = \"/boot\";",
+				"          mountOptions = [ \"umask=0077\" ];",
+				"        };",
+				"      };",
+				"      root = {",
+				"        size = \"100%\";",
+				"        content = {",
+				"          type = \"filesystem\";",
+				"          format = \"ext4\";",
+				"          mountpoint = \"/\";",
+				"        };",
+				"      };",
+				"    };",
+				"  };",
+				"};",
+				"boot.loader.grub = {",
+				"  efiSupport = true;",
+				"  efiInstallAsRemovable = true;",
+				"};",
+			]
+		}
 
 	list : List(Str) -> Str
 	list = |items|
