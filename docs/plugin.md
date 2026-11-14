@@ -96,7 +96,8 @@ plan as `ctx.lock_requests`, so std's `update`, its check that the lock is
 current, and `Std.build_flake_output` all include them. `kai update` moves
 them with the rest; `kai update NAME` takes only names std's settings
 declare. The machine plugin asks for `Source("default")`, which its
-systems are built from.
+systems are built from, and disko and agenix, their nixpkgs following
+it, when a machine has a `Disk` or `Secrets`.
 
 `Plugin.checking_lock_requests(plugin, check)` is how the lock's owner,
 std, checks them: `check` takes every plugin's requests and returns its

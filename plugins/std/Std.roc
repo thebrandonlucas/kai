@@ -1386,7 +1386,8 @@ expect {
 		and checked(project, [asking("machine", disko("github:example/disko"))])
 			== Err(
 				"std: machine asks to lock Input disko at github:example/disko, "
-					.concat("but the project declares github:nix-community/disko"),
+					.concat("but the project declares github:nix-community/disko; ")
+					.concat("remove disko from std's settings to use machine's"),
 			)
 		and checked(
 			planning,

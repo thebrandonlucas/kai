@@ -245,35 +245,42 @@ ConfigFixtures := [].{
 		.concat(ConfigFixtures.secret_fixtures)
 		.concat(ConfigFixtures.caddy_fixtures)
 
-	# A machine with a Disk, accepted beside the disko input it needs and
-	# refused without it.
+	# A machine with a Disk, whose disko input kai locks itself: accepted
+	# without the input, or beside the same one, and refused beside another.
 	disk_fixtures : List(Fixture)
 	disk_fixtures = {
-		disko = "Input(\"disko\", \"github:nix-community/disko\"), "
+		disko = |ref| "Input(\"disko\", \"${ref}\"), "
 		machine =
 			\\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
 			\\  User("admin", [SshKeys(["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 a@b"])]),
 			\\  Ssh, Disk(SingleDisk("/dev/disk/by-path/pci-0000:00:04.0"))])
+		with_disko = |ref| ConfigFixtures.machine_kaifile_with(disko(ref), machine)
 		[
 			{
 				name: "MachineDisk",
 				expected: Valid,
-				body: ConfigFixtures.machine_kaifile_with(disko, machine),
+				body: ConfigFixtures.machine_kaifile(machine),
 			},
 			{
-				name: "MachineDiskWithoutDisko",
+				name: "MachineDiskWithDisko",
+				expected: Valid,
+				body: with_disko("github:nix-community/disko"),
+			},
+			{
+				name: "MachineDiskWithOtherDisko",
 				expected: Rejected(
-					"machine web: Disk needs disko; add "
-						.concat("Input(\"disko\", \"github:nix-community/disko\") ")
-						.concat("to std's settings"),
+					"std: machine asks to lock Input disko at "
+						.concat("github:nix-community/disko, but the project declares ")
+						.concat("github:example/disko; remove disko from std's ")
+						.concat("settings to use machine's"),
 				),
-				body: ConfigFixtures.machine_kaifile(machine),
+				body: with_disko("github:example/disko"),
 			},
 		]
 	}
 
-	# A machine with Operators and Secrets, accepted beside the agenix input
-	# it needs and refused without it.
+	# A machine with Operators and Secrets, whose agenix input kai locks
+	# itself: accepted without the input, or beside the same one.
 	secret_fixtures : List(Fixture)
 	secret_fixtures = {
 		agenix = "Input(\"agenix\", \"github:ryantm/agenix\"), "
@@ -285,16 +292,12 @@ ConfigFixtures := [].{
 			{
 				name: "MachineSecrets",
 				expected: Valid,
-				body: ConfigFixtures.machine_kaifile_with(agenix, machine),
+				body: ConfigFixtures.machine_kaifile(machine),
 			},
 			{
-				name: "MachineSecretsWithoutAgenix",
-				expected: Rejected(
-					"machine web: Secrets needs agenix; add "
-						.concat("Input(\"agenix\", \"github:ryantm/agenix\") ")
-						.concat("to std's settings"),
-				),
-				body: ConfigFixtures.machine_kaifile(machine),
+				name: "MachineSecretsWithAgenix",
+				expected: Valid,
+				body: ConfigFixtures.machine_kaifile_with(agenix, machine),
 			},
 		]
 	}
@@ -366,7 +369,8 @@ ConfigFixtures := [].{
 			"PluginInputConflict",
 			Rejected(
 				"std: extra asks to lock Input disko at github:example/disko, "
-					.concat("but the project declares github:nix-community/disko"),
+					.concat("but the project declares github:nix-community/disko; ")
+					.concat("remove disko from std's settings to use extra's"),
 			),
 			"Input(\"disko\", \"github:example/disko\", [])",
 		),

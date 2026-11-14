@@ -76,8 +76,9 @@ Machine := [].{
 	Machines : List(MachineModel.Machine)
 
 	## `project` is std's settings, whose environments and inputs machines
-	## use; a machine's System must be one of its Systems. Machines keep
-	## std's "default" package source locked, which they are built from.
+	## use; a machine's System must be one of its Systems. Machines ask std
+	## to lock the "default" package source they are built from, and disko
+	## and agenix when a machine has a Disk or Secrets.
 	plugin : List(Config.Setting), List(Setting) -> Plugin
 	plugin = |project, settings|
 		match Machine.checked(project, settings) {
@@ -93,7 +94,7 @@ Machine := [].{
 						NixosBackend.secret_implementation(project, machines),
 					],
 				})
-					.locking(if (machines.is_empty()) [] else [Source("default")])
+					.locking(NixosBackend.lock_requests(machines))
 			Err(problems) => Plugin.invalid("machine", problems)
 		}
 
@@ -149,9 +150,9 @@ Machine := [].{
 			"Machine(\"web\", [System(\"x86_64-linux\"), StateVersion(\"25.05\"),",
 			"  Host(\"admin@web.example.com\"),",
 			"  User(\"admin\", [SshKeys([\"ssh-ed25519 AAAA...\"])]), Ssh,",
-			"  Disk(SingleDisk(\"/dev/sda\")),",
+			"  Disk(SingleDisk(\"/dev/sda\")),                   # kai locks disko",
 			"  Operators([\"age1...\"]),",
-			"  Secrets([Secret(\"app-key\", [Owner(\"app\")])]),",
+			"  Secrets([Secret(\"app-key\", [Owner(\"app\")])]),   # kai locks agenix",
 			"  Services([Caddy([Site(\"example.com\",",
 			"    ReverseProxy(\"localhost:8080\"))])]),",
 			"  Modules([\"nixos/web.nix\"])]),",
@@ -206,7 +207,6 @@ Machine := [].{
 			"kai secret rekey web --identity ~/.ssh/id_ed25519",
 		],
 		config: [
-			"Input(\"agenix\", \"github:ryantm/agenix\"),   # in std's settings",
 			"Machine(\"web\", [..., Operators([\"age1...\", \"ssh-ed25519 AAAA...\"]),",
 			"  Secrets([Secret(\"app-key\", [Owner(\"app\"), Mode(\"0400\")])])]),",
 		],
@@ -274,7 +274,7 @@ Machine := [].{
 				.concat(if (empty_operators) [no_operator] else [])
 				.concat(repeated_options)
 				.concat(Machine.problems(model, m))
-				.concat(NixosBackend.problems(project, m))
+				.concat(NixosBackend.problems(m))
 			$problems = $problems.concat(found.map(|p| "machine ${name}: ${p}"))
 			$machines = $machines.append(m)
 		}
@@ -695,7 +695,7 @@ flake_lock =
 	\\}
 
 # The flake.lock nix flake update writes for the project's nixpkgs and
-# disko, whose own nixpkgs is locked apart.
+# disko, whose own nixpkgs follows the project's.
 disko_lock =
 	\\{
 	\\  "nodes": {
@@ -714,7 +714,7 @@ disko_lock =
 	\\      }
 	\\    },
 	\\    "disko": {
-	\\      "inputs": { "nixpkgs": "nixpkgs" },
+	\\      "inputs": { "nixpkgs": ["default"] },
 	\\      "locked": {
 	\\        "lastModified": 1790100000,
 	\\        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -725,20 +725,6 @@ disko_lock =
 	\\      },
 	\\      "original": {
 	\\        "owner": "nix-community", "repo": "disko", "type": "github"
-	\\      }
-	\\    },
-	\\    "nixpkgs": {
-	\\      "locked": {
-	\\        "lastModified": 1790185690,
-	\\        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
-	\\        "owner": "NixOS",
-	\\        "repo": "nixpkgs",
-	\\        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
-	\\        "type": "github"
-	\\      },
-	\\      "original": {
-	\\        "owner": "NixOS", "ref": "nixpkgs-unstable",
-	\\        "repo": "nixpkgs", "type": "github"
 	\\      }
 	\\    },
 	\\    "root": { "inputs": { "default": "default", "disko": "disko" } }
@@ -785,14 +771,21 @@ context = {
 	lock_requests: [],
 }
 
-# The project with disko declared, which a machine with a Disk needs.
-disko_project = project.append(Input("disko", "github:nix-community/disko"))
+# What plugins ask std to lock, each with the asking plugin's name.
+Requests : List(Implementation.Requested)
 
-# The lock std's update publishes for `settings` from Nix's `nix_lock`.
-published : List(Config.Setting), Str -> [Absent, Present(Str)]
-published = |settings, nix_lock| {
+# Every plugin's lock requests in a Kaifile of std for `settings` and the
+# machine `plugin`.
+requests_of : List(Config.Setting), Plugin -> Requests
+requests_of = |settings, plugin|
+	Kaifile.lock_requests(Kaifile.new([Std.plugin(settings), plugin]))
+
+# The lock std's update publishes for `settings` and every plugin's
+# `requests` from Nix's `nix_lock`.
+published : List(Config.Setting), Requests, Str -> [Absent, Present(Str)]
+published = |settings, requests, nix_lock| {
 	observed = [{ path: "/generated/nix/flake.lock", contents: Text(nix_lock) }]
-	resumed = { ..context, phase: 1, observed }
+	resumed = { ..context, phase: 1, observed, lock_requests: requests }
 	update = Std.plugin(settings).implementations
 		.find_first(|i| i.command == "update" and i.backend == On("nix"))
 	match update.map_ok(|i| (i.plan)(resumed)) {
@@ -832,8 +825,10 @@ planned_in = |locked, machine_settings, action, to| {
 		.first()
 		.map_err(|_| Plan.fail("no implementation"))?
 	(found.fit)(args).map_err(Plan.fail)?
-	lock = published(settings, nix_lock)
-	(found.plan)({ ..context, args, host: { system: system }, lock })
+	requests = requests_of(settings, plugin)
+	lock = published(settings, requests, nix_lock)
+	host = { system: system }
+	(found.plan)({ ..context, args, host, lock, lock_requests: requests })
 }
 
 # Whether machine web's rendered lines, trimmed, hold `expected` in order.
@@ -859,15 +854,15 @@ problems_of : List(MachineSetting) -> List(Str)
 problems_of = |settings|
 	Machine.plugin(project, [Machine("web", settings)]).problems
 
-# Machine web as it installs: with a Disk, in the project with disko.
+# Machine web as it installs: with a Disk.
 installed_web = web.append(Disk(SingleDisk("/dev/sda")))
 
 # The plan of `kai machine install web --to TO` ("" for no --to) for machine
-# web's `settings` in the project with disko.
+# web's `settings`, its disko locked.
 installed : List(MachineSetting), Str -> Try(Plan, Plan.Failure)
 installed = |settings, to| {
 	system = "x86_64-linux"
-	locked = { settings: disko_project, nix_lock: disko_lock, system }
+	locked = { settings: project, nix_lock: disko_lock, system }
 	planned_in(locked, settings, "install", to)
 }
 
@@ -959,26 +954,21 @@ expect {
 		and !renders(web, ["efiSupport = true;"])
 }
 
-# A Disk is a /dev path of plain characters, given once, and needs disko
-# declared in std's settings; each is refused as Kaifile.roc compiles.
+# A Disk is a /dev path of plain characters, given once; each is refused as
+# Kaifile.roc compiles.
 expect {
-	in_disko = |settings|
-		Machine.plugin(disko_project, [Machine("web", settings)]).problems
 	disk = |device| Disk(SingleDisk(device))
-	declare = "add Input(\"disko\", \"github:nix-community/disko\")"
 	bad = |device|
 		"machine web: Disk device ${device} is no /dev/... path, "
 			.concat("such as \"/dev/sda\"")
 	valid = ["/dev/sda", "/dev/nvme0n1", "/dev/disk/by-path/pci-0000:00:04.0"]
 	invalid = ["sda", "/dev/", "/dev/../etc/passwd", "/dev/sd a", "/dev/x;y"]
-	in_disko(installed_web) == []
+	problems_of(installed_web) == []
 		and valid.all(Machine.valid_device)
 		and !invalid.any(Machine.valid_device)
-		and in_disko(web.append(disk("/dev/sd\"a"))) == [bad("/dev/sd\"a")]
-		and in_disko(web.concat([disk("/dev/sda"), disk("/dev/sdb")]))
+		and problems_of(web.append(disk("/dev/sd\"a"))) == [bad("/dev/sd\"a")]
+		and problems_of(web.concat([disk("/dev/sda"), disk("/dev/sdb")]))
 			== ["machine web: Disk is given more than once"]
-		and problems_of(installed_web)
-			== ["machine web: Disk needs disko; ${declare} to std's settings"]
 }
 
 # A build checks the machine's modules, writes std's flake with the machine
@@ -1336,7 +1326,7 @@ expect {
 }
 
 # The flake.lock nix flake update writes for the project's nixpkgs, disko
-# and agenix, whose own nixpkgs are locked apart.
+# and agenix, whose own nixpkgs follow the project's.
 agenix_lock =
 	\\{
 	\\  "nodes": {
@@ -1355,7 +1345,7 @@ agenix_lock =
 	\\      }
 	\\    },
 	\\    "disko": {
-	\\      "inputs": { "nixpkgs": "nixpkgs" },
+	\\      "inputs": { "nixpkgs": ["default"] },
 	\\      "locked": {
 	\\        "lastModified": 1790100000,
 	\\        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -1369,7 +1359,7 @@ agenix_lock =
 	\\      }
 	\\    },
 	\\    "agenix": {
-	\\      "inputs": { "nixpkgs": "nixpkgs" },
+	\\      "inputs": { "nixpkgs": ["default"] },
 	\\      "locked": {
 	\\        "lastModified": 1790100000,
 	\\        "narHash": "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=",
@@ -1379,20 +1369,6 @@ agenix_lock =
 	\\        "type": "github"
 	\\      },
 	\\      "original": { "owner": "ryantm", "repo": "agenix", "type": "github" }
-	\\    },
-	\\    "nixpkgs": {
-	\\      "locked": {
-	\\        "lastModified": 1790185690,
-	\\        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
-	\\        "owner": "NixOS",
-	\\        "repo": "nixpkgs",
-	\\        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
-	\\        "type": "github"
-	\\      },
-	\\      "original": {
-	\\        "owner": "NixOS", "ref": "nixpkgs-unstable",
-	\\        "repo": "nixpkgs", "type": "github"
-	\\      }
 	\\    },
 	\\    "root": {
 	\\      "inputs": {
@@ -1404,12 +1380,10 @@ agenix_lock =
 	\\  "version": 7
 	\\}
 
-# The project with disko and agenix declared, as a machine with Secrets
-# needs, locked on an x86_64-linux host.
-agenix_project = disko_project.append(Input("agenix", "github:ryantm/agenix"))
-
+# The project with disko and agenix locked, as a machine with a Disk and
+# Secrets asks, on an x86_64-linux host.
 agenix_locked = {
-	settings: agenix_project,
+	settings: project,
 	nix_lock: agenix_lock,
 	system: "x86_64-linux",
 }
@@ -1427,7 +1401,7 @@ secret_web = installed_web.concat(
 secret_planned :
 	List(MachineSetting), Str, List(Str), Str -> Try(Plan, Plan.Failure)
 secret_planned = |settings, action, words, identity| {
-	plugin = Machine.plugin(agenix_project, [Machine("web", settings)])
+	plugin = Machine.plugin(project, [Machine("web", settings)])
 	option = { name: "identity", value: Present(identity) }
 	given = if (identity.is_empty()) [] else [option]
 	args = [{ name: "action", value: Present(action) }]
@@ -1437,8 +1411,9 @@ secret_planned = |settings, action, words, identity| {
 		.find_first(|i| i.command == "secret")
 		.map_err(|_| Plan.fail("no implementation"))?
 	(found.fit)(args).map_err(Plan.fail)?
-	lock = published(agenix_project, agenix_lock)
-	(found.plan)({ ..context, args, lock })
+	requests = requests_of(project, plugin)
+	lock = published(project, requests, agenix_lock)
+	(found.plan)({ ..context, args, lock, lock_requests: requests })
 }
 
 # age and ssh-keygen from the locked nixpkgs, running a script.
@@ -1616,11 +1591,8 @@ expect {
 }
 
 # Operators and Secrets are checked as Kaifile.roc compiles: keys, names,
-# owners, groups and modes, duplicates, Secrets without Operators, and
-# Secrets without the agenix input.
+# owners, groups and modes, duplicates, and Secrets without Operators.
 expect {
-	in_agenix = |settings|
-		Machine.plugin(agenix_project, [Machine("web", settings)]).problems
 	installed_with = |settings| installed_web.concat(settings)
 	bad_key = "ssh-ed25519 short"
 	ecdsa = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY="
@@ -1660,19 +1632,12 @@ expect {
 			["secret db: Mode is given more than once"],
 		),
 	]
-	declare = "add Input(\"agenix\", \"github:ryantm/agenix\") to std's settings"
-	without_agenix = Machine.plugin(
-		disko_project,
-		[Machine("web", installed_with([operators, secret("db", [])]))],
-	)
 	accepted = installed_with([operators, secret("app.env_1-x", [Mode("640")])])
 	checks.all(
 		|(settings, expected)|
-			in_agenix(settings) == expected.map(|p| "machine web: ${p}"),
+			problems_of(settings) == expected.map(|p| "machine web: ${p}"),
 	)
-		and in_agenix(accepted) == []
-		and without_agenix.problems
-			== ["machine web: Secrets needs agenix; ${declare}"]
+		and problems_of(accepted) == []
 }
 
 # Caddy serving a proxied site and a directory, with an email.
@@ -1778,4 +1743,42 @@ expect {
 		and Kaifile.validate(Kaifile.new([Std.plugin(bare), machine])).is_ok()
 		and locks_default([Std.plugin(bare), machine])
 		and !locks_default([Std.plugin(bare), Machine.plugin(bare, [])])
+}
+
+# A machine with a Disk asks std to lock disko, and one with Secrets
+# agenix, each with its nixpkgs following the project's, as the flake
+# `kai update` resolves declares. A project that declares disko alike is
+# accepted; one declaring another disko is told to remove it.
+expect {
+	following = [Follows("nixpkgs", "default")]
+	disko = Input("disko", "github:nix-community/disko", following)
+	agenix = Input("agenix", "github:ryantm/agenix", following)
+	secrets = [Operators([operator]), Secrets([Secret("db", [])])]
+	requested = |settings|
+		Machine.plugin(project, [Machine("web", settings)]).lock_requests
+	validated = |settings| {
+		machine = Machine.plugin(settings, [Machine("web", installed_web)])
+		Kaifile.validate(Kaifile.new([Std.plugin(settings), machine]))
+			.map_ok(|_| {})
+	}
+	machine = Machine.plugin(project, [Machine("web", secret_web)])
+	flake = update_files(project, [Std.plugin(project), machine])
+	follows = |input|
+		flake.any(
+			|text|
+				text.contains("\"${input}\".inputs.\"nixpkgs\".follows = \"default\";"),
+		)
+	requested(web) == [Source("default")]
+		and requested(installed_web) == [Source("default"), disko]
+		and requested(web.concat(secrets)) == [Source("default"), agenix]
+		and follows("disko")
+		and follows("agenix")
+		and validated(project.append(Input("disko", "github:nix-community/disko")))
+			== Ok({})
+		and validated(project.append(Input("disko", "github:example/disko")))
+			== Err(
+				"std: machine asks to lock Input disko at github:nix-community/disko, "
+					.concat("but the project declares github:example/disko; ")
+					.concat("remove disko from std's settings to use machine's"),
+			)
 }

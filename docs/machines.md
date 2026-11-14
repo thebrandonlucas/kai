@@ -20,7 +20,6 @@ import machine.Machine
 project : List(Config.Setting)
 project = [
 	Name("site"),
-	Input("disko", "github:nix-community/disko"),
 	Environment("ops", [Tools(["htop"])]),
 ]
 
@@ -63,11 +62,11 @@ Every setting but `User` occurs at most once in a machine.
 | `Firewall([Tcp([...]), Udp([...])])` | Ports the firewall opens, beside OpenSSH's. NixOS's firewall is on either way. |
 | `TimeZone(zone)` | `time.timeZone`, such as `"Etc/UTC"`. Optional (default NixOS's, UTC). |
 | `Use(environment)` | Puts a std environment's tools on the system's `PATH` (`environment.systemPackages`). The environment's variables stay in its shells and tasks. It cannot be one only the direct backend serves. |
-| `Disk(SingleDisk(device))` | The disk `kai machine install` partitions and the system boots from, the whole of `device`, an absolute `/dev/...` path such as `"/dev/sda"` or `"/dev/disk/by-id/..."`; see [Installing on a server](#installing-on-a-server). It needs `Input("disko", "github:nix-community/disko")` in std's settings. Optional (default: the file systems and boot loader come from `Modules`). |
+| `Disk(SingleDisk(device))` | The disk `kai machine install` partitions and the system boots from, the whole of `device`, an absolute `/dev/...` path such as `"/dev/sda"` or `"/dev/disk/by-id/..."`; see [Installing on a server](#installing-on-a-server). kai pins disko, the Disk's module, itself. Optional (default: the file systems and boot loader come from `Modules`). |
 | `Operators([...])` | The public keys of whoever may decrypt the machine's host key and secrets: age recipients (`age1...`) or `ssh-ed25519` and `ssh-rsa` public keys, at least one; see [Secrets](#secrets). Optional. |
-| `Secrets([Secret(name, [...])])` | Files the system decrypts into `/run/secrets/NAME` as it activates, with `Owner(user)` (default `root`), `Group(group)` (default `root`) and `Mode("0400")`, an octal mode (default `"0400"`); see [Secrets](#secrets). They need `Operators` and `Input("agenix", "github:ryantm/agenix")` in std's settings. Optional. |
+| `Secrets([Secret(name, [...])])` | Files the system decrypts into `/run/secrets/NAME` as it activates, with `Owner(user)` (default `root`), `Group(group)` (default `root`) and `Mode("0400")`, an octal mode (default `"0400"`); see [Secrets](#secrets). They need `Operators`; kai pins agenix, which decrypts them, itself. Optional. |
 | `Services([...])` | Typed services the machine runs, each at most once: for now `Caddy([...])`, which serves sites over HTTPS; see [Services](#services). Optional. |
-| `Modules([...])` | NixOS module files, relative to the project and inside it, for everything else: services, hardware, and the disks and boot loader when there is no `Disk`. They receive the flake's `inputs` as a module argument, so a module can import another flake's module, such as `inputs.disko.nixosModules.disko` after `Input("disko", "github:nix-community/disko")` in std's settings. |
+| `Modules([...])` | NixOS module files, relative to the project and inside it, for everything else: services, hardware, and the disks and boot loader when there is no `Disk`. They receive the flake's `inputs` as a module argument, so a module can import another flake's module, such as `inputs.home-manager.nixosModules.home-manager` after `Input("home-manager", "github:nix-community/home-manager")` in std's settings. |
 
 `kai check` refuses, as Kaifile.roc compiles, a machine name that is not a
 letter followed by letters, digits, `-` or `_`; a missing or non-Linux
@@ -76,9 +75,8 @@ letter followed by letters, digits, `-` or `_`; a missing or non-Linux
 names NixOS would refuse; a key that
 is no OpenSSH public key; `Ssh` with no keys to log in with; port 0; an
 unknown environment; a `Disk` device that is no `/dev/...` path of letters,
-digits and `._:+-`, or a `Disk` without the `disko` input; an operator
-that is no age recipient, `ssh-ed25519` or `ssh-rsa` key, or empty
-`Operators`; `Secrets` without `Operators` or without the `agenix` input,
+digits and `._:+-`; an operator that is no age recipient, `ssh-ed25519` or
+`ssh-rsa` key, or empty `Operators`; `Secrets` without `Operators`,
 a secret name that is not a letter followed by letters, digits, `-`, `_` or
 `.`, a secret declared twice, an owner or group NixOS would refuse, or a
 mode that is not three or four octal digits; a service given twice, and
@@ -104,9 +102,14 @@ nixosConfigurations."web" = inputs."default".lib.nixosSystem {
 The system comes from the project's `default` package source, so
 `Packages("default", From(NixPackages("github:NixOS/nixpkgs/nixos-25.05")))`
 picks the NixOS release, and `kai update` moves it with the rest of the
-lock. Machines add no inputs of their own, so the lock std's `kai update`
-writes serves them; a `Disk` uses the `disko` input std's settings declare,
-and `Secrets` the `agenix` input, which `kai update` locks with the rest.
+lock. Machines need no `Input` lines: the plugin asks std's `kai update` to
+lock the `default` source, and for a machine with a `Disk`
+`github:nix-community/disko`, or with `Secrets` `github:ryantm/agenix`, as
+the flake's `disko` and `agenix` inputs, each with its `nixpkgs` following
+`default` so the project locks one nixpkgs. A project that declares
+`Input("disko", ...)` or `Input("agenix", ...)` itself keeps working when
+the reference is the same; another reference is refused as Kaifile.roc
+compiles, and removing the line from std's settings fixes it.
 
 A plugin adds outputs through std's public API, `Std.build_flake_output`,
 described in [plugin.md](plugin.md#building-from-stds-flake).
@@ -264,12 +267,8 @@ A machine to install needs:
   mounted at `/boot` and an ext4 root filling the rest, and boots it with
   GRUB on both BIOS and UEFI, which is nixos-anywhere's own example layout.
   `Modules` must then not define the root file system or the boot loader.
-- `Input("disko", "github:nix-community/disko")` in std's settings, which
-  the Disk's module comes from, locked by `kai update`; kai refuses a Disk
-  without it as Kaifile.roc compiles. `Follows("disko", "nixpkgs",
-  "default")` makes disko's own nixpkgs the project's instead of a second
-  one locked apart; the system, disko's module included, builds from the
-  project's `default` source either way.
+  disko, which the layout's module comes from, is pinned by kai and locked
+  by `kai update`, its nixpkgs the project's.
 - `Ssh` and a `User` with `SshKeys`, since those keys are how you reach the
   server once it runs the machine. Logging in as root afterwards needs
   `User("root", [SshKeys([...])])`; a user other than root needs
@@ -311,15 +310,10 @@ describes.
 
 A machine's secrets, such as an API key a service reads, are encrypted
 files in the project, decrypted on the machine as it activates by
-[agenix](https://github.com/ryantm/agenix):
+[agenix](https://github.com/ryantm/agenix), which kai pins and `kai update`
+locks, so std's settings need no `Input` for it:
 
 ```roc
-project = [
-	Name("site"),
-	Input("disko", "github:nix-community/disko"),
-	Input("agenix", "github:ryantm/agenix"),
-]
-
 Machine("web", [
 	...,
 	Operators(["age1...", "ssh-ed25519 AAAA... admin@example"]),

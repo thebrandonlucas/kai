@@ -49,41 +49,27 @@ NixosBackend :: [].{
 			},
 		}
 
-	## What only Nix can honour that is wrong with machine `m` in `project`.
-	problems : Project, Machine -> List(Str)
-	problems = |project, m| {
-		modules = m.modules
+	## What only Nix can honour that is wrong with machine `m`.
+	problems : Machine -> List(Str)
+	problems = |m|
+		m.modules
 			.drop_if(NixosBackend.valid_module_path)
 			.map(|path| "module ${path} is no .nix file inside the project")
-		declared = |input|
-			project.any(
-				|setting|
-					match setting {
-						Input(name, _) => name.to_str() == input
-						_ => Bool.False
-					},
-			)
-		missing = |needed, setting, input|
-			if needed and !declared(input) {
-				declaration = NixosBackend.input(input)
-				["${setting} needs ${input}; add ${declaration} to std's settings"]
-			} else {
-				[]
-			}
-		modules
-			.concat(missing(m.disk != NoDisk, "Disk", "disko"))
-			.concat(missing(!m.secrets.is_empty(), "Secrets", "agenix"))
-	}
 
-	## The std setting declaring the flake input a Disk's or Secrets' module
-	## comes from.
-	input : Str -> Str
-	input = |name|
-		if name == "disko" {
-			"Input(\"disko\", \"github:nix-community/disko\")"
-		} else {
-			"Input(\"agenix\", \"github:ryantm/agenix\")"
-		}
+	## What std's update locks for `machines`: the "default" package source
+	## they are built from, and disko for a Disk and agenix for Secrets,
+	## each with its nixpkgs following that source. agenix's darwin and
+	## home-manager inputs follow its nixpkgs, and so that source too.
+	lock_requests : List(Machine) -> List(Implementation.LockRequest)
+	lock_requests = |machines| {
+		following = [Follows("nixpkgs", "default")]
+		disko = Input("disko", "github:nix-community/disko", following)
+		agenix = Input("agenix", "github:ryantm/agenix", following)
+		when = |present, requests| if (present) requests else []
+		when(!machines.is_empty(), [Source("default")])
+			.concat(when(machines.any(|m| m.disk != NoDisk), [disko]))
+			.concat(when(machines.any(|m| !m.secrets.is_empty()), [agenix]))
+	}
 
 	## A relative path to a .nix file that stays inside the project.
 	valid_module_path : Str -> Bool
