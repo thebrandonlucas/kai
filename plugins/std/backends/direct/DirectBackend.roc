@@ -17,7 +17,7 @@ import model.Request
 DirectBackend := [].{
 	Lock : [Absent, Present(Str)]
 
-	## What the lock holds for one file: `key` is `<fetch>/<system>`.
+	## What the lock holds for one file: `key` is `DirectBackend.lock_key`'s.
 	Pin : { key : Str, url : Str, sha256 : Str, size : U64 }
 
 	update_hint = "kai --backend direct update"
@@ -251,16 +251,18 @@ DirectBackend := [].{
 			.map_err(|_| Plan.fail("no Fetch ${tool.source}"))?
 		file = fetch.files.find_first(|f| f.system == system)
 			.map_err(|_| Plan.fail("Fetch ${fetch.name} has no file for ${system}"))?
-		key = "${fetch.name}/${system}"
-		pin = locked_pins.find_first(|p| p.key == key).map_err(
-			|_| {
+		key = DirectBackend.lock_key(fetch, system)
+		holding = locked_pins.keep_if(|p| DirectBackend.holds(fetch, p))
+		pin = match holding.find_first(|p| DirectBackend.current(file, p)) {
+			Ok(found) => found
+			Err(_) if holding.is_empty() => {
 				why = "the lock has no direct pin for ${key}"
-				DirectBackend.lock_failure("missing_direct_lock", why)
-			},
-		)?
-		if !DirectBackend.current(file, pin) {
-			why = "the direct pin for ${key} does not match its Fetch"
-			return Err(DirectBackend.lock_failure("stale_lock", why))
+				return Err(DirectBackend.lock_failure("missing_direct_lock", why))
+			}
+			Err(_) => {
+				why = "the direct pin for ${key} does not match its Fetch"
+				return Err(DirectBackend.lock_failure("stale_lock", why))
+			}
 		}
 		{ url, sha256, size, .. } = pin
 		urls = [url].concat(file.mirrors)
@@ -359,12 +361,50 @@ DirectBackend := [].{
 		Object([{ name: "files", value: Array(entries.map(entry)) }])
 	}
 
-	## Every file of every Fetch, with the key the lock holds it under.
-	files : Model -> List({ fetch : Str, key : Str, file : Model.FetchFile })
+	## Whether a Fetch is one file that each of its systems shares, as a
+	## FetchAll's or a RocPackages bundle's is, which the lock pins once.
+	shared : Model.Fetch -> Bool
+	shared = |fetch|
+		match fetch.files {
+			[first, _, ..] =>
+				fetch.files.all(
+					|f|
+						f.url == first.url
+							and f.hash == first.hash
+							and f.mirrors == first.mirrors
+							and f.unpack == first.unpack,
+				)
+			_ => Bool.False
+		}
+
+	## The key the lock pins the file of `fetch` for `system` under: the
+	## Fetch's name when it is shared, else `<fetch>/<system>`.
+	lock_key : Model.Fetch, Str -> Str
+	lock_key = |fetch, system|
+		if (DirectBackend.shared(fetch)) fetch.name else "${fetch.name}/${system}"
+
+	## Whether `pin` is under one of the keys of `fetch`: its name, or the
+	## `<fetch>/<system>` of one of its files. A lock from before a shared
+	## Fetch was pinned once, or from when it had one system, holds it under
+	## another of them; `current` says whether the pin is for the same file.
+	holds : Model.Fetch, Pin -> Bool
+	holds = |fetch, pin|
+		pin.key == fetch.name
+			or fetch.files.any(|f| pin.key == "${fetch.name}/${f.system}")
+
+	## Every file of every Fetch, a shared Fetch's once, with the key the lock
+	## holds it under.
+	files :
+		Model -> List({ fetch : Model.Fetch, key : Str, file : Model.FetchFile })
 	files = |model|
 		model.fetches.join_map(
-			|{ name, files: fetched, .. }|
-				fetched.map(|file| { fetch: name, key: "${name}/${file.system}", file }),
+			|fetch| {
+				pinned =
+					if (DirectBackend.shared(fetch)) fetch.files.take_first(1) else fetch.files
+				pinned.map(
+					|file| { fetch, key: DirectBackend.lock_key(fetch, file.system), file },
+				)
+			},
 		)
 
 	## Phase 0 asks kai to measure every file the lock has no current pin
@@ -377,9 +417,13 @@ DirectBackend := [].{
 	update = |model, names, layout, lock, phase, observed| {
 		result = "${layout.generated_root}/direct/measured"
 		kept = DirectBackend.pins(lock)?
-		pinned = |{ fetch, key, file }|
-			!names.contains(fetch)
-				and kept.any(|p| p.key == key and DirectBackend.current(file, p))
+		# A current pin the lock holds for a file, under any key it reads.
+		current_pin = |{ fetch, file, .. }|
+			kept.find_first(
+				|p| DirectBackend.holds(fetch, p) and DirectBackend.current(file, p),
+			)
+		pinned = |wanted_file|
+			!names.contains(wanted_file.fetch.name) and current_pin(wanted_file).is_ok()
 		wanted = DirectBackend.files(model)
 		shares_url = |f, url| wanted.any(|w| w.key == f.key and w.file.url == url)
 		once = |seen, f| if (seen.any(|s| s.urls == f.urls)) seen else seen.append(f)
@@ -407,8 +451,10 @@ DirectBackend := [].{
 				},
 		)
 		next = wanted.map_try(
-			|{ key, file, .. }|
-				# Its own measurement, or one under another key with the same URL.
+			|wanted_file| {
+				{ key, file, .. } = wanted_file
+				# Its own measurement, or one under another key with the same URL,
+				# else the current pin the lock holds, now under its own key.
 				match fresh.find_first(|f| f.key == key or shares_url(f, file.url)) {
 					Ok({ sha256, size, .. }) => {
 						pin = { key, url: file.url, sha256, size }
@@ -418,9 +464,11 @@ DirectBackend := [].{
 							Err(Plan.fail("${key} is not the file its sha256 publishes"))
 					}
 					Err(_) =>
-						kept.find_first(|p| p.key == key)
+						current_pin(wanted_file)
+							.map_ok(|p| { ..p, key })
 							.map_err(|_| Plan.fail("kai did not measure ${key}"))
-				},
+				}
+			},
 		)?
 		contents = LockFile.splice(lock, "direct", DirectBackend.section(next))
 			.map_err(Plan.fail)?
@@ -666,15 +714,14 @@ expect {
 }
 
 # A task places its RocPackages bundles, as the lock pins them, after making
-# its tools ready; update measures a bundle every system shares once and pins
-# it on each.
+# its tools ready; update measures a bundle several systems share once and
+# pins it once, under the Fetch's name.
 expect {
 	hash = "6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS"
 	url = "https://example.com/1.0/${hash}.tar.zst"
 	bundle = |system|
 		{ system, url, hash: "", mirrors: [], unpack: Archive("main.roc") }
 	name = Project.roc_package_fetch(url)
-	key = "${name}/x86_64-linux"
 	with_bundle = {
 		..model,
 		environments: [{ ..environment, roc_packages: [url] }],
@@ -682,7 +729,7 @@ expect {
 			{ name, files: [bundle("x86_64-linux")], unavailable: [] },
 		),
 	}
-	lock = locked(both.append(pin(key, url)))
+	lock = locked(both.append(pin("${name}/x86_64-linux", url)))
 	planned_steps = DirectBackend.plan(
 		with_bundle,
 		Request.Run("t", []),
@@ -696,18 +743,60 @@ expect {
 		_ => Bool.False
 	}
 	everywhere = [bundle("x86_64-linux"), bundle("aarch64-linux")]
-	two = { ..model, fetches: [{ name, files: everywhere, unavailable: [] }] }
+	bundled = { name, files: everywhere, unavailable: [] }
+	two = { ..model, fetches: [bundled] }
 	result = "/p/.kai/generated/direct/measured"
 	measured = match DirectBackend.update(two, [], layout, Absent, 0, []) {
-		Ok({ steps: [Measure({ files, .. })], .. }) => files.map(|f| f.key) == [key]
+		Ok({ steps: [Measure({ files, .. })], .. }) => files.map(|f| f.key) == [name]
 		_ => Bool.False
 	}
-	observed = [{ path: result, contents: Text("${key} ${sha256} 9\n") }]
+	observed = [{ path: result, contents: Text("${name} ${sha256} 9\n") }]
 	pinned = match DirectBackend.update(two, [], layout, Absent, 1, observed) {
 		Ok({ steps: [PublishLock({ contents, .. })], .. }) =>
 			DirectBackend.pins(Present(contents)).map_ok(|found| found.map(|p| p.key))
-				== Ok([key, "${name}/aarch64-linux"])
+				== Ok([name])
 		_ => Bool.False
 	}
 	placing and measured and pinned
+}
+
+# A lock that pins a shared Fetch on each system, as older locks do, still
+# serves it, and update keeps that pin once, under the Fetch's name, without
+# measuring it again.
+expect {
+	data = {
+		system: "x86_64-linux",
+		url: "https://example.com/data.tar.gz",
+		hash: Project.sri_sha256(sha256) ?? "",
+		mirrors: [],
+		unpack: File,
+	}
+	files = [data, { ..data, system: "aarch64-linux" }]
+	data_fetch = { name: "data", files, unavailable: [] }
+	with_data = {
+		..model,
+		systems: ["x86_64-linux", "aarch64-linux"],
+		environments: [{ ..environment, tools: [{ source: "data", name: "d" }] }],
+		fetches: [data_fetch],
+	}
+	old = locked(
+		[pin("data/x86_64-linux", data.url), pin("data/aarch64-linux", data.url)],
+	)
+	result = "/p/.kai/generated/direct/measured"
+	observed = [{ path: result, contents: Text("") }]
+	shell = Request.Shell("default", [])
+	serves = DirectBackend.plan(with_data, shell, "aarch64-linux", layout, old)
+		.is_ok()
+	asked = DirectBackend.update(with_data, [], layout, old, 0, [])
+	measures_nothing = match asked {
+		Ok({ steps: [Measure({ files: [], .. })], .. }) => Bool.True
+		_ => Bool.False
+	}
+	kept = match DirectBackend.update(with_data, [], layout, old, 1, observed) {
+		Ok({ steps: [PublishLock({ contents, .. })], .. }) =>
+			DirectBackend.pins(Present(contents)).map_ok(|found| found.map(|p| p.key))
+				== Ok(["data"])
+		_ => Bool.False
+	}
+	serves and measures_nothing and kept
 }
