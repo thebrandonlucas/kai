@@ -23,8 +23,10 @@ Machine := [].{
 	## generations act on instead of the host kai runs on. Ssh runs
 	## OpenSSH with key logins only, root's only when root has keys. Firewall
 	## opens ports beside OpenSSH's. Use puts a std environment's tools on
-	## the system's PATH. Modules are NixOS module files relative to the
-	## project, which receive the flake's `inputs`.
+	## the system's PATH. Disk is the disk layout `kai machine install`
+	## partitions, which the system mounts and boots from. Modules are NixOS
+	## module files relative to the project, which receive the flake's
+	## `inputs`.
 	MachineSetting : [
 		System(System),
 		HostName(Str),
@@ -35,8 +37,14 @@ Machine := [].{
 		Use(EnvName),
 		TimeZone(Str),
 		StateVersion(Str),
+		Disk(DiskSetting),
 		Modules(List(Str)),
 	]
+
+	## The one disk layout: the whole disk at an absolute `/dev/...` path,
+	## such as "/dev/sda", holding a BIOS boot partition, an EFI system
+	## partition at /boot and an ext4 root, so it boots on BIOS and UEFI.
+	DiskSetting : [SingleDisk(Str)]
 
 	## A user's authorized SSH public keys and supplementary groups. Every
 	## user but root is an ordinary user.
@@ -79,13 +87,15 @@ Machine := [].{
 						("switch", "Build the machine's system and switch its host to it."),
 						("rollback", "Switch the machine's host back to its previous system."),
 						("generations", "List the system generations of the machine's host."),
+						("install", "Erase the --to server's Disk and install the machine."),
 					].map(|(value, summary)| { value, summary, details: [] }),
 					default: Required,
 				}),
 				Value({
 					name: "to",
 					short: "",
-					help: "Act on this SSH target, user@host, not the machine's Host.",
+					help: "Act on this SSH target, user@host, not the machine's Host; "
+						.concat("install needs it, since it erases the target's disk."),
 				}),
 				Trailing({
 					name: "machine",
@@ -100,9 +110,10 @@ Machine := [].{
 
 	page : Command.Page
 	page = {
-		description: "Build a NixOS machine the project declares, or switch to it.",
+		description: "Build, install or switch to a NixOS machine the project has.",
 		examples: [
 			"kai machine build web",
+			"kai machine install web --to root@203.0.113.7",
 			"kai --dry-run machine switch web",
 			"kai machine switch web --to admin@203.0.113.7",
 			"kai machine rollback web",
@@ -112,6 +123,7 @@ Machine := [].{
 			"Machine(\"web\", [System(\"x86_64-linux\"), StateVersion(\"25.05\"),",
 			"  Host(\"admin@web.example.com\"),",
 			"  User(\"admin\", [SshKeys([\"ssh-ed25519 AAAA...\"])]), Ssh,",
+			"  Disk(SingleDisk(\"/dev/sda\")),",
 			"  Modules([\"nixos/web.nix\"])]),",
 		],
 	}
@@ -143,7 +155,7 @@ Machine := [].{
 				.map(|s| "${s} is given more than once")
 				.concat(if (empty_host) [empty] else [])
 				.concat(Machine.problems(model, m))
-				.concat(NixosBackend.problems(m))
+				.concat(NixosBackend.problems(project, m))
 			$problems = $problems.concat(found.map(|p| "machine ${name}: ${p}"))
 			$machines = $machines.append(m)
 		}
@@ -178,6 +190,7 @@ Machine := [].{
 			Use(_) => "Use"
 			TimeZone(_) => "TimeZone"
 			StateVersion(_) => "StateVersion"
+			Disk(_) => "Disk"
 			Modules(_) => "Modules"
 		}
 
@@ -198,6 +211,7 @@ Machine := [].{
 				environment: "",
 				time_zone: "",
 				state_version: "",
+				disk: NoDisk,
 				modules: [],
 			},
 			|m, part|
@@ -230,6 +244,7 @@ Machine := [].{
 					Use(environment) => { ..m, environment: environment.to_str() }
 					TimeZone(time_zone) => { ..m, time_zone }
 					StateVersion(state_version) => { ..m, state_version }
+					Disk(SingleDisk(device)) => { ..m, disk: SingleDisk(device) }
 					Modules(modules) => { ..m, modules }
 				},
 		)
@@ -311,6 +326,14 @@ Machine := [].{
 			# Only keys log in.
 			$found = $found.append("Ssh needs a User with SshKeys")
 		}
+		match m.disk {
+			SingleDisk(device) if !Machine.valid_device(device) => {
+				$found = $found.append(
+					"Disk device ${device} is no /dev/... path, such as \"/dev/sda\"",
+				)
+			}
+			_ => {}
+		}
 		if m.tcp_ports.concat(m.udp_ports).contains(0) {
 			$found = $found.append("Firewall ports run from 1 to 65535")
 		}
@@ -362,6 +385,20 @@ Machine := [].{
 		ends
 			and bytes.len() <= 63
 			and bytes.all(|b| alphanumeric(b) or b == '-' or b == '_')
+	}
+
+	## A device's absolute path beneath /dev, such as "/dev/sda" or
+	## "/dev/disk/by-id/...": letters, digits and `._:+-` in segments that
+	## are neither `.` nor `..`.
+	valid_device : Str -> Bool
+	valid_device = |device| {
+		plain = |b|
+			Machine.letter(b) or Machine.digit(b) or "._:+-".to_utf8().contains(b)
+		segments = device.drop_prefix("/dev/").split_on("/")
+		device.starts_with("/dev/")
+			and segments.all(
+				|s| !s.is_empty() and s != "." and s != ".." and s.to_utf8().all(plain),
+			)
 	}
 
 	## Empty, for NixOS's default, or a zone name such as "Europe/Berlin".
@@ -438,6 +475,59 @@ flake_lock =
 	\\  "version": 7
 	\\}
 
+# The flake.lock nix flake update writes for the project's nixpkgs and
+# disko, whose own nixpkgs is locked apart.
+disko_lock =
+	\\{
+	\\  "nodes": {
+	\\    "default": {
+	\\      "locked": {
+	\\        "lastModified": 1790185690,
+	\\        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
+	\\        "owner": "NixOS",
+	\\        "repo": "nixpkgs",
+	\\        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
+	\\        "type": "github"
+	\\      },
+	\\      "original": {
+	\\        "owner": "NixOS", "ref": "nixos-unstable",
+	\\        "repo": "nixpkgs", "type": "github"
+	\\      }
+	\\    },
+	\\    "disko": {
+	\\      "inputs": { "nixpkgs": "nixpkgs" },
+	\\      "locked": {
+	\\        "lastModified": 1790100000,
+	\\        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+	\\        "owner": "nix-community",
+	\\        "repo": "disko",
+	\\        "rev": "0123456789abcdef0123456789abcdef01234567",
+	\\        "type": "github"
+	\\      },
+	\\      "original": {
+	\\        "owner": "nix-community", "repo": "disko", "type": "github"
+	\\      }
+	\\    },
+	\\    "nixpkgs": {
+	\\      "locked": {
+	\\        "lastModified": 1790185690,
+	\\        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
+	\\        "owner": "NixOS",
+	\\        "repo": "nixpkgs",
+	\\        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
+	\\        "type": "github"
+	\\      },
+	\\      "original": {
+	\\        "owner": "NixOS", "ref": "nixpkgs-unstable",
+	\\        "repo": "nixpkgs", "type": "github"
+	\\      }
+	\\    },
+	\\    "root": { "inputs": { "default": "default", "disko": "disko" } }
+	\\  },
+	\\  "root": "root",
+	\\  "version": 7
+	\\}
+
 project : List(Config.Setting)
 project = [
 	Name("site"),
@@ -475,10 +565,13 @@ context = {
 	observed: [],
 }
 
-# The lock std's update publishes for `settings` from flake_lock.
-published : List(Config.Setting) -> [Absent, Present(Str)]
-published = |settings| {
-	observed = [{ path: "/generated/nix/flake.lock", contents: Text(flake_lock) }]
+# The project with disko declared, which a machine with a Disk needs.
+disko_project = project.append(Input("disko", "github:nix-community/disko"))
+
+# The lock std's update publishes for `settings` from Nix's `nix_lock`.
+published : List(Config.Setting), Str -> [Absent, Present(Str)]
+published = |settings, nix_lock| {
+	observed = [{ path: "/generated/nix/flake.lock", contents: Text(nix_lock) }]
 	resumed = { ..context, phase: 1, observed }
 	update = Std.plugin(settings).implementations
 		.find_first(|i| i.command == "update" and i.backend == On("nix"))
@@ -498,7 +591,19 @@ planned = |action, system| planned_with(web, action, system, "")
 # web's `settings`, on a host of `system`.
 planned_with : List(MachineSetting), Str, Str, Str -> Try(Plan, Plan.Failure)
 planned_with = |settings, action, system, to| {
-	plugin = Machine.plugin(project, [Machine("web", settings)])
+	locked = { settings: project, nix_lock: flake_lock, system }
+	planned_in(locked, settings, action, to)
+}
+
+# std's `settings` locked from Nix's `nix_lock`, on a host of `system`.
+Locked : { settings : List(Config.Setting), nix_lock : Str, system : Str }
+
+# The plan of `kai machine ACTION web --to TO` in a locked project, for
+# machine web's `machine_settings`.
+planned_in : Locked, List(MachineSetting), Str, Str -> Try(Plan, Plan.Failure)
+planned_in = |locked, machine_settings, action, to| {
+	{ settings, nix_lock, system } = locked
+	plugin = Machine.plugin(settings, [Machine("web", machine_settings)])
 	options = if (to.is_empty()) [] else [{ name: "to", value: Present(to) }]
 	args = [{ name: "action", value: Present(action) }]
 		.append({ name: "machine", value: Many(["web"]) })
@@ -507,7 +612,7 @@ planned_with = |settings, action, system, to| {
 		.first()
 		.map_err(|_| Plan.fail("no implementation"))?
 	(found.fit)(args).map_err(Plan.fail)?
-	lock = published(project)
+	lock = published(settings, nix_lock)
 	(found.plan)({ ..context, args, host: { system: system }, lock })
 }
 
@@ -533,6 +638,128 @@ renders = |settings, expected| {
 problems_of : List(MachineSetting) -> List(Str)
 problems_of = |settings|
 	Machine.plugin(project, [Machine("web", settings)]).problems
+
+# Machine web as it installs: with a Disk, in the project with disko.
+installed_web = web.append(Disk(SingleDisk("/dev/sda")))
+
+# The plan of `kai machine install web --to TO` ("" for no --to) for machine
+# web's `settings` in the project with disko.
+installed : List(MachineSetting), Str -> Try(Plan, Plan.Failure)
+installed = |settings, to| {
+	system = "x86_64-linux"
+	locked = { settings: disko_project, nix_lock: disko_lock, system }
+	planned_in(locked, settings, "install", to)
+}
+
+# An install expects nix and ssh, builds as `build` does, confirms naming
+# the target and the disk it erases, then runs nixos-anywhere from the
+# project's locked nixpkgs on the generated flake, read impurely as a build
+# reads it.
+expect {
+	target = "root@203.0.113.7"
+	flake = "path:/generated/nix"
+	anywhere = ["--flake", "${flake}#web", "--target-host", target]
+	toplevel = "nixosConfigurations.web.config.system.build.toplevel"
+	match installed(installed_web, target) {
+		Ok({ steps, next: Done }) =>
+			match steps {
+				[ExpectPrograms(tools), CheckSource(_), .. as rest] =>
+					tools.programs == ["nix", "ssh"]
+						and match rest.drop_first(1) {
+							[Run(built), Confirm(prompt), Run(install)] =>
+								built.argv.last() == Ok("${flake}#${toplevel}")
+									and prompt
+										== "Install machine web on ${target}, ERASING its disk "
+											.concat("/dev/sda and everything on it?")
+									and match install.argv {
+										["sh", "-c", script, "sh", .. as given] =>
+											given == [flake].concat(anywhere)
+												and script.contains("\$NIX_CONFIG\npure-eval = false")
+												and script.contains("default#nixos-anywhere")
+												and !script.contains(target)
+										_ => Bool.False
+									}
+							_ => Bool.False
+						}
+				_ => Bool.False
+			}
+		_ => Bool.False
+	}
+}
+
+# An install goes only where --to says, never to Host, and refuses a
+# machine without a Disk to partition or without SSH logins to reach it by
+# afterwards.
+expect {
+	refused = |settings, to|
+		match installed(settings, to) {
+			Err({ message, .. }) => message
+			Ok(_) => ""
+		}
+	target = "root@203.0.113.7"
+	no_ssh = installed_web.drop_if(|s| Machine.setting_name(s) == "Ssh")
+	no_disk = web
+	refused(installed_web.append(Host("admin@web.example.com")), "")
+		== "kai machine install web needs --to TARGET, such as root@203.0.113.7: "
+			.concat("it erases the target's disk, so it never defaults to Host")
+		and refused(no_disk, target)
+			== "kai machine install needs Disk(...) on machine web, the disk it "
+				.concat("partitions and installs on")
+		and refused(no_ssh, target)
+			== "kai machine install needs Ssh and a User with SshKeys on machine "
+				.concat("web, or the server cannot be reached once installed")
+		and refused(installed_web, "-oProxyCommand=x")
+			== "--to -oProxyCommand=x is no SSH target; ${MachineModel.target_form}"
+}
+
+# A Disk renders disko's module and nixos-anywhere's layout on the device:
+# a BIOS boot partition, an EFI system partition at /boot and an ext4 root,
+# with GRUB installed for BIOS and UEFI. Without a Disk, neither renders.
+expect {
+	layout = [
+		"imports = [ inputs.\"disko\".nixosModules.disko ];",
+		"disko.devices.disk.main = {",
+		"type = \"disk\";",
+		"device = \"/dev/sda\";",
+		"type = \"gpt\";",
+		"boot = { size = \"1M\"; type = \"EF02\"; };",
+		"size = \"512M\";",
+		"type = \"EF00\";",
+		"format = \"vfat\";",
+		"mountpoint = \"/boot\";",
+		"size = \"100%\";",
+		"format = \"ext4\";",
+		"mountpoint = \"/\";",
+		"boot.loader.grub = {",
+		"efiSupport = true;",
+		"efiInstallAsRemovable = true;",
+	]
+	renders(installed_web, layout)
+		and !renders(web, ["disko.devices.disk.main = {"])
+		and !renders(web, ["efiSupport = true;"])
+}
+
+# A Disk is a /dev path of plain characters, given once, and needs disko
+# declared in std's settings; each is refused as Kaifile.roc compiles.
+expect {
+	in_disko = |settings|
+		Machine.plugin(disko_project, [Machine("web", settings)]).problems
+	disk = |device| Disk(SingleDisk(device))
+	declare = "add Input(\"disko\", \"github:nix-community/disko\")"
+	bad = |device|
+		"machine web: Disk device ${device} is no /dev/... path, "
+			.concat("such as \"/dev/sda\"")
+	valid = ["/dev/sda", "/dev/nvme0n1", "/dev/disk/by-path/pci-0000:00:04.0"]
+	invalid = ["sda", "/dev/", "/dev/../etc/passwd", "/dev/sd a", "/dev/x;y"]
+	in_disko(installed_web) == []
+		and valid.all(Machine.valid_device)
+		and !invalid.any(Machine.valid_device)
+		and in_disko(web.append(disk("/dev/sd\"a"))) == [bad("/dev/sd\"a")]
+		and in_disko(web.concat([disk("/dev/sda"), disk("/dev/sdb")]))
+			== ["machine web: Disk is given more than once"]
+		and problems_of(installed_web)
+			== ["machine web: Disk needs disko; ${declare} to std's settings"]
+}
 
 # A build checks the machine's modules, writes std's flake with the machine
 # in nixosConfigurations, and builds its toplevel, printing the store path.

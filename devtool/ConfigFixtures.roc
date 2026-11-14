@@ -154,14 +154,18 @@ ConfigFixtures := [].{
 		}
 
 	# The machine plugin's machines beside a std project with an environment.
-	machine_kaifile = |machines|
+	machine_kaifile = |machines| ConfigFixtures.machine_kaifile_with("", machines)
+
+	# The machine plugin's machines beside a std project with an environment
+	# and the settings `extra`, each followed by a comma.
+	machine_kaifile_with = |extra, machines|
 		\\import pf.Kaifile
 		\\import std.Config
 		\\import std.Std
 		\\import machine.Machine
 		\\
 		\\config : List(Config.Setting)
-		\\config = [Name("machines"), Environment("ops", [Tools(["htop"])])]
+		\\config = [Name("machines"), ${extra}Environment("ops", [Tools(["htop"])])]
 		\\
 		\\kaifile = Kaifile.new([Std.plugin(config),
 		\\  Machine.plugin(config, [${machines}])])
@@ -213,7 +217,36 @@ ConfigFixtures := [].{
 			expected: RejectedName("\"linux\" is not a system"),
 			body: \\Machine("web", [System("linux"), StateVersion("25.05")])
 		},
-	].map(|f| { ..f, body: ConfigFixtures.machine_kaifile(f.body) })
+	]
+		.map(|f| { ..f, body: ConfigFixtures.machine_kaifile(f.body) })
+		.concat(ConfigFixtures.disk_fixtures)
+
+	# A machine with a Disk, accepted beside the disko input it needs and
+	# refused without it.
+	disk_fixtures : List(Fixture)
+	disk_fixtures = {
+		disko = "Input(\"disko\", \"github:nix-community/disko\"), "
+		machine =
+			\\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+			\\  User("admin", [SshKeys(["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5 a@b"])]),
+			\\  Ssh, Disk(SingleDisk("/dev/disk/by-path/pci-0000:00:04.0"))])
+		[
+			{
+				name: "MachineDisk",
+				expected: Valid,
+				body: ConfigFixtures.machine_kaifile_with(disko, machine),
+			},
+			{
+				name: "MachineDiskWithoutDisko",
+				expected: Rejected(
+					"machine web: Disk needs disko; add "
+						.concat("Input(\"disko\", \"github:nix-community/disko\") ")
+						.concat("to std's settings"),
+				),
+				body: ConfigFixtures.machine_kaifile(machine),
+			},
+		]
+	}
 
 	registry_fixtures : List(Fixture)
 	registry_fixtures = [
