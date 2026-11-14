@@ -188,7 +188,17 @@ Guix := [].{
 				locked = GuixBackend.section(pinned, hashed)
 				contents = LockFile.splice(ctx.lock, "guix", locked)?
 				publish = PublishLock({ previous: ctx.lock, contents })
-				Ok(Plan.{ steps: [publish], next: Done })
+				before = match ctx.lock {
+					Present(old) =>
+						match LockFile.section(old, "guix") {
+							Ok(Present(section)) => GuixBackend.lock_entries(section)
+							_ => []
+						}
+					Absent => []
+				}
+				after = GuixBackend.lock_entries(locked)
+				notes = StdModel.lock_changes(before, after).map(|line| Note(line))
+				Ok(Plan.{ steps: [publish].concat(notes), next: Done })
 			}
 		}
 	}
@@ -297,6 +307,38 @@ guix_lock = published(
 	"{\"channels\":[{\"name\":\"guix\",\"commit\":\"${pin}\"}],"
 		.concat("\"sources\":[{\"name\":\"assets\",\"hash\":\"${assets_hash}\"}]}"),
 )
+
+# Update notes each pin it adds, and each one the lock held that it drops,
+# such as a source the project no longer declares.
+expect {
+	path = "/generated/guix/lock-result.json"
+	result = "{\"channels\":[{\"name\":\"guix\",\"commit\":\"${pin}\"}],"
+		.concat("\"sources\":[{\"name\":\"assets\",\"hash\":\"${assets_hash}\"}]}")
+	notes = |lock| {
+		resumed = { ..context, lock, phase: 1 }
+		observed = [{ path, contents: Text(result) }]
+		match planned(guix, "update", { ..resumed, observed }) {
+			Ok(plan) =>
+				plan.steps.keep_oks(
+					|step|
+						match step {
+							Note(line) => Ok(line)
+							_ => Err({})
+						},
+				)
+			Err(_) => []
+		}
+	}
+	old = "{\"name\":\"old\",\"path\":\"old\",\"hash\":\"0abc\"},"
+	held = match guix_lock {
+		Present(text) =>
+			Present(text.replace_first("\"sources\":[", "\"sources\":[${old}"))
+		Absent => Absent
+	}
+	notes(Absent) == ["guix added at 01234567", "assets added at 01234567"]
+		and notes(guix_lock) == ["no input changed"]
+		and notes(held) == ["old removed"]
+}
 
 time_machine = ["guix", "time-machine", "-C", "/generated/guix/channels.scm"]
 

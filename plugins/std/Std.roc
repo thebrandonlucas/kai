@@ -308,7 +308,19 @@ Std := [].{
 					plan: |ctx| {
 						{ layout, lock, phase, observed, .. } = ctx
 						names = Command.trailing(ctx.args, "inputs")
-						DirectBackend.update(model, names, layout, lock, phase, observed)
+						updated =
+							DirectBackend.update(model, names, layout, lock, phase, observed)?
+						# Publishing says what changed, as the Nix update does.
+						notes = updated.steps.join_map(
+							|step|
+								match step {
+									PublishLock({ contents, .. }) =>
+										LockReport.changes(Direct, lock, contents)
+											.map(|line| Note(line))
+									_ => []
+								},
+						)
+						Ok(Plan.{ steps: updated.steps.concat(notes), next: updated.next })
 					},
 				},
 				Implementation.{
@@ -645,14 +657,7 @@ Std := [].{
 					.map_err(|message| "cannot lock the Nix inputs: ${message}")?
 				# Other backends' sections are kept as they are.
 				contents = LockFile.splice(ctx.lock, "nix", Locks.section(locks))?
-				previous = match ctx.lock {
-					Present(text) => Locks.decode(text)
-					Absent => Err("no lock")
-				}
-				changed = match Locks.changes(previous, locks) {
-					[] => ["no input changed"]
-					lines => lines
-				}
+				changed = LockReport.changes(Nix, ctx.lock, contents)
 				publish = PublishLock({ previous: ctx.lock, contents })
 				steps = [publish].concat(changed.map(|line| Note(line)))
 				Ok(Plan.{ steps, next: Done })

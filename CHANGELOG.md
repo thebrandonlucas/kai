@@ -17,6 +17,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 ### Fixed
 
+- `kai update` reports every lock entry it removes, not only root Nix inputs: an input an overlay pulled in that now `Follows` a package source (`kai: tools/nixpkgs removed`), a file the direct backend no longer pins, and a Guix channel or source the Kaifile no longer declares. The direct backend's and Guix's `kai update` now also say which entries they added or moved, or `no input changed`, as Nix's does, and Nix's also lists the inputs root inputs pull in, under the names `kai lock` gives them. With `--json`, each line is a `note` event.
 - Builds leave every Kai workspace out of the project's copy, not only their own: another `KAI_DIR` beside the project's, or a nested project's `.kai`, no longer breaks the build with the links inside it.
 
 ## [0.0.12] - 2026-11-06
