@@ -2,6 +2,11 @@
 ## compile time. Only its shape (`<arch>-<os>`, lowercase letters, digits
 ## and `_`) is checked here; std rejects systems none of its backends support.
 System :: { name : Str }.{
+
+	## Systems compare by name, so a Kaifile can test one with `==` or keep
+	## those of a list it wants with `contains`.
+	is_eq : _
+
 	from_quote : Str -> Try(System, [BadQuotedBytes(Str)])
 	from_quote = |raw| {
 		parts = raw.split_on("-")
@@ -41,3 +46,19 @@ expect System.rejected("linux").ends_with("or \"aarch64-linux\"")
 # A URL is one interpolated beside a System, and names the conversion.
 expect System.rejected("https://example.com/tool-")
 	.contains("`system.to_str()`")
+
+# Systems compare by name, so list functions such as `contains` work on them.
+expect {
+	systems : List(System)
+	systems = ["x86_64-linux", "aarch64-linux"]
+	systems.contains("aarch64-linux") and !systems.contains("aarch64-darwin")
+}
+
+# A System equals one of the same name, and still names it.
+expect {
+	linux : System
+	linux = "x86_64-linux"
+	linux == "x86_64-linux"
+		and linux != "aarch64-linux"
+		and linux.to_str() == "x86_64-linux"
+}

@@ -396,7 +396,8 @@ or `chmod` when either is missing from `PATH`. For example:
 
 ```roc
 # Zig names each system's archive after it, as in zig-x86_64-linux-0.16.0.
-# A System goes into a string as `system.to_str()`.
+# A System goes into a string as `system.to_str()`, and compares by name, so
+# `==` and list functions such as `contains` work on it.
 zig = |system| {
 	name = "zig-${system.to_str()}-0.16.0"
 	{
