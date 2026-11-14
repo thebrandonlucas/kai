@@ -3751,6 +3751,7 @@ expect {
 				systems: ["x86_64-linux"],
 				tools: [wayland],
 				env: [{ name: "GPU", value: "on" }],
+				package_env: [],
 			},
 		],
 	}
@@ -3766,6 +3767,28 @@ expect {
 				and count(text, "\"wayland\" or") == 1
 				and count(text, "env = { \"GPU\" = \"on\"; \"KAI_SYSTEM\" = system; };")
 					== 1
+		Err(_) => Bool.False
+	}
+}
+
+# OnSystems' PackageEnv sets its variable on its systems only.
+expect {
+	wayland = { source: "default", name: "wayland" }
+	libraries = { name: "LIBS", value: LibraryPath([wayland]) }
+	linux = {
+		systems: ["x86_64-linux"],
+		tools: [],
+		env: [],
+		package_env: [libraries],
+	}
+	environment = { ..base, on_systems: [linux] }
+	systems = ["x86_64-linux", "aarch64-darwin"]
+	count = |text, part| text.split_on(part).len() - 1
+	model = mk({ ..simple, systems, environments: [environment] })
+	match NixBackend.render(model) {
+		Ok(text) =>
+			count(text, "\"LIBS\" = sets.\"default\".lib.makeLibraryPath [ ") == 1
+				and count(text, "\"wayland\" or") == 1
 		Err(_) => Bool.False
 	}
 }

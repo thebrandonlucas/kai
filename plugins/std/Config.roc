@@ -107,7 +107,9 @@ Config :: [].{
 	## task's or build's Env overrides them. It needs Nix.
 	## OnSystems(systems, settings) adds tools and variables on the named
 	## declared systems only: its Tools after the environment's own, its Env
-	## overriding the environment's. Nix evaluates only the host's.
+	## and PackageEnv overriding the environment's variables by name. Nix
+	## evaluates only the host's. A PackageEnv may name a tool the environment
+	## has only through OnSystems Tools only on the systems that add it.
 	## RocPackages lists released Roc package bundle URLs, each `https://` and
 	## ending in `<hash>.tar.zst`, that are placed in Roc's package cache before
 	## a shell or task starts, so Roc resolves them without downloading. The
@@ -133,7 +135,11 @@ Config :: [].{
 	RustToolchainSetting : [Components(List(Str)), Targets(List(Str))]
 
 	## What OnSystems adds; each occurs at most once.
-	SystemSetting : [Tools(List(Tool)), Env(List((Str, Str)))]
+	SystemSetting : [
+		Tools(List(Tool)),
+		Env(List((Str, Str))),
+		PackageEnv(List((Str, PackageValue))),
+	]
 
 	## Tools' `lib` or `bin` directories joined with `:`, or one tool's path.
 	PackageValue : [

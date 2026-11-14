@@ -79,6 +79,7 @@ Spec := [].{
 										("systems", texts(on.systems)),
 										("tools", tools(on.tools)),
 										("env", variables(on.env)),
+										("package_env", Array(on.package_env.map(package_variable))),
 									]),
 							),
 						),
