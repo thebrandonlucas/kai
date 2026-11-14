@@ -3,6 +3,7 @@
 import Config
 import ConfigToModel
 import pf.LockJson
+import direct.DirectBackend
 import model.Model
 import model.Project
 
@@ -84,9 +85,9 @@ Spec := [].{
 					),
 				],
 			)
-		file = |fetch_name, f|
+		file = |owner, f|
 			object([
-				("key", text("${fetch_name}/${f.system}")),
+				("key", text(DirectBackend.lock_key(owner, f.system))),
 				("system", text(f.system)),
 				("url", text(f.url)),
 				("mirrors", texts(f.mirrors)),
@@ -105,7 +106,7 @@ Spec := [].{
 				f.name,
 				[
 					("pinned_by", text(if (locked) "lock" else "hash")),
-					("files", Array(f.files.map(|one| file(f.name, one)))),
+					("files", Array(f.files.map(|one| file(f, one)))),
 					("unavailable_on", texts(f.unavailable)),
 				],
 			)
@@ -330,7 +331,8 @@ project = [
 
 # Tools say where they come from: a package source, a download, or the
 # machine; fetch files carry the key the lock's direct section uses, and an
-# environment's RocPackages are fetches on every system.
+# environment's RocPackages are fetches on every system, which the lock pins
+# once, under the fetch's name.
 expect {
 	tools = ["environments", "0", "tools"]
 	locked_file = ["fetches", "1", "files", "0"]
@@ -365,5 +367,6 @@ expect {
 		(["fetches", "2", "pinned_by"], String("lock")),
 		(["fetches", "2", "files", "1", "system"], String("aarch64-linux")),
 		(["fetches", "2", "files", "1", "archive_path"], String("main.roc")),
+		(["fetches", "2", "files", "1", "key"], String("roc-${roc_hash}")),
 	].all(|(path, expected)| spec_at(project, path) == Ok(expected))
 }

@@ -193,8 +193,8 @@ garbage collection.
 | `Shell(name, [Use(environment)])` | A shell for `kai shell`. |
 | `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. Optionally `Secrets([...])`: the names of the variables it receives when it runs, `OptionalEnvironmentVariables([...])`: those it receives from kai's environment only when set there, `Needs([...])`: builds kai builds first, in `$KAI_ARTIFACTS/<name>`, and `Dir(path)`: the project-relative directory it runs in, in place of the project root. |
 | `Source(name, flakeRef)` | A locked, non-flake source that builds can read. |
-| `Fetch(name, [{ system, url, sha256 }, ...])` | A file pinned by its published sha256 (hex or SRI), one per system; the host's system picks it, and it needs no lock entry. Builds read it in `Inputs([...])`, and the tool `"name#binary"` puts it on `PATH` as the executable `binary`. |
-| `FetchAll(name, { url, sha256 })` | A `Fetch` of one file for every system, such as a data archive or a source tarball. |
+| `Fetch(name, [{ system, url, sha256 }, ...])` | A file pinned by its published sha256 (hex or SRI), one per system; the host's system picks it. Nix needs no lock entry for it; the direct backend's `kai update` records its size in the lock, after checking the file is the one its sha256 publishes. Builds read it in `Inputs([...])`, and the tool `"name#binary"` puts it on `PATH` as the executable `binary`. |
+| `FetchAll(name, { url, sha256 })` | A `Fetch` of one file for every system, such as a data archive or a source tarball. `kai update` on the direct backend downloads it once, and the lock pins it once, under its name. |
 | `FetchUnavailable(name, [...])` | The declared systems a `Fetch` or `FetchAll` has no file for, such as a tool with no macOS build. On them, Kai refuses only the shells, tasks and builds that use it, saying why, rather than the whole Kaifile; `OnSystems` can leave the tool out there instead. |
 | `FetchLocked(name, [{ system, url, mirrors, program }, ...])` | A `Fetch` with no published sha256: `kai update` records each file's SHA-256 and size in the lock's `direct` section, and the [direct backend](#running-without-nix-or-guix) runs it, as does Nix beside package-source tools; a build cannot use it. `program` is `File`, or `Archive(path)` for a tar.gz, tar.xz or zip with the program at `path`; `mirrors` are other URLs for the same bytes. |
 | `CargoVendor(name, text)` | The crates a `Cargo.lock` names, vendored into one directory that builds can read, pinned by the lock's checksums with no lock entry, so `kai update <name>` only says so (`cargo update` moves them). Pass the text with `import "Cargo.lock" as cargo_lock : Str`. A git dependency is fetched at the commit the lock records. |
@@ -417,8 +417,10 @@ kaifile = Std.kaifile([
 ```
 
 `kai update` downloads each file it has no pin for, on every declared system,
-and records its SHA-256 and size in `.kai/lock.json`; `kai update zig` measures
-zig's files again. `kai run test` then
+and records its SHA-256 and size in `.kai/lock.json`, under `<fetch>/<system>`.
+One file several systems share, as a `FetchAll`'s or a `RocPackages` bundle's,
+is downloaded once and pinned once, under the Fetch's name. `kai update zig`
+measures zig's files again. `kai run test` then
 checks that every `Expect` program is on `PATH`, makes the downloads ready, and
 runs the task with them first on `PATH`.
 
