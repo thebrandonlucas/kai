@@ -200,7 +200,8 @@ flake_ref = |attrs| {
 	}
 }
 
-## Each downloaded file by its key, `<fetch>/<system>`.
+## Each downloaded file by its key: `<fetch>/<system>`, or `<fetch>` for one
+## file several systems share.
 direct : Str -> Try(List(Entry), Str)
 direct = |lock_text| {
 	section = match LockFile.section(lock_text, "direct")? {
@@ -288,7 +289,9 @@ guix_section =
 
 direct_section =
 	"{\"files\":[{\"key\":\"tool/x86_64-linux\",\"sha256\":\"${hex}\","
-		.concat("\"size\":42,\"url\":\"https://example.com/tool\"}]}")
+		.concat("\"size\":42,\"url\":\"https://example.com/tool\"},")
+		.concat("{\"key\":\"data\",\"sha256\":\"${hex}\",")
+		.concat("\"size\":7,\"url\":\"https://example.com/data\"}]}")
 
 lock_text =
 	"{\"version\":2,\"direct\":${direct_section},\"guix\":${guix_section},"
@@ -297,7 +300,8 @@ lock_text =
 # Root inputs keep their declaration order and the names `kai spec` gives
 # them; what they pull in follows, named by its path, and follows are not
 # repeated. Nix nodes pin a NAR hash, direct files a file hash, size and
-# system; another plugin's section, such as guix, is left out.
+# system, null for one file several systems share; another plugin's section,
+# such as guix, is left out.
 expect {
 	at = |index, field| ["inputs", index, field]
 	[
@@ -320,8 +324,10 @@ expect {
 		(at("3", "size"), Number("42")),
 		(at("3", "hash").concat(["encoding"]), String("hex")),
 		(at("3", "locked"), Null),
+		(at("4", "name"), String("data")),
+		(at("4", "system"), Null),
 	].all(|(path, expected)| report_at(lock_text, path) == Ok(expected))
-		and report_at(lock_text, ["inputs", "4"]).is_err()
+		and report_at(lock_text, ["inputs", "5"]).is_err()
 }
 
 # A lock with no sections reports no inputs; a missing lock is missing_lock,
