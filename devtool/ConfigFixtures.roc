@@ -1147,6 +1147,25 @@ ConfigFixtures := [].{
 				\\  OnSystems(["aarch64-darwin"], [Env([("GPU", "off")])])])]
 		},
 		{
+			# Systems compare, so list functions pick some of them.
+			name: "CompareSystems",
+			expected: Valid,
+			body: \\import std.System
+				\\
+				\\systems : List(System)
+				\\systems = ["x86_64-linux", "aarch64-linux", "aarch64-darwin"]
+				\\
+				\\darwin : List(System)
+				\\darwin = ["aarch64-darwin"]
+				\\
+				\\config = [Name("compare-systems"), Systems(systems),
+				\\ Environment("dev", [
+				\\  OnSystems(systems.drop_if(|system| darwin.contains(system)),
+				\\   [Env([("KERNEL", "Linux")])]),
+				\\  OnSystems(systems.keep_if(|system| system == "aarch64-darwin"),
+				\\   [Env([("KERNEL", "Darwin")])])])]
+		},
+		{
 			name: "OnSystemsUndeclared",
 			expected: Rejected(
 				"OnSystems in environment dev names undeclared system aarch64-darwin",

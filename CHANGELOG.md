@@ -8,6 +8,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 - Releases attest every asset they publish with GitHub build provenance, so `gh attestation verify kai-X.Y.Z-x86_64-linux.tar.gz --repo thebrandonlucas/kai` shows that a download was built by the release workflow. `SECURITY.md` explains how to check one.
 - `OnSystems` accepts `PackageEnv([...])`, so a variable set to paths in packages can be limited to some systems: `OnSystems(["x86_64-linux", "aarch64-linux"], [Tools([...]), PackageEnv([("LD_LIBRARY_PATH", LibraryPath([...]))])])` gives Linux the library path of libraries macOS has no build of, and macOS still gets the shell. Like its `Env`, its variables override the environment's by name, and an extending environment's own `Env` and `PackageEnv` override them. `kai check` refuses a `LibraryPath`, `BinPath` or `PackagePath` naming a tool the environment has only through `OnSystems` on a system that does not add it.
+- `System` values compare by name, so a Kaifile can test one with `==` and pick some of a list with ordinary list functions: with `systems : List(System)`, `OnSystems(systems.drop_if(|system| system == "aarch64-darwin"), [...])` names every system in it but `aarch64-darwin`, and `systems.contains("x86_64-linux")` says whether the list has it.
 
 ### Changed
 
