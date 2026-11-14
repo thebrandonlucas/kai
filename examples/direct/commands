@@ -4,3 +4,4 @@ run version
 workflow check
 shell default -- actionlint --version
 lock
+requirements
