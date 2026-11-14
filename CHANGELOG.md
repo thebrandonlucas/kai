@@ -4,6 +4,10 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 ## [Unreleased]
 
+### Added
+
+- Releases attest every asset they publish with GitHub build provenance, so `gh attestation verify kai-X.Y.Z-x86_64-linux.tar.gz --repo thebrandonlucas/kai` shows that a download was built by the release workflow. `SECURITY.md` explains how to check one.
+
 ## [0.0.12] - 2026-11-06
 
 ### Added
