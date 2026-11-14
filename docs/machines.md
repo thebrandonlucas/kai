@@ -66,6 +66,7 @@ Every setting but `User` occurs at most once in a machine.
 | `Disk(SingleDisk(device))` | The disk `kai machine install` partitions and the system boots from, the whole of `device`, an absolute `/dev/...` path such as `"/dev/sda"` or `"/dev/disk/by-id/..."`; see [Installing on a server](#installing-on-a-server). It needs `Input("disko", "github:nix-community/disko")` in std's settings. Optional (default: the file systems and boot loader come from `Modules`). |
 | `Operators([...])` | The public keys of whoever may decrypt the machine's host key and secrets: age recipients (`age1...`) or `ssh-ed25519` and `ssh-rsa` public keys, at least one; see [Secrets](#secrets). Optional. |
 | `Secrets([Secret(name, [...])])` | Files the system decrypts into `/run/secrets/NAME` as it activates, with `Owner(user)` (default `root`), `Group(group)` (default `root`) and `Mode("0400")`, an octal mode (default `"0400"`); see [Secrets](#secrets). They need `Operators` and `Input("agenix", "github:ryantm/agenix")` in std's settings. Optional. |
+| `Services([...])` | Typed services the machine runs, each at most once: for now `Caddy([...])`, which serves sites over HTTPS; see [Services](#services). Optional. |
 | `Modules([...])` | NixOS module files, relative to the project and inside it, for everything else: services, hardware, and the disks and boot loader when there is no `Disk`. They receive the flake's `inputs` as a module argument, so a module can import another flake's module, such as `inputs.disko.nixosModules.disko` after `Input("disko", "github:nix-community/disko")` in std's settings. |
 
 `kai check` refuses, as Kaifile.roc compiles, a machine name that is not a
@@ -80,7 +81,8 @@ that is no age recipient, `ssh-ed25519` or `ssh-rsa` key, or empty
 `Operators`; `Secrets` without `Operators` or without the `agenix` input,
 a secret name that is not a letter followed by letters, digits, `-`, `_` or
 `.`, a secret declared twice, an owner or group NixOS would refuse, or a
-mode that is not three or four octal digits; and a module path that is
+mode that is not three or four octal digits; a service given twice, and
+what [Services](#services) lists for each; and a module path that is
 absolute, uses `.` or `..` segments, or is not a `.nix` file.
 
 ## How a machine reaches the flake
@@ -397,9 +399,88 @@ matches one `Secret(name)` each, needs no YAML or JSON document, and keeps
 `kai secret set` to one value at a time; sops-nix's several values per file
 is no advantage when each secret is declared on its own.
 
+## Services
+
+`Services([...])` declares the typed services a machine runs, each at most
+once. There is one so far, [Caddy](https://caddyserver.com), a web server
+that gets and renews its sites' HTTPS certificates itself:
+
+```roc
+Machine("web", [
+	...,
+	Services([
+		Caddy([
+			Email("admin@example.com"),
+			Site("example.com", ReverseProxy("localhost:8080")),
+			Site("files.example.com", Files("/srv/files")),
+		]),
+	]),
+])
+```
+
+On NixOS it renders
+
+```nix
+networking.firewall.allowedTCPPorts = [ 80 443 ];
+networking.firewall.allowedUDPPorts = [ 443 ];
+services.caddy.enable = true;
+services.caddy.email = "admin@example.com";
+services.caddy.virtualHosts."example.com".extraConfig = "reverse_proxy localhost:8080";
+services.caddy.virtualHosts."files.example.com".extraConfig = "root * /srv/files\nfile_server";
+```
+
+| Setting | Meaning |
+|---|---|
+| `Site(domain, ReverseProxy(upstream))` | Serves `domain` over HTTPS, passing requests to `upstream`: `host:port`, such as `"localhost:8080"`, `[ipv6]:port` or `unix//path` for a Unix socket. |
+| `Site(domain, Files(path))` | Serves `domain` over HTTPS from the files in the absolute directory `path`. |
+| `Email(address)` | The address Caddy gives the certificate authority for its account, which warns of certificates about to expire. Optional, at most once. |
+
+A domain is a lowercase DNS name with no scheme, port or path, such as
+`"example.com"`. Wildcards such as `"*.example.com"` are refused: their
+certificate needs a DNS challenge, with the DNS provider's credentials,
+which kai does not set up yet, so give each name its own `Site`. A
+domain's DNS records must point at the machine before Caddy can get a
+certificate for it.
+
+Caddy needs TCP port 80, for HTTP, which it redirects to HTTPS and where
+it answers the certificate authority's challenge, and 443, for HTTPS, and
+UDP port 443 for HTTP/3. kai adds them to the ports `Firewall` opens,
+once each, so a machine with `Firewall([Tcp([80, 443, 8443])])` and Caddy
+opens those three TCP ports and UDP 443.
+
+`kai check` refuses Caddy without a `Site`, a domain served twice, an
+`Email` given twice, and a value that is not plainly what it claims: a
+domain that is no lowercase DNS name, an upstream that is not one of the
+forms above or holds whitespace, a `Files` path that is not absolute or
+holds anything but letters, digits and `/._-+@,`, and an email that is not
+one `local@domain` address. Each value lands in a Caddyfile, so kai checks
+it rather than escaping it, and none can add a directive of its own.
+
+### How services work
+
+Each typed service is a module of the machine plugin's `services` package,
+such as `plugins/machine/services/Caddy.roc`: its settings, their checks
+and the backend-neutral model they fold into. The machine's model holds
+that model, and each backend renders it; on nix, `NixosBackend.roc` renders
+Caddy as `services.caddy`. A second service is another module there, a tag
+in `Services`, and a renderer in each backend.
+
+What a service needs of the machine it gets through the machine's model:
+Caddy adds its ports to the firewall's. A service that needs a user would
+add one the same way, and one that needs a secret would name a declared
+`Secret`, which it reads at `/run/secrets/NAME`. Services refer to each
+other by what they listen on: a `Site` proxies to `localhost:8080` where
+another service, or a `Modules` file, serves that port.
+
+Everything without a typed service stays in `Modules`, and an untyped
+`Options([...])`, which `kai check` validates against the options of the
+locked nixpkgs, is planned next; typed services stay the small, canonical
+layer for the common cases.
+
 ## Not yet
 
-Services from the project's own builds, more disk layouts and images come
-next; see
+`Options([...])`, more typed services such as Postgres, backups and the
+project's own builds, `kai machine image` for providers that boot from
+images, test machines with microvm, and `kai machine gc` come next; see
 [#463](https://github.com/thebrandonlucas/kai/issues/463). Guix System is
 not planned yet, though only `Modules` in the settings is Nix-specific.

@@ -2,6 +2,7 @@
 # machine command reads them.
 import pf.Command
 import pf.Plan
+import services.Caddy
 
 MachineModel :: [].{
 
@@ -9,8 +10,9 @@ MachineModel :: [].{
 	## implementation checks it, and another backend would refuse it. `host`
 	## is the SSH target it lives at, "" for the host kai runs on. `disk` is
 	## the layout install partitions and the system mounts. `operators` are
-	## the public keys its host key and secrets are encrypted to, and
-	## `secrets` what it decrypts as it activates.
+	## the public keys its host key and secrets are encrypted to,
+	## `secrets` what it decrypts as it activates, and `services` what it
+	## runs.
 	Machine : {
 		name : Str,
 		system : Str,
@@ -26,8 +28,35 @@ MachineModel :: [].{
 		disk : Disk,
 		operators : List(Str),
 		secrets : List(Secret),
+		services : List(Service),
 		modules : List(Str),
 	}
+
+	## A typed service, as its module in the services package folds it.
+	Service : [Caddy(Caddy.Server)]
+
+	## The TCP ports machine `m`'s firewall opens: Firewall's, then each
+	## service's that Firewall does not already open.
+	open_tcp_ports : Machine -> List(U16)
+	open_tcp_ports = |m| {
+		served = m.services.join_map(|Caddy(_)| Caddy.tcp_ports)
+		MachineModel.adding(m.tcp_ports, served)
+	}
+
+	## The UDP ports machine `m`'s firewall opens, as `open_tcp_ports`.
+	open_udp_ports : Machine -> List(U16)
+	open_udp_ports = |m| {
+		served = m.services.join_map(|Caddy(_)| Caddy.udp_ports)
+		MachineModel.adding(m.udp_ports, served)
+	}
+
+	## `ports`, then each of `added` they do not already hold.
+	adding : List(U16), List(U16) -> List(U16)
+	adding = |ports, added|
+		added.fold(
+			ports,
+			|all, port| if (all.contains(port)) all else all.append(port),
+		)
 
 	## A secret's name, and its file's owner, group and octal mode.
 	Secret : { name : Str, owner : Str, group : Str, mode : Str }

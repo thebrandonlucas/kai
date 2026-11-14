@@ -8,6 +8,7 @@ import std.Config
 import std.EnvName
 import std.StdModel exposing [Model]
 import std.System
+import services.Caddy
 import MachineModel
 import NixosBackend
 
@@ -28,8 +29,9 @@ Machine := [].{
 	## partitions, which the system mounts and boots from. Operators are the
 	## age recipients or SSH public keys of whoever may decrypt the machine's
 	## host key and Secrets, which `kai secret set` writes and the system
-	## decrypts into /run/secrets. Modules are NixOS module files relative to
-	## the project, which receive the flake's `inputs`.
+	## decrypts into /run/secrets. Services are the typed services it runs,
+	## each at most once. Modules are NixOS module files relative to the
+	## project, which receive the flake's `inputs`.
 	MachineSetting : [
 		System(System),
 		HostName(Str),
@@ -43,8 +45,14 @@ Machine := [].{
 		Disk(DiskSetting),
 		Operators(List(Str)),
 		Secrets(List(SecretSetting)),
+		Services(List(ServiceSetting)),
 		Modules(List(Str)),
 	]
+
+	## A typed service, whose settings, checks and model are its module's in
+	## the services package. Caddy serves sites over HTTPS and opens TCP
+	## ports 80 and 443 and UDP port 443.
+	ServiceSetting : [Caddy(List(Caddy.Setting))]
 
 	## A secret, by name: a letter, then letters, digits, `-`, `_` or `.`.
 	## It is the file /run/secrets/NAME, owned by Owner (default root) and
@@ -142,6 +150,8 @@ Machine := [].{
 			"  Disk(SingleDisk(\"/dev/sda\")),",
 			"  Operators([\"age1...\"]),",
 			"  Secrets([Secret(\"app-key\", [Owner(\"app\")])]),",
+			"  Services([Caddy([Site(\"example.com\",",
+			"    ReverseProxy(\"localhost:8080\"))])]),",
 			"  Modules([\"nixos/web.nix\"])]),",
 		],
 	}
@@ -245,8 +255,19 @@ Machine := [].{
 					Machine.repeated(options.map(Machine.option_name))
 						.map(|o| "secret ${secret}: ${o} is given more than once"),
 			)
-			found = Machine.repeated(given)
+			# A service's own settings, folded, hide the ones given twice.
+			services = parts.join_map(
+				|part|
+					match part {
+						Services(list) => list
+						_ => []
+					},
+			)
+			service_names = services.map(|Caddy(_)| "Caddy")
+			service_problems = services.join_map(|Caddy(caddy)| Caddy.problems(caddy))
+			found = Machine.repeated(given.concat(service_names))
 				.map(|s| "${s} is given more than once")
+				.concat(service_problems)
 				.concat(empty)
 				.concat(if (empty_operators) [no_operator] else [])
 				.concat(repeated_options)
@@ -289,6 +310,7 @@ Machine := [].{
 			Disk(_) => "Disk"
 			Operators(_) => "Operators"
 			Secrets(_) => "Secrets"
+			Services(_) => "Services"
 			Modules(_) => "Modules"
 		}
 
@@ -320,6 +342,7 @@ Machine := [].{
 				disk: NoDisk,
 				operators: [],
 				secrets: [],
+				services: [],
 				modules: [],
 			},
 			|m, part|
@@ -355,6 +378,10 @@ Machine := [].{
 					Disk(SingleDisk(device)) => { ..m, disk: SingleDisk(device) }
 					Operators(operators) => { ..m, operators }
 					Secrets(secrets) => { ..m, secrets: secrets.map(Machine.secret) }
+					Services(services) => {
+						..m,
+						services: services.map(|Caddy(caddy)| Caddy(Caddy.server(caddy))),
+					}
 					Modules(modules) => { ..m, modules }
 				},
 		)
@@ -1642,4 +1669,74 @@ expect {
 		and in_agenix(accepted) == []
 		and without_agenix.problems
 			== ["machine web: Secrets needs agenix; ${declare}"]
+}
+
+# Caddy serving a proxied site and a directory, with an email.
+caddy_web = web.append(
+	Services([
+		Caddy([
+			Email("admin@example.com"),
+			Site("example.com", ReverseProxy("localhost:8080")),
+			Site("files.example.com", Files("/srv/files")),
+		]),
+	]),
+)
+
+# Caddy renders NixOS's services.caddy, with its email and one virtual host
+# per site, and opens TCP 80 and 443 and UDP 443 beside Firewall's ports,
+# each once.
+expect {
+	opened = |ports| "networking.firewall.allowedTCPPorts = [ ${ports} ];"
+	virtual_host = |domain, caddyfile|
+		"services.caddy.virtualHosts.\"${domain}\".extraConfig = \"${caddyfile}\";"
+	site = Site("example.com", ReverseProxy("localhost:8080"))
+	without_firewall = web
+		.drop_if(|s| Machine.setting_name(s) == "Firewall")
+		.append(Services([Caddy([site])]))
+	other_ports = without_firewall.append(Firewall([Tcp([443, 8443])]))
+	udp = |ports| "networking.firewall.allowedUDPPorts = [ ${ports} ];"
+	quic = without_firewall.append(Firewall([Udp([443, 4433])]))
+	renders(
+		caddy_web,
+		[
+			opened("80 443"),
+			udp("443"),
+			"services.caddy.enable = true;",
+			"services.caddy.email = \"admin@example.com\";",
+			virtual_host("example.com", "reverse_proxy localhost:8080"),
+			virtual_host("files.example.com", "root * /srv/files\\nfile_server"),
+		],
+	)
+		and renders(without_firewall, [opened("80 443")])
+		and renders(other_ports, [opened("443 8443 80")])
+		and renders(quic, [udp("443 4433")])
+		and !renders(web, ["networking.firewall.allowedUDPPorts = [ 443 ];"])
+		and !renders(without_firewall, ["services.caddy.email = \"\";"])
+		and !renders(web, ["services.caddy.enable = true;"])
+}
+
+# Services are checked as Kaifile.roc compiles: Caddy's own checks, and
+# Services or Caddy given twice.
+expect {
+	site = Site("example.com", ReverseProxy("localhost:8080"))
+	checks = [
+		(caddy_web, []),
+		(web.append(Services([Caddy([])])), ["Caddy needs at least one Site"]),
+		(
+			web.append(Services([Caddy([site]), Caddy([site])])),
+			["Caddy is given more than once"],
+		),
+		(
+			web.concat([Services([Caddy([site])]), Services([])]),
+			["Services is given more than once"],
+		),
+		(
+			web.append(Services([Caddy([site, site])])),
+			["Caddy site example.com is declared more than once"],
+		),
+	]
+	checks.all(
+		|(settings, expected)|
+			problems_of(settings) == expected.map(|p| "machine web: ${p}"),
+	)
 }
