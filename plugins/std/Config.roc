@@ -98,7 +98,7 @@ Config :: [].{
 	## that runs the tool's `bin/<binary>`, without the tool's other
 	## binaries; it needs Nix.
 	## RustToolchain takes a rust-toolchain.toml's text and adds the toolchain
-	## its [toolchain] table pins, overriding the parent's; it needs Nix and an
+	## its `[toolchain]` table pins, overriding the parent's; it needs Nix and an
 	## Overlay providing rust-bin, such as rust-overlay. RustToolchainWith
 	## takes the same text and adds, to what the file pins, the components
 	## and targets its settings name.
