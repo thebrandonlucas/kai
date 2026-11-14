@@ -1,6 +1,7 @@
 # The machine plugin: `Machine(name, [...])` settings beside std's, each a
-# system from a small typed core, and the `kai machine` command, which
-# NixosBackend implements on the nix backend from MachineModel.
+# system from a small typed core, and the `kai machine` and `kai secret`
+# commands, which NixosBackend implements on the nix backend from
+# MachineModel.
 import pf.Command
 import pf.Plugin
 import std.Config
@@ -24,9 +25,11 @@ Machine := [].{
 	## OpenSSH with key logins only, root's only when root has keys. Firewall
 	## opens ports beside OpenSSH's. Use puts a std environment's tools on
 	## the system's PATH. Disk is the disk layout `kai machine install`
-	## partitions, which the system mounts and boots from. Modules are NixOS
-	## module files relative to the project, which receive the flake's
-	## `inputs`.
+	## partitions, which the system mounts and boots from. Operators are the
+	## age recipients or SSH public keys of whoever may decrypt the machine's
+	## host key and Secrets, which `kai secret set` writes and the system
+	## decrypts into /run/secrets. Modules are NixOS module files relative to
+	## the project, which receive the flake's `inputs`.
 	MachineSetting : [
 		System(System),
 		HostName(Str),
@@ -38,8 +41,17 @@ Machine := [].{
 		TimeZone(Str),
 		StateVersion(Str),
 		Disk(DiskSetting),
+		Operators(List(Str)),
+		Secrets(List(SecretSetting)),
 		Modules(List(Str)),
 	]
+
+	## A secret, by name: a letter, then letters, digits, `-`, `_` or `.`.
+	## It is the file /run/secrets/NAME, owned by Owner (default root) and
+	## Group (default root), with octal Mode (default "0400").
+	SecretSetting : [Secret(Str, List(SecretOption))]
+
+	SecretOption : [Owner(Str), Group(Str), Mode(Str)]
 
 	## The one disk layout: the whole disk at an absolute `/dev/...` path,
 	## such as "/dev/sda", holding a BIOS boot partition, an EFI system
@@ -65,9 +77,12 @@ Machine := [].{
 					name: "machine",
 					version: "",
 					describe: "",
-					commands: [Machine.command(machines)],
+					commands: [Machine.command(machines), Machine.secret_command(machines)],
 					backends: [],
-					implementations: [NixosBackend.implementation(project, machines)],
+					implementations: [
+						NixosBackend.implementation(project, machines),
+						NixosBackend.secret_implementation(project, machines),
+					],
 				})
 			Err(problems) => Plugin.invalid("machine", problems)
 		}
@@ -97,6 +112,7 @@ Machine := [].{
 					help: "Act on this SSH target, user@host, not the machine's Host; "
 						.concat("install needs it, since it erases the target's disk."),
 				}),
+				Machine.identity,
 				Trailing({
 					name: "machine",
 					help: "The machine.",
@@ -124,7 +140,63 @@ Machine := [].{
 			"  Host(\"admin@web.example.com\"),",
 			"  User(\"admin\", [SshKeys([\"ssh-ed25519 AAAA...\"])]), Ssh,",
 			"  Disk(SingleDisk(\"/dev/sda\")),",
+			"  Operators([\"age1...\"]),",
+			"  Secrets([Secret(\"app-key\", [Owner(\"app\")])]),",
 			"  Modules([\"nixos/web.nix\"])]),",
+		],
+	}
+
+	## The age or SSH identity that decrypts a machine's host key and
+	## secrets.
+	identity : Command.Arg
+	identity = Path({
+		name: "identity",
+		short: "i",
+		help: "Decrypt with this age or SSH private key (default ~/.ssh/id_ed25519).",
+	})
+
+	## `kai secret`, which encrypts a machine's secrets to its Operators and
+	## host key.
+	secret_command : Machines -> Command
+	secret_command = |machines|
+		Command.{
+			name: "secret",
+			summary: Machine.secret_page.description,
+			help: Machine.secret_page,
+			args: [
+				Name({
+					name: "action",
+					help: "What to do with the machine's secrets.",
+					choices: [
+						("set", "Encrypt the value on stdin as a machine's secret."),
+						("rekey", "Encrypt a machine's secrets again to its current keys."),
+					].map(|(value, summary)| { value, summary, details: [] }),
+					default: Required,
+				}),
+				Machine.identity,
+				Trailing({
+					name: "names",
+					help: "The machine, then for set the secret: ".concat(
+						Str.join_with(machines.map(|m| m.name), ", "),
+					),
+					choices: [],
+				}),
+			],
+			lock: ReadsLock,
+		}
+
+	secret_page : Command.Page
+	secret_page = {
+		description: "Encrypt a machine's secrets to its Operators and host key.",
+		examples: [
+			"printf %s \"$API_KEY\" | kai secret set web app-key",
+			"kai secret rekey web",
+			"kai secret rekey web --identity ~/.ssh/id_ed25519",
+		],
+		config: [
+			"Input(\"agenix\", \"github:ryantm/agenix\"),   # in std's settings",
+			"Machine(\"web\", [..., Operators([\"age1...\", \"ssh-ed25519 AAAA...\"]),",
+			"  Secrets([Secret(\"app-key\", [Owner(\"app\"), Mode(\"0400\")])])]),",
 		],
 	}
 
@@ -142,7 +214,7 @@ Machine := [].{
 			given = parts
 				.map(Machine.setting_name)
 				.drop_if(|s| s == "User")
-			# An empty Host folds to none, so it is found here.
+			# An empty Host or Operators folds to none, so it is found here.
 			empty_host = parts.any(
 				|part|
 					match part {
@@ -150,10 +222,34 @@ Machine := [].{
 						_ => Bool.False
 					},
 			)
-			empty = "Host is empty; ${MachineModel.target_form}"
+			empty_operators = parts.any(
+				|part|
+					match part {
+						Operators(keys) => keys.is_empty()
+						_ => Bool.False
+					},
+			)
+			empty_host_problem = "Host is empty; ${MachineModel.target_form}"
+			empty = if (empty_host) [empty_host_problem] else []
+			no_operator = "Operators needs at least one key"
+			# Each Secret's options, folded, hide the ones given twice.
+			secret_options = parts.join_map(
+				|part|
+					match part {
+						Secrets(secrets) => secrets
+						_ => []
+					},
+			)
+			repeated_options = secret_options.join_map(
+				|Secret(secret, options)|
+					Machine.repeated(options.map(Machine.option_name))
+						.map(|o| "secret ${secret}: ${o} is given more than once"),
+			)
 			found = Machine.repeated(given)
 				.map(|s| "${s} is given more than once")
-				.concat(if (empty_host) [empty] else [])
+				.concat(empty)
+				.concat(if (empty_operators) [no_operator] else [])
+				.concat(repeated_options)
 				.concat(Machine.problems(model, m))
 				.concat(NixosBackend.problems(project, m))
 			$problems = $problems.concat(found.map(|p| "machine ${name}: ${p}"))
@@ -191,7 +287,17 @@ Machine := [].{
 			TimeZone(_) => "TimeZone"
 			StateVersion(_) => "StateVersion"
 			Disk(_) => "Disk"
+			Operators(_) => "Operators"
+			Secrets(_) => "Secrets"
 			Modules(_) => "Modules"
+		}
+
+	option_name : SecretOption -> Str
+	option_name = |option|
+		match option {
+			Owner(_) => "Owner"
+			Group(_) => "Group"
+			Mode(_) => "Mode"
 		}
 
 	## A machine's settings folded into its fields; a later one wins, and
@@ -212,6 +318,8 @@ Machine := [].{
 				time_zone: "",
 				state_version: "",
 				disk: NoDisk,
+				operators: [],
+				secrets: [],
 				modules: [],
 			},
 			|m, part|
@@ -245,7 +353,21 @@ Machine := [].{
 					TimeZone(time_zone) => { ..m, time_zone }
 					StateVersion(state_version) => { ..m, state_version }
 					Disk(SingleDisk(device)) => { ..m, disk: SingleDisk(device) }
+					Operators(operators) => { ..m, operators }
+					Secrets(secrets) => { ..m, secrets: secrets.map(Machine.secret) }
 					Modules(modules) => { ..m, modules }
+				},
+		)
+
+	secret : SecretSetting -> MachineModel.Secret
+	secret = |Secret(name, options)|
+		options.fold(
+			{ name, owner: "root", group: "root", mode: "0400" },
+			|s, option|
+				match option {
+					Owner(owner) => { ..s, owner }
+					Group(group) => { ..s, group }
+					Mode(mode) => { ..s, mode }
 				},
 		)
 
@@ -333,6 +455,37 @@ Machine := [].{
 				)
 			}
 			_ => {}
+		}
+		for operator in m.operators.drop_if(Machine.valid_operator) {
+			$found = $found.append(
+				"operator \"${operator}\" is no age recipient or ssh-ed25519 or "
+					.concat("ssh-rsa public key"),
+			)
+		}
+		if !m.secrets.is_empty() and m.operators.is_empty() {
+			$found = $found.append("Secrets needs Operators to encrypt them to")
+		}
+		for name in Machine.repeated(m.secrets.map(|s| s.name)) {
+			$found = $found.append("secret ${name} is declared more than once")
+		}
+		for s in m.secrets {
+			if !Machine.valid_secret_name(s.name) {
+				$found = $found.append(
+					"secret ${s.name} is no secret name; use a letter, then "
+						.concat("letters, digits, -, _ or ."),
+				)
+			}
+			if !MachineModel.valid_account(s.owner) {
+				$found = $found.append("secret ${s.name}: ${s.owner} is no user name")
+			}
+			if !MachineModel.valid_account(s.group) {
+				$found = $found.append("secret ${s.name}: ${s.group} is no group name")
+			}
+			if !Machine.valid_mode(s.mode) {
+				$found = $found.append(
+					"secret ${s.name}: Mode ${s.mode} is no octal mode, such as \"0400\"",
+				)
+			}
 		}
 		if m.tcp_ports.concat(m.udp_ports).contains(0) {
 			$found = $found.append("Firewall ports run from 1 to 65535")
@@ -443,6 +596,42 @@ Machine := [].{
 					and data.to_utf8().all(base64)
 			_ => Bool.False
 		}
+	}
+
+	## A key age encrypts to: an X25519 recipient, `age1` and 58 bech32
+	## characters, or an ssh-ed25519 or ssh-rsa public key.
+	valid_operator : Str -> Bool
+	valid_operator = |key|
+		match key.split_first(" ") {
+			Ok({ before, .. }) =>
+				["ssh-ed25519", "ssh-rsa"].contains(before) and Machine.valid_ssh_key(key)
+			Err(_) => {
+				bech32 = "qpzry9x8gf2tvdw0s3jn54khce6mua7l".to_utf8()
+				data = key.drop_prefix("age1")
+				key.starts_with("age1")
+					and data.count_utf8_bytes() == 58
+					and data.to_utf8().all(|b| bech32.contains(b))
+			}
+		}
+
+	## A secret's name, its file's under secrets/ and /run/secrets: a letter,
+	## then letters, digits, `-`, `_` or `.`.
+	valid_secret_name : Str -> Bool
+	valid_secret_name = |name| {
+		plain = |b|
+			Machine.letter(b) or Machine.digit(b) or "-_.".to_utf8().contains(b)
+		match name.to_utf8() {
+			[first, .. as rest] => Machine.letter(first) and rest.all(plain)
+			[] => Bool.False
+		}
+	}
+
+	## An octal file mode such as "0400" or "640": three or four of 0 to 7.
+	valid_mode : Str -> Bool
+	valid_mode = |mode| {
+		bytes = mode.to_utf8()
+		octal = bytes.all(|b| b >= '0' and b <= '7')
+		(bytes.len() == 3 or bytes.len() == 4) and octal
 	}
 }
 
@@ -1113,4 +1302,344 @@ expect {
 			problems_of(settings) == expected.map(|p| "machine web: ${p}"),
 	)
 		and twice.problems == ["machine web is declared more than once"]
+}
+
+# The flake.lock nix flake update writes for the project's nixpkgs, disko
+# and agenix, whose own nixpkgs are locked apart.
+agenix_lock =
+	\\{
+	\\  "nodes": {
+	\\    "default": {
+	\\      "locked": {
+	\\        "lastModified": 1790185690,
+	\\        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
+	\\        "owner": "NixOS",
+	\\        "repo": "nixpkgs",
+	\\        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
+	\\        "type": "github"
+	\\      },
+	\\      "original": {
+	\\        "owner": "NixOS", "ref": "nixos-unstable",
+	\\        "repo": "nixpkgs", "type": "github"
+	\\      }
+	\\    },
+	\\    "disko": {
+	\\      "inputs": { "nixpkgs": "nixpkgs" },
+	\\      "locked": {
+	\\        "lastModified": 1790100000,
+	\\        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+	\\        "owner": "nix-community",
+	\\        "repo": "disko",
+	\\        "rev": "0123456789abcdef0123456789abcdef01234567",
+	\\        "type": "github"
+	\\      },
+	\\      "original": {
+	\\        "owner": "nix-community", "repo": "disko", "type": "github"
+	\\      }
+	\\    },
+	\\    "agenix": {
+	\\      "inputs": { "nixpkgs": "nixpkgs" },
+	\\      "locked": {
+	\\        "lastModified": 1790100000,
+	\\        "narHash": "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=",
+	\\        "owner": "ryantm",
+	\\        "repo": "agenix",
+	\\        "rev": "89abcdef0123456789abcdef0123456789abcdef",
+	\\        "type": "github"
+	\\      },
+	\\      "original": { "owner": "ryantm", "repo": "agenix", "type": "github" }
+	\\    },
+	\\    "nixpkgs": {
+	\\      "locked": {
+	\\        "lastModified": 1790185690,
+	\\        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
+	\\        "owner": "NixOS",
+	\\        "repo": "nixpkgs",
+	\\        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
+	\\        "type": "github"
+	\\      },
+	\\      "original": {
+	\\        "owner": "NixOS", "ref": "nixpkgs-unstable",
+	\\        "repo": "nixpkgs", "type": "github"
+	\\      }
+	\\    },
+	\\    "root": {
+	\\      "inputs": {
+	\\        "default": "default", "disko": "disko", "agenix": "agenix"
+	\\      }
+	\\    }
+	\\  },
+	\\  "root": "root",
+	\\  "version": 7
+	\\}
+
+# The project with disko and agenix declared, as a machine with Secrets
+# needs, locked on an x86_64-linux host.
+agenix_project = disko_project.append(Input("agenix", "github:ryantm/agenix"))
+
+agenix_locked = {
+	settings: agenix_project,
+	nix_lock: agenix_lock,
+	system: "x86_64-linux",
+}
+
+# An age recipient: age1, then 58 bech32 characters.
+operator = "age1qpzry9x8gf2tvdw0s3jn54khce6mua7lqpzry9x8gf2tvdw0s3jn54khce"
+
+# Machine web as it installs, with Operators and a secret its admin owns.
+secret_web = installed_web.concat(
+	[Operators([operator, key]), Secrets([Secret("app-key", [Owner("admin")])])],
+)
+
+# The plan of `kai secret ACTION WORDS...` for machine web's `settings`,
+# with `identity` as --identity ("" for none).
+secret_planned :
+	List(MachineSetting), Str, List(Str), Str -> Try(Plan, Plan.Failure)
+secret_planned = |settings, action, words, identity| {
+	plugin = Machine.plugin(agenix_project, [Machine("web", settings)])
+	option = { name: "identity", value: Present(identity) }
+	given = if (identity.is_empty()) [] else [option]
+	args = [{ name: "action", value: Present(action) }]
+		.append({ name: "names", value: Many(words) })
+		.concat(given)
+	found = plugin.implementations
+		.find_first(|i| i.command == "secret")
+		.map_err(|_| Plan.fail("no implementation"))?
+	(found.fit)(args).map_err(Plan.fail)?
+	lock = published(agenix_project, agenix_lock)
+	(found.plan)({ ..context, args, lock })
+}
+
+# age and ssh-keygen from the locked nixpkgs, running a script.
+with_age = ["nix", "shell", "--inputs-from", "path:/generated/nix"]
+	.concat(["default#age", "default#openssh", "--command", "sh", "-c"])
+
+# `kai secret set web app-key` writes std's flake, without building the
+# machine, then encrypts stdin with age from the locked nixpkgs. The script
+# receives every name and key as an argument, never in its text, and makes
+# its temporary directory itself.
+expect {
+	operators = "${operator}\n${key}"
+	match secret_planned(secret_web, "set", ["web", "app-key"], "") {
+		Ok({ steps: [ExpectPrograms(tools), .. as rest], next: Done }) =>
+			tools.programs == ["nix"]
+				and rest.any(
+					|step|
+						match step {
+							Write(_) => Bool.True
+							_ => Bool.False
+						},
+				)
+				and match argvs(rest) {
+					[argv] =>
+						match argv.split_at(with_age.len()) {
+							{ before, others: [script, "sh", .. as given] } =>
+								before == with_age
+									and given
+										== [
+											"/project/secrets",
+											"web",
+											"app-key",
+											operators,
+											NixosBackend.without_host_key("web"),
+										]
+									and script.contains("mktemp -d")
+									and script.contains("trap 'rm -rf \"$work\"' EXIT")
+									and script.contains("age -R \"$work/recipients\"")
+									and !script.contains("app-key")
+									and !script.contains(operator)
+							_ => Bool.False
+						}
+					_ => Bool.False
+				}
+		_ => Bool.False
+	}
+}
+
+# `kai secret rekey web` decrypts with --identity, or ~/.ssh/id_ed25519 when
+# it is not given, and encrypts the secrets and the host key again.
+expect {
+	given = |identity|
+		match secret_planned(secret_web, "rekey", ["web"], identity) {
+			Ok({ steps, next: Done }) =>
+				match argvs(steps) {
+					[argv] =>
+						match argv.split_at(with_age.len() + 2) {
+							{ before, others } =>
+								before.drop_last(2) == with_age
+									and before.last() == Ok("sh")
+									and others.first() == Ok(identity)
+									and others.drop_first(1).take_first(2)
+										== ["/project/secrets", "web"]
+									and match before.get(with_age.len()) {
+										Ok(script) =>
+											script.contains("identity=$HOME/.ssh/id_ed25519")
+												and script.contains("reencrypt \"$secret\"")
+												and script.contains("hosts/$name.age")
+										Err(_) => Bool.False
+									}
+						}
+					_ => Bool.False
+				}
+			_ => Bool.False
+		}
+	given("") and given("/keys/operator")
+}
+
+# Unknown machines and secrets are refused before planning, with the names
+# they may have meant; so are a machine without Operators and a set naming
+# no secret.
+expect {
+	refused = |settings, action, words|
+		match secret_planned(settings, action, words, "") {
+			Err(failure) => failure
+			Ok(_) => Plan.fail("")
+		}
+	machine = refused(secret_web, "rekey", ["wbe"])
+	secret = refused(secret_web, "set", ["web", "app-kye"])
+	machine.code == "unknown_name"
+		and machine.message == "unknown machine: wbe"
+		and machine.suggestions == ["web"]
+		and secret.code == "unknown_name"
+		and secret.message == "machine web declares no secret app-kye"
+		and secret.suggestions == ["app-key"]
+		and refused(installed_web, "rekey", ["web"]).message
+			== "machine web has no Operators to encrypt secrets to"
+		and refused(secret_web, "set", ["web"]).message
+			== "name what to set: kai secret set MACHINE SECRET, or kai secret "
+				.concat("rekey MACHINE")
+}
+
+# With Operators, install runs nixos-anywhere inside one script under age and
+# ssh-keygen from the locked nixpkgs: it decrypts or makes the host key in its
+# own temporary directory and places it with --extra-files. The target and
+# every name and key are arguments.
+expect {
+	target = "root@203.0.113.7"
+	flake = "path:/generated/nix"
+	match planned_in(agenix_locked, secret_web, "install", target) {
+		Ok({ steps, next: Done }) =>
+			match argvs(steps).last() {
+				Ok(argv) =>
+					match argv.split_at(with_age.len()) {
+						{ before, others: [script, "sh", .. as given] } =>
+							before == with_age
+								and given
+									== [flake, "", "/project/secrets", "web", "${operator}\n${key}"]
+										.concat(["--flake", "${flake}#web", "--target-host", target])
+								and script.contains("--extra-files \"$files\"")
+								and script.contains("ssh-keygen -q -t ed25519 -N ''")
+								and script.contains("age -d -i \"$identity\" -o \"$key\"")
+								and script.contains("default#nixos-anywhere")
+								and script.contains("pure-eval = false")
+								and !script.contains(target)
+								and !script.contains("exec ")
+						_ => Bool.False
+					}
+				Err(_) => Bool.False
+			}
+		_ => Bool.False
+	}
+}
+
+# A build of a machine with Secrets fails before building when a secret's
+# file is missing, naming the command that sets it, and checks each file.
+expect {
+	file = "/project/secrets/web/app-key.age"
+	match planned_in(agenix_locked, secret_web, "build", "") {
+		Ok({ steps: [CheckSource(_), Run(found), CheckSource(checked), ..], .. }) =>
+			checked == file
+				and match found.argv {
+					["sh", "-c", script, "sh", "web", given] =>
+						given == file and script.contains("run kai secret set $name $secret")
+					_ => Bool.False
+				}
+		_ => Bool.False
+	}
+}
+
+# Secrets render agenix's module and one age.secrets entry each, decrypted
+# with the host key into /run/secrets; disko's and agenix's modules are
+# imported together.
+expect {
+	agenix = "inputs.\"agenix\".nixosModules.default"
+	identities = "age.identityPaths = [ \"/etc/ssh/ssh_host_ed25519_key\" ];"
+	only_secrets = web.concat(
+		[Operators([operator]), Secrets([Secret("db", [])])],
+	)
+	renders(
+		secret_web,
+		[
+			"imports = [ inputs.\"disko\".nixosModules.disko ${agenix} ];",
+			identities,
+			"age.secrets.\"app-key\" = {",
+			"file = (/. + \"/project/secrets/web/app-key.age\");",
+			"owner = \"admin\";",
+			"group = \"root\";",
+			"mode = \"0400\";",
+			"path = \"/run/secrets/app-key\";",
+		],
+	)
+		and renders(only_secrets, ["imports = [ ${agenix} ];", "owner = \"root\";"])
+		and !renders(installed_web, [identities])
+}
+
+# Operators and Secrets are checked as Kaifile.roc compiles: keys, names,
+# owners, groups and modes, duplicates, Secrets without Operators, and
+# Secrets without the agenix input.
+expect {
+	in_agenix = |settings|
+		Machine.plugin(agenix_project, [Machine("web", settings)]).problems
+	installed_with = |settings| installed_web.concat(settings)
+	bad_key = "ssh-ed25519 short"
+	ecdsa = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY="
+	secret = |name, options| Secrets([Secret(name, options)])
+	operators = Operators([operator])
+	no_operator = |k|
+		"operator \"${k}\" is no age recipient or ssh-ed25519 or ssh-rsa "
+			.concat("public key")
+	bad_options = [Owner("App"), Group("-x"), Mode("0800")]
+	checks = [
+		(installed_with([Operators([operator, key])]), []),
+		(installed_with([Operators([])]), ["Operators needs at least one key"]),
+		(
+			installed_with([Operators([bad_key, ecdsa, "age1short"])]),
+			[bad_key, ecdsa, "age1short"].map(no_operator),
+		),
+		(
+			installed_with([secret("db", [])]),
+			["Secrets needs Operators to encrypt them to"],
+		),
+		(
+			installed_with([operators, secret("a/b", bad_options)]),
+			[
+				"secret a/b is no secret name; use a letter, then letters, "
+					.concat("digits, -, _ or ."),
+				"secret a/b: App is no user name",
+				"secret a/b: -x is no group name",
+				"secret a/b: Mode 0800 is no octal mode, such as \"0400\"",
+			],
+		),
+		(
+			installed_with([operators, Secrets([Secret("db", []), Secret("db", [])])]),
+			["secret db is declared more than once"],
+		),
+		(
+			installed_with([operators, secret("db", [Mode("0400"), Mode("0440")])]),
+			["secret db: Mode is given more than once"],
+		),
+	]
+	declare = "add Input(\"agenix\", \"github:ryantm/agenix\") to std's settings"
+	without_agenix = Machine.plugin(
+		disko_project,
+		[Machine("web", installed_with([operators, secret("db", [])]))],
+	)
+	accepted = installed_with([operators, secret("app.env_1-x", [Mode("640")])])
+	checks.all(
+		|(settings, expected)|
+			in_agenix(settings) == expected.map(|p| "machine web: ${p}"),
+	)
+		and in_agenix(accepted) == []
+		and without_agenix.problems
+			== ["machine web: Secrets needs agenix; ${declare}"]
 }

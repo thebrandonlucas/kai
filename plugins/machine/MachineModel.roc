@@ -1,13 +1,16 @@
 # The machines a Kaifile declares, as every backend's implementation of the
 # machine command reads them.
 import pf.Command
+import pf.Plan
 
 MachineModel :: [].{
 
 	## A machine's settings, folded. Modules is Nix's alone: the nix
 	## implementation checks it, and another backend would refuse it. `host`
 	## is the SSH target it lives at, "" for the host kai runs on. `disk` is
-	## the layout install partitions and the system mounts.
+	## the layout install partitions and the system mounts. `operators` are
+	## the public keys its host key and secrets are encrypted to, and
+	## `secrets` what it decrypts as it activates.
 	Machine : {
 		name : Str,
 		system : Str,
@@ -21,8 +24,13 @@ MachineModel :: [].{
 		time_zone : Str,
 		state_version : Str,
 		disk : Disk,
+		operators : List(Str),
+		secrets : List(Secret),
 		modules : List(Str),
 	}
+
+	## A secret's name, and its file's owner, group and octal mode.
+	Secret : { name : Str, owner : Str, group : Str, mode : Str }
 
 	## No disk layout, or the whole disk at a device path.
 	Disk : [NoDisk, SingleDisk(Str)]
@@ -42,6 +50,40 @@ MachineModel :: [].{
 	}
 
 	name_one = "name one machine: kai machine ACTION NAME"
+
+	## The machine `kai secret ACTION MACHINE [SECRET]` names, which has
+	## Operators to encrypt to, and the secret a `set` names ("" for a
+	## `rekey`), which the machine declares.
+	secret_target :
+		List(Machine), Command.Args -> Try((Machine, Str), Plan.Failure)
+	secret_target = |machines, args| {
+		action = Command.name(args, "action")
+		words = Command.trailing(args, "names")
+		usage = "kai secret set MACHINE SECRET, or kai secret rekey MACHINE"
+		(name, secret) = match words {
+			[machine_name, secret_name] if action == "set" => (machine_name, secret_name)
+			[machine_name] if action == "rekey" => (machine_name, "")
+			_ => return Err(Plan.fail("name what to ${action}: ${usage}"))
+		}
+		unknown = |message, given, names| {
+			code: "unknown_name",
+			message,
+			hint: "",
+			suggestions: Plan.closest(given, names),
+		}
+		machine_names = machines.map(|found| found.name)
+		m = machines.find_first(|found| found.name == name).map_err(
+			|_| unknown("unknown machine: ${name}", name, machine_names),
+		)?
+		secrets = m.secrets.map(|s| s.name)
+		if m.operators.is_empty() {
+			Err(Plan.fail("machine ${name} has no Operators to encrypt secrets to"))
+		} else if action == "set" and !secrets.contains(secret) {
+			Err(unknown("machine ${name} declares no secret ${secret}", secret, secrets))
+		} else {
+			Ok((m, secret))
+		}
+	}
 
 	## Where `kai machine ACTION` acts on machine `m`: `--to`, else its Host,
 	## else the host kai runs on. A build is always made here, and an
