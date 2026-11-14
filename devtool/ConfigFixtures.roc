@@ -221,6 +221,7 @@ ConfigFixtures := [].{
 		.map(|f| { ..f, body: ConfigFixtures.machine_kaifile(f.body) })
 		.concat(ConfigFixtures.disk_fixtures)
 		.concat(ConfigFixtures.secret_fixtures)
+		.concat(ConfigFixtures.caddy_fixtures)
 
 	# A machine with a Disk, accepted beside the disko input it needs and
 	# refused without it.
@@ -275,6 +276,26 @@ ConfigFixtures := [].{
 			},
 		]
 	}
+
+	# A machine serving sites with Caddy, accepted, and refused without any.
+	caddy_fixtures : List(Fixture)
+	caddy_fixtures = [
+		{
+			name: "MachineCaddy",
+			expected: Valid,
+			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+				\\  Services([Caddy([Email("admin@example.com"),
+				\\    Site("example.com", ReverseProxy("localhost:8080")),
+				\\    Site("files.example.com", Files("/srv/files"))])])])
+		},
+		{
+			name: "MachineCaddyWithoutSites",
+			expected: Rejected("machine web: Caddy needs at least one Site"),
+			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+				\\  Services([Caddy([Email("admin@example.com")])])])
+		},
+	]
+		.map(|f| { ..f, body: ConfigFixtures.machine_kaifile(f.body) })
 
 	registry_fixtures : List(Fixture)
 	registry_fixtures = [

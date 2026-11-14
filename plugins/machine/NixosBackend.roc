@@ -7,6 +7,7 @@ import pf.Implementation
 import pf.Plan
 import std.Config
 import std.Std
+import services.Caddy
 import MachineModel exposing [Machine]
 
 ## Each machine is `lib.nixosSystem` of the "default" package source, with
@@ -636,6 +637,8 @@ NixosBackend :: [].{
 		]
 		firewall = |protocol, list|
 			"networking.firewall.allowed${protocol}Ports = ${ports(list)};"
+		tcp_ports = MachineModel.open_tcp_ports(m)
+		udp_ports = MachineModel.open_udp_ports(m)
 		# mkShell puts an environment's packages in nativeBuildInputs.
 		shell = "(environmentsFor ${quote(m.system)}).${quote(m.environment)} { }"
 		system_packages = [
@@ -685,12 +688,37 @@ NixosBackend :: [].{
 			.concat(users)
 			.concat(when(trusted, [trusted_users]))
 			.concat(when(m.ssh, ssh))
-			.concat(when(!m.tcp_ports.is_empty(), [firewall("TCP", m.tcp_ports)]))
-			.concat(when(!m.udp_ports.is_empty(), [firewall("UDP", m.udp_ports)]))
+			.concat(when(!tcp_ports.is_empty(), [firewall("TCP", tcp_ports)]))
+			.concat(when(!udp_ports.is_empty(), [firewall("UDP", udp_ports)]))
 			.concat(when(!m.environment.is_empty(), system_packages))
 			.concat(when(!imported.is_empty(), [import_line]))
 			.concat(NixosBackend.disk(m.disk))
 			.concat(when(!m.secrets.is_empty(), secrets))
+			.concat(m.services.join_map(|Caddy(server)| NixosBackend.caddy(server)))
+	}
+
+	## Caddy as NixOS's services.caddy: one virtual host per site, whose
+	## Caddyfile lines Caddy.problems has made sure hold no syntax of their
+	## own. The firewall opens its ports beside Firewall's.
+	caddy : Caddy.Server -> List(Str)
+	caddy = |server| {
+		quote = NixosBackend.quote
+		email = if server.email.is_empty() {
+			[]
+		} else {
+			["services.caddy.email = ${quote(server.email)};"]
+		}
+		sites = server.sites.map(
+			|site| {
+				caddyfile = match site.target {
+					ReverseProxy(upstream) => "reverse_proxy ${upstream}"
+					Files(root) => "root * ${root}\nfile_server"
+				}
+				"services.caddy.virtualHosts.${quote(site.domain)}.extraConfig = "
+					.concat("${quote(caddyfile)};")
+			},
+		)
+		["services.caddy.enable = true;"].concat(email).concat(sites)
 	}
 
 	## A Disk as disko's NixOS module and its layout, with GRUB booting on
