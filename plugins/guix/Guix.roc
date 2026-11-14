@@ -225,6 +225,7 @@ context = {
 	lock: Absent,
 	phase: 0,
 	observed: [],
+	lock_requests: [],
 }
 
 # The plan of the plugin's implementation of `command`, once it fits.

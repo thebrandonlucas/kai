@@ -452,7 +452,18 @@ Project :: [].{
 		check_names(model.environments.map(|e| e.name), "Environment")?
 		check_names(model.shells.map(|s| s.name), "Shell")?
 		check_names(model.tasks.map(|t| t.name), "Task")?
-		sources = if model.sources.any(|s| s.name == "default") {
+		# The implicit "default" source is the project's only when it is used:
+		# by a tool, an environment without package tools, which it builds,
+		# or a Follows.
+		uses_default = |environment| {
+			resolved = resolve(model.environments, environment.name, []) ?? environment
+			tools = package_tools(environment_tools(resolved), model.fetches)
+			!direct_only(model, resolved)
+				and (tools.is_empty() or tools.any(|t| t.source == "default"))
+		}
+		used = model.environments.any(uses_default)
+			or model.follows.any(|f| f.source == "default")
+		sources = if model.sources.any(|s| s.name == "default") or !used {
 			model.sources
 		} else {
 			[{ name: "default", provider: Auto }].concat(model.sources)
@@ -586,8 +597,8 @@ Project :: [].{
 		var $followed = []
 		for follows in model.follows {
 			{ overlay, input, source } = follows
-			if !model.inputs.any(|i| i.name == overlay and i.kind == Overlay) {
-				return Err("unknown overlay: ${overlay}")
+			if !model.inputs.any(|i| i.name == overlay) {
+				return Err("unknown overlay or input: ${overlay}")
 			}
 			if !valid_name(input) or $followed.contains((overlay, input)) {
 				return Err("invalid or duplicate Follows input of ${overlay}: ${input}")

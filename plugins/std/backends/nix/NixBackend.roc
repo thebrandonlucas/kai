@@ -870,10 +870,13 @@ NixBackend :: [].{
 			]),
 		)?
 		# Inspection retains scoped inputs; plans emit stable full declarations.
-		# A rendered overlay's Follows need their package source declared too.
+		# A rendered overlay's or flake input's Follows need their package
+		# source declared too.
 		follows = match staging {
 			None => model.follows.keep_if(
-				|followed| environments.any(|e| e.overlays.contains(followed.overlay)),
+				|followed|
+					environments.any(|e| e.overlays.contains(followed.overlay))
+						or model.inputs.any(|i| i.name == followed.overlay and i.kind == Flake),
 			)
 			Some(_) => model.follows
 		}

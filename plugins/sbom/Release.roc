@@ -377,6 +377,7 @@ context = |args, phase, observed| {
 		lock: Present(weaver_lock),
 		phase,
 		observed,
+		lock_requests: [],
 	}
 }
 

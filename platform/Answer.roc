@@ -122,6 +122,7 @@ Answer := [].{
 						lock: request.lock,
 						phase,
 						observed,
+						lock_requests: Kaifile.lock_requests(kaifile),
 					},
 				)
 			}

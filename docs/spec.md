@@ -14,9 +14,9 @@ meaning or goes away bumps it. Lists keep declaration order.
 |---|---|
 | `schema_version` | 1. |
 | `name`, `systems`, `build_root` | `Name`, `Systems` and `BuildRoot` (`""` for the project's directory). |
-| `package_sources` | `Packages`, with the implicit `default`: `name`, `provider` (`auto`, `nix` or `guix`) and `ref` (the flake ref or Guix specification, `null` for `auto`). The guix plugin's channels are its own settings, not std's. |
+| `package_sources` | `Packages`, with the implicit `default` when a tool, an environment without package tools or a `Follows` uses it: `name`, `provider` (`auto`, `nix` or `guix`) and `ref` (the flake ref or Guix specification, `null` for `auto`). The guix plugin's channels are its own settings, not std's. |
 | `overlays` | `Overlay`: `name`, `ref` and `follows` (`input`, `source`). |
-| `flake_inputs` | Other flake inputs: `name`, `ref`. |
+| `flake_inputs` | Other flake inputs: `name`, `ref` and `follows` (`input`, `source`). |
 | `sources` | `Source`: `name`, `ref`. |
 | `fetches` | `Fetch`, `FetchAll` (one file per available system), `FetchLocked`, and one per `RocPackages` bundle, pinned by the lock: `name`, `pinned_by` (`hash` when the Kaifile gives each sha256, `lock` for `FetchLocked`), `unavailable_on`, and `files`: `key` (`<fetch>/<system>`), `system`, `url`, `mirrors`, `hash` (`null` when the lock pins it, else `algorithm` `sha256`, `of` `file`, `encoding` `sri` and `value`) and `archive_path` (the program inside an archive, else `null`). |
 | `cargo_vendors` | `CargoVendor`: `name`. |

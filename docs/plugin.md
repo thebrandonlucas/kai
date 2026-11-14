@@ -68,6 +68,40 @@ Settings are the plugin's own closed tag union (`Deploy.Setting`), so a
 misspelt setting is a type error. A plugin that works with std's settings
 takes the same `List(Config.Setting)` value the project gives std.
 
+## Asking std to lock inputs
+
+A plugin whose plans need flake inputs or package sources asks std's
+`kai update` to lock them, so its users need not declare them:
+
+```roc
+Plugin.new({ ... }).locking([
+	Input("disko", "github:nix-community/disko", [Follows("nixpkgs", "default")]),
+	Source("default"),
+])
+```
+
+`Input(name, flake_ref, options)` is a flake input std locks and declares
+in its generated flake under `name`; `Follows(input, source)` makes the
+flake's own input `input` the project's package source `source`, as std's
+`Follows` setting does. `Source(name)` keeps a package source the project
+declares locked, or `default`, which std otherwise locks only when an
+environment's tools, an environment without package tools, or a `Follows`
+uses it. An `Input` the project declares at the same reference is the
+project's. As Kaifile.roc compiles, std refuses, naming both, an `Input`
+the project declares at another reference, or as a package source,
+`Source`, `Fetch` or `CargoVendor`, or another plugin asks for at another
+reference; and a `Source` the project does not declare. The platform hands
+every plugin's requests, each with the requesting plugin's name, to every
+plan as `ctx.lock_requests`, so std's `update`, its check that the lock is
+current, and `Std.build_flake_output` all include them. `kai update` moves
+them with the rest; `kai update NAME` takes only names std's settings
+declare. The machine plugin asks for `Source("default")`, which its
+systems are built from.
+
+`Plugin.checking_lock_requests(plugin, check)` is how the lock's owner,
+std, checks them: `check` takes every plugin's requests and returns its
+problems, which fail Kaifile.roc as a plugin's problems do.
+
 ## Commands
 
 ```roc
@@ -121,7 +155,8 @@ falls back to another backend after choosing one.
 `ctx` holds the parsed `args`, the chosen `backend`, the `host` system,
 the `layout` of the project and its `.kai` workspace, the project's git
 `revision` (`describe` and `commit_date`, empty outside git), the `lock`
-text, and, for continued plans, `phase` and the `observed` files.
+text, every plugin's `lock_requests`, and, for continued plans, `phase`
+and the `observed` files.
 
 A plan that fails says why as a `Plan.Failure`:
 
@@ -206,9 +241,10 @@ attribute definitions, which see `inputs`, `self` and `environmentsFor
 system`, the definition of each of `environments`: a function from extra
 `mkShell` attributes to the environment's shell. They may not use the names
 std writes (`devShells`, `packages`, `kaiArtifacts`) or add inputs, which
-would leave the lock stale; they read files by absolute path, which
-`--impure` allows. The machine plugin, `plugins/machine`, builds its machines this
-way.
+would leave the lock stale: a plugin asks std to lock its inputs instead
+(see [Asking std to lock inputs](#asking-std-to-lock-inputs)). They read
+files by absolute path, which `--impure` allows. The machine plugin,
+`plugins/machine`, builds its machines this way.
 
 ## Implementing std's commands on another backend
 

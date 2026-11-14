@@ -177,7 +177,7 @@ Spec := [].{
 			model.follows.keep_if(|f| f.overlay == overlay).map(
 				|f| object([("input", text(f.input)), ("source", text(f.source))]),
 			)
-		overlay = |i|
+		flake = |i|
 			with_name(
 				i.name,
 				[("ref", text(i.url)), ("follows", Array(follows(i.name)))],
@@ -208,13 +208,12 @@ Spec := [].{
 				("package_sources", Array(model.sources.map(package_source))),
 				(
 					"overlays",
-					Array(model.inputs.keep_if(|i| i.kind == Overlay).map(overlay)),
+					Array(model.inputs.keep_if(|i| i.kind == Overlay).map(flake)),
 				),
 				(
 					"flake_inputs",
 					Array(
-						model.inputs.keep_if(|i| i.kind == Flake)
-							.map(|i| reference(i.name, i.url)),
+						model.inputs.keep_if(|i| i.kind == Flake).map(flake),
 					),
 				),
 				(

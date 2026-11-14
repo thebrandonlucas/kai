@@ -153,6 +153,28 @@ ConfigFixtures := [].{
 				\\kaifile = Kaifile.new([Std.plugin(config), extra])
 		}
 
+	# A plugin next to std asking it to lock `request`, in a project that
+	# declares disko. std refuses a request it cannot honour, naming both.
+	with_lock_request = |name, expected, request|
+		{
+			name,
+			expected,
+			body: \\import pf.Kaifile
+				\\import pf.Plugin
+				\\import std.Config
+				\\import std.Std
+				\\
+				\\extra = Plugin.new({ name: "extra", version: "1", describe: "",
+				\\  commands: [], backends: [], implementations: [] })
+				\\
+				\\config : List(Config.Setting)
+				\\config = [Name("locking"), Environment("dev", []),
+				\\  Input("disko", "github:nix-community/disko")]
+				\\
+				\\kaifile = Kaifile.new([Std.plugin(config),
+				\\  extra.locking([${request}])])
+		}
+
 	# The machine plugin's machines beside a std project with an environment.
 	machine_kaifile = |machines| ConfigFixtures.machine_kaifile_with("", machines)
 
@@ -334,6 +356,27 @@ ConfigFixtures := [].{
 			"only one command may own the lock",
 			"cmd(\"pin\", OwnsLock)",
 			"free(\"pin\")",
+		),
+		ConfigFixtures.with_lock_request(
+			"PluginInputAsDeclared",
+			Valid,
+			"Input(\"disko\", \"github:nix-community/disko\", [])",
+		),
+		ConfigFixtures.with_lock_request(
+			"PluginInputConflict",
+			Rejected(
+				"std: extra asks to lock Input disko at github:example/disko, "
+					.concat("but the project declares github:nix-community/disko"),
+			),
+			"Input(\"disko\", \"github:example/disko\", [])",
+		),
+		ConfigFixtures.with_lock_request(
+			"PluginSourceUndeclared",
+			Rejected(
+				"std: extra asks to lock package source stable, "
+					.concat("which the project does not declare"),
+			),
+			"Source(\"stable\")",
 		),
 	]
 
@@ -652,7 +695,8 @@ ConfigFixtures := [].{
 		{
 			name: "SourceDefaultCollision",
 			expected: Rejected("DuplicateInput"),
-			body: \\config = [Name("bad"), Source("default", "path:./assets")]
+			body: \\config = [Name("bad"), Source("default", "path:./assets"),
+				\\ Environment("dev", [Tools(["hello"])])]
 		},
 		{
 			name: "DuplicateBuild",

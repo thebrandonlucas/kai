@@ -98,6 +98,74 @@ StdModel := [].{
 	validate : Model -> Try(Model, Str)
 	validate = Project.validate
 
+	## The model with what plugins ask std to lock: each requested Input a
+	## flake input, its options Follows, unless the project or an earlier
+	## request declares it at the same reference; each requested Source one
+	## the project declares, or "default", kept even when nothing uses it.
+	## A request for a name declared otherwise is refused, naming both.
+	with_lock_requests : Model, List(Implementation.Requested) -> Try(Model, Str)
+	with_lock_requests = |model, requested| {
+		var $inputs = model.inputs
+		var $follows = model.follows
+		var $sources = model.sources
+		var $requesters = []
+		for asked in requested {
+			plugin = asked.plugin
+			match asked.request {
+				Input(name, ref, options) => {
+					wants = "${plugin} asks to lock Input ${name} at ${ref}"
+					declared = $inputs.find_first(|i| i.name == name)
+					requester = $requesters.find_first(|(input, _)| input == name)
+					match (declared, requester) {
+						(Ok(input), Ok((_, other))) if input.url != ref =>
+							return Err("${wants}, but ${other} asks for ${input.url}")
+						(Ok(input), _) if input.url != ref =>
+							return Err("${wants}, but the project declares ${input.url}")
+						(Ok(_), _) => {}
+						(Err(_), _) => {
+							taken = $sources.any(|s| s.name == name)
+								or model.build_sources.any(|s| s.name == name)
+								or model.fetches.any(|f| f.name == name)
+								or model.cargo_vendors.any(|c| c.name == name)
+							if taken {
+								return Err("${wants}, but the project declares ${name} otherwise")
+							}
+							$inputs = $inputs.append({ name, url: ref, kind: Flake })
+							$requesters = $requesters.append((name, plugin))
+							for option in options {
+								match option {
+									Follows(input, source) => {
+										$follows = $follows.append({ overlay: name, input, source })
+									}
+								}
+							}
+						}
+					}
+				}
+				Source(name) => {
+					undeclared = !$sources.any(|s| s.name == name)
+					if undeclared and name != "default" {
+						return Err(
+							"${plugin} asks to lock package source ${name}, "
+								.concat("which the project does not declare"),
+						)
+					}
+					if undeclared {
+						$sources = $sources.append({ name, provider: Auto })
+					}
+				}
+			}
+		}
+		requires_ = if $follows.is_empty() or model.requires_.contains("follows") {
+			model.requires_
+		} else {
+			model.requires_.append("follows")
+		}
+		inputs = $inputs
+		follows = $follows
+		Project.validate({ ..model, requires_, inputs, follows, sources: $sources })
+	}
+
 	## The model as it is on `system`: each environment with what its
 	## OnSystems add there.
 	for_system : Model, Str -> Model

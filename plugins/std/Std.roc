@@ -56,8 +56,25 @@ Std := [].{
 					],
 					implementations: Std.implementations(model),
 				})
+					.checking_lock_requests(
+						|requested|
+							match StdModel.with_lock_requests(model, requested) {
+								Ok(requesting) =>
+									match Locks.inputs(requesting) {
+										Ok(_) => []
+										Err(problem) => [problem]
+									}
+								Err(problem) => [problem]
+							},
+					)
 			Err(problem) => Plugin.invalid("std", [problem])
 		}
+
+	## The model with every plugin's lock requests, which std's Nix plans
+	## lock, render and check the lock against.
+	requested_model : Model, Implementation.Context -> Try(Model, Plan.Failure)
+	requested_model = |model, ctx|
+		StdModel.with_lock_requests(model, ctx.lock_requests).map_err(Plan.fail)
 
 	## The settings' model, with Systems and Raw checked too so kai check
 	## reports what no backend accepts instead of every command failing later.
@@ -287,8 +304,9 @@ Std := [].{
 						}
 					},
 					plan: |ctx| {
-						Std.known_inputs(model, Command.trailing(ctx.args, "inputs"))?
-						nix_model = StdModel.revised(Std.on_nix(model), ctx)
+						requesting = Std.requested_model(model, ctx)?
+						Std.known_inputs(requesting, Command.trailing(ctx.args, "inputs"))?
+						nix_model = StdModel.revised(Std.on_nix(requesting), ctx)
 						Std.update_nix(nix_model, ctx).map_err(Plan.fail)
 					},
 				},
@@ -384,7 +402,7 @@ Std := [].{
 	## Nix plans read the lock authority; its absence is a planning failure.
 	plan_nix : Model, Request, Implementation.Context -> Try(Plan, Plan.Failure)
 	plan_nix = |declared, wanted, ctx| {
-		model = StdModel.revised(Std.on_nix(declared), ctx)
+		model = StdModel.revised(Std.on_nix(Std.requested_model(declared, ctx)?), ctx)
 		layout = Std.nix_layout(ctx.layout)
 		target = ctx.host.system
 		StdModel.known(model, wanted)?
@@ -525,7 +543,8 @@ Std := [].{
 	build_flake_output :
 		List(Config.Setting), Implementation.Context, Extra -> Try(Plan, Plan.Failure)
 	build_flake_output = |settings, ctx, wanted| {
-		model = Std.on_nix(ConfigToModel.convert(settings).map_err(Plan.fail)?)
+		declared = ConfigToModel.convert(settings).map_err(Plan.fail)?
+		model = Std.on_nix(Std.requested_model(declared, ctx)?)
 		locks = Std.nix_locks(model, ctx)?
 		layout = Std.nix_layout(ctx.layout)
 		NixBackend.plan_output(model, wanted, ctx.host.system, layout, locks)
@@ -700,6 +719,7 @@ context = {
 	lock: Absent,
 	phase: 0,
 	observed: [],
+	lock_requests: [],
 }
 
 # The planning settings' plan for `command` on the context's backend, once
@@ -929,6 +949,7 @@ expect {
 		lock: Absent,
 		phase: 0,
 		observed: [],
+		lock_requests: [],
 	}
 	backends = |command, choice|
 		match Std.kaifile([Name("x")]).candidates(command, choice, context_for) {
@@ -1134,4 +1155,259 @@ expect {
 				and Std.checked_model([both, Name("bad"), nix_only]) == Err(refused)
 		Err(_) => Bool.False
 	}
+}
+
+import pf.LockJson
+
+# The flake.lock Nix writes for the planning settings and disko, a plugin's
+# Input whose own nixpkgs follows the project's "default" source.
+disko_native_lock =
+	\\{
+	\\  "nodes": {
+	\\    "assets": {
+	\\      "flake": false,
+	\\      "locked": {
+	\\        "lastModified": 1790281077,
+	\\        "narHash": "sha256-mhO52EWOvxHOyTFt0V1hM6Oo6mlpNo2PFlxQtcmCJBc=",
+	\\        "path": "/project/assets",
+	\\        "type": "path"
+	\\      },
+	\\      "original": { "path": "/project/assets", "type": "path" }
+	\\    },
+	\\    "default": {
+	\\      "locked": {
+	\\        "lastModified": 1790185690,
+	\\        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
+	\\        "owner": "NixOS",
+	\\        "repo": "nixpkgs",
+	\\        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
+	\\        "type": "github"
+	\\      },
+	\\      "original": {
+	\\        "owner": "NixOS", "ref": "nixos-unstable",
+	\\        "repo": "nixpkgs", "type": "github"
+	\\      }
+	\\    },
+	\\    "disko": {
+	\\      "inputs": { "nixpkgs": ["default"] },
+	\\      "locked": {
+	\\        "lastModified": 1790100000,
+	\\        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+	\\        "owner": "nix-community",
+	\\        "repo": "disko",
+	\\        "rev": "0123456789abcdef0123456789abcdef01234567",
+	\\        "type": "github"
+	\\      },
+	\\      "original": {
+	\\        "owner": "nix-community", "repo": "disko", "type": "github"
+	\\      }
+	\\    },
+	\\    "root": {
+	\\      "inputs": {
+	\\        "assets": "assets", "default": "default", "disko": "disko"
+	\\      }
+	\\    }
+	\\  },
+	\\  "root": "root",
+	\\  "version": 7
+	\\}
+
+# What the machine plugin would ask std to lock: the "default" source, and
+# disko with its nixpkgs following it.
+disko_requests : List(Implementation.Requested)
+disko_requests = [
+	{ plugin: "machine", request: Source("default") },
+	{
+		plugin: "machine",
+		request: Input(
+			"disko",
+			"github:nix-community/disko",
+			[Follows("nixpkgs", "default")],
+		),
+	},
+]
+
+# The contents of the file a plan writes whose path ends with `suffix`, or
+# "" when it writes none or fails.
+written : Try(Plan, Plan.Failure), Str -> Str
+written = |result, suffix|
+	match result {
+		Ok(plan) =>
+			plan.steps
+				.join_map(
+					|step|
+						match step {
+							Write(files) => files.keep_if(|f| f.path.ends_with(suffix))
+							_ => []
+						},
+				)
+				.map(|f| f.contents)
+				.first()
+				?? ""
+		Err(_) => ""
+	}
+
+# The flake.nix std's update has Nix resolve for `settings`.
+update_flake : List(Config.Setting), Implementation.Context -> Str
+update_flake = |settings, ctx| {
+	update = Std.plugin(settings).implementations
+		.find_first(|i| i.command == "update" and i.backend == On("nix"))
+	match update {
+		Ok(found) => written((found.plan)(ctx), "/flake.nix")
+		Err(_) => ""
+	}
+}
+
+# The value at `names`, one field inside another.
+at : LockJson, List(Str) -> Try(LockJson, Str)
+at = |value, names| {
+	var $value = value
+	for name in names {
+		$value = LockJson.field($value, name)?
+	}
+	Ok($value)
+}
+
+# A plugin's flake output, which reads no environment.
+system_output : Extra
+system_output = {
+	outputs: "      kaiSystem = 1;\n",
+	environments: [],
+	attribute: "kaiSystem",
+	name: "system",
+	description: "build system",
+	out_link: "",
+}
+
+# A plugin's Input reaches the flake `kai update` resolves, the identity of
+# the lock it publishes and the flake a plugin builds from, its nixpkgs
+# following the project's "default" source in each flake.
+expect {
+	requesting = { ..context, lock_requests: disko_requests }
+	declared = "\"disko\" = { url = \"github:nix-community/disko\"; "
+		.concat("flake = true; };")
+	follows = "\"disko\".inputs.\"nixpkgs\".follows = \"default\";"
+	flake = update_flake(planning, requesting)
+	path = "/generated/nix/flake.lock"
+	locked = published(requesting, path, disko_native_lock)
+	identity_follows = match locked {
+		Present(text) =>
+			match LockFile.section(text, "nix") {
+				Ok(Present(section)) =>
+					at(section, ["identity", "inputs", "disko", "follows", "nixpkgs"])
+				_ => Err("no Nix section")
+			}
+		Absent => Err("no lock")
+	}
+	built = Std.build_flake_output(
+		planning,
+		{ ..requesting, lock: locked },
+		system_output,
+	)
+	flake.contains(declared)
+		and flake.contains(follows)
+		and identity_follows == Ok(LockJson.String("default"))
+		and written(built, "/flake.nix").contains(declared)
+		and written(built, "/flake.nix").contains(follows)
+		and written(built, "/flake.lock").contains("disko")
+		and failed(Std.build_flake_output(planning, requesting, system_output))
+			== "missing_lock"
+		and failed(
+			Std.build_flake_output(planning, { ..context, lock: locked }, system_output),
+		)
+			== ""
+}
+
+# std locks the "default" package source only when something uses it
+# (#420): not when every tool names another source, but when a plugin, such
+# as the machine plugin, asks for it, or the project declares it.
+expect {
+	stable = From(NixPackages("github:NixOS/nixpkgs/nixos-25.05"))
+	elsewhere = [
+		Name("elsewhere"),
+		Systems(["x86_64-linux"]),
+		Packages("stable", stable),
+		Environment("dev", [Tools(["stable#hello"])]),
+		Shell("default", [Use("dev")]),
+	]
+	default_source = |settings, ctx|
+		update_flake(settings, ctx).contains("\"default\" = { url")
+	machine = { plugin: "machine", request: Source("default") }
+	update_flake(elsewhere, context).contains("\"stable\" = { url")
+		and !default_source(elsewhere, context)
+		and default_source(elsewhere, { ..context, lock_requests: [machine] })
+		and default_source(elsewhere.append(Packages("default", Auto)), context)
+		and default_source(planning, context)
+}
+
+# A lock holding a "default" source nothing uses any more, as kai locked
+# before #420, is not stale: a plan's flake.lock leaves it out, and the next
+# update drops it.
+expect {
+	unused = [
+		Name("planning"),
+		Systems(["x86_64-linux"]),
+		Source("assets", "path:./assets"),
+	]
+	locked = { ..context, lock: nix_lock }
+	built = Std.build_flake_output(unused, locked, system_output)
+	roots = |text|
+		match LockJson.decode(text) {
+			Ok(graph) =>
+				at(graph, ["nodes", "root", "inputs"])
+			Err(why) => Err(why)
+		}
+	roots(written(built, "/flake.lock"))
+		== Ok(LockJson.Object([{ name: "assets", value: LockJson.String("assets") }]))
+		and !update_flake(unused, context).contains("\"default\"")
+}
+
+# A plugin's lock request std cannot honour fails Kaifile.roc as it
+# compiles, naming the plugin and what the project, or another plugin,
+# declares instead; one the project declares alike is accepted.
+expect {
+	asking = |name, request|
+		Plugin.new({
+			name,
+			version: "",
+			describe: "",
+			commands: [],
+			backends: [],
+			implementations: [],
+		})
+			.locking([request])
+	disko = |ref| Input("disko", ref, [])
+	project = planning.append(Input("disko", "github:nix-community/disko"))
+	checked = |settings, plugins|
+		Kaifile.validate(Kaifile.new([Std.plugin(settings)].concat(plugins)))
+			.map_ok(|_| {})
+	checked(project, [asking("machine", disko("github:nix-community/disko"))])
+		== Ok({})
+		and checked(project, [asking("machine", disko("github:example/disko"))])
+			== Err(
+				"std: machine asks to lock Input disko at github:example/disko, "
+					.concat("but the project declares github:nix-community/disko"),
+			)
+		and checked(
+			planning,
+			[
+				asking("a", disko("github:a/disko")),
+				asking("b", disko("github:b/disko")),
+			],
+		)
+			== Err(
+				"std: b asks to lock Input disko at github:b/disko, "
+					.concat("but a asks for github:a/disko"),
+			)
+		and checked(planning, [asking("machine", disko("github:a/disko"))]) == Ok({})
+		and checked(planning, [asking("machine", Source("stable"))])
+			== Err(
+				"std: machine asks to lock package source stable, "
+					.concat("which the project does not declare"),
+			)
+		and checked(planning, [asking("machine", Input("assets", "github:a/b", []))])
+			== Err(
+				"std: machine asks to lock Input assets at github:a/b, "
+					.concat("but the project declares assets otherwise"),
+			)
 }

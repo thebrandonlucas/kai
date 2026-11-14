@@ -104,9 +104,17 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 		Candidates({ command, plugin: owner, choice, lock, options })
 	}
 
+	## Every plugin's lock requests, in plugin order.
+	lock_requests : Kaifile -> List(Implementation.Requested)
+	lock_requests = |kaifile|
+		kaifile.plugins.join_map(
+			|p| p.lock_requests.map(|request| { plugin: p.name, request }),
+		)
+
 	## The project description kai reads, or why the plugins are invalid:
-	## a plugin's problems, a plugin named twice, a registry rule broken, or
-	## more than one plugin describing the project.
+	## a plugin's problems, a plugin named twice, a registry rule broken, a
+	## lock request a plugin refuses, or more than one plugin describing the
+	## project.
 	validate : Kaifile -> Try(Str, Str)
 	validate = |kaifile| {
 		var $names = []
@@ -124,6 +132,13 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 			$names = $names.append(plugin.name)
 		}
 		Kaifile.registry(kaifile)?
+		requested = Kaifile.lock_requests(kaifile)
+		for plugin in kaifile.plugins {
+			match (plugin.check_lock_requests)(requested) {
+				[] => {}
+				problems => return Err("${plugin.name}: ${Str.join_with(problems, "; ")}")
+			}
+		}
 		match kaifile.plugins.keep_if(|p| !p.describe.is_empty()) {
 			[one] => Ok(one.describe)
 			[] => Ok("")
@@ -254,6 +269,30 @@ expect [
 	),
 ].all(|(plugins, expected)| Kaifile.validate(Kaifile.new(plugins)) == expected)
 
+# Every plugin's lock requests, named by plugin, reach each plugin's check;
+# a request one refuses fails the Kaifile with that plugin's problem.
+expect {
+	following = [Follows("nixpkgs", "default")]
+	disko = Input("disko", "github:nix-community/disko", following)
+	machine = described("machine", "")
+		.locking([Source("default")])
+		.locking([disko])
+	refusing = described("std", "(ir)").checking_lock_requests(
+		|requested|
+			requested
+				.keep_if(|r| r.request == disko)
+				.map(|r| "${r.plugin} asks for disko"),
+	)
+	Kaifile.lock_requests(Kaifile.new([refusing, machine]))
+		== [
+			{ plugin: "machine", request: Source("default") },
+			{ plugin: "machine", request: disko },
+		]
+		and Kaifile.validate(Kaifile.new([refusing, machine]))
+			== Err("std: machine asks for disko")
+		and Kaifile.validate(Kaifile.new([refusing])) == Ok("(ir)")
+}
+
 planned = |text| Ok(Plan.{ steps: [Note(text)], next: Done })
 
 toy : Kaifile
@@ -306,6 +345,7 @@ context = |backend| {
 	lock: Absent,
 	phase: 0,
 	observed: [],
+	lock_requests: [],
 }
 
 outcomes = |command, choice|

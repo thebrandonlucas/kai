@@ -223,14 +223,50 @@ Locks := { identity : LockJson, graph : LockJson }.{
 		if !stale.is_empty() {
 			return Err("${stale}; run kai update")
 		}
-		rebase(locks, layout)
+		rebase(declared_part(locks, project)?, layout)
+	}
+
+	## The lock without the inputs `model` no longer declares, which the
+	## flake.lock a plan writes leaves out, as Nix would remove them. Nix
+	## reads only the nodes the root reaches, so theirs may stay.
+	declared_part : Locks, Model -> Try(Locks, Str)
+	declared_part = |locks, model| {
+		identity = declared_only(locks.identity, identity_for(model)?)?
+		names = LockJson.object(LockJson.field(identity, "inputs")?)?.map(|i| i.name)
+		roots = LockJson.object(root_inputs(locks.graph)?)?
+		if roots.all(|input| names.contains(input.name)) {
+			return Ok(locks)
+		}
+		root_name = LockJson.string(LockJson.field(locks.graph, "root")?)?
+		nodes = LockJson.field(locks.graph, "nodes")?
+		kept = LockJson.Object(roots.keep_if(|input| names.contains(input.name)))
+		root = LockJson.set(LockJson.field(nodes, root_name)?, "inputs", kept)?
+		nodes_with_root = LockJson.set(nodes, root_name, root)?
+		graph = LockJson.set(locks.graph, "nodes", nodes_with_root)?
+		Ok(Locks.{ identity, graph })
+	}
+
+	## `identity` with only the inputs `declared`, another identity, has.
+	declared_only : LockJson, LockJson -> Try(LockJson, Str)
+	declared_only = |identity, declared| {
+		names = LockJson.object(LockJson.field(declared, "inputs")?)?.map(|i| i.name)
+		inputs_ = LockJson.object(LockJson.field(identity, "inputs")?)?
+		LockJson.set(
+			identity,
+			"inputs",
+			LockJson.Object(inputs_.keep_if(|input| names.contains(input.name))),
+		)
 	}
 
 	## Why the lock was made for other inputs or overlays than `model`
-	## declares, naming the changed ones; "" when it was not.
+	## declares, naming the changed ones; "" when it was not. An input the
+	## lock has but nothing declares, such as a "default" source nothing
+	## uses any more, is no reason: plans leave it out, and the next update
+	## drops it.
 	staleness : Locks, Model -> Try(Str, Str)
 	staleness = |locks, model| {
 		declared = identity_for(Project.validate(model)?)?
+		locked_identity = declared_only(locks.identity, declared)?
 		# The inputs, and the order an environment applies its overlays in,
 		# decide what the lock means. An environment added or removed changes
 		# neither, so it needs no update.
@@ -245,9 +281,9 @@ Locks := { identity : LockJson, graph : LockJson }.{
 					Err(_) => False
 				},
 		)
-		same_inputs = equivalent(inputs_of(locks.identity)?, inputs_of(declared)?)
+		same_inputs = equivalent(inputs_of(locked_identity)?, inputs_of(declared)?)
 		if reordered or !same_inputs {
-			changed = Str.join_with(changed_inputs(locks.identity, declared), ", ")
+			changed = Str.join_with(changed_inputs(locked_identity, declared), ", ")
 			named = if (changed.is_empty()) "" else " (${changed})"
 			Ok("lock input or ordered-overlay identity changed${named}")
 		} else {
@@ -395,13 +431,14 @@ Locks := { identity : LockJson, graph : LockJson }.{
 			)? != LockJson.Boolean(kind != "source") {
 				return Err("lock input flake intent mismatch")
 			}
-			# Follows map an overlay's own inputs to Nix package sources.
+			# Follows map an overlay's or flake's own inputs to Nix package sources.
 			follows = LockJson.field(input.value, "follows") ?? LockJson.Object([])
 			for followed in LockJson.object(follows)? {
 				source_name = LockJson.string(followed.value)?
 				source = LockJson.field(LockJson.field(identity, "inputs")?, source_name)?
 				source_kind = LockJson.string(LockJson.field(source, "kind")?)?
-				if kind != "overlay" or !Project.valid_name(followed.name)
+				if !["overlay", "flake"].contains(kind)
+					or !Project.valid_name(followed.name)
 					or !["auto", "packages"].contains(source_kind) {
 					return Err("invalid lock follows")
 				}
