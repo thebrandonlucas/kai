@@ -15,6 +15,14 @@ Workspace := [].{
 	marker = ".kai-workspace"
 	marker_contents = "Kai project workspace\n"
 
+	# Git leaves what Kai generates untracked, apart from the lock.
+	ignore = ".gitignore"
+	ignore_contents =
+		\\# Kai's workspace: commit lock.json; the rest is generated.
+		\\*
+		\\!/lock.json
+		\\
+
 	# Names that would alias version control or configuration, lowercased.
 	reserved = [
 		".bzr",
@@ -113,28 +121,37 @@ Workspace := [].{
 		marker_path = "${root}/${Workspace.marker}"
 		default = root == "${layout.project_root}/${Workspace.default_dir}"
 		match Workspace.path(root).type!() {
-			Ok(IsDir) if default => Ok({})
+			Ok(IsDir) if default => {}
 			Ok(IsDir) => {
 				Workspace.safe_path!(marker_path)?
 				owned = Workspace.path(marker_path).is_file!()?
 					and Workspace.path(marker_path).read_utf8!()?
 						== Workspace.marker_contents
-				if owned {
-					Ok({})
-				} else {
-					Err(UnsafeWorkspace("${root} is not a Kai workspace"))
+				if !owned {
+					return Err(UnsafeWorkspace("${root} is not a Kai workspace"))
 				}
 			}
-			Ok(_) => Err(UnsafeWorkspace("${root} must be a directory"))
+			Ok(_) => return Err(UnsafeWorkspace("${root} must be a directory"))
 			Err(PathErr(NotFound, _)) => {
 				Workspace.path(root).create_dir!()?
-				if default {
-					Ok({})
-				} else {
-					Workspace.path(marker_path).write_utf8!(Workspace.marker_contents)
+				if !default {
+					Workspace.path(marker_path).write_utf8!(Workspace.marker_contents)?
 				}
 			}
-			Err(err) => Err(err)
+			Err(err) => return Err(err)
+		}
+		Workspace.ignore!(root)
+	}
+
+	# A workspace without a .gitignore, such as a fresh clone's, gets Kai's;
+	# one already there, such as the user's own, is left alone.
+	ignore! : Str => Try({}, _)
+	ignore! = |root| {
+		ignore_path = "${root}/${Workspace.ignore}"
+		match Workspace.path(ignore_path).type!() {
+			Err(PathErr(NotFound, _)) =>
+				Workspace.atomic_write!(ignore_path, Workspace.ignore_contents)
+			_ => Ok({})
 		}
 	}
 
@@ -293,4 +310,14 @@ expect {
 		|(target, ok)|
 			Workspace.stageable({ path: target, contents: "" }, layout) == ok,
 	)
+}
+
+# Kai's .gitignore ignores the whole workspace but its lock, and ends with a
+# newline as checks for text files expect.
+expect {
+	layout = Workspace.locate("/project", ".kai")
+	lines = Workspace.ignore_contents.split_on("\n")
+	lines.contains("*")
+		and lines.contains("!${layout.lock_path.drop_prefix(layout.workspace)}")
+		and Workspace.ignore_contents.ends_with("\n")
 }

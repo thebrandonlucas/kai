@@ -528,15 +528,13 @@ is a `note` event. `kai shell`, `run`, `build` and `workflow` only read it, and
 ask you to run `kai update` when it is missing, when a source, input or an
 environment's overlay order changed, or when a locked local source has
 changed. An environment or tool using only locked sources needs no update.
-Commit the lock; the rest of `.kai` is generated:
-
-```gitignore
-/.kai/*
-!/.kai/lock.json
-```
+Commit the lock; the rest of `.kai` is generated. Kai writes `.kai/.gitignore`,
+which ignores everything there but `lock.json`, so git lists only the lock
+and your own `.gitignore` needs no `.kai` lines. Kai leaves a `.gitignore`
+already in `.kai` as it is, so to ignore other files there, write your own.
 
 `KAI_DIR=<name>` moves the whole directory to another top-level name in the
-project.
+project; Kai writes the same `.gitignore` there.
 
 ## direnv
 

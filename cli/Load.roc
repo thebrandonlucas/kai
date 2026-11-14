@@ -533,7 +533,7 @@ Load := [].{
 			_ = Load.path(program).delete!()
 			return Err(CompileFailed)
 		}
-		Workspace.atomic_write!(record, "program ${name}\n${inputs}")?
+		Workspace.atomic_write!(record, Load.record(name, inputs))?
 		# A program still answering another kai keeps running once deleted.
 		for entry in Load.path(directory).list!()? {
 			entry_name = Load.split_file(entry.to_str()?).file
@@ -636,12 +636,19 @@ Load := [].{
 		}
 	}
 
+	# The record of a program compiled from these inputs, a line for each
+	# and a newline at its end, as checks for text files expect.
+	record : Str, Str -> Str
+	record = |name, inputs| "program ${name}\n${inputs}\n"
+
 	# The program a stored record names, if it was compiled from exactly
-	# these inputs, in any order.
+	# these inputs, in any order. A record from an older kai has no final
+	# newline.
 	compiled_from : Str, Str -> Try(Str, [Stale])
 	compiled_from = |stored, inputs| {
 		(first, rest) = match stored.split_first("\n") {
-			Ok({ before, after }) => (before, after.split_on("\n"))
+			Ok({ before, after }) =>
+				(before, after.drop_suffix("\n").split_on("\n"))
 			Err(_) => return Err(Stale)
 		}
 		current_lines = inputs.split_on("\n")
@@ -800,11 +807,12 @@ expect
 		== ["../VERSION", "data/a b.txt"]
 
 # The stored program answers only for exactly the inputs it was compiled
-# from, listed in any order.
+# from, listed in any order, whether or not its record ends with a newline.
 expect {
 	inputs = "roc v1\n/p/Kaifile.roc 10 5\n/p/Tasks.roc 3 7"
 	reordered = "roc v1\n/p/Tasks.roc 3 7\n/p/Kaifile.roc 10 5"
-	stored = "program Kaifile.roc-1\n${inputs}"
+	stored = Load.record("Kaifile.roc-1", inputs)
+	older = "program Kaifile.roc-1\n${inputs}"
 	changed = [
 		"roc v1\n/p/Kaifile.roc 10 6\n/p/Tasks.roc 3 7",
 		"roc v2\n/p/Kaifile.roc 10 5\n/p/Tasks.roc 3 7",
@@ -812,6 +820,8 @@ expect {
 		"${inputs}\n/p/New.roc 1 1",
 	]
 	Load.compiled_from(stored, reordered) == Ok("Kaifile.roc-1")
+		and Load.compiled_from(older, inputs) == Ok("Kaifile.roc-1")
+		and stored.ends_with("\n")
 		and changed.all(|other| Load.compiled_from(stored, other) == Err(Stale))
 		and Load.compiled_from("", inputs) == Err(Stale)
 		and Load.compiled_from("program ../x\n${inputs}", inputs) == Err(Stale)

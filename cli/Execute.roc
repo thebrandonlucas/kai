@@ -754,9 +754,10 @@ Execute := [].{
 		Ok({})
 	}
 
-	# What a Remembered run's record holds: its argv and its files.
+	# What a Remembered run's record holds: its argv and its files, and a
+	# newline at its end, as checks for text files expect.
 	remembrance : List(Str), List(Plan.File) -> Str
-	remembrance = |argv, files| Sexpr.to_str({ argv, files })
+	remembrance = |argv, files| "${Sexpr.to_str({ argv, files })}\n"
 
 	# A record's file name: the run's description, with every character
 	# other than a lowercase letter or digit replaced by '-'.
@@ -1154,7 +1155,7 @@ remembering = |file|
 expect validated([remembering("/p/.kai/generated/flake.nix")]) == Ok({})
 
 # A remembered run is skipped only for the same argv and the same contents
-# of the same files.
+# of the same files. Its record ends with a newline.
 expect {
 	flake = { path: "/g/flake.nix", contents: "{ }" }
 	lock = { path: "/g/flake.lock", contents: "{}" }
@@ -1167,6 +1168,7 @@ expect {
 		Execute.remembrance(["nix eval"], [flake, lock]),
 	]
 	key == Execute.remembrance(["nix", "eval"], [flake, lock])
+		and key.ends_with("\n")
 		and changed.all(|other| other != key)
 }
 
