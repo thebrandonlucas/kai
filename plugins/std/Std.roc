@@ -1,7 +1,7 @@
 # std's settings are today's Kaifile settings. std declares kai's standard
-# commands (shell, run, build, workflow, update, model, spec, lock), the nix
-# and direct backends, and implementations planning from the settings'
-# Kaifile model.
+# commands (shell, run, build, workflow, update, model, spec, requirements,
+# lock), the nix and direct backends, and implementations planning from the
+# settings' Kaifile model.
 import pf.Backend
 import pf.Command
 import Config
@@ -230,6 +230,25 @@ Std := [].{
 			),
 			command("model", Pages.model, [], ReadsLock),
 			command("spec", Pages.spec, [], ReadsLock),
+			command(
+				"requirements",
+				Pages.requirements,
+				[
+					Trailing({
+						name: "environments",
+						help: "Environments to check (default: each that Expects programs).",
+						choices: model.environments.map(
+							|e|
+								if e.expected.is_empty() {
+									choice(e.name, "", "no Expect")
+								} else {
+									choice(e.name, "", "Expect ${Str.join_with(e.expected, ", ")}")
+								},
+						),
+					}),
+				],
+				ReadsLock,
+			),
 			command("lock", Pages.lock, [], ReadsLock),
 		]
 	}
@@ -339,6 +358,15 @@ Std := [].{
 					plan: |_| Ok(Plan.{ steps: [Print(Spec.json(model))], next: Done }),
 				},
 				Implementation.{
+					command: "requirements",
+					backend: Independent,
+					fit: |_| Ok({}),
+					plan: |ctx| {
+						names = Command.trailing(ctx.args, "environments")
+						Std.requirements(model, names, ctx.host.system)
+					},
+				},
+				Implementation.{
 					command: "lock",
 					backend: Independent,
 					fit: |_| Ok({}),
@@ -391,6 +419,52 @@ Std := [].{
 			suggestions = unknown.join_map(|name| Plan.closest(name, declared))
 			Err({ code: "unknown_input", message, hint: "", suggestions })
 		}
+	}
+
+	## `kai requirements`: the programs each named environment, or each that
+	## Expects any, expects of the machine on `system`, then one check that
+	## fails naming every one that is not on PATH.
+	requirements : Model, List(Str), Str -> Try(Plan, Plan.Failure)
+	requirements = |model, names, system| {
+		validated = Project.validate(model).map_err(Plan.fail)?
+		environments = Project.for_system(validated, system).environments
+		declared = environments.map(|e| e.name)
+		unknown = |name| {
+			message = "unknown environment: ${name}"
+			suggestions = Plan.closest(name, declared)
+			{ code: "unknown_name", message, hint: "", suggestions }
+		}
+		chosen =
+			if names.is_empty() {
+				environments.keep_if(|e| !e.expected.is_empty())
+			} else {
+				names.map_try(
+					|name|
+						environments.find_first(|e| e.name == name).map_err(|_| unknown(name)),
+				)?
+			}
+		printed = chosen.map(
+			|e|
+				if e.expected.is_empty() {
+					Print("environment ${e.name} expects no programs")
+				} else {
+					Print("environment ${e.name} expects ${Str.join_with(e.expected, ", ")}")
+				},
+		)
+		programs = chosen.join_map(|e| e.expected).fold(
+			[],
+			|seen, program| if (seen.contains(program)) seen else seen.append(program),
+		)
+		description = match chosen {
+			[one] => "environment ${one.name}"
+			_ => "the project"
+		}
+		steps = match (printed, programs) {
+			([], _) => [Print("no environment expects programs")]
+			(_, []) => printed
+			_ => printed.append(ExpectPrograms({ description, programs }))
+		}
+		Ok(Plan.{ steps, next: Done })
 	}
 
 	## Nix plans read the lock authority; its absence is a planning failure.
@@ -947,7 +1021,9 @@ expect {
 				and backends(command, Only("direct")) == ["direct"],
 	)
 		and [Auto, Only("nix"), Only("direct")].all(
-			|choice| ["model", "spec", "lock"].all(|c| backends(c, choice) == [""]),
+			|choice|
+				["model", "spec", "requirements", "lock"]
+					.all(|c| backends(c, choice) == [""]),
 		)
 }
 
@@ -1137,6 +1213,35 @@ expect {
 			Std.on_nix(model).systems == ["x86_64-linux"]
 				and update(model) == [Bool.True]
 				and Std.checked_model([both, Name("bad"), nix_only]) == Err(refused)
+		Err(_) => Bool.False
+	}
+}
+
+# `kai requirements` prints what each environment that Expects programs
+# expects, an Extend's included, then checks them all at once; a named
+# environment is checked alone, one expecting nothing only says so, and a
+# mistyped one is refused with the name it may mean.
+expect {
+	settings = planning.concat([
+		Environment("base", [Expect(["git"])]),
+		Environment("ci", [Extend("base"), Expect(["make", "git"])]),
+	])
+	steps = |model, names|
+		Std.requirements(model, names, "x86_64-linux").map_ok(|plan| plan.steps)
+	programs = ["git", "make"]
+	check = |description| ExpectPrograms({ description, programs })
+	base = Print("environment base expects git")
+	ci = Print("environment ci expects git, make")
+	dev = Print("environment dev expects no programs")
+	match ConfigToModel.convert(settings) {
+		Ok(model) =>
+			steps(model, []) == Ok([base, ci, check("the project")])
+				and steps(model, ["ci"]) == Ok([ci, check("environment ci")])
+				and steps(model, ["dev"]) == Ok([dev])
+				and steps(model, ["cii"]).map_err(|f| (f.code, f.suggestions))
+					== Err(("unknown_name", ["ci"]))
+				and planned("requirements", context).map_ok(|plan| plan.steps)
+					== Ok([Print("no environment expects programs")])
 		Err(_) => Bool.False
 	}
 }

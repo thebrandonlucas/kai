@@ -33,6 +33,15 @@ Pages := [].{
 		config: [Pages.environment],
 	}
 
+	requirements : Command.Page
+	requirements = {
+		description: "List the programs each environment Expects of the machine, "
+			.concat("then fail naming every one that is not on PATH. `kai spec` ")
+			.concat("lists them too, as tools from \"expected\"."),
+		examples: ["kai requirements", "kai requirements host"],
+		config: ["Environment(\"host\", [Expect([\"sh\"])]),"],
+	}
+
 	lock : Command.Page
 	lock = {
 		description: "Print every input the lock pins, in its Nix and direct "

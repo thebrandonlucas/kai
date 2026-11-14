@@ -103,7 +103,7 @@ E2ePlugins := [].{
 		described = kai!(["describe"])?.stdout_utf8
 		expected = "plugins: std, deploy 0.1.0, quiet 1\n"
 			.concat("commands: shell, run, build, workflow, update, model, spec, ")
-			.concat("lock, deploy\n")
+			.concat("requirements, lock, deploy\n")
 			.concat("backends: nix, direct\n")
 		if described != expected {
 			return Err(WrongDescribe(described))
