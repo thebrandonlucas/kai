@@ -97,6 +97,8 @@ The Roc publisher rebuilds the artifacts, creates the matching annotated tag usi
 
 `publish-release` is CI-only and is not part of normal local release preparation.
 
+Once `publish-release` succeeds, the workflow attests every file in `dist/`, which are then exactly the published assets, with `actions/attest-build-provenance`, so `gh attestation verify FILE --repo OWNER/REPOSITORY` ties each download to the release workflow (see `SECURITY.md`). A rerun that finds the release already published attests the same files again, which is harmless.
+
 ## Recovery
 
 - Before a branch push begins, a preparation failure rolls back local release changes and removes generated release output.
