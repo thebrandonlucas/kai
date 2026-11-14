@@ -1,13 +1,15 @@
 # Invariants that should always be true about the code to maintain conceptual
 # integrity.
 #
-# Currently there are 6:
+# Currently there are 7:
 # - Enforce each code module and expect test to have an explainer comment
 # - Require every backend planner to have executed planning expect tests
 # - Require each plugin's test root to check Conformance.missing
 # - Limit line length to 80
 # - Reject direct static literal-list Str.join_with calls
 # - Require character literals in ASCII byte comparisons
+# - Require a `##` doc comment on each item std and the platform expose,
+#   apart from the known gaps devtool/doc-gaps.txt lists
 #
 # Inspired by [tidy.zig]
 import pf.Path
@@ -17,10 +19,12 @@ Tidy := [].{
 	Kind : [
 		LineTooLong(U64),
 		MissingConformance,
+		MissingDocComment(Str),
 		MissingExpectComment,
 		MissingImplementationTest(Str),
 		MissingModuleComment,
 		NumericAsciiByteComparison,
+		StaleDocGap(Str),
 		StaticLiteralJoin,
 	]
 
@@ -772,6 +776,170 @@ Tidy := [].{
 		}
 	}
 
+	# The package roots whose exposed modules are std's and the platform's API.
+	api_roots = ["plugins/std/main.roc", "platform/main.roc", "platform/api.roc"]
+	doc_gaps_path = "devtool/doc-gaps.txt"
+
+	# The module names a package or platform header exposes, one per line in
+	# the list after `package` or `exposes`.
+	exposed_names = |header|
+		header.split_on("\n").map(Str.trim).fold(
+			{ inside: Bool.False, done: Bool.False, names: [] },
+			|state, line|
+				if state.done {
+					state
+				} else if state.inside and line == "]" {
+					{ ..state, done: Bool.True }
+				} else if state.inside {
+					{ ..state, names: state.names.append(line.drop_suffix(",")) }
+				} else {
+					{ ..state, inside: line == "[" or line.ends_with("exposes [") }
+				},
+		).names
+
+	# The name a line declares: a name, then `:`, `:=`, `::` or `=`.
+	declared_name = |text| {
+		bytes = text.to_utf8()
+		name_end = Tidy.identifier_end(bytes, 0)
+		end = if (Tidy.byte_at(bytes, name_end) == '!') name_end + 1 else name_end
+		rest = Str.from_utf8_lossy(bytes.drop_first(end)).trim_start()
+		first = Tidy.byte_at(bytes, 0)
+		if
+			((first >= 'a' and first <= 'z') or (first >= 'A' and first <= 'Z'))
+				and (rest.starts_with(":") or rest.starts_with("="))
+				and !rest.starts_with("==")
+				{
+					Declares(Str.from_utf8_lossy(bytes.take_first(end)))
+				} else {
+			DeclaresNothing
+		}
+	}
+
+	# A type module exposes its type, declared first at the top level, and
+	# each definition directly inside the type's `.{ }` block; anything else
+	# is private. An item is documented when the line before it, blank lines
+	# aside, is a `##` comment. An annotation and its definition are one
+	# item, at the annotation.
+	exposed_items = |lines, phase, previous|
+		match lines {
+			[] => []
+			[first, .. as rest] => {
+				text = first.text
+				top_level = !text.is_empty() and !text.starts_with("\t")
+				item = |name| [
+					{
+						line: first.line,
+						name,
+						documented: previous.starts_with("##"),
+					},
+				]
+				(found, next_phase) = match (phase, Tidy.declared_name(text)) {
+					(TypePending, Declares(name)) if top_level => {
+						opened = if text.ends_with(".{") {
+							Block
+						} else if text.ends_with("{") or text.ends_with("[") {
+							TypeBody
+						} else {
+							Done
+						}
+						(item(name), opened)
+					}
+					(TypeBody, _) if top_level =>
+						([], if (text.ends_with(".{")) Block else Done)
+					(Block, _) if text.starts_with("}") => ([], Done)
+					(Block, _) if
+					text.starts_with("\t") and !text.starts_with("\t\t") =>
+						match Tidy.declared_name(text.trim()) {
+							Declares(name) => (item(name), Block)
+							DeclaresNothing => ([], Block)
+						}
+					_ => ([], phase)
+				}
+				current = if (text.trim().is_empty()) previous else text.trim()
+				found.concat(Tidy.exposed_items(rest, next_phase, current))
+			}
+		}
+
+	api_module_paths! = |roots|
+		match roots {
+			[] => Ok([])
+			[root, .. as rest] => {
+				header = Path.read_utf8!(Path.utf8(root))?
+				directory = Str.join_with(root.split_on("/").drop_last(1), "/")
+				paths = Tidy.exposed_names(header).map(
+					|name| "${directory}/${name}.roc",
+				)
+				remaining = Tidy.api_module_paths!(rest)?
+				Ok(paths.concat(remaining.keep_if(|path| !paths.contains(path))))
+			}
+		}
+
+	api_items! = |paths|
+		match paths {
+			[] => Ok([])
+			[path, .. as rest] => {
+				source = Path.read_utf8!(Path.utf8(path))?
+				items = Tidy.exposed_items(Tidy.indexed_lines(source), TypePending, "")
+					.fold(
+						[],
+						|kept, item|
+							if kept.any(|other| other.name == item.name) {
+								kept
+							} else {
+								kept.append({
+									path,
+									line: item.line,
+									name: item.name,
+									documented: item.documented,
+								})
+							},
+					)
+				remaining = Tidy.api_items!(rest)?
+				Ok(items.concat(remaining))
+			}
+		}
+
+	# An undocumented item fails unless the gap list names it, as "path name";
+	# an entry naming an item that is documented or gone fails too, so the
+	# list only shrinks. No items at all fails, so the check cannot go vacuous.
+	doc_diagnostics! = |roots| {
+		items = Tidy.api_items!(Tidy.api_module_paths!(roots)?)?
+		gaps = Tidy.indexed_lines(Path.read_utf8!(Path.utf8(Tidy.doc_gaps_path))?)
+			.map(|gap| { line: gap.line, entry: gap.text.trim() })
+			.keep_if(|gap| !gap.entry.is_empty() and !gap.entry.starts_with("#"))
+		undocumented = items.keep_if(|item| !item.documented)
+		entries = undocumented.map(|item| "${item.path} ${item.name}")
+		missing = undocumented.keep_if(
+			|item| !gaps.any(|gap| gap.entry == "${item.path} ${item.name}"),
+		).map(
+			|item|
+				Tidy.Diagnostic.{
+					kind: MissingDocComment(item.name),
+					line: item.line,
+					path: item.path,
+				},
+		)
+		stale = gaps.keep_if(|gap| !entries.contains(gap.entry)).map(
+			|gap|
+				Tidy.Diagnostic.{
+					kind: StaleDocGap(gap.entry),
+					line: gap.line,
+					path: Tidy.doc_gaps_path,
+				},
+		)
+		if items.is_empty() {
+			Ok([
+				Tidy.Diagnostic.{
+					kind: MissingDocComment("no exposed item"),
+					line: 1,
+					path: Str.join_with(roots, ", "),
+				},
+			])
+		} else {
+			Ok(missing.concat(stale))
+		}
+	}
+
 	check_paths! = |paths|
 		match paths {
 			[] => Ok([])
@@ -840,6 +1008,20 @@ Tidy := [].{
 		)
 		missing_conformance = diagnostics.keep_if(
 			|diagnostic| diagnostic.kind == MissingConformance,
+		)
+		missing_docs = diagnostics.keep_if(
+			|diagnostic|
+				match diagnostic.kind {
+					MissingDocComment(_) => Bool.True
+					_ => Bool.False
+				},
+		)
+		stale_doc_gaps = diagnostics.keep_if(
+			|diagnostic|
+				match diagnostic.kind {
+					StaleDocGap(_) => Bool.True
+					_ => Bool.False
+				},
 		)
 
 		if !missing_comments.is_empty() {
@@ -920,6 +1102,36 @@ Tidy := [].{
 				Stderr.line!("  ${diagnostic.path}")?
 			}
 		}
+		if !missing_docs.is_empty() {
+			Stderr.line!("")?
+			header = "API items without a ## doc comment (${
+				U64.to_str(missing_docs.len())
+			}):"
+			Stderr.line!(Tidy.colorize(Tidy.ansi_red, header))?
+			for diagnostic in missing_docs {
+				name = match diagnostic.kind {
+					MissingDocComment(found) => found
+					_ => ""
+				}
+				line = U64.to_str(diagnostic.line)
+				Stderr.line!("  ${diagnostic.path}:${line} ${name}")?
+			}
+		}
+		if !stale_doc_gaps.is_empty() {
+			Stderr.line!("")?
+			header = "Doc gap entries to remove, now documented or gone (${
+				U64.to_str(stale_doc_gaps.len())
+			}):"
+			Stderr.line!(Tidy.colorize(Tidy.ansi_red, header))?
+			for diagnostic in stale_doc_gaps {
+				entry = match diagnostic.kind {
+					StaleDocGap(found) => found
+					_ => ""
+				}
+				line = U64.to_str(diagnostic.line)
+				Stderr.line!("  ${diagnostic.path}:${line} ${entry}")?
+			}
+		}
 		if !diagnostics.is_empty() {
 			Stderr.line!("")?
 		}
@@ -927,6 +1139,10 @@ Tidy := [].{
 		Tidy.print_check!("Module and expect comments", missing_comments.is_empty())?
 		Tidy.print_check!("Backend planner tests", missing_tests.is_empty())?
 		Tidy.print_check!("Plugin Conformance", missing_conformance.is_empty())?
+		Tidy.print_check!(
+			"Doc comments on std and platform API items",
+			missing_docs.is_empty() and stale_doc_gaps.is_empty(),
+		)?
 		Tidy.print_check!("80-codepoint line limit", long_lines.is_empty())?
 		Tidy.print_check!(
 			"No direct static literal-list Str.join_with calls",
@@ -957,7 +1173,14 @@ Tidy := [].{
 		} else {
 			[]
 		}
-		diagnostics = file_diagnostics.concat(implementation_diagnostics)
+		doc_diagnostics = if whole_repository {
+			Tidy.doc_diagnostics!(Tidy.api_roots)?
+		} else {
+			[]
+		}
+		diagnostics = file_diagnostics
+			.concat(implementation_diagnostics)
+			.concat(doc_diagnostics)
 		Tidy.print_report!(diagnostics)?
 		if diagnostics.is_empty() {
 			Ok({})
