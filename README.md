@@ -534,8 +534,14 @@ which ignores everything there but `lock.json`, so git lists only the lock
 and your own `.gitignore` needs no `.kai` lines. Kai leaves a `.gitignore`
 already in `.kai` as it is, so to ignore other files there, write your own.
 
-`KAI_DIR=<name>` moves the whole directory to another top-level name in the
-project; Kai writes the same `.gitignore` there.
+`KAI_DIR=<name>` moves Kai's generated files and caches, everything in
+`.kai` but the lock, to another top-level directory in the project, such as
+one your tools already ignore. The lock stays at `.kai/lock.json`, so a
+committed lock serves every `KAI_DIR`. Kai overwrites and deletes files in
+`KAI_DIR`, so it uses only a new or empty directory, which it marks as its
+own with a `.kai-workspace` file, or one it marked before; it refuses any
+other existing directory, such as `.zig-cache`. Kai writes a `.gitignore`
+there that ignores everything in it.
 
 ## direnv
 

@@ -18,7 +18,7 @@ Variables := [].{
 
 	kai_dir = {
 		name: "KAI_DIR",
-		description: "The project's workspace directory (default: .kai).",
+		description: "Where Kai keeps generated files (default: .kai).",
 	}
 
 	kai_no_cache = {

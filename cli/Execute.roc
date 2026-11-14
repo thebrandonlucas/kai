@@ -685,6 +685,7 @@ Execute := [].{
 					Present(text) => Present(text.to_utf8())
 					Absent => Absent
 				}
+				Workspace.prepare_lock!(layout)?
 				Update.publish!(layout.lock_path, prior, contents)?
 				if previous == Present(contents) {
 					return Ok({})
