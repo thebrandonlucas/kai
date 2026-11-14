@@ -439,6 +439,20 @@ GuixBackend :: [].{
 
 	stale_lock = "the guix lock is missing or stale"
 
+	## Each channel's commit and source's hash a guix section pins, by name,
+	## whatever the project now declares: what `kai update` compares.
+	lock_entries : LockJson -> List({ name : Str, pin : Str })
+	lock_entries = |found| {
+		pins_in = |field, pin_field|
+			(LockJson.array(LockJson.field(found, field) ?? Null) ?? []).keep_oks(
+				|e| {
+					name = LockJson.string(LockJson.field(e, "name")?)?
+					Ok({ name, pin: LockJson.string(LockJson.field(e, pin_field)?)? })
+				},
+			)
+		pins_in("channels", "commit").concat(pins_in("sources", "hash"))
+	}
+
 	## The pins of `channels` and the source hashes a guix section holds.
 	read_lock : List(Channel), LockJson -> Try(Locked, Str)
 	read_lock = |channels, found| {
