@@ -55,7 +55,7 @@ Every setting but `User` occurs at most once in a machine.
 |---|---|
 | `System(system)` | Required. `x86_64-linux` or `aarch64-linux`, and one of the project's `Systems`. |
 | `StateVersion(release)` | Required. NixOS's `system.stateVersion`, a release such as `"25.05"`: the release whose state formats the machine keeps. Set it once, when the machine is installed. |
-| `HostName(name)` | `networking.hostName`. Optional (default: the machine's name). |
+| `HostName(name)` | `networking.hostName`. Optional (default: the machine's name, or an [instance](#many-servers-from-one-machine)'s). |
 | `Host(target)` | The SSH target, `user@host` or `host`, with an optional `:port`, that `switch`, `rollback` and `generations` act on; see [Remote machines](#remote-machines). Optional (default: the host kai runs on). |
 | `User(name, [...])` | An ordinary user, with `SshKeys([...])`, its authorized OpenSSH public keys, and `Groups([...])`, its supplementary groups such as `wheel`. `User("root", [SshKeys([...])])` authorizes keys for root, which takes no groups. |
 | `Ssh` | OpenSSH, with key logins only: no passwords or keyboard-interactive logins, and root only with keys when root has some. It needs a `User` with `SshKeys`, and opens its port in the firewall. |
@@ -445,6 +445,55 @@ each device's model and drivers, and the firmware's vendor and version.
 It holds no keys or passwords, and nixos-facter leaves out the firmware's
 serial numbers and UUIDs, though a device such as a disk may report its
 own serial number, so it is safe to commit.
+
+### Many servers from one machine
+
+A tool that launches the same machine many times, such as a catalog of
+server recipes, installs each server as an instance of it, named with
+`--as`:
+
+```console
+$ kai machine install web --as demo --to root@203.0.113.7
+$ kai machine install web --as staging --to root@198.51.100.4
+$ printf %s "$API_KEY" | kai secret set web app-key --as demo
+$ kai machine switch web --as demo --to admin@203.0.113.7
+```
+
+Everything kai records of a server is kept under its instance's name
+instead of the machine's, so one project serves every server, without a
+copy of it per server, and installs do not overwrite each other:
+
+| File | Holds |
+|---|---|
+| `machines/INSTANCE/facter.json` | The instance's [hardware facts](#hardware-facts). |
+| `secrets/hosts/INSTANCE.age`, `.pub` | Its host key, as [The host key comes first](#the-host-key-comes-first) describes. |
+| `secrets/INSTANCE/SECRET.age` | Each secret, encrypted to the Operators and the instance's host key. |
+| `.kai/machines/INSTANCE` | A switch's out-link, and `INSTANCE-installer` an install's. |
+
+`kai machine build`, `install`, `switch`, `rollback` and `generations`,
+and `kai secret set` and `rekey`, take `--as`. Without it, the instance is
+the machine itself, as before, and so is `--as` with the machine's own
+name. Each instance's system is the machine's settings with its own
+hardware facts and secrets: the command naming it adds
+`nixosConfigurations.INSTANCE` to the generated flake beside the declared
+machines, and builds that. Its `networking.hostName` is the instance's
+name, unless `HostName` sets one for every instance. Remote commands
+trust the instance's host key, `-o HostKeyAlias=INSTANCE`, as [The
+target's host key](#the-targets-host-key) describes for a machine.
+
+Each instance has its own copy of each secret, encrypted to its own host
+key, so set an instance's secrets with `kai secret set ... --as INSTANCE`,
+before or after installing it, as for a machine. An instance's name is a
+machine name that is also a host name: a letter, then up to 62 letters,
+digits, `-` or `_`, ending in a letter or digit. It cannot be another
+declared machine's name; kai refuses either before planning.
+
+`Host` is where the declared machine itself lives, so an instance never
+acts on it: give each command on an instance `--to`, as an install
+already needs. Without `--to`, an instance's `switch`, `rollback` and
+`generations` act on the host kai runs on, which must be named after the
+instance, as for a machine without `Host`. When `Host`'s user is a `User`
+of the machine, every instance trusts that user to copy systems in.
 
 ## Secrets
 

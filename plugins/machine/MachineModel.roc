@@ -7,14 +7,18 @@ import services.Caddy
 MachineModel :: [].{
 
 	## A machine's settings, folded. Modules is Nix's alone: the nix
-	## implementation checks it, and another backend would refuse it. `host`
-	## is the SSH target it lives at, "" for the host kai runs on. `disk` is
+	## implementation checks it, and another backend would refuse it.
+	## `instance` names the server it is installed on, by default its `name`:
+	## what kai records of that server is kept under it. `host_name` is
+	## HostName, "" for the instance's name. `host` is the SSH target it
+	## lives at, "" for the host kai runs on. `disk` is
 	## the layout install partitions and the system mounts. `operators` are
 	## the public keys its host key and secrets are encrypted to,
 	## `secrets` what it decrypts as it activates, and `services` what it
 	## runs.
 	Machine : {
 		name : Str,
+		instance : Str,
 		system : Str,
 		host_name : Str,
 		host : Str,
@@ -66,17 +70,73 @@ MachineModel :: [].{
 
 	User : { name : Str, keys : List(Str), groups : List(Str) }
 
-	## The machine `kai machine ACTION NAME` names.
+	## The machine `kai machine ACTION NAME` names, as the instance `--as`
+	## names.
 	requested : List(Machine), Command.Args -> Try(Machine, Str)
 	requested = |machines, args| {
 		name = match Command.trailing(args, "machine") {
 			[one] => one
 			_ => return Err(MachineModel.name_one)
 		}
-		machines
-			.find_first(|m| m.name == name)
-			.map_err(|_| "unknown machine: ${name}")
+		m = machines
+			.find_first(|found| found.name == name)
+			.map_err(|_| "unknown machine: ${name}")?
+		MachineModel.instance_of(machines, m, args)
 	}
+
+	## Machine `m` as the instance `--as` names, or as itself. An instance's
+	## name is a machine name that is also a host name, and no other
+	## machine's, whose files and system it would share.
+	instance_of : List(Machine), Machine, Command.Args -> Try(Machine, Str)
+	instance_of = |machines, m, args| {
+		another_machine = |name| name != m.name and machines.any(|o| o.name == name)
+		match Command.value(args, "as") {
+			Err(NoValue) => Ok(m)
+			Ok(instance) if !MachineModel.valid_instance(instance) =>
+				Err(
+					"--as ${instance} is no instance name; use a letter, then up to "
+						.concat("62 letters, digits, - or _, ending in a letter or digit"),
+				)
+			Ok(instance) if another_machine(instance) =>
+				Err("--as ${instance} names another machine; name another instance")
+			Ok(instance) => Ok({ ..m, instance })
+		}
+	}
+
+	## A letter, then up to 62 letters, digits, `-` or `_`, ending in a
+	## letter or digit: a machine name that is also a host name.
+	valid_instance : Str -> Bool
+	valid_instance = |name| {
+		letter = |b| (b >= 'a' and b <= 'z') or (b >= 'A' and b <= 'Z')
+		alphanumeric = |b| letter(b) or (b >= '0' and b <= '9')
+		bytes = name.to_utf8()
+		ends = match (bytes.first(), bytes.last()) {
+			(Ok(first), Ok(last)) => letter(first) and alphanumeric(last)
+			_ => Bool.False
+		}
+		ends
+			and bytes.len() <= 63
+			and bytes.all(|b| alphanumeric(b) or b == '-' or b == '_')
+	}
+
+	## Machine `m`'s networking.hostName: HostName, else its instance's name.
+	host_name : Machine -> Str
+	host_name = |m| if (m.host_name.is_empty()) m.instance else m.host_name
+
+	## Machine `m` in kai's words: "machine web", or "machine web as demo"
+	## for an instance.
+	called : Machine -> Str
+	called = |m|
+		if m.instance == m.name {
+			"machine ${m.name}"
+		} else {
+			"machine ${m.name} as ${m.instance}"
+		}
+
+	## Machine `m` as a command names it: "web", or "web --as demo".
+	named : Machine -> Str
+	named = |m|
+		if (m.instance == m.name) m.name else "${m.name} --as ${m.instance}"
 
 	name_one = "name one machine: kai machine ACTION NAME"
 
@@ -101,9 +161,10 @@ MachineModel :: [].{
 			suggestions: Plan.closest(given, names),
 		}
 		machine_names = machines.map(|found| found.name)
-		m = machines.find_first(|found| found.name == name).map_err(
+		declared = machines.find_first(|found| found.name == name).map_err(
 			|_| unknown("unknown machine: ${name}", name, machine_names),
 		)?
+		m = MachineModel.instance_of(machines, declared, args).map_err(Plan.fail)?
 		secrets = m.secrets.map(|s| s.name)
 		if m.operators.is_empty() {
 			Err(Plan.fail("machine ${name} has no Operators to encrypt secrets to"))
@@ -116,7 +177,8 @@ MachineModel :: [].{
 
 	## Where `kai machine ACTION` acts on machine `m`: `--to`, else its Host,
 	## else the host kai runs on. A build is always made here, and an
-	## install, which erases a disk, goes only where `--to` says.
+	## install, which erases a disk, goes only where `--to` says. Host is
+	## the machine's own server, never an instance's.
 	destination : Machine, Command.Args -> Try([Here, Remote(Str)], Str)
 	destination = |m, args| {
 		action = Command.name(args, "action")
@@ -128,11 +190,11 @@ MachineModel :: [].{
 			Ok(to) => Ok(Remote(to))
 			Err(NoValue) if action == "install" =>
 				Err(
-					"kai machine install ${m.name} needs --to TARGET, such as "
-						.concat("root@203.0.113.7: it erases the target's disk, so ")
-						.concat("it never defaults to Host"),
+					"kai machine install ${MachineModel.named(m)} needs --to TARGET, "
+						.concat("such as root@203.0.113.7: it erases the target's disk, ")
+						.concat("so it never defaults to Host"),
 				)
-			Err(NoValue) if m.host.is_empty() => Ok(Here)
+			Err(NoValue) if m.host.is_empty() or m.instance != m.name => Ok(Here)
 			Err(NoValue) => Ok(Remote(m.host))
 		}
 	}

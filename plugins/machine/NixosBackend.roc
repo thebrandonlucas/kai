@@ -26,13 +26,14 @@ NixosBackend :: [].{
 	Built : { attribute : Str, name : Str, description : Str, out_link : Str }
 
 	implementation : Project, List(Machine) -> Implementation
-	implementation = |project, machines|
+	implementation = |project, declared|
 		Implementation.{
 			command: "machine",
 			backend: On("nix"),
-			fit: |args| MachineModel.requested(machines, args).map_ok(|_| {}),
+			fit: |args| MachineModel.requested(declared, args).map_ok(|_| {}),
 			plan: |ctx| {
-				m = MachineModel.requested(machines, ctx.args).map_err(Plan.fail)?
+				m = MachineModel.requested(declared, ctx.args).map_err(Plan.fail)?
+				machines = NixosBackend.with_instance(declared, m)
 				action = Command.name(ctx.args, "action")
 				destination = MachineModel.destination(m, ctx.args).map_err(Plan.fail)?
 				if action == "build" {
@@ -60,6 +61,14 @@ NixosBackend :: [].{
 				}
 			},
 		}
+
+	## The machines the flake defines: the declared ones, and `m` too when
+	## it is an instance, as `nixosConfigurations.<instance>`, which reads
+	## the instance's hardware facts and secrets. Only the command line
+	## names an instance, so the command naming one renders it.
+	with_instance : List(Machine), Machine -> List(Machine)
+	with_instance = |declared, m|
+		if (m.instance == m.name) declared else declared.append(m)
 
 	## What only Nix can honour that is wrong with machine `m`.
 	problems : Machine -> List(Str)
@@ -109,12 +118,13 @@ NixosBackend :: [].{
 		if ctx.host.system != m.system {
 			return Err(
 				Plan.fail(
-					"machine ${m.name} is ${m.system}, but this host is ${ctx.host.system}: "
+					"${MachineModel.called(m)} is ${m.system}, but this host is "
+						.concat("${ctx.host.system}: ")
 						.concat(NixosBackend.local_only(action, m)),
 				),
 			)
 		}
-		description = "machine ${action} ${m.name}"
+		description = "machine ${action} ${MachineModel.named(m)}"
 		system_profile = NixosBackend.profile
 		check = NixosBackend.host_check(action, m)
 		here = NixosBackend.run("${description}: host check", Quiet, check)
@@ -128,11 +138,12 @@ NixosBackend :: [].{
 		restarting = "restarting changed services and booting it by default?"
 		steps = match action {
 			"switch" => {
-				link = "${ctx.layout.workspace}/machines/${m.name}"
+				link = "${ctx.layout.workspace}/machines/${m.instance}"
 				built = NixosBackend.build(project, machines, m, ctx, link)?
-				prompt = "Switch this host to machine ${m.name}, ${restarting}"
+				called = MachineModel.called(m)
+				prompt = "Switch this host to ${called}, ${restarting}"
 				set = sudo(["nix", "build", "--no-link", "--profile", system_profile, link])
-				activating = Note("activating machine ${m.name}'s system on this host")
+				activating = Note("activating ${called}'s system on this host")
 				[here]
 					.concat(built.steps)
 					.concat([Confirm(prompt), activating, set, activate])
@@ -159,7 +170,7 @@ NixosBackend :: [].{
 	## `read_host_key` found it, else the operator's known hosts.
 	on_remote : Project, List(Machine), Machine, Context, Str, Str -> Planned
 	on_remote = |project, machines, m, ctx, action, target| {
-		description = "machine ${action} ${m.name} on ${target}"
+		description = "machine ${action} ${MachineModel.named(m)} on ${target}"
 		system_profile = NixosBackend.profile
 		programs = if (action == "switch") ["nix", "ssh"] else ["ssh"]
 		tools = [ExpectPrograms({ description, programs })]
@@ -190,9 +201,9 @@ NixosBackend :: [].{
 		restarting = "restarting changed services and booting it by default?"
 		steps = match action {
 			"switch" => {
-				link = "${ctx.layout.workspace}/machines/${m.name}"
+				link = "${ctx.layout.workspace}/machines/${m.instance}"
 				built = NixosBackend.build(project, machines, m, ctx, link)?
-				prompt = "Switch ${target} to machine ${m.name}, ${restarting}"
+				prompt = "Switch ${target} to ${MachineModel.called(m)}, ${restarting}"
 				# The URL holds no port: NIX_SSHOPTS passes it to ssh.
 				store = "ssh-ng://${reach.destination}"
 				# A system built here is unsigned; the target still refuses it from
@@ -206,7 +217,7 @@ NixosBackend :: [].{
 					.concat(built.steps)
 					.concat([
 						Confirm(prompt),
-						Note("copying machine ${m.name}'s system to ${target}"),
+						Note("copying ${MachineModel.called(m)}'s system to ${target}"),
 						quiet(NixosBackend.with_ssh_options(options, copy)),
 						Note("activating it on ${target}"),
 						quiet(set),
@@ -226,7 +237,7 @@ NixosBackend :: [].{
 	}
 
 	## Where a remote action copies machine `m`'s host public key,
-	## secrets/hosts/NAME.pub, for its continuation to read.
+	## secrets/hosts/INSTANCE.pub, for its continuation to read.
 	host_key_copy : Context -> Str
 	host_key_copy = |ctx| "${ctx.layout.generated_root}/machine/host-key.pub"
 
@@ -245,9 +256,10 @@ NixosBackend :: [].{
 			\\[ -e "$1" ] || exit 0
 			\\mkdir -p "$(dirname "$2")" || exit
 			\\exec cp "$1" "$2"
-		public_key = "${ctx.layout.project_root}/secrets/hosts/${m.name}.pub"
+		public_key = "${ctx.layout.project_root}/secrets/hosts/${m.instance}.pub"
 		copy = NixosBackend.host_key_copy(ctx)
-		description = "machine ${action} ${m.name} on ${target}: host key"
+		named = MachineModel.named(m)
+		description = "machine ${action} ${named} on ${target}: host key"
 		argv = ["sh", "-c", script, "sh", public_key, copy]
 		steps = [NixosBackend.run(description, Quiet, argv)]
 		Ok(Plan.{ steps, next: Observe([copy]) })
@@ -255,7 +267,7 @@ NixosBackend :: [].{
 
 	## The ssh options trusting exactly machine `m`'s host key, as
 	## `read_host_key` copied it, and the step writing the known hosts file
-	## they name: the key under the machine's name, by which ssh looks it up
+	## they name: the key under the instance's name, by which ssh looks it up
 	## in that file alone, whatever address or ~/.ssh/config alias the
 	## target is. Without the key there are none, and ssh checks the
 	## operator's known hosts. ssh splits the file's name at spaces, and Nix
@@ -271,7 +283,7 @@ NixosBackend :: [].{
 		known = NixosBackend.known_hosts_file(ctx)
 		plain = |b| !" \t\n\r%\"'\\".to_utf8().contains(b)
 		if key.is_empty() {
-			Err(Plan.fail("secrets/hosts/${m.name}.pub holds no public key"))
+			Err(Plan.fail("secrets/hosts/${m.instance}.pub holds no public key"))
 		} else if !known.to_utf8().all(plain) {
 			Err(
 				Plan.fail(
@@ -280,11 +292,11 @@ NixosBackend :: [].{
 				),
 			)
 		} else {
-			file = { path: known, contents: "${m.name} ${key}\n" }
+			file = { path: known, contents: "${m.instance} ${key}\n" }
 			options = ["-o", "UserKnownHostsFile=${known}"]
 				.concat(["-o", "GlobalKnownHostsFile=/dev/null"])
 				.concat(["-o", "StrictHostKeyChecking=yes"])
-				.concat(["-o", "HostKeyAlias=${m.name}"])
+				.concat(["-o", "HostKeyAlias=${m.instance}"])
 			Ok({ steps: [Write([file])], options })
 		}
 	}
@@ -372,7 +384,7 @@ NixosBackend :: [].{
 				},
 			)
 		} else if action == "switch" {
-			[Note("machine ${m.name} ${running} on ${place}")]
+			[Note("${MachineModel.called(m)} ${running} on ${place}")]
 		} else {
 			[Note("${place} ${running}")]
 		}
@@ -393,18 +405,18 @@ NixosBackend :: [].{
 	## builds the system again with it.
 	install : Project, List(Machine), Machine, Context, Str -> Planned
 	install = |project, machines, m, ctx, target| {
-		description = "machine install ${m.name} on ${target}"
+		description = "machine install ${MachineModel.named(m)} on ${target}"
 		tools = ExpectPrograms({ description, programs: ["nix", "ssh"] })
 		built = NixosBackend.build(project, machines, m, ctx, "")?
-		installer_link = "${ctx.layout.workspace}/machines/${m.name}-installer"
+		installer_link = "${ctx.layout.workspace}/machines/${m.instance}-installer"
 		installer = NixosBackend.flake_build(
 			project,
 			machines,
 			ctx,
 			{
 				attribute: "kexecInstallers.${m.system}",
-				name: "${m.name}-installer",
-				description: "machine install ${m.name}: installer",
+				name: "${m.instance}-installer",
+				description: "machine install ${MachineModel.named(m)}: installer",
 				out_link: installer_link,
 			},
 		)?
@@ -422,11 +434,11 @@ NixosBackend :: [].{
 			SingleDisk(path) => path
 			NoDisk => ""
 		}
-		prompt = "Install machine ${m.name} on ${target}, ERASING its disk "
+		prompt = "Install ${MachineModel.called(m)} on ${target}, ERASING its disk "
 			.concat("${device} and everything on it?")
 		flake = "path:${Std.nix_layout(ctx.layout).generated_root}"
 		anywhere = if m.operators.is_empty() {
-			NixosBackend.nixos_anywhere(flake, m.name, target)
+			NixosBackend.nixos_anywhere(flake, m.instance, target)
 		} else {
 			NixosBackend.keyed_install(ctx, flake, m, target)
 		}
@@ -436,7 +448,7 @@ NixosBackend :: [].{
 		# nixos-anywhere's progress shows, as it runs for minutes and may stall.
 		run = NixosBackend.run(description, Inherit, anywhere.concat(recording))
 		installing = Note(
-			"installing machine ${m.name} on ${target}: this erases ${device} "
+			"installing ${MachineModel.called(m)} on ${target}: this erases ${device} "
 				.concat("and takes several minutes"),
 		)
 		wrote = Note("wrote ${facts}, the machine's hardware facts; commit it")
@@ -523,8 +535,9 @@ NixosBackend :: [].{
 		identity = Command.path(ctx.args, "identity") ?? ""
 		secrets = "${ctx.layout.project_root}/secrets"
 		NixosBackend.with_age(flake, Str.join_with(script, "\n"))
-			.concat([flake, identity, secrets, m.name, Str.join_with(m.operators, "\n")])
-			.concat(NixosBackend.anywhere_arguments(flake, m.name, target))
+			.concat([flake, identity, secrets, m.instance])
+			.append(Str.join_with(m.operators, "\n"))
+			.concat(NixosBackend.anywhere_arguments(flake, m.instance, target))
 	}
 
 	## `sh -c script sh` with age and ssh-keygen from the locked nixpkgs of
@@ -583,7 +596,7 @@ NixosBackend :: [].{
 			plan: |ctx| {
 				(m, secret) = MachineModel.secret_target(machines, ctx.args)?
 				action = Command.name(ctx.args, "action")
-				description = "secret ${action} ${m.name}"
+				description = "secret ${action} ${MachineModel.named(m)}"
 				tools = ExpectPrograms({ description, programs: ["nix"] })
 				flake = NixosBackend.flake_output(project, machines, m, ctx, "")?
 				written = flake.steps.drop_if(
@@ -596,14 +609,14 @@ NixosBackend :: [].{
 				nix_flake = "path:${Std.nix_layout(ctx.layout).generated_root}"
 				secrets = "${ctx.layout.project_root}/secrets"
 				operators = Str.join_with(m.operators, "\n")
-				unknown_host = NixosBackend.without_host_key(m.name)
+				unknown_host = NixosBackend.without_host_key(m)
 				argv = if action == "set" {
 					NixosBackend.with_age(nix_flake, NixosBackend.set_script)
-						.concat([secrets, m.name, secret, operators, unknown_host])
+						.concat([secrets, m.instance, secret, operators, unknown_host])
 				} else {
 					identity = Command.path(ctx.args, "identity") ?? ""
 					NixosBackend.with_age(nix_flake, NixosBackend.rekey_script)
-						.concat([identity, secrets, m.name, operators, unknown_host])
+						.concat([identity, secrets, m.instance, operators, unknown_host])
 				}
 				steps = [tools]
 					.concat(written)
@@ -614,12 +627,14 @@ NixosBackend :: [].{
 
 	## Why a machine without a host public key cannot decrypt its secrets
 	## yet, and what fixes it.
-	without_host_key : Str -> Str
-	without_host_key = |name|
+	without_host_key : Machine -> Str
+	without_host_key = |m| {
+		name = MachineModel.named(m)
 		"kai machine install ${name} makes the machine's host key and encrypts "
 			.concat("its secrets to it; for a machine installed otherwise, write ")
 			.concat("its /etc/ssh/ssh_host_ed25519_key.pub there and run kai ")
 			.concat("secret rekey ${name}")
+	}
 
 	## Encrypts stdin, which never touches a disk, to the recipients, as
 	## secrets/NAME/SECRET.age.
@@ -700,8 +715,8 @@ NixosBackend :: [].{
 			target,
 			reach.destination,
 			NixosBackend.architecture(m),
-			"machine ${m.name} is ${m.system}",
-			"run kai machine install ${m.name} --to ${target} first",
+			"${MachineModel.called(m)} is ${m.system}",
+			"run kai machine install ${MachineModel.named(m)} --to ${target} first",
 		]
 			.concat(reach.options)
 			.concat(options)
@@ -759,16 +774,23 @@ NixosBackend :: [].{
 			[]
 		} else {
 			script =
-				\\name=$1
-				\\shift
+				\\name=$1 instance=$2
+				\\shift 2
 				\\for file; do
 				\\  [ -e "$file" ] && continue
 				\\  secret=$(basename "$file" .age)
-				\\  echo "$file does not exist: run kai secret set $name $secret" >&2
+				\\  set="kai secret set $name $secret$instance"
+				\\  echo "$file does not exist: run $set" >&2
 				\\  exit 1
 				\\done
-			description = "machine build ${machine.name}: secrets"
-			argv = ["sh", "-c", script, "sh", machine.name].concat(files)
+			description = "machine build ${MachineModel.named(machine)}: secrets"
+			# A secret of an instance is set naming it.
+			instance = if machine.instance == machine.name {
+				""
+			} else {
+				" --as ${machine.instance}"
+			}
+			argv = ["sh", "-c", script, "sh", machine.name, instance].concat(files)
 			checked = files.map(|file| CheckSource(file))
 			[NixosBackend.run(description, Quiet, argv)].concat(checked)
 		}
@@ -778,10 +800,10 @@ NixosBackend :: [].{
 	## std's flake with every machine, and the build of `machine`'s system.
 	flake_output : Project, List(Machine), Machine, Context, Str -> Planned
 	flake_output = |project, machines, machine, ctx, out_link| {
-		attribute = "nixosConfigurations.${machine.name}"
+		attribute = "nixosConfigurations.${machine.instance}"
 			.concat(".config.system.build.toplevel")
-		description = "machine build ${machine.name}"
-		wanted = { attribute, name: machine.name, description, out_link }
+		description = "machine build ${MachineModel.named(machine)}"
+		wanted = { attribute, name: machine.instance, description, out_link }
 		NixosBackend.flake_build(project, machines, ctx, wanted)
 	}
 
@@ -806,19 +828,24 @@ NixosBackend :: [].{
 	## Where install records machine `m`'s hardware facts, beneath
 	## `project_root`.
 	facts_file : Machine, Str -> Str
-	facts_file = |m, project_root| "${project_root}/machines/${m.name}/facter.json"
+	facts_file = |m, project_root|
+		"${project_root}/machines/${m.instance}/facter.json"
 
 	## Where secret `s` of machine `m` is encrypted, beneath `project_root`.
 	secret_file : Machine, MachineModel.Secret, Str -> Str
 	secret_file = |m, s, project_root|
-		"${project_root}/secrets/${m.name}/${s.name}.age"
+		"${project_root}/secrets/${m.instance}/${s.name}.age"
 
 	## Why `action` refuses another host than `m`.
 	local_only : Str, Machine -> Str
-	local_only = |action, m|
-		"kai machine ${action} without Host or --to acts on the host it runs "
-			.concat("on; run it on ${m.host_name}, or name its SSH target with ")
-			.concat("Host or --to")
+	local_only = |action, m| {
+		# An instance never acts on Host, the machine's own server.
+		reaching = if (m.instance == m.name) "Host or --to" else "--to"
+		host_name = MachineModel.host_name(m)
+		"kai machine ${action} ${MachineModel.named(m)} without ${reaching} acts "
+			.concat("on the host it runs on; run it on ${host_name}, or name its ")
+			.concat("SSH target with ${reaching}")
+	}
 
 	## A shell check, as the switch runs, that this host's name is the
 	## machine's HostName. The names and the message are arguments, never
@@ -830,7 +857,8 @@ NixosBackend :: [].{
 			\\[ "$host" = "$1" ] && exit 0
 			\\echo "this host is $host, not $1: $2" >&2
 			\\exit 1
-		["sh", "-c", script, "sh", m.host_name, NixosBackend.local_only(action, m)]
+		why = NixosBackend.local_only(action, m)
+		["sh", "-c", script, "sh", MachineModel.host_name(m), why]
 	}
 
 	run : Str, Plan.Output, List(Str) -> Plan.Step
@@ -874,7 +902,7 @@ NixosBackend :: [].{
 		settings = NixosBackend.settings(m, project_root)
 		NixosBackend.lines(
 			[
-				"        ${NixosBackend.quote(m.name)} = "
+				"        ${NixosBackend.quote(m.instance)} = "
 					.concat("inputs.\"default\".lib.nixosSystem {"),
 				"          specialArgs = { inherit inputs; };",
 				"          modules = [",
@@ -968,7 +996,7 @@ NixosBackend :: [].{
 			)
 		[
 			"nixpkgs.hostPlatform = ${quote(m.system)};",
-			"networking.hostName = ${quote(m.host_name)};",
+			"networking.hostName = ${quote(MachineModel.host_name(m))};",
 			"system.stateVersion = ${quote(m.state_version)};",
 		]
 			.concat(

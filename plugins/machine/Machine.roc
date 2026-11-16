@@ -20,9 +20,10 @@ Machine := [].{
 	Setting : [Machine(Str, List(MachineSetting))]
 
 	## System and StateVersion are required, and every setting but User
-	## occurs at most once. HostName defaults to the machine's name. Host is
-	## the SSH target, `user@host` or `host`, that switch, rollback and
-	## generations act on instead of the host kai runs on. Ssh runs
+	## occurs at most once. HostName defaults to the machine's name, or an
+	## instance's. Host is the SSH target, `user@host` or `host`, that
+	## switch, rollback and generations act on instead of the host kai runs
+	## on, unless they name an instance. Ssh runs
 	## OpenSSH with key logins only, root's only when root has keys. Firewall
 	## opens ports beside OpenSSH's. Use puts a std environment's tools on
 	## the system's PATH. Disk is the disk layout `kai machine install`
@@ -124,6 +125,7 @@ Machine := [].{
 					help: "Act on this SSH target, user@host[:port], not the machine's Host; "
 						.concat("install needs it, since it erases the target's disk."),
 				}),
+				Machine.instance,
 				Machine.identity,
 				Trailing({
 					name: "machine",
@@ -142,6 +144,7 @@ Machine := [].{
 		examples: [
 			"kai machine build web",
 			"kai machine install web --to root@203.0.113.7",
+			"kai machine install web --as demo --to root@198.51.100.4",
 			"kai --dry-run machine switch web",
 			"kai machine switch web --to admin@203.0.113.7",
 			"kai machine rollback web",
@@ -159,6 +162,17 @@ Machine := [].{
 			"  Modules([\"nixos/web.nix\"])]),",
 		],
 	}
+
+	## The instance of a machine a command acts on: one server of several
+	## installed from the same declaration, whose hardware facts, host key
+	## and secrets are kept under its name instead of the machine's.
+	instance : Command.Arg
+	instance = Value({
+		name: "as",
+		short: "",
+		help: "Act on this instance of the machine, one server of several, which "
+			.concat("keeps its own facts, host key and secrets (default the machine)."),
+	})
 
 	## The age or SSH identity that decrypts a machine's host key and
 	## secrets.
@@ -187,6 +201,7 @@ Machine := [].{
 					].map(|(value, summary)| { value, summary, details: [] }),
 					default: Required,
 				}),
+				Machine.instance,
 				Machine.identity,
 				Trailing({
 					name: "names",
@@ -206,6 +221,7 @@ Machine := [].{
 			"printf %s \"$API_KEY\" | kai secret set web app-key",
 			"kai secret rekey web",
 			"kai secret rekey web --identity ~/.ssh/id_ed25519",
+			"printf %s \"$API_KEY\" | kai secret set web app-key --as demo",
 		],
 		config: [
 			"Machine(\"web\", [..., Operators([\"age1...\", \"ssh-ed25519 AAAA...\"]),",
@@ -332,8 +348,9 @@ Machine := [].{
 		parts.fold(
 			{
 				name,
+				instance: name,
 				system: "",
-				host_name: name,
+				host_name: "",
 				host: "",
 				users: [],
 				ssh: Bool.False,
@@ -439,9 +456,10 @@ Machine := [].{
 				"StateVersion is required, as a release such as \"25.05\"",
 			)
 		}
-		if !Machine.valid_host_name(m.host_name) {
+		host_name = MachineModel.host_name(m)
+		if !Machine.valid_host_name(host_name) {
 			$found = $found.append(
-				"HostName ${m.host_name} is no host name; "
+				"HostName ${host_name} is no host name; "
 					.concat("use letters, digits, - or _"),
 			)
 		}
@@ -1167,7 +1185,7 @@ expect {
 		["sh", "-c", script, "sh", "www", why] =>
 			!script.contains("www")
 				and why
-					== "kai machine switch without Host or --to acts on the host it "
+					== "kai machine switch web without Host or --to acts on the host it "
 						.concat("runs on; run it on www, or name its SSH target with ")
 						.concat("Host or --to")
 		_ => Bool.False
@@ -1780,12 +1798,22 @@ secret_web = installed_web.concat(
 secret_planned :
 	List(MachineSetting), Str, List(Str), Str -> Try(Plan, Plan.Failure)
 secret_planned = |settings, action, words, identity| {
+	given = if (identity.is_empty()) [] else [("identity", identity)]
+	secret_planned_with(settings, action, words, given)
+}
+
+# Options, each a name and its value.
+Options : List((Str, Str))
+
+# The plan of `kai secret ACTION WORDS...` with `options` for machine web's
+# `settings`.
+secret_planned_with :
+	List(MachineSetting), Str, List(Str), Options -> Try(Plan, Plan.Failure)
+secret_planned_with = |settings, action, words, options| {
 	plugin = Machine.plugin(project, [Machine("web", settings)])
-	option = { name: "identity", value: Present(identity) }
-	given = if (identity.is_empty()) [] else [option]
 	args = [{ name: "action", value: Present(action) }]
 		.append({ name: "names", value: Many(words) })
-		.concat(given)
+		.concat(options.map(|(name, value)| { name, value: Present(value) }))
 	found = plugin.implementations
 		.find_first(|i| i.command == "secret")
 		.map_err(|_| Plan.fail("no implementation"))?
@@ -1826,7 +1854,7 @@ expect {
 											"web",
 											"app-key",
 											operators,
-											NixosBackend.without_host_key("web"),
+											NixosBackend.without_host_key(web_machine),
 										]
 									and script.contains("mktemp -d")
 									and script.contains("trap 'rm -rf \"$work\"' EXIT")
@@ -1941,8 +1969,9 @@ expect {
 		Ok({ steps: [CheckSource(_), Run(found), CheckSource(checked), ..], .. }) =>
 			checked == file
 				and match found.argv {
-					["sh", "-c", script, "sh", "web", given] =>
-						given == file and script.contains("run kai secret set $name $secret")
+					["sh", "-c", script, "sh", "web", "", given] =>
+						given == file
+							and script.contains("set=\"kai secret set $name $secret$instance\"")
 					_ => Bool.False
 				}
 		_ => Bool.False
@@ -2173,4 +2202,200 @@ expect {
 					.concat("but the project declares github:example/disko; ")
 					.concat("remove disko from std's settings to use machine's"),
 			)
+}
+
+# Machine web at its Host, installed with Operators and a secret, beside
+# machine db.
+instance_web = secret_web.append(Host("admin@web.example.com"))
+
+# The plan of `kai machine ACTION web` with `options` for machine web's
+# `settings`, beside machine db, at `phase`, having read `observed`.
+instanced : List(MachineSetting), Str, Options, U64, Observed -> Planned
+instanced = |settings, action, options, phase, observed| {
+	machines = [Machine("web", settings), Machine("db", web)]
+	plugin = Machine.plugin(project, machines)
+	args = [{ name: "action", value: Present(action) }]
+		.append({ name: "machine", value: Many(["web"]) })
+		.concat(options.map(|(name, value)| { name, value: Present(value) }))
+	found = plugin.implementations
+		.first()
+		.map_err(|_| Plan.fail("no implementation"))?
+	(found.fit)(args).map_err(Plan.fail)?
+	requests = requests_of(project, plugin)
+	lock = published(project, requests, agenix_lock)
+	planning = { ..context, args, lock, lock_requests: requests, phase, observed }
+	(found.plan)(planning)
+}
+
+Planned : Try(Plan, Plan.Failure)
+
+# Steps' notes and prompts, in order.
+said : List(Plan.Step) -> List(Str)
+said = |steps|
+	steps.keep_oks(
+		|step|
+			match step {
+				Note(text) => Ok(text)
+				Confirm(text) => Ok(text)
+				_ => Err({})
+			},
+	)
+
+# The contents of the files steps write.
+written_text : List(Plan.Step) -> Str
+written_text = |steps|
+	steps
+		.join_map(
+			|step|
+				match step {
+					Write(files) => files.map(|file| file.contents)
+					_ => []
+				},
+		)
+		.fold("", Str.concat)
+
+# `install web --as demo` keeps everything it records of the server under
+# demo: the flake gains nixosConfigurations.demo, whose hostName is demo and
+# which reads demo's hardware facts and secrets, beside web's own; the
+# build, the installer's out-link, nixos-anywhere's flake attribute and the
+# facts it records, the host key and the secrets it encrypts are demo's.
+expect {
+	target = "root@203.0.113.7"
+	flake = "path:/generated/nix"
+	toplevel = "nixosConfigurations.demo.config.system.build.toplevel"
+	secret = "/project/secrets/demo/app-key.age"
+	facts = "/project/machines/demo/facter.json"
+	options = [("as", "demo"), ("to", target)]
+	match instanced(instance_web, "install", options, 0, []) {
+		Ok({ steps, next: Done }) => {
+			ran = argvs(steps)
+			anywhere = ran.last() ?? []
+			given = anywhere.drop_first(with_age.len() + 2)
+			flake_text = written_text(steps)
+			checked = ["sh", "web", " --as demo", secret]
+			ran.any(|argv| argv.last() == Ok("${flake}#${toplevel}"))
+				and ran.any(|argv| argv.contains("/work/machines/demo-installer"))
+				and ran.any(|argv| argv.drop_first(3) == checked)
+				and steps.contains(CheckSource(secret))
+				and given.take_first(4) == [flake, "", "/project/secrets", "demo"]
+				and anywhere.contains("${flake}#demo")
+				and anywhere.contains(facts)
+				and flake_text.contains("\"web\" = inputs.\"default\".lib.nixosSystem")
+				and flake_text.contains("\"demo\" = inputs.\"default\".lib.nixosSystem")
+				and flake_text.contains("networking.hostName = \"demo\";")
+				and flake_text.contains("(/. + \"${secret}\")")
+				and flake_text.contains("/. + \"${facts}\"")
+				and said(steps)
+					== [
+						"Install machine web as demo on ${target}, ERASING its disk "
+							.concat("/dev/sda and everything on it?"),
+						"installing machine web as demo on ${target}: this erases "
+							.concat("/dev/sda and takes several minutes"),
+						"wrote ${facts}, the machine's hardware facts; commit it",
+					]
+		}
+		_ => Bool.False
+	}
+}
+
+# HostName still names an instance's host.
+expect {
+	declared = Machine.machine("web", web.append(HostName("www")))
+	www = { ..declared, instance: "demo" }
+	rendered = NixosBackend.outputs([www], "/project")
+	rendered.contains("\"demo\" = inputs.\"default\".lib.nixosSystem")
+		and rendered.contains("networking.hostName = \"www\";")
+}
+
+# An instance never acts on Host, the machine's own server: without --to, a
+# switch acts on this host, which must be named demo, and leaves its
+# out-link under demo.
+expect {
+	why = "kai machine switch web --as demo without --to acts on the host it "
+		.concat("runs on; run it on demo, or name its SSH target with --to")
+	match instanced(instance_web, "switch", [("as", "demo")], 0, []) {
+		Ok({ steps: [Run(check), .. as rest], .. }) =>
+			match check.argv {
+				["sh", "-c", _, "sh", "demo", given] =>
+					given == why
+						and argvs(rest).any(|argv| argv.contains("/work/machines/demo"))
+						and said(rest).drop_first(1)
+							== ["activating machine web as demo's system on this host"]
+				_ => Bool.False
+			}
+		_ => Bool.False
+	}
+}
+
+# A remote action on an instance reads and trusts demo's host key, under
+# demo's name, checks the target naming the install that makes demo, and
+# says which instance runs which generation.
+expect {
+	target = "root@203.0.113.7"
+	options = [("as", "demo"), ("to", target)]
+	pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5host root@demo\n"
+	at = |phase, observed|
+		instanced(instance_web, "switch", options, phase, observed)
+	read = match at(0, []) {
+		Ok({ steps: [Run({ argv, .. })], .. }) =>
+			argv.drop_first(3)
+				== ["sh", "/project/secrets/hosts/demo.pub", host_key_copy]
+		_ => Bool.False
+	}
+	switched = match at(1, [{ path: host_key_copy, contents: Text(pub) }]) {
+		Ok({ steps: [_, Write([file]), Run(check), .. as rest], .. }) =>
+			file == { path: known_hosts, contents: "demo ${pub}" }
+				and check.argv.contains("HostKeyAlias=demo")
+				and check.argv.contains("machine web as demo is x86_64-linux")
+				and check.argv.contains(
+					"run kai machine install web --as demo --to ${target} first",
+				)
+				and argvs(rest).any(|argv| argv.contains("/work/machines/demo"))
+				and said(rest).contains(
+					"copying machine web as demo's system to ${target}",
+				)
+		_ => Bool.False
+	}
+	recorded = [{ path: generations, contents: Text("system-43-link\n") }]
+	running = "machine web as demo is now running generation 43 on ${target}"
+	reports = at(2, recorded).map_ok(|plan| plan.steps) == Ok([Note(running)])
+	read and switched and reports
+}
+
+# --as names an instance as a machine name that is also a host name, and
+# never another machine; --as web is web itself.
+expect {
+	refused = |instance|
+		match instanced(instance_web, "generations", [("as", instance)], 0, []) {
+			Err({ message, .. }) => message
+			Ok(_) => ""
+		}
+	no_instance = |instance|
+		"--as ${instance} is no instance name; use a letter, then up to 62 "
+			.concat("letters, digits, - or _, ending in a letter or digit")
+	plain = instanced(instance_web, "generations", [], 0, [])
+	refused("1x") == no_instance("1x")
+		and refused("web-") == no_instance("web-")
+		and refused("db") == "--as db names another machine; name another instance"
+		and instanced(instance_web, "generations", [("as", "web")], 0, []) == plain
+}
+
+# `kai secret set web app-key --as demo` encrypts to demo's host key as
+# secrets/demo/app-key.age, and rekey --as demo rekeys demo's secrets; both
+# name the commands for demo when its host key is missing.
+expect {
+	demo = { ..Machine.machine("web", secret_web), instance: "demo" }
+	unknown_host = NixosBackend.without_host_key(demo)
+	given = |action, words|
+		match secret_planned_with(secret_web, action, words, [("as", "demo")]) {
+			Ok({ steps, .. }) =>
+				argvs(steps).first().map_ok(|argv| argv.drop_first(with_age.len() + 2))
+					?? []
+			Err(_) => []
+		}
+	set = ["/project/secrets", "demo", "app-key", "${operator}\n${key}"]
+	given("set", ["web", "app-key"]) == set.append(unknown_host)
+		and given("rekey", ["web"]).take_first(3) == ["", "/project/secrets", "demo"]
+		and unknown_host.starts_with("kai machine install web --as demo makes")
+		and unknown_host.ends_with("run kai secret rekey web --as demo")
 }
