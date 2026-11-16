@@ -1179,7 +1179,7 @@ expect {
 	profile_command = ["sudo"]
 		.concat(remote_nix)
 		.concat(["build", "--no-link", "--profile", profile])
-	set = NixosBackend.remote_profile(link, target, profile_command)
+	set = NixosBackend.remote_profile(link, target, profile_command, [])
 	activation = ["sh", "-c", NixosBackend.activation, "sh", profile, "sudo"]
 	activate = NixosBackend.recorded(
 		generations,
@@ -1196,7 +1196,7 @@ expect {
 				[ExpectPrograms(tools), Run(check), _, _, Run(built), .. as rest] =>
 					tools.programs == ["nix", "ssh"]
 						and observed == generations
-						and check.argv == NixosBackend.remote_check(machine, target)
+						and check.argv == NixosBackend.remote_check(machine, target, [])
 						and built.argv.contains(link)
 						and match rest {
 							[Confirm(prompt), ..] =>
@@ -1306,7 +1306,7 @@ expect {
 expect {
 	target = "admin@web.example.com"
 	machine = Machine.machine("web", remote_web)
-	checked = match NixosBackend.remote_check(machine, target) {
+	checked = match NixosBackend.remote_check(machine, target, []) {
 		["sh", "-c", script, "sh", "admin@web.example.com", "x86_64", is, then] =>
 			!script.contains(target)
 				and is == "machine web is x86_64-linux"
@@ -1314,12 +1314,122 @@ expect {
 		_ => Bool.False
 	}
 	command = ["a b", "it's", "c"]
-	set = match NixosBackend.remote_profile("/work/x", target, command) {
+	set = match NixosBackend.remote_profile("/work/x", target, command, []) {
 		["sh", "-c", script, "sh", "/work/x", "admin@web.example.com", quoted] =>
 			!script.contains(target) and quoted == "'a b' 'it'\\''s' c"
 		_ => Bool.False
 	}
 	checked and set
+}
+
+# Machine web at its Host with Operators, so a remote action reads its host
+# key first.
+keyed_web = remote_web.append(Operators([operator]))
+
+# Files a continuation read.
+Observed : List({ path : Str, contents : [Missing, Text(Str)] })
+
+# The plan of `kai machine ACTION web` for `settings` at `phase`, having
+# read `observed`.
+continued : List(MachineSetting), Str, U64, Observed -> Try(Plan, Plan.Failure)
+continued = |settings, action, phase, observed| {
+	plugin = Machine.plugin(project, [Machine("web", settings)])
+	args = [{ name: "action", value: Present(action) }]
+		.append({ name: "machine", value: Many(["web"]) })
+	requests = requests_of(project, plugin)
+	lock = published(project, requests, flake_lock)
+	found = plugin.implementations
+		.first()
+		.map_err(|_| Plan.fail("no implementation"))?
+	planning = { ..context, args, lock, lock_requests: requests, phase, observed }
+	(found.plan)(planning)
+}
+
+# Where a remote action copies the host public key, and the known hosts file
+# it writes from it.
+host_key_copy = "/generated/machine/host-key.pub"
+
+known_hosts = "/generated/machine/known_hosts"
+
+# A remote action on a machine with Operators first copies its host public
+# key, if any, into the generated files, quietly, and reads the copy back.
+expect {
+	match continued(keyed_web, "switch", 0, []) {
+		Ok({ steps: [Run({ argv, output: Quiet, .. })], next }) =>
+			next == Observe([host_key_copy])
+				and argv.drop_first(3)
+					== ["sh", "/project/secrets/hosts/web.pub", host_key_copy]
+		_ => Bool.False
+	}
+}
+
+# With the key, every SSH connection trusts it alone: a known hosts file
+# holding it under the machine's name, written before the host check, and
+# ssh options naming it, passed to ssh and, in NIX_SSHOPTS, to nix copy.
+expect {
+	target = "admin@web.example.com"
+	pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5host root@web\n"
+	options = ["-o", "UserKnownHostsFile=${known_hosts}"]
+		.concat(["-o", "GlobalKnownHostsFile=/dev/null"])
+		.concat(["-o", "StrictHostKeyChecking=yes", "-o", "HostKeyAlias=web"])
+	written = { path: known_hosts, contents: "web ${pub}" }
+	link = "/work/machines/web"
+	copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
+		.concat(["--to", "ssh-ng://${target}", link])
+	profile_command = ["sudo"]
+		.concat(remote_nix)
+		.concat(["build", "--no-link", "--profile", profile])
+	set = NixosBackend.remote_profile(link, target, profile_command, options)
+	on_target = |argv|
+		["ssh"]
+			.concat(options)
+			.concat([target, "--"])
+			.concat(argv.map(NixosBackend.shell_quote))
+	activation = ["sh", "-c", NixosBackend.activation, "sh", profile, "sudo"]
+	activate = NixosBackend.recorded(generations, on_target(activation))
+	rollback = ["profile", "rollback", "--profile", profile]
+	back = on_target(["sudo"].concat(remote_nix).concat(rollback))
+	observed = [{ path: host_key_copy, contents: Text(pub) }]
+	on = |action| continued(keyed_web, action, 1, observed)
+	machine = Machine.machine("web", keyed_web)
+	copied = NixosBackend.with_ssh_options(options, copy)
+	switched = match on("switch") {
+		Ok({ steps: [_, Write([file]), Run(check), .. as rest], next }) =>
+			file == written
+				and next == Observe([generations])
+				and check.argv == NixosBackend.remote_check(machine, target, options)
+				and argvs(rest).drop_first(argvs(rest).len() - 3)
+					== [copied, set, activate]
+		_ => Bool.False
+	}
+	nix_options = match copied {
+		["sh", "-c", script, "sh", joined, .. as rest] =>
+			rest == copy
+				and script.contains("options=\"$options $NIX_SSHOPTS\"")
+				and joined == Str.join_with(options, " ")
+		_ => Bool.False
+	}
+	rolled_back = match on("rollback") {
+		Ok({ steps: [_, Write([file]), Run(_), Confirm(_), _, .. as rest], .. }) =>
+			file == written and argvs(rest) == [back, activate]
+		_ => Bool.False
+	}
+	switched and nix_options and rolled_back
+}
+
+# Without the key, a machine with Operators connects as one without does,
+# trusting the operator's known hosts, and reports a phase later; an empty
+# key fails.
+expect {
+	missing = [{ path: host_key_copy, contents: Missing }]
+	steps = |settings, phase, observed|
+		continued(settings, "generations", phase, observed).map_ok(|p| p.steps)
+	empty = [{ path: host_key_copy, contents: Text("\n") }]
+	recorded = [{ path: generations, contents: Text("system-43-link\n") }]
+	failure = continued(keyed_web, "generations", 1, empty).map_err(|f| f.message)
+	steps(keyed_web, 1, missing) == steps(remote_web, 0, [])
+		and steps(keyed_web, 2, recorded) == steps(remote_web, 1, recorded)
+		and failure == Err("secrets/hosts/web.pub holds no public key")
 }
 
 # A build stays here: it ignores Host and refuses --to, and a --to that is no

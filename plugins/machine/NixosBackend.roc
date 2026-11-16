@@ -43,11 +43,17 @@ NixosBackend :: [].{
 						Remote(target) => NixosBackend.install(project, machines, m, ctx, target)
 						Here => Err(Plan.fail("kai machine install needs --to"))
 					}
-				} else if ctx.phase > 0 {
-					NixosBackend.report(m, ctx, action, destination)
 				} else {
+					# A remote machine with Operators may have a host key: its
+					# public key is read first, so the plan reports a phase later.
+					keyed = destination != Here and !m.operators.is_empty()
+					reporting = if (keyed) 2 else 1
 					match destination {
+						_ if ctx.phase >= reporting =>
+							NixosBackend.report(m, ctx, action, destination)
 						Here => NixosBackend.on_host(project, machines, m, ctx, action)
+						Remote(target) if keyed and ctx.phase == 0 =>
+							NixosBackend.read_host_key(m, ctx, action, target)
 						Remote(target) =>
 							NixosBackend.on_remote(project, machines, m, ctx, action, target)
 					}
@@ -148,22 +154,30 @@ NixosBackend :: [].{
 	## must run NixOS on the machine's architecture. The system is built
 	## here and copied there; only the profile and the activation run as
 	## root there, through sudo unless the target logs in as root. Each
-	## records the generations for `report`.
+	## records the generations for `report`. Every SSH connection trusts
+	## the machine's host key when `read_host_key` found it, else the
+	## operator's known hosts.
 	on_remote : Project, List(Machine), Machine, Context, Str, Str -> Planned
 	on_remote = |project, machines, m, ctx, action, target| {
 		description = "machine ${action} ${m.name} on ${target}"
 		system_profile = NixosBackend.profile
 		programs = if (action == "switch") ["nix", "ssh"] else ["ssh"]
-		tools = ExpectPrograms({ description, programs })
-		check = NixosBackend.remote_check(m, target)
+		tools = [ExpectPrograms({ description, programs })]
+		trust = NixosBackend.trusted_host_key(m, ctx)?
+		check = NixosBackend.remote_check(m, target, trust.options)
 		there = NixosBackend.run("${description}: host check", Quiet, check)
+		# The known hosts file is written before the first connection.
+		first = tools.concat(trust.steps).append(there)
 		root = MachineModel.target_user(target) == "root"
 		as_root = |argv| if (root) argv else ["sudo"].concat(argv)
 		# The remote nix may not enable `nix profile` and `nix build`.
 		nix = ["nix", "--extra-experimental-features", "nix-command"]
 		# ssh joins the words for the remote shell, so each is quoted for it.
 		remote = |argv|
-			["ssh", target, "--"].concat(argv.map(NixosBackend.shell_quote))
+			["ssh"]
+				.concat(trust.options)
+				.concat([target, "--"])
+				.concat(argv.map(NixosBackend.shell_quote))
 		quiet = |argv| NixosBackend.run(description, Quiet, argv)
 		file = NixosBackend.generations_file(ctx)
 		recording = |script, sudo| {
@@ -184,13 +198,13 @@ NixosBackend :: [].{
 					.concat(["--to", store, link])
 				set_profile = ["build", "--no-link", "--profile", system_profile]
 				set_command = as_root(nix.concat(set_profile))
-				set = NixosBackend.remote_profile(link, target, set_command)
-				[tools, there]
+				set = NixosBackend.remote_profile(link, target, set_command, trust.options)
+				first
 					.concat(built.steps)
 					.concat([
 						Confirm(prompt),
 						Note("copying machine ${m.name}'s system to ${target}"),
-						quiet(copy),
+						quiet(NixosBackend.with_ssh_options(trust.options, copy)),
 						Note("activating it on ${target}"),
 						quiet(set),
 						activate,
@@ -201,12 +215,95 @@ NixosBackend :: [].{
 				rollback = ["profile", "rollback", "--profile", system_profile]
 				back = quiet(remote(as_root(nix.concat(rollback))))
 				activating = Note("activating the previous system on ${target}")
-				[tools, there, Confirm(prompt), activating, back, activate]
+				first.concat([Confirm(prompt), activating, back, activate])
 			}
-			_ => [tools, there, recording(NixosBackend.listing, [])]
+			_ => first.append(recording(NixosBackend.listing, []))
 		}
 		Ok(Plan.{ steps, next: Observe([file]) })
 	}
+
+	## Where a remote action copies machine `m`'s host public key,
+	## secrets/hosts/NAME.pub, for its continuation to read.
+	host_key_copy : Context -> Str
+	host_key_copy = |ctx| "${ctx.layout.generated_root}/machine/host-key.pub"
+
+	## The known hosts file holding only a remote machine's host key.
+	known_hosts_file : Context -> Str
+	known_hosts_file = |ctx| "${ctx.layout.generated_root}/machine/known_hosts"
+
+	## The first phase of a remote action on machine `m`, which has
+	## Operators: a plugin reads only generated files, so this copies its
+	## host public key, when kai made or was given one, for
+	## `trusted_host_key` to read, removing a stale copy first.
+	read_host_key : Machine, Context, Str, Str -> Planned
+	read_host_key = |m, ctx, action, target| {
+		script =
+			\\rm -f "$2" || exit
+			\\[ -e "$1" ] || exit 0
+			\\mkdir -p "$(dirname "$2")" || exit
+			\\exec cp "$1" "$2"
+		public_key = "${ctx.layout.project_root}/secrets/hosts/${m.name}.pub"
+		copy = NixosBackend.host_key_copy(ctx)
+		description = "machine ${action} ${m.name} on ${target}: host key"
+		argv = ["sh", "-c", script, "sh", public_key, copy]
+		steps = [NixosBackend.run(description, Quiet, argv)]
+		Ok(Plan.{ steps, next: Observe([copy]) })
+	}
+
+	## The ssh options trusting exactly machine `m`'s host key, as
+	## `read_host_key` copied it, and the step writing the known hosts file
+	## they name: the key under the machine's name, by which ssh looks it up
+	## in that file alone, whatever address or ~/.ssh/config alias the
+	## target is. Without the key there are none, and ssh checks the
+	## operator's known hosts. ssh splits the file's name at spaces, and Nix
+	## NIX_SSHOPTS too, so its path must hold none.
+	trusted_host_key : Machine, Context -> Try(Trust, Plan.Failure)
+	trusted_host_key = |m, ctx| {
+		copy = NixosBackend.host_key_copy(ctx)
+		text = match ctx.observed.find_first(|o| o.path == copy) {
+			Ok({ contents: Text(contents), .. }) => contents
+			_ => return Ok({ steps: [], options: [] })
+		}
+		key = text.split_on("\n").first().map_ok(Str.trim) ?? ""
+		known = NixosBackend.known_hosts_file(ctx)
+		plain = |b| !" \t\n\r%\"'\\".to_utf8().contains(b)
+		if key.is_empty() {
+			Err(Plan.fail("secrets/hosts/${m.name}.pub holds no public key"))
+		} else if !known.to_utf8().all(plain) {
+			Err(
+				Plan.fail(
+					"ssh cannot name the known hosts file ${known}: its path "
+						.concat("holds a space, a quote or %"),
+				),
+			)
+		} else {
+			file = { path: known, contents: "${m.name} ${key}\n" }
+			options = ["-o", "UserKnownHostsFile=${known}"]
+				.concat(["-o", "GlobalKnownHostsFile=/dev/null"])
+				.concat(["-o", "StrictHostKeyChecking=yes"])
+				.concat(["-o", "HostKeyAlias=${m.name}"])
+			Ok({ steps: [Write([file])], options })
+		}
+	}
+
+	## ssh options, and the steps to take before they hold.
+	Trust : { steps : List(Plan.Step), options : List(Str) }
+
+	## `argv`, a nix command, with ssh `options` in NIX_SSHOPTS before the
+	## operator's own, so that ssh takes them first; `argv` alone without.
+	with_ssh_options : List(Str), List(Str) -> List(Str)
+	with_ssh_options = |options, argv|
+		if options.is_empty() {
+			argv
+		} else {
+			script =
+				\\options=$1
+				\\shift
+				\\[ -z "$NIX_SSHOPTS" ] || options="$options $NIX_SSHOPTS"
+				\\export NIX_SSHOPTS="$options"
+				\\exec "$@"
+			["sh", "-c", script, "sh", Str.join_with(options, " ")].concat(argv)
+		}
 
 	## Where a switch, rollback or listing records the system profile's
 	## generations for `report`: the link the profile points at, such as
@@ -550,20 +647,23 @@ NixosBackend :: [].{
 		}
 
 	## A shell check, as the switch runs, that `target` runs NixOS on the
-	## machine's architecture. The target and the messages are arguments,
-	## never part of the script; when ssh fails, it exits with ssh's status.
-	remote_check : Machine, Str -> List(Str)
-	remote_check = |m, target| {
+	## machine's architecture, connecting with ssh `options`. The target, the
+	## messages and the options are arguments, never part of the script;
+	## when ssh fails, it exits with ssh's status.
+	remote_check : Machine, Str, List(Str) -> List(Str)
+	remote_check = |m, target, options| {
 		script =
-			\\found=$(ssh "$1" -- 'uname -m && test -e /etc/NIXOS')
+			\\target=$1 architecture=$2 machine=$3 install=$4
+			\\shift 4
+			\\found=$(ssh "$@" "$target" -- 'uname -m && test -e /etc/NIXOS')
 			\\status=$?
 			\\[ "$status" -gt 1 ] && exit "$status"
-			\\if [ "$found" != "$2" ]; then
-			\\  echo "$1 is $found, not $2: $3" >&2
+			\\if [ "$found" != "$architecture" ]; then
+			\\  echo "$target is $found, not $architecture: $machine" >&2
 			\\  exit 1
 			\\fi
 			\\[ "$status" = 0 ] && exit 0
-			\\echo "$1 does not run NixOS: $4" >&2
+			\\echo "$target does not run NixOS: $install" >&2
 			\\exit 1
 		[
 			"sh",
@@ -575,23 +675,27 @@ NixosBackend :: [].{
 			"machine ${m.name} is ${m.system}",
 			"run kai machine install ${m.name} --to ${target} first",
 		]
+			.concat(options)
 	}
 
 	## A shell step setting `target`'s system profile to the store path
 	## `link` names, known only once the build has run: `command`, quoted
-	## for the remote shell, then the store path, which holds no quote.
-	remote_profile : Str, Str, List(Str) -> List(Str)
-	remote_profile = |link, target, command| {
+	## for the remote shell, then the store path, which holds no quote. ssh
+	## connects with `options`, the last arguments.
+	remote_profile : Str, Str, List(Str), List(Str) -> List(Str)
+	remote_profile = |link, target, command, options| {
 		script =
-			\\store_path=$(readlink -f "$1") || exit
+			\\link=$1 target=$2 command=$3
+			\\shift 3
+			\\store_path=$(readlink -f "$link") || exit
 			\\case $store_path in
 			\\/nix/store/*[!A-Za-z0-9/+._?=-]*) ;;
-			\\/nix/store/?*) exec ssh "$2" -- "$3 '$store_path'" ;;
+			\\/nix/store/?*) exec ssh "$@" "$target" -- "$command '$store_path'" ;;
 			\\esac
 			\\echo "unexpected store path: $store_path" >&2
 			\\exit 1
 		quoted = Str.join_with(command.map(NixosBackend.shell_quote), " ")
-		["sh", "-c", script, "sh", link, target, quoted]
+		["sh", "-c", script, "sh", link, target, quoted].concat(options)
 	}
 
 	## `word` as one word for a POSIX shell: bare when it holds only plain

@@ -264,6 +264,39 @@ and the listing run in a short `sh` script on the target, which also reads
 which generation the profile now is. When the target logs in as `root`,
 nothing goes through `sudo`.
 
+#### The target's host key
+
+ssh checks the target's host key against your `~/.ssh/known_hosts`, where a
+server just installed is missing and its address, often reused, may hold
+another server's key. For a machine with `Operators`, kai knows the key:
+`kai machine install` writes it to `secrets/hosts/NAME.pub` before the
+server boots, and for a machine installed otherwise you may copy it there
+(see [The host key comes first](#the-host-key-comes-first)). When that file
+exists, `switch`, `rollback` and `generations` trust exactly that key and
+nothing else: they write `.kai/generated/machine/known_hosts`, holding
+`NAME KEY`, and every `ssh`, and `nix copy` through `NIX_SSHOPTS`, connects
+with
+
+```sh
+-o UserKnownHostsFile=PROJECT/.kai/generated/machine/known_hosts
+-o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes
+-o HostKeyAlias=NAME
+```
+
+so the key is looked up under the machine's name, whatever address or
+`~/.ssh/config` alias the target is. A key that differs fails the step, at
+a terminal or not, and your `known_hosts` is neither read nor changed. A
+tool that creates a server thus needs no `known_hosts` editing before
+`kai machine switch`. Your own `NIX_SSHOPTS` follow kai's options. ssh and
+Nix split these options at spaces, so the project's `.kai` must lie at a
+path without spaces, quotes or `%`, or the plan fails saying so.
+
+Plugins read only kai's generated files, so these commands first copy
+`secrets/hosts/NAME.pub` to `.kai/generated/machine/host-key.pub` and read
+the copy back before planning the rest; for a machine with `Operators`,
+`--dry-run` shows only that copy. Without the file, or without `Operators`,
+ssh checks your `known_hosts` as it always does.
+
 A user other than root needs two things on the target: `sudo` that asks for
 no password, since the commands run without a terminal (for example
 `security.sudo.wheelNeedsPassword = false;` in a module, with the user in
@@ -362,7 +395,11 @@ command needs `--identity` when your key is not `~/.ssh/id_ed25519`.
 
 Afterwards the server runs the machine, and `kai machine switch NAME --to
 USER@ADDRESS`, or `Host`, changes it as [Remote machines](#remote-machines)
-describes.
+describes, trusting the host key the install placed, for a machine with
+`Operators` (see [The target's host key](#the-targets-host-key)). kai
+leaves the install's own connections as nixos-anywhere makes them: they
+reach the server's previous system and the installer it boots, each with
+a host key other than the machine's.
 
 ### Hardware facts
 
@@ -461,6 +498,11 @@ Operators only and says so; the install then adds the host key. For a
 machine installed some other way, copy its
 `/etc/ssh/ssh_host_ed25519_key.pub` to `secrets/hosts/NAME.pub` and run
 `kai secret rekey NAME`.
+
+The same public key is the one remote `switch`, `rollback` and
+`generations` trust when they reach the machine over SSH, as [The target's
+host key](#the-targets-host-key) describes, so after an install they need
+no entry in your `known_hosts`.
 
 ### What is safe to commit
 
