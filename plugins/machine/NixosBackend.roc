@@ -167,7 +167,10 @@ NixosBackend :: [].{
 				built = NixosBackend.build(project, machines, m, ctx, link)?
 				prompt = "Switch ${target} to machine ${m.name}, ${restarting}"
 				store = "ssh-ng://${target}"
-				copy = ["nix", "copy", "--substitute-on-destination", "--to", store, link]
+				# A system built here is unsigned; the target still refuses it from
+				# a user it does not trust.
+				copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
+					.concat(["--to", store, link])
 				set_profile = ["build", "--no-link", "--profile", system_profile]
 				set_command = as_root(nix.concat(set_profile))
 				set = NixosBackend.remote_profile(link, target, set_command)

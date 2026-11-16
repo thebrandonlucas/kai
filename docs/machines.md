@@ -238,7 +238,8 @@ system here as a local switch does, leaving `.kai/machines/NAME`, asks for
 confirmation naming the target, and runs
 
 ```sh
-nix copy --substitute-on-destination --to ssh-ng://TARGET .kai/machines/NAME
+nix copy --no-check-sigs --substitute-on-destination \
+  --to ssh-ng://TARGET .kai/machines/NAME
 ssh TARGET -- sudo nix --extra-experimental-features nix-command \
   build --no-link --profile /nix/var/nix/profiles/system STORE_PATH
 ssh TARGET -- sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
@@ -246,7 +247,8 @@ ssh TARGET -- sudo /nix/var/nix/profiles/system/bin/switch-to-configuration swit
 
 where STORE_PATH is the system the out-link names, read as the step runs.
 The target downloads what it can from its own substituters and receives the
-rest. `kai machine rollback NAME` checks the target, asks, then runs
+rest. A system built here carries no signature, so the copy skips the
+signature check, which only a user the target trusts may do. `kai machine rollback NAME` checks the target, asks, then runs
 
 ```sh
 ssh TARGET -- sudo nix --extra-experimental-features nix-command \

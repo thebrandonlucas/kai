@@ -1128,8 +1128,8 @@ remote_nix = ["nix", "--extra-experimental-features", "nix-command"]
 expect {
 	target = "admin@web.example.com"
 	link = "/work/machines/web"
-	copy = ["nix", "copy", "--substitute-on-destination", "--to"]
-		.concat(["ssh-ng://${target}", link])
+	copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
+		.concat(["--to", "ssh-ng://${target}", link])
 	profile_command = ["sudo"]
 		.concat(remote_nix)
 		.concat(["build", "--no-link", "--profile", profile])
