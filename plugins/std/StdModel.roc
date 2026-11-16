@@ -102,7 +102,9 @@ StdModel := [].{
 	## flake input, its options Follows, unless the project or an earlier
 	## request declares it at the same reference; each requested Source one
 	## the project declares, or "default", kept even when nothing uses it.
-	## A request for a name declared otherwise is refused, naming both.
+	## A request for a name declared otherwise is refused, naming both; one
+	## for an Input the project declares at another reference says that
+	## removing the project's takes the plugin's.
 	with_lock_requests : Model, List(Implementation.Requested) -> Try(Model, Str)
 	with_lock_requests = |model, requested| {
 		var $inputs = model.inputs
@@ -120,7 +122,10 @@ StdModel := [].{
 						(Ok(input), Ok((_, other))) if input.url != ref =>
 							return Err("${wants}, but ${other} asks for ${input.url}")
 						(Ok(input), _) if input.url != ref =>
-							return Err("${wants}, but the project declares ${input.url}")
+							return Err(
+								"${wants}, but the project declares ${input.url}; "
+									.concat("remove ${name} from std's settings to use ${plugin}'s"),
+							)
 						(Ok(_), _) => {}
 						(Err(_), _) => {
 							taken = $sources.any(|s| s.name == name)

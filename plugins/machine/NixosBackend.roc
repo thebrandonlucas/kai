@@ -12,7 +12,8 @@ import MachineModel exposing [Machine]
 
 ## Each machine is `lib.nixosSystem` of the "default" package source, with
 ## one module holding its typed settings, then its own module files by
-## absolute path. Modules receive the flake's `inputs` as an argument.
+## absolute path and its inputs' module files by store path. Modules
+## receive the flake's `inputs` as an argument.
 NixosBackend :: [].{
 
 	Project : List(Config.Setting)
@@ -21,14 +22,19 @@ NixosBackend :: [].{
 
 	Context : Implementation.Context
 
+	## What a build of the flake builds: its attribute, the name kai prints
+	## its store path by, its description, and its out-link ("" for none).
+	Built : { attribute : Str, name : Str, description : Str, out_link : Str }
+
 	implementation : Project, List(Machine) -> Implementation
-	implementation = |project, machines|
+	implementation = |project, declared|
 		Implementation.{
 			command: "machine",
 			backend: On("nix"),
-			fit: |args| MachineModel.requested(machines, args).map_ok(|_| {}),
+			fit: |args| MachineModel.requested(declared, args).map_ok(|_| {}),
 			plan: |ctx| {
-				m = MachineModel.requested(machines, ctx.args).map_err(Plan.fail)?
+				m = MachineModel.requested(declared, ctx.args).map_err(Plan.fail)?
+				machines = NixosBackend.with_instance(declared, m)
 				action = Command.name(ctx.args, "action")
 				destination = MachineModel.destination(m, ctx.args).map_err(Plan.fail)?
 				if action == "build" {
@@ -40,8 +46,16 @@ NixosBackend :: [].{
 						Here => Err(Plan.fail("kai machine install needs --to"))
 					}
 				} else {
+					# A remote machine with Operators may have a host key: its
+					# public key is read first, so the plan reports a phase later.
+					keyed = destination != Here and !m.operators.is_empty()
+					reporting = if (keyed) 2 else 1
 					match destination {
+						_ if ctx.phase >= reporting =>
+							NixosBackend.report(m, ctx, action, destination)
 						Here => NixosBackend.on_host(project, machines, m, ctx, action)
+						Remote(target) if keyed and ctx.phase == 0 =>
+							NixosBackend.read_host_key(m, ctx, action, target)
 						Remote(target) =>
 							NixosBackend.on_remote(project, machines, m, ctx, action, target)
 					}
@@ -49,43 +63,54 @@ NixosBackend :: [].{
 			},
 		}
 
-	## What only Nix can honour that is wrong with machine `m` in `project`.
-	problems : Project, Machine -> List(Str)
-	problems = |project, m| {
-		modules = m.modules
+	## The machines the flake defines: the declared ones, and `m` too when
+	## it is an instance, as `nixosConfigurations.<instance>`, which reads
+	## the instance's hardware facts and secrets. Only the command line
+	## names an instance, so the command naming one renders it.
+	with_instance : List(Machine), Machine -> List(Machine)
+	with_instance = |declared, m|
+		if (m.instance == m.name) declared else declared.append(m)
+
+	## What only Nix can honour that is wrong with machine `m`.
+	problems : Machine -> List(Str)
+	problems = |m| {
+		outside = |file| !NixosBackend.valid_module_path(file.path)
+		not_in_input = |{ input, path }|
+			"module ${path} is no .nix file inside input ${input}"
+		m.modules
 			.drop_if(NixosBackend.valid_module_path)
 			.map(|path| "module ${path} is no .nix file inside the project")
-		declared = |input|
-			project.any(
-				|setting|
-					match setting {
-						Input(name, _) => name.to_str() == input
-						_ => Bool.False
-					},
+			.concat(
+				m.input_modules
+					.keep_if(outside)
+					.map(not_in_input),
 			)
-		missing = |needed, setting, input|
-			if needed and !declared(input) {
-				declaration = NixosBackend.input(input)
-				["${setting} needs ${input}; add ${declaration} to std's settings"]
-			} else {
-				[]
-			}
-		modules
-			.concat(missing(m.disk != NoDisk, "Disk", "disko"))
-			.concat(missing(!m.secrets.is_empty(), "Secrets", "agenix"))
 	}
 
-	## The std setting declaring the flake input a Disk's or Secrets' module
-	## comes from.
-	input : Str -> Str
-	input = |name|
-		if name == "disko" {
-			"Input(\"disko\", \"github:nix-community/disko\")"
-		} else {
-			"Input(\"agenix\", \"github:ryantm/agenix\")"
-		}
+	## What std's update locks for `machines`: the "default" package source
+	## they are built from, and disko and nixos-images for a Disk and agenix
+	## for Secrets, each with its nixpkgs following that source. agenix's
+	## darwin and home-manager inputs follow its nixpkgs, and so that source
+	## too. Both of nixos-images' nixpkgs follow it, so install boots an
+	## installer of the same nixpkgs as the disko it runs.
+	lock_requests : List(Machine) -> List(Implementation.LockRequest)
+	lock_requests = |machines| {
+		following = [Follows("nixpkgs", "default")]
+		disko = Input("disko", "github:nix-community/disko", following)
+		agenix = Input("agenix", "github:ryantm/agenix", following)
+		images = Input(
+			"nixos-images",
+			"github:nix-community/nixos-images",
+			[Follows("nixos-unstable", "default"), Follows("nixos-stable", "default")],
+		)
+		when = |present, requests| if (present) requests else []
+		when(!machines.is_empty(), [Source("default")])
+			.concat(when(machines.any(|m| m.disk != NoDisk), [disko, images]))
+			.concat(when(machines.any(|m| !m.secrets.is_empty()), [agenix]))
+	}
 
-	## A relative path to a .nix file that stays inside the project.
+	## A relative path to a .nix file that stays inside the project, or the
+	## input.
 	valid_module_path : Str -> Bool
 	valid_module_path = |path|
 		path.ends_with(".nix")
@@ -96,151 +121,385 @@ NixosBackend :: [].{
 
 	## Switching, rolling back and listing act on this host, which must be
 	## the machine: its System now, its HostName as the plan runs. Only the
-	## profile and the activation run as root.
+	## profile and the activation run as root, through sudo, which asks for
+	## a password on the terminal itself, so they stay quiet. Each records
+	## the generations for `report`.
 	on_host : Project, List(Machine), Machine, Context, Str -> Planned
 	on_host = |project, machines, m, ctx, action| {
 		if ctx.host.system != m.system {
 			return Err(
 				Plan.fail(
-					"machine ${m.name} is ${m.system}, but this host is ${ctx.host.system}: "
+					"${MachineModel.called(m)} is ${m.system}, but this host is "
+						.concat("${ctx.host.system}: ")
 						.concat(NixosBackend.local_only(action, m)),
 				),
 			)
 		}
-		description = "machine ${action} ${m.name}"
+		description = "machine ${action} ${MachineModel.named(m)}"
 		system_profile = NixosBackend.profile
 		check = NixosBackend.host_check(action, m)
 		here = NixosBackend.run("${description}: host check", Quiet, check)
-		sudo = |argv| NixosBackend.run(description, Inherit, ["sudo"].concat(argv))
-		activate = sudo(["${system_profile}/bin/switch-to-configuration", "switch"])
+		sudo = |argv| NixosBackend.run(description, Quiet, ["sudo"].concat(argv))
+		file = NixosBackend.generations_file(ctx)
+		recording = |script, as_root| {
+			argv = ["sh", "-c", script, "sh", system_profile].concat(as_root)
+			NixosBackend.run(description, Quiet, NixosBackend.recorded(file, argv))
+		}
+		activate = recording(NixosBackend.activation, ["sudo"])
 		restarting = "restarting changed services and booting it by default?"
 		steps = match action {
 			"switch" => {
-				link = "${ctx.layout.workspace}/machines/${m.name}"
+				link = "${ctx.layout.workspace}/machines/${m.instance}"
 				built = NixosBackend.build(project, machines, m, ctx, link)?
-				prompt = "Switch this host to machine ${m.name}, ${restarting}"
+				called = MachineModel.called(m)
+				prompt = "Switch this host to ${called}, ${restarting}"
 				set = sudo(["nix", "build", "--no-link", "--profile", system_profile, link])
-				[here].concat(built.steps).concat([Confirm(prompt), set, activate])
+				activating = Note("activating ${called}'s system on this host")
+				[here]
+					.concat(built.steps)
+					.concat([Confirm(prompt), activating, set, activate])
 			}
 			"rollback" => {
 				prompt = "Switch this host back to its previous system, ${restarting}"
 				# Steps the profile's link back a generation, as `nix-env
 				# --rollback` does: it needs no `nix profile` manifest.
 				back = sudo(["nix", "profile", "rollback", "--profile", system_profile])
-				[here, Confirm(prompt), back, activate]
+				activating = Note("activating this host's previous system")
+				[here, Confirm(prompt), activating, back, activate]
 			}
-			_ => {
-				listed = ["nixos-rebuild", "list-generations"]
-				[here, NixosBackend.run(description, Inherit, listed)]
-			}
+			_ => [here, recording(NixosBackend.listing, [])]
 		}
-		Ok(Plan.{ steps, next: Done })
+		Ok(Plan.{ steps, next: Observe([file]) })
 	}
 
 	## Switching, rolling back and listing act on `target` over SSH, which
 	## must run NixOS on the machine's architecture. The system is built
 	## here and copied there; only the profile and the activation run as
-	## root there, through sudo unless the target logs in as root.
+	## root there, through sudo unless the target logs in as root. Each
+	## records the generations for `report`. Every SSH connection goes to
+	## the target's port, and trusts the machine's host key when
+	## `read_host_key` found it, else the operator's known hosts.
 	on_remote : Project, List(Machine), Machine, Context, Str, Str -> Planned
 	on_remote = |project, machines, m, ctx, action, target| {
-		description = "machine ${action} ${m.name} on ${target}"
+		description = "machine ${action} ${MachineModel.named(m)} on ${target}"
 		system_profile = NixosBackend.profile
 		programs = if (action == "switch") ["nix", "ssh"] else ["ssh"]
-		tools = ExpectPrograms({ description, programs })
-		check = NixosBackend.remote_check(m, target)
+		tools = [ExpectPrograms({ description, programs })]
+		trust = NixosBackend.trusted_host_key(m, ctx)?
+		check = NixosBackend.remote_check(m, target, trust.options)
 		there = NixosBackend.run("${description}: host check", Quiet, check)
+		# The known hosts file is written before the first connection.
+		first = tools.concat(trust.steps).append(there)
 		root = MachineModel.target_user(target) == "root"
 		as_root = |argv| if (root) argv else ["sudo"].concat(argv)
 		# The remote nix may not enable `nix profile` and `nix build`.
 		nix = ["nix", "--extra-experimental-features", "nix-command"]
+		reach = NixosBackend.ssh_target(target)
+		options = reach.options.concat(trust.options)
 		# ssh joins the words for the remote shell, so each is quoted for it.
-		remote = |argv| {
-			words = ["ssh", target, "--"].concat(argv.map(NixosBackend.shell_quote))
-			NixosBackend.run(description, Inherit, words)
+		remote = |argv|
+			["ssh"]
+				.concat(options)
+				.concat([reach.destination, "--"])
+				.concat(argv.map(NixosBackend.shell_quote))
+		quiet = |argv| NixosBackend.run(description, Quiet, argv)
+		file = NixosBackend.generations_file(ctx)
+		recording = |script, sudo| {
+			argv = remote(["sh", "-c", script, "sh", system_profile].concat(sudo))
+			quiet(NixosBackend.recorded(file, argv))
 		}
-		activation = ["${system_profile}/bin/switch-to-configuration", "switch"]
-		activate = remote(as_root(activation))
+		activate = recording(NixosBackend.activation, as_root([]))
 		restarting = "restarting changed services and booting it by default?"
 		steps = match action {
 			"switch" => {
-				link = "${ctx.layout.workspace}/machines/${m.name}"
+				link = "${ctx.layout.workspace}/machines/${m.instance}"
 				built = NixosBackend.build(project, machines, m, ctx, link)?
-				prompt = "Switch ${target} to machine ${m.name}, ${restarting}"
-				store = "ssh-ng://${target}"
-				copy = ["nix", "copy", "--substitute-on-destination", "--to", store, link]
+				prompt = "Switch ${target} to ${MachineModel.called(m)}, ${restarting}"
+				# The URL holds no port: NIX_SSHOPTS passes it to ssh.
+				store = "ssh-ng://${reach.destination}"
+				# A system built here is unsigned; the target still refuses it from
+				# a user it does not trust.
+				copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
+					.concat(["--to", store, link])
 				set_profile = ["build", "--no-link", "--profile", system_profile]
 				set_command = as_root(nix.concat(set_profile))
-				set = NixosBackend.remote_profile(link, target, set_command)
-				[tools, there]
+				set = NixosBackend.remote_profile(link, target, set_command, trust.options)
+				first
 					.concat(built.steps)
 					.concat([
 						Confirm(prompt),
-						NixosBackend.run(description, Inherit, copy),
-						NixosBackend.run(description, Inherit, set),
+						Note("copying ${MachineModel.called(m)}'s system to ${target}"),
+						quiet(NixosBackend.with_ssh_options(options, copy)),
+						Note("activating it on ${target}"),
+						quiet(set),
 						activate,
 					])
 			}
 			"rollback" => {
 				prompt = "Switch ${target} back to its previous system, ${restarting}"
 				rollback = ["profile", "rollback", "--profile", system_profile]
-				back = remote(as_root(nix.concat(rollback)))
-				[tools, there, Confirm(prompt), back, activate]
+				back = quiet(remote(as_root(nix.concat(rollback))))
+				activating = Note("activating the previous system on ${target}")
+				first.concat([Confirm(prompt), activating, back, activate])
 			}
-			_ => [tools, there, remote(["nixos-rebuild", "list-generations"])]
+			_ => first.append(recording(NixosBackend.listing, []))
+		}
+		Ok(Plan.{ steps, next: Observe([file]) })
+	}
+
+	## Where a remote action copies machine `m`'s host public key,
+	## secrets/hosts/INSTANCE.pub, for its continuation to read.
+	host_key_copy : Context -> Str
+	host_key_copy = |ctx| "${ctx.layout.generated_root}/machine/host-key.pub"
+
+	## The known hosts file holding only a remote machine's host key.
+	known_hosts_file : Context -> Str
+	known_hosts_file = |ctx| "${ctx.layout.generated_root}/machine/known_hosts"
+
+	## The first phase of a remote action on machine `m`, which has
+	## Operators: a plugin reads only generated files, so this copies its
+	## host public key, when kai made or was given one, for
+	## `trusted_host_key` to read, removing a stale copy first.
+	read_host_key : Machine, Context, Str, Str -> Planned
+	read_host_key = |m, ctx, action, target| {
+		script =
+			\\rm -f "$2" || exit
+			\\[ -e "$1" ] || exit 0
+			\\mkdir -p "$(dirname "$2")" || exit
+			\\exec cp "$1" "$2"
+		public_key = "${ctx.layout.project_root}/secrets/hosts/${m.instance}.pub"
+		copy = NixosBackend.host_key_copy(ctx)
+		named = MachineModel.named(m)
+		description = "machine ${action} ${named} on ${target}: host key"
+		argv = ["sh", "-c", script, "sh", public_key, copy]
+		steps = [NixosBackend.run(description, Quiet, argv)]
+		Ok(Plan.{ steps, next: Observe([copy]) })
+	}
+
+	## The ssh options trusting exactly machine `m`'s host key, as
+	## `read_host_key` copied it, and the step writing the known hosts file
+	## they name: the key under the instance's name, by which ssh looks it up
+	## in that file alone, whatever address or ~/.ssh/config alias the
+	## target is. Without the key there are none, and ssh checks the
+	## operator's known hosts. ssh splits the file's name at spaces, and Nix
+	## NIX_SSHOPTS too, so its path must hold none.
+	trusted_host_key : Machine, Context -> Try(Trust, Plan.Failure)
+	trusted_host_key = |m, ctx| {
+		copy = NixosBackend.host_key_copy(ctx)
+		text = match ctx.observed.find_first(|o| o.path == copy) {
+			Ok({ contents: Text(contents), .. }) => contents
+			_ => return Ok({ steps: [], options: [] })
+		}
+		key = text.split_on("\n").first().map_ok(Str.trim) ?? ""
+		known = NixosBackend.known_hosts_file(ctx)
+		plain = |b| !" \t\n\r%\"'\\".to_utf8().contains(b)
+		if key.is_empty() {
+			Err(Plan.fail("secrets/hosts/${m.instance}.pub holds no public key"))
+		} else if !known.to_utf8().all(plain) {
+			Err(
+				Plan.fail(
+					"ssh cannot name the known hosts file ${known}: its path "
+						.concat("holds a space, a quote or %"),
+				),
+			)
+		} else {
+			file = { path: known, contents: "${m.instance} ${key}\n" }
+			options = ["-o", "UserKnownHostsFile=${known}"]
+				.concat(["-o", "GlobalKnownHostsFile=/dev/null"])
+				.concat(["-o", "StrictHostKeyChecking=yes"])
+				.concat(["-o", "HostKeyAlias=${m.instance}"])
+			Ok({ steps: [Write([file])], options })
+		}
+	}
+
+	## ssh options, and the steps to take before they hold.
+	Trust : { steps : List(Plan.Step), options : List(Str) }
+
+	## `argv`, a nix command, with ssh `options` in NIX_SSHOPTS before the
+	## operator's own, so that ssh takes them first; `argv` alone without.
+	with_ssh_options : List(Str), List(Str) -> List(Str)
+	with_ssh_options = |options, argv|
+		if options.is_empty() {
+			argv
+		} else {
+			script =
+				\\options=$1
+				\\shift
+				\\[ -z "$NIX_SSHOPTS" ] || options="$options $NIX_SSHOPTS"
+				\\export NIX_SSHOPTS="$options"
+				\\exec "$@"
+			["sh", "-c", script, "sh", Str.join_with(options, " ")].concat(argv)
+		}
+
+	## Where a switch, rollback or listing records the system profile's
+	## generations for `report`: the link the profile points at, such as
+	## system-43-link, then, when listing, each generation's link and the
+	## time it was made, oldest first.
+	generations_file : Context -> Str
+	generations_file = |ctx| "${ctx.layout.generated_root}/machine/generations"
+
+	## Activates the system profile `$1` as root through the words after it,
+	## sudo or none, its output on stderr, then prints the profile's link.
+	activation =
+		\\profile=$1
+		\\shift
+		\\"$@" "$profile/bin/switch-to-configuration" switch >&2 || exit
+		\\readlink "$profile"
+
+	## Prints the system profile `$1`'s link, then each generation's link
+	## and the time it was made, oldest first.
+	listing =
+		\\readlink "$1" || exit
+		\\cd "$(dirname "$1")" || exit
+		\\stat -c '%n %y' "$(basename "$1")"-*-link | sort -t- -k2,2n
+
+	## `argv` with its stdout written to `file`, which is in the generated
+	## root, so that a continuation reads it.
+	recorded : Str, List(Str) -> List(Str)
+	recorded = |file, argv| {
+		script =
+			\\file=$1
+			\\shift
+			\\mkdir -p "$(dirname "$file")" || exit
+			\\"$@" >"$file"
+		["sh", "-c", script, "sh", file].concat(argv)
+	}
+
+	## What a switch or rollback at `destination` says once it has run, or
+	## the generations a listing prints, from what it recorded.
+	report : Machine, Context, Str, [Here, Remote(Str)] -> Planned
+	report = |m, ctx, action, destination| {
+		file = NixosBackend.generations_file(ctx)
+		lines = match ctx.observed.find_first(|o| o.path == file) {
+			Ok({ contents: Text(text), .. }) => text.split_on("\n").drop_if(Str.is_empty)
+			_ => return Err(Plan.fail("kai machine ${action} recorded no ${file}"))
+		}
+		current = lines.first() ?? ""
+		place = match destination {
+			Here => "this host"
+			Remote(target) => target
+		}
+		generation = NixosBackend.generation(current)
+		running = "is now running generation ${generation}"
+		steps = if action == "generations" {
+			lines.drop_first(1).map(
+				|line| {
+					(link, made) = match line.split_first(" ") {
+						Ok({ before, after }) => (before, after)
+						Err(_) => (line, "")
+					}
+					# stat's time, such as 2026-11-14 10:03:12.5 +0000, to the minute.
+					minute = Str.join_with(made.split_on(":").take_first(2), ":")
+					marker = if (link == current) "  (current)" else ""
+					Print("generation ${NixosBackend.generation(link)}  ${minute}${marker}")
+				},
+			)
+		} else if action == "switch" {
+			[Note("${MachineModel.called(m)} ${running} on ${place}")]
+		} else {
+			[Note("${place} ${running}")]
 		}
 		Ok(Plan.{ steps, next: Done })
 	}
 
+	## The generation a system profile's link names: 43 for system-43-link.
+	generation : Str -> Str
+	generation = |link| link.drop_prefix("system-").drop_suffix("-link")
+
 	## Installing erases the Disk of the server at `target`, any Linux that
 	## logs in over SSH as root or with sudo, and installs the machine with
-	## nixos-anywhere from the project's locked nixpkgs. The system is
-	## built here first, so what fails to build fails before anything is
-	## erased.
+	## nixos-anywhere from the project's locked nixpkgs. The system, and
+	## the kexec installer nixos-anywhere boots the server into, of the same
+	## nixpkgs as the disko it runs there, are built here first, so what
+	## fails to build fails before anything is erased. nixos-anywhere then
+	## records the server's hardware with nixos-facter in the project, and
+	## builds the system again with it.
 	install : Project, List(Machine), Machine, Context, Str -> Planned
 	install = |project, machines, m, ctx, target| {
-		description = "machine install ${m.name} on ${target}"
+		description = "machine install ${MachineModel.named(m)} on ${target}"
 		tools = ExpectPrograms({ description, programs: ["nix", "ssh"] })
 		built = NixosBackend.build(project, machines, m, ctx, "")?
+		installer_link = "${ctx.layout.workspace}/machines/${m.instance}-installer"
+		installer = NixosBackend.flake_build(
+			project,
+			machines,
+			ctx,
+			{
+				attribute: "kexecInstallers.${m.system}",
+				name: "${m.instance}-installer",
+				description: "machine install ${MachineModel.named(m)}: installer",
+				out_link: installer_link,
+			},
+		)?
+		# The system's build has written the flake already.
+		installer_build = installer.steps.keep_if(
+			|step|
+				match step {
+					Run(_) => Bool.True
+					_ => Bool.False
+				},
+		)
+		tarball = "${installer_link}/nixos-kexec-installer-noninteractive-"
+			.concat("${m.system}.tar.gz")
 		device = match m.disk {
 			SingleDisk(path) => path
 			NoDisk => ""
 		}
-		prompt = "Install machine ${m.name} on ${target}, ERASING its disk "
+		prompt = "Install ${MachineModel.called(m)} on ${target}, ERASING its disk "
 			.concat("${device} and everything on it?")
 		flake = "path:${Std.nix_layout(ctx.layout).generated_root}"
 		anywhere = if m.operators.is_empty() {
-			NixosBackend.nixos_anywhere(flake, m.name, target)
+			NixosBackend.nixos_anywhere(flake, m.instance, target)
 		} else {
 			NixosBackend.keyed_install(ctx, flake, m, target)
 		}
+		facts = NixosBackend.facts_file(m, ctx.layout.project_root)
+		recording = ["--kexec", tarball]
+			.concat(["--generate-hardware-config", "nixos-facter", facts])
+		# nixos-anywhere's progress shows, as it runs for minutes and may stall.
+		run = NixosBackend.run(description, Inherit, anywhere.concat(recording))
+		installing = Note(
+			"installing ${MachineModel.called(m)} on ${target}: this erases ${device} "
+				.concat("and takes several minutes"),
+		)
+		wrote = Note("wrote ${facts}, the machine's hardware facts; commit it")
 		steps = [tools]
 			.concat(built.steps)
-			.concat([Confirm(prompt), NixosBackend.run(description, Inherit, anywhere)])
+			.concat(installer_build)
+			.concat([Confirm(prompt), installing, run, wrote])
 		Ok(Plan.{ steps, next: Done })
 	}
 
-	## nixos-anywhere from the locked nixpkgs on machine `name` of `flake`. The
-	## machine's module files are read by their absolute paths, which pure
-	## evaluation refuses, as `kai machine build`'s --impure allows: the script
-	## adds `pure-eval = false` to any NIX_CONFIG the user has.
+	## nixos-anywhere from the locked nixpkgs on machine `name` of `flake`.
 	nixos_anywhere : Str, Str, Str -> List(Str)
 	nixos_anywhere = |flake, name, target| {
 		script =
 			\\flake=$1
 			\\shift
 			\\exec nix run --inputs-from "$flake" default#nixos-anywhere -- "$@"
-		["sh", "-c", Str.join_with([NixosBackend.impure, script], "\n"), "sh", flake]
-			.concat(["--flake", "${flake}#${name}", "--target-host", target])
+		["sh", "-c", script, "sh", flake]
+			.concat(NixosBackend.anywhere_arguments(flake, name, target))
 	}
 
-	## Adds `pure-eval = false` to any NIX_CONFIG the user has.
-	impure =
-		\\case $NIX_CONFIG in
-		\\'') NIX_CONFIG='pure-eval = false' ;;
-		\\*) NIX_CONFIG="$NIX_CONFIG
-		\\pure-eval = false" ;;
-		\\esac
-		\\export NIX_CONFIG
+	## nixos-anywhere's arguments for machine `name` of `flake` on `target`. The
+	## machine's module files and hardware facts are read by their absolute
+	## paths, which pure evaluation refuses, as `kai machine build`'s --impure
+	## allows. Flake commands ignore `pure-eval` from NIX_CONFIG, so it is an
+	## option, which nixos-anywhere passes to each of its nix commands. A
+	## target's port is its own option, and holds once the server has booted
+	## the installer, as through a port forward to port 22.
+	anywhere_arguments : Str, Str, Str -> List(Str)
+	anywhere_arguments = |flake, name, target| {
+		reach = NixosBackend.ssh_target(target)
+		port = if reach.port.is_empty() {
+			[]
+		} else {
+			["--ssh-port", reach.port, "--post-kexec-ssh-port", reach.port]
+		}
+		["--flake", "${flake}#${name}", "--target-host", reach.destination]
+			.concat(port)
+			.concat(["--option", "pure-eval", "false"])
+	}
 
 	## nixos-anywhere as `nixos_anywhere` runs it, placing machine `m`'s SSH
 	## host key with `--extra-files`. The key is decrypted from
@@ -283,12 +542,13 @@ NixosBackend :: [].{
 			\\chmod 644 "$key.pub"
 			\\anywhere=default#nixos-anywhere
 			\\nix run --inputs-from "$flake" "$anywhere" -- "$@" --extra-files "$files"
-		script = [arguments, NixosBackend.decrypting, NixosBackend.impure, installing]
+		script = [arguments, NixosBackend.decrypting, installing]
 		identity = Command.path(ctx.args, "identity") ?? ""
 		secrets = "${ctx.layout.project_root}/secrets"
 		NixosBackend.with_age(flake, Str.join_with(script, "\n"))
-			.concat([flake, identity, secrets, m.name, Str.join_with(m.operators, "\n")])
-			.concat(["--flake", "${flake}#${m.name}", "--target-host", target])
+			.concat([flake, identity, secrets, m.instance])
+			.append(Str.join_with(m.operators, "\n"))
+			.concat(NixosBackend.anywhere_arguments(flake, m.instance, target))
 	}
 
 	## `sh -c script sh` with age and ssh-keygen from the locked nixpkgs of
@@ -347,7 +607,7 @@ NixosBackend :: [].{
 			plan: |ctx| {
 				(m, secret) = MachineModel.secret_target(machines, ctx.args)?
 				action = Command.name(ctx.args, "action")
-				description = "secret ${action} ${m.name}"
+				description = "secret ${action} ${MachineModel.named(m)}"
 				tools = ExpectPrograms({ description, programs: ["nix"] })
 				flake = NixosBackend.flake_output(project, machines, m, ctx, "")?
 				written = flake.steps.drop_if(
@@ -360,14 +620,14 @@ NixosBackend :: [].{
 				nix_flake = "path:${Std.nix_layout(ctx.layout).generated_root}"
 				secrets = "${ctx.layout.project_root}/secrets"
 				operators = Str.join_with(m.operators, "\n")
-				unknown_host = NixosBackend.without_host_key(m.name)
+				unknown_host = NixosBackend.without_host_key(m)
 				argv = if action == "set" {
 					NixosBackend.with_age(nix_flake, NixosBackend.set_script)
-						.concat([secrets, m.name, secret, operators, unknown_host])
+						.concat([secrets, m.instance, secret, operators, unknown_host])
 				} else {
 					identity = Command.path(ctx.args, "identity") ?? ""
 					NixosBackend.with_age(nix_flake, NixosBackend.rekey_script)
-						.concat([identity, secrets, m.name, operators, unknown_host])
+						.concat([identity, secrets, m.instance, operators, unknown_host])
 				}
 				steps = [tools]
 					.concat(written)
@@ -378,12 +638,14 @@ NixosBackend :: [].{
 
 	## Why a machine without a host public key cannot decrypt its secrets
 	## yet, and what fixes it.
-	without_host_key : Str -> Str
-	without_host_key = |name|
+	without_host_key : Machine -> Str
+	without_host_key = |m| {
+		name = MachineModel.named(m)
 		"kai machine install ${name} makes the machine's host key and encrypts "
 			.concat("its secrets to it; for a machine installed otherwise, write ")
 			.concat("its /etc/ssh/ssh_host_ed25519_key.pub there and run kai ")
 			.concat("secret rekey ${name}")
+	}
 
 	## Encrypts stdin, which never touches a disk, to the recipients, as
 	## secrets/NAME/SECRET.age.
@@ -423,21 +685,38 @@ NixosBackend :: [].{
 			Err(_) => m.system
 		}
 
+	## How ssh reaches `target`, an SSH target `MachineModel.parse_target`
+	## takes: its `destination`, `user@host` or `host`, and its `port`, ""
+	## for ssh's own, which `options` name as ssh takes it. Neither the
+	## destination nor an `ssh-ng://` store URL holds the port.
+	ssh_target : Str -> { destination : Str, port : Str, options : List(Str) }
+	ssh_target = |target| {
+		{ user, host, port } = MachineModel.parse_target(target)
+			?? { user: "", host: target, port: "" }
+		destination = if (user.is_empty()) host else "${user}@${host}"
+		options = if (port.is_empty()) [] else ["-p", port]
+		{ destination, port, options }
+	}
+
 	## A shell check, as the switch runs, that `target` runs NixOS on the
-	## machine's architecture. The target and the messages are arguments,
-	## never part of the script; when ssh fails, it exits with ssh's status.
-	remote_check : Machine, Str -> List(Str)
-	remote_check = |m, target| {
+	## machine's architecture, connecting with ssh `options` and its port.
+	## The target, the messages and the options are arguments, never part
+	## of the script; when ssh fails, it exits with ssh's status.
+	remote_check : Machine, Str, List(Str) -> List(Str)
+	remote_check = |m, target, options| {
+		reach = NixosBackend.ssh_target(target)
 		script =
-			\\found=$(ssh "$1" -- 'uname -m && test -e /etc/NIXOS')
+			\\target=$1 destination=$2 architecture=$3 machine=$4 install=$5
+			\\shift 5
+			\\found=$(ssh "$@" "$destination" -- 'uname -m && test -e /etc/NIXOS')
 			\\status=$?
 			\\[ "$status" -gt 1 ] && exit "$status"
-			\\if [ "$found" != "$2" ]; then
-			\\  echo "$1 is $found, not $2: $3" >&2
+			\\if [ "$found" != "$architecture" ]; then
+			\\  echo "$target is $found, not $architecture: $machine" >&2
 			\\  exit 1
 			\\fi
 			\\[ "$status" = 0 ] && exit 0
-			\\echo "$1 does not run NixOS: $4" >&2
+			\\echo "$target does not run NixOS: $install" >&2
 			\\exit 1
 		[
 			"sh",
@@ -445,27 +724,36 @@ NixosBackend :: [].{
 			script,
 			"sh",
 			target,
+			reach.destination,
 			NixosBackend.architecture(m),
-			"machine ${m.name} is ${m.system}",
-			"run kai machine install ${m.name} --to ${target} first",
+			"${MachineModel.called(m)} is ${m.system}",
+			"run kai machine install ${MachineModel.named(m)} --to ${target} first",
 		]
+			.concat(reach.options)
+			.concat(options)
 	}
 
 	## A shell step setting `target`'s system profile to the store path
 	## `link` names, known only once the build has run: `command`, quoted
-	## for the remote shell, then the store path, which holds no quote.
-	remote_profile : Str, Str, List(Str) -> List(Str)
-	remote_profile = |link, target, command| {
+	## for the remote shell, then the store path, which holds no quote. ssh
+	## connects with the target's port and `options`, the last arguments.
+	remote_profile : Str, Str, List(Str), List(Str) -> List(Str)
+	remote_profile = |link, target, command, options| {
+		reach = NixosBackend.ssh_target(target)
 		script =
-			\\store_path=$(readlink -f "$1") || exit
+			\\link=$1 target=$2 command=$3
+			\\shift 3
+			\\store_path=$(readlink -f "$link") || exit
 			\\case $store_path in
 			\\/nix/store/*[!A-Za-z0-9/+._?=-]*) ;;
-			\\/nix/store/?*) exec ssh "$2" -- "$3 '$store_path'" ;;
+			\\/nix/store/?*) exec ssh "$@" "$target" -- "$command '$store_path'" ;;
 			\\esac
 			\\echo "unexpected store path: $store_path" >&2
 			\\exit 1
 		quoted = Str.join_with(command.map(NixosBackend.shell_quote), " ")
-		["sh", "-c", script, "sh", link, target, quoted]
+		["sh", "-c", script, "sh", link, reach.destination, quoted]
+			.concat(reach.options)
+			.concat(options)
 	}
 
 	## `word` as one word for a POSIX shell: bare when it holds only plain
@@ -497,16 +785,23 @@ NixosBackend :: [].{
 			[]
 		} else {
 			script =
-				\\name=$1
-				\\shift
+				\\name=$1 instance=$2
+				\\shift 2
 				\\for file; do
 				\\  [ -e "$file" ] && continue
 				\\  secret=$(basename "$file" .age)
-				\\  echo "$file does not exist: run kai secret set $name $secret" >&2
+				\\  set="kai secret set $name $secret$instance"
+				\\  echo "$file does not exist: run $set" >&2
 				\\  exit 1
 				\\done
-			description = "machine build ${machine.name}: secrets"
-			argv = ["sh", "-c", script, "sh", machine.name].concat(files)
+			description = "machine build ${MachineModel.named(machine)}: secrets"
+			# A secret of an instance is set naming it.
+			instance = if machine.instance == machine.name {
+				""
+			} else {
+				" --as ${machine.instance}"
+			}
+			argv = ["sh", "-c", script, "sh", machine.name, instance].concat(files)
 			checked = files.map(|file| CheckSource(file))
 			[NixosBackend.run(description, Quiet, argv)].concat(checked)
 		}
@@ -516,8 +811,16 @@ NixosBackend :: [].{
 	## std's flake with every machine, and the build of `machine`'s system.
 	flake_output : Project, List(Machine), Machine, Context, Str -> Planned
 	flake_output = |project, machines, machine, ctx, out_link| {
-		attribute = "nixosConfigurations.${machine.name}"
+		attribute = "nixosConfigurations.${machine.instance}"
 			.concat(".config.system.build.toplevel")
+		description = "machine build ${MachineModel.named(machine)}"
+		wanted = { attribute, name: machine.instance, description, out_link }
+		NixosBackend.flake_build(project, machines, ctx, wanted)
+	}
+
+	## std's flake with every machine, and the build `wanted` describes.
+	flake_build : Project, List(Machine), Context, Built -> Planned
+	flake_build = |project, machines, ctx, wanted|
 		Std.build_flake_output(
 			project,
 			ctx,
@@ -526,25 +829,34 @@ NixosBackend :: [].{
 				environments: machines
 					.keep_if(|m| !m.environment.is_empty())
 					.map(|m| m.environment),
-				attribute,
-				name: machine.name,
-				description: "machine build ${machine.name}",
-				out_link,
+				attribute: wanted.attribute,
+				name: wanted.name,
+				description: wanted.description,
+				out_link: wanted.out_link,
 			},
 		)
-	}
+
+	## Where install records machine `m`'s hardware facts, beneath
+	## `project_root`.
+	facts_file : Machine, Str -> Str
+	facts_file = |m, project_root|
+		"${project_root}/machines/${m.instance}/facter.json"
 
 	## Where secret `s` of machine `m` is encrypted, beneath `project_root`.
 	secret_file : Machine, MachineModel.Secret, Str -> Str
 	secret_file = |m, s, project_root|
-		"${project_root}/secrets/${m.name}/${s.name}.age"
+		"${project_root}/secrets/${m.instance}/${s.name}.age"
 
 	## Why `action` refuses another host than `m`.
 	local_only : Str, Machine -> Str
-	local_only = |action, m|
-		"kai machine ${action} without Host or --to acts on the host it runs "
-			.concat("on; run it on ${m.host_name}, or name its SSH target with ")
-			.concat("Host or --to")
+	local_only = |action, m| {
+		# An instance never acts on Host, the machine's own server.
+		reaching = if (m.instance == m.name) "Host or --to" else "--to"
+		host_name = MachineModel.host_name(m)
+		"kai machine ${action} ${MachineModel.named(m)} without ${reaching} acts "
+			.concat("on the host it runs on; run it on ${host_name}, or name its ")
+			.concat("SSH target with ${reaching}")
+	}
 
 	## A shell check, as the switch runs, that this host's name is the
 	## machine's HostName. The names and the message are arguments, never
@@ -556,7 +868,8 @@ NixosBackend :: [].{
 			\\[ "$host" = "$1" ] && exit 0
 			\\echo "this host is $host, not $1: $2" >&2
 			\\exit 1
-		["sh", "-c", script, "sh", m.host_name, NixosBackend.local_only(action, m)]
+		why = NixosBackend.local_only(action, m)
+		["sh", "-c", script, "sh", MachineModel.host_name(m), why]
 	}
 
 	run : Str, Plan.Output, List(Str) -> Plan.Step
@@ -571,25 +884,39 @@ NixosBackend :: [].{
 		})
 
 	## The flake outputs defining every machine, with module paths beneath
-	## `project_root`; "" when there are none.
+	## `project_root`, and, when one has a Disk, the noninteractive kexec
+	## installer nixos-images builds for each system, which install boots;
+	## "" when there are none.
 	outputs : List(Machine), Str -> Str
 	outputs = |machines, project_root|
 		if machines.is_empty() {
 			""
 		} else {
 			defined = machines.map(|m| NixosBackend.machine(m, project_root))
+			# nixos-images names it unstable, but both its nixpkgs follow the
+			# project's.
+			installers =
+				\\      kexecInstallers = builtins.mapAttrs
+				\\        (system: packages:
+				\\          packages.kexec-installer-nixos-unstable-noninteractive)
+				\\        inputs."nixos-images".packages;
+				\\
 			"      nixosConfigurations = {\n"
 				.concat(Str.join_with(defined, ""))
 				.concat("      };\n")
+				.concat(if (machines.any(|m| m.disk != NoDisk)) installers else "")
 		}
 
 	machine : Machine, Str -> Str
 	machine = |m, project_root| {
 		file = |path| "(/. + ${NixosBackend.quote("${project_root}/${path}")})"
+		# A file of a locked input is in the store, so reading it is pure.
+		input_file = |{ input, path }|
+			"(inputs.${NixosBackend.quote(input)} + ${NixosBackend.quote("/${path}")})"
 		settings = NixosBackend.settings(m, project_root)
 		NixosBackend.lines(
 			[
-				"        ${NixosBackend.quote(m.name)} = "
+				"        ${NixosBackend.quote(m.instance)} = "
 					.concat("inputs.\"default\".lib.nixosSystem {"),
 				"          specialArgs = { inherit inputs; };",
 				"          modules = [",
@@ -598,6 +925,7 @@ NixosBackend :: [].{
 				.concat(settings.map(|line| "              ${line}"))
 				.append("            }")
 				.concat(m.modules.map(|path| "            ${file(path)}"))
+				.concat(m.input_modules.map(input_file).map(|line| "            ${line}"))
 				.concat(["          ];", "        };"]),
 		)
 	}
@@ -657,6 +985,13 @@ NixosBackend :: [].{
 		imported = when(m.disk != NoDisk, [disko])
 			.concat(when(!m.secrets.is_empty(), [agenix]))
 		import_line = "imports = ${NixosBackend.list(imported)};"
+		# The facts install records, once it has: NixOS's facter module loads
+		# the kernel modules and firmware the server's hardware needs.
+		facts = "/. + ${quote(NixosBackend.facts_file(m, project_root))}"
+		facter = [
+			"hardware.facter.reportPath = let report = ${facts}; in",
+			"  if builtins.pathExists report then report else null;",
+		]
 		# agenix decrypts each secret with the host key install placed, or
 		# the one OpenSSH made, into /run/secrets.
 		file = |s| "(/. + ${quote(NixosBackend.secret_file(m, s, project_root))})"
@@ -676,7 +1011,7 @@ NixosBackend :: [].{
 			)
 		[
 			"nixpkgs.hostPlatform = ${quote(m.system)};",
-			"networking.hostName = ${quote(m.host_name)};",
+			"networking.hostName = ${quote(MachineModel.host_name(m))};",
 			"system.stateVersion = ${quote(m.state_version)};",
 		]
 			.concat(
@@ -693,6 +1028,7 @@ NixosBackend :: [].{
 			.concat(when(!m.environment.is_empty(), system_packages))
 			.concat(when(!imported.is_empty(), [import_line]))
 			.concat(NixosBackend.disk(m.disk))
+			.concat(when(m.disk != NoDisk, facter))
 			.concat(when(!m.secrets.is_empty(), secrets))
 			.concat(m.services.join_map(|Caddy(server)| NixosBackend.caddy(server)))
 	}

@@ -3,7 +3,7 @@
 The machine plugin declares machines in Kaifile.roc, beside std's
 environments, shells, tasks and builds, and lives in `plugins/machine`. It
 implements `kai machine` on the nix backend, where each machine is a NixOS
-system; `Modules` is Nix's alone.
+system; `Modules` and `InputModules` are Nix's alone.
 
 ```roc
 app [kaifile] {
@@ -20,7 +20,6 @@ import machine.Machine
 project : List(Config.Setting)
 project = [
 	Name("site"),
-	Input("disko", "github:nix-community/disko"),
 	Environment("ops", [Tools(["htop"])]),
 ]
 
@@ -50,24 +49,25 @@ plugins/machine` in a checkout of that release makes it, to host as
 
 ## Settings
 
-Every setting but `User` occurs at most once in a machine.
+Every setting but `User` and `InputModules` occurs at most once in a machine.
 
 | Setting | Meaning |
 |---|---|
 | `System(system)` | Required. `x86_64-linux` or `aarch64-linux`, and one of the project's `Systems`. |
 | `StateVersion(release)` | Required. NixOS's `system.stateVersion`, a release such as `"25.05"`: the release whose state formats the machine keeps. Set it once, when the machine is installed. |
-| `HostName(name)` | `networking.hostName`. Optional (default: the machine's name). |
-| `Host(target)` | The SSH target, `user@host` or `host`, that `switch`, `rollback` and `generations` act on; see [Remote machines](#remote-machines). Optional (default: the host kai runs on). |
+| `HostName(name)` | `networking.hostName`. Optional (default: the machine's name, or an [instance](#many-servers-from-one-machine)'s). |
+| `Host(target)` | The SSH target, `user@host` or `host`, with an optional `:port`, that `switch`, `rollback` and `generations` act on; see [Remote machines](#remote-machines). Optional (default: the host kai runs on). |
 | `User(name, [...])` | An ordinary user, with `SshKeys([...])`, its authorized OpenSSH public keys, and `Groups([...])`, its supplementary groups such as `wheel`. `User("root", [SshKeys([...])])` authorizes keys for root, which takes no groups. |
 | `Ssh` | OpenSSH, with key logins only: no passwords or keyboard-interactive logins, and root only with keys when root has some. It needs a `User` with `SshKeys`, and opens its port in the firewall. |
 | `Firewall([Tcp([...]), Udp([...])])` | Ports the firewall opens, beside OpenSSH's. NixOS's firewall is on either way. |
 | `TimeZone(zone)` | `time.timeZone`, such as `"Etc/UTC"`. Optional (default NixOS's, UTC). |
 | `Use(environment)` | Puts a std environment's tools on the system's `PATH` (`environment.systemPackages`). The environment's variables stay in its shells and tasks. It cannot be one only the direct backend serves. |
-| `Disk(SingleDisk(device))` | The disk `kai machine install` partitions and the system boots from, the whole of `device`, an absolute `/dev/...` path such as `"/dev/sda"` or `"/dev/disk/by-id/..."`; see [Installing on a server](#installing-on-a-server). It needs `Input("disko", "github:nix-community/disko")` in std's settings. Optional (default: the file systems and boot loader come from `Modules`). |
+| `Disk(SingleDisk(device))` | The disk `kai machine install` partitions and the system boots from, the whole of `device`, an absolute `/dev/...` path such as `"/dev/sda"` or `"/dev/disk/by-id/..."`; see [Installing on a server](#installing-on-a-server). kai pins disko, the Disk's module, and nixos-images, the installer it boots, itself, and the install records the server's hardware in `machines/NAME/facter.json`. Optional (default: the file systems, boot loader and hardware come from `Modules`). |
 | `Operators([...])` | The public keys of whoever may decrypt the machine's host key and secrets: age recipients (`age1...`) or `ssh-ed25519` and `ssh-rsa` public keys, at least one; see [Secrets](#secrets). Optional. |
-| `Secrets([Secret(name, [...])])` | Files the system decrypts into `/run/secrets/NAME` as it activates, with `Owner(user)` (default `root`), `Group(group)` (default `root`) and `Mode("0400")`, an octal mode (default `"0400"`); see [Secrets](#secrets). They need `Operators` and `Input("agenix", "github:ryantm/agenix")` in std's settings. Optional. |
+| `Secrets([Secret(name, [...])])` | Files the system decrypts into `/run/secrets/NAME` as it activates, with `Owner(user)` (default `root`), `Group(group)` (default `root`) and `Mode("0400")`, an octal mode (default `"0400"`); see [Secrets](#secrets). They need `Operators`; kai pins agenix, which decrypts them, itself. Optional. |
 | `Services([...])` | Typed services the machine runs, each at most once: for now `Caddy([...])`, which serves sites over HTTPS; see [Services](#services). Optional. |
-| `Modules([...])` | NixOS module files, relative to the project and inside it, for everything else: services, hardware, and the disks and boot loader when there is no `Disk`. They receive the flake's `inputs` as a module argument, so a module can import another flake's module, such as `inputs.disko.nixosModules.disko` after `Input("disko", "github:nix-community/disko")` in std's settings. |
+| `Modules([...])` | NixOS module files, relative to the project and inside it, for everything else: services, and the hardware, disks and boot loader when there is no `Disk`. They receive the flake's `inputs` as a module argument, so a module can import another flake's module, such as `inputs.home-manager.nixosModules.home-manager` after `Input("home-manager", "github:nix-community/home-manager")` in std's settings. |
+| `InputModules(input, [...])` | NixOS module files, relative to a locked flake input and inside it, such as a provider's profile shared by many projects; see [Provider profiles](#provider-profiles). The input is one std's settings declare with `Input(...)`, or one a plugin asks `kai update` to lock. It may be given more than once, such as once per input. Optional. |
 
 `kai check` refuses, as Kaifile.roc compiles, a machine name that is not a
 letter followed by letters, digits, `-` or `_`; a missing or non-Linux
@@ -76,14 +76,15 @@ letter followed by letters, digits, `-` or `_`; a missing or non-Linux
 names NixOS would refuse; a key that
 is no OpenSSH public key; `Ssh` with no keys to log in with; port 0; an
 unknown environment; a `Disk` device that is no `/dev/...` path of letters,
-digits and `._:+-`, or a `Disk` without the `disko` input; an operator
-that is no age recipient, `ssh-ed25519` or `ssh-rsa` key, or empty
-`Operators`; `Secrets` without `Operators` or without the `agenix` input,
+digits and `._:+-`; an operator that is no age recipient, `ssh-ed25519` or
+`ssh-rsa` key, or empty `Operators`; `Secrets` without `Operators`,
 a secret name that is not a letter followed by letters, digits, `-`, `_` or
 `.`, a secret declared twice, an owner or group NixOS would refuse, or a
 mode that is not three or four octal digits; a service given twice, and
-what [Services](#services) lists for each; and a module path that is
-absolute, uses `.` or `..` segments, or is not a `.nix` file.
+what [Services](#services) lists for each; a module path that is
+absolute, uses `.` or `..` segments, or is not a `.nix` file; and an
+`InputModules` input that neither std's settings declare nor a plugin
+asks to lock.
 
 ## How a machine reaches the flake
 
@@ -97,16 +98,24 @@ nixosConfigurations."web" = inputs."default".lib.nixosSystem {
   modules = [
     { nixpkgs.hostPlatform = "x86_64-linux"; ... }   # the typed settings
     (/. + "/path/to/project/nixos/web.nix")
+    (inputs."profiles" + "/digitalocean.nix")   # InputModules("profiles", ...)
   ];
 };
 ```
 
 The system comes from the project's `default` package source, so
-`Packages("default", From(NixPackages("github:NixOS/nixpkgs/nixos-25.05")))`
+`Packages("default", From(NixPackages("github:NixOS/nixpkgs/nixos-25.11")))`
 picks the NixOS release, and `kai update` moves it with the rest of the
-lock. Machines add no inputs of their own, so the lock std's `kai update`
-writes serves them; a `Disk` uses the `disko` input std's settings declare,
-and `Secrets` the `agenix` input, which `kai update` locks with the rest.
+lock. Machines need no `Input` lines: the plugin asks std's `kai update` to
+lock the `default` source, and for a machine with a `Disk`
+`github:nix-community/disko` and `github:nix-community/nixos-images`, or
+with `Secrets` `github:ryantm/agenix`, as the flake's `disko`,
+`nixos-images` and `agenix` inputs, each with its nixpkgs inputs
+(`nixpkgs`, or nixos-images' `nixos-unstable` and `nixos-stable`)
+following `default` so the project locks one nixpkgs. A project that declares
+`Input("disko", ...)` or `Input("agenix", ...)` itself keeps working when
+the reference is the same; another reference is refused as Kaifile.roc
+compiles, and removing the line from std's settings fixes it.
 
 A plugin adds outputs through std's public API, `Std.build_flake_output`,
 described in [plugin.md](plugin.md#building-from-stds-flake).
@@ -126,8 +135,11 @@ files by their absolute paths; remote builders stay allowed, so a host with a
 builder for the machine's system can build it. `kai --dry-run machine build
 NAME` prints the plan, the generated flake included, instead.
 
-A system needs a root file system and a boot loader, which come from `Disk`
-or from a module such as the `hardware-configuration.nix` that
+A system needs a root file system, a boot loader and the kernel modules its
+hardware needs. On a machine with `Disk`, they come from the layout and the
+hardware facts `kai machine install` records; see [Hardware
+facts](#hardware-facts). On one kai does not install, they come from a
+module such as the `hardware-configuration.nix` that
 `nixos-generate-config` writes; see [examples/machines](../examples/machines).
 
 ### Switching this host
@@ -151,7 +163,8 @@ which does what `nixos-rebuild switch` does once it has built: the system
 becomes a new generation of the system profile (already built, it is only
 recorded), is activated, restarting the services that changed, and is the
 boot default. The build runs as you; only
-these two commands run as root, through `sudo`. Switching the system that was
+these two commands run as root, through `sudo`, which asks for your
+password on the terminal when it needs it. Switching the system that was
 just built, rather than having `nixos-rebuild` evaluate the flake again,
 means what kai printed is what runs.
 
@@ -163,14 +176,44 @@ sudo nix profile rollback --profile /nix/var/nix/profiles/system
 sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
 ```
 
-`kai machine generations NAME` lists the system generations with
-`nixos-rebuild list-generations`, which needs no root and, unlike `nix
-profile history`, shows each generation's NixOS version and kernel.
+`kai machine generations NAME` lists the system generations from the
+profile's links, `/nix/var/nix/profiles/system-*-link`, with the time each
+was made and the current one marked. It needs no root.
 
 Switch and rollback ask before changing the system, so they need a terminal
 or `--yes`. A rollback changes only the host, not `.kai/lock.json`: the next
 switch builds from the lock again. `kai --dry-run machine switch NAME` prints the whole plan, the host
 check, the build and the confirmation included, and runs none of it.
+
+### What kai prints
+
+The machine commands say what they do in kai's words, and show the output
+of the commands they run, such as `nix copy` or the activation's, only
+when one fails, just before kai's error:
+
+```console
+$ kai machine switch web
+building web: nixosConfigurations.web.config.system.build.toplevel (output out)
+/nix/store/...-nixos-system-web-25.11
+built web: nixosConfigurations.web.config.system.build.toplevel -> /nix/store/...
+kai: Switch admin@web.example.com to machine web, restarting changed services and booting it by default? [y/N] y
+kai: copying machine web's system to admin@web.example.com
+kai: activating it on admin@web.example.com
+kai: machine web is now running generation 43 on admin@web.example.com
+$ kai machine generations web
+generation 42  2026-11-13 18:20
+generation 43  2026-11-14 10:03  (current)
+```
+
+A rollback ends with the generation the host now runs. `generations`
+prints one line per generation, oldest first, with the time in the host's
+time zone; with `--json`, each is a `result` event. The last step of each
+writes what it read of the profile to `.kai/generated/machine/generations`,
+which kai reads back to print it.
+
+`kai machine install` is the exception: it shows nixos-anywhere's
+progress as it runs, since an install takes several minutes, and a stalled
+one should be visible.
 
 ### Remote machines
 
@@ -187,9 +230,15 @@ $ kai machine rollback web --to root@203.0.113.7
 ```
 
 A target is `host` or `user@host`, where host is a name, such as an alias
-from `~/.ssh/config`, or an IPv4 or IPv6 address. It takes no port: set one,
-and any other SSH option, in `~/.ssh/config`. kai refuses a `Host` that is no
-target as Kaifile.roc compiles, and a `--to` that is none before planning.
+from `~/.ssh/config`, or an IPv4 or IPv6 address, then `:port` for an SSH
+port other than ssh's own, such as `admin@203.0.113.7:2222`. An IPv6 host
+goes in brackets before a port, `root@[2001:db8::1]:2222`, and may stand
+bare without one. kai passes the port to `ssh` as `-p PORT`, to
+nixos-anywhere as `--ssh-port`, and to `nix copy` in `NIX_SSHOPTS`, so a
+local VM that forwards a port to its SSH, or a host on another port, needs
+no `~/.ssh/config` entry; set any other SSH option there. kai refuses a
+`Host` that is no target, or a port outside 1 to 65535, as Kaifile.roc
+compiles, and a `--to` that is none before planning.
 `kai machine build` always builds here: it ignores `Host` and refuses
 `--to`.
 
@@ -201,15 +250,19 @@ system here as a local switch does, leaving `.kai/machines/NAME`, asks for
 confirmation naming the target, and runs
 
 ```sh
-nix copy --substitute-on-destination --to ssh-ng://TARGET .kai/machines/NAME
+nix copy --no-check-sigs --substitute-on-destination \
+  --to ssh-ng://TARGET .kai/machines/NAME
 ssh TARGET -- sudo nix --extra-experimental-features nix-command \
   build --no-link --profile /nix/var/nix/profiles/system STORE_PATH
 ssh TARGET -- sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
 ```
 
 where STORE_PATH is the system the out-link names, read as the step runs.
+With a port, TARGET is the target without it, `ssh` takes `-p PORT` and
+`nix copy` takes it in `NIX_SSHOPTS`.
 The target downloads what it can from its own substituters and receives the
-rest. `kai machine rollback NAME` checks the target, asks, then runs
+rest. A system built here carries no signature, so the copy skips the
+signature check, which only a user the target trusts may do. `kai machine rollback NAME` checks the target, asks, then runs
 
 ```sh
 ssh TARGET -- sudo nix --extra-experimental-features nix-command \
@@ -217,9 +270,44 @@ ssh TARGET -- sudo nix --extra-experimental-features nix-command \
 ssh TARGET -- sudo /nix/var/nix/profiles/system/bin/switch-to-configuration switch
 ```
 
-and `kai machine generations NAME` checks it and runs `ssh TARGET --
-nixos-rebuild list-generations`. When the target logs in as `root`, nothing
-goes through `sudo`.
+and `kai machine generations NAME` checks it and lists the target's
+generations as a local one does, over one SSH connection. The activation
+and the listing run in a short `sh` script on the target, which also reads
+which generation the profile now is. When the target logs in as `root`,
+nothing goes through `sudo`.
+
+#### The target's host key
+
+ssh checks the target's host key against your `~/.ssh/known_hosts`, where a
+server just installed is missing and its address, often reused, may hold
+another server's key. For a machine with `Operators`, kai knows the key:
+`kai machine install` writes it to `secrets/hosts/NAME.pub` before the
+server boots, and for a machine installed otherwise you may copy it there
+(see [The host key comes first](#the-host-key-comes-first)). When that file
+exists, `switch`, `rollback` and `generations` trust exactly that key and
+nothing else: they write `.kai/generated/machine/known_hosts`, holding
+`NAME KEY`, and every `ssh`, and `nix copy` through `NIX_SSHOPTS`, connects
+with
+
+```sh
+-o UserKnownHostsFile=PROJECT/.kai/generated/machine/known_hosts
+-o GlobalKnownHostsFile=/dev/null -o StrictHostKeyChecking=yes
+-o HostKeyAlias=NAME
+```
+
+so the key is looked up under the machine's name, whatever address, port or
+`~/.ssh/config` alias the target names. A key that differs fails the step, at
+a terminal or not, and your `known_hosts` is neither read nor changed. A
+tool that creates a server thus needs no `known_hosts` editing before
+`kai machine switch`. Your own `NIX_SSHOPTS` follow kai's options. ssh and
+Nix split these options at spaces, so the project's `.kai` must lie at a
+path without spaces, quotes or `%`, or the plan fails saying so.
+
+Plugins read only kai's generated files, so these commands first copy
+`secrets/hosts/NAME.pub` to `.kai/generated/machine/host-key.pub` and read
+the copy back before planning the rest; for a machine with `Operators`,
+`--dry-run` shows only that copy. Without the file, or without `Operators`,
+ssh checks your `known_hosts` as it always does.
 
 A user other than root needs two things on the target: `sudo` that asks for
 no password, since the commands run without a terminal (for example
@@ -255,7 +343,51 @@ destroy server
 
 What a provider needs of the machine itself, such as DigitalOcean's metadata
 networking or a disk named `/dev/vda` rather than `/dev/sda`, is a NixOS
-module file the Kaifile includes with `Modules([...])`, not a kai setting.
+module file, not a kai setting: one of the project's own with
+`Modules([...])`, or a shared profile with `InputModules`.
+
+#### Provider profiles
+
+A tool or provider plugin that creates servers for many projects keeps its
+profiles, the NixOS modules a provider's servers need, in one repository
+rather than a copy in each project. A project declares that repository as a
+flake input in std's settings, and its machines name the files they use:
+
+```roc
+project = [
+	Name("site"),
+	Input("profiles", "github:org/kai-profiles"),
+]
+
+Machine("web", [
+	...,
+	Disk(SingleDisk("/dev/vda")),
+	InputModules("profiles", ["digitalocean.nix"]),
+])
+```
+
+`kai update` locks the input with the rest of `.kai/lock.json`, and the
+machine imports `(inputs."profiles" + "/digitalocean.nix")`, a file of the
+locked input in the Nix store, so `kai update` moves the profile and
+reading it needs no `--impure`. kai refuses, as Kaifile.roc compiles, an
+input std's settings do not declare and no plugin asks to lock, and a path
+that is absolute, uses `.` or `..` segments, or is not a `.nix` file; a path
+missing from the input fails the build.
+
+A provider plugin can ship its profiles without the project declaring the
+input: it asks std to lock its repository with `Plugin.locking`, as the
+machine plugin does disko (see
+[plugin.md](plugin.md#asking-std-to-lock-inputs)), and its users name that
+input in `InputModules`:
+
+```roc
+# In the provider plugin:
+Plugin.new({ name: "digitalocean", ... })
+	.locking([Input("do-profiles", "github:org/kai-digitalocean", [])])
+
+# In a Kaifile that uses it:
+Machine("web", [..., InputModules("do-profiles", ["droplet.nix"])])
+```
 
 A machine to install needs:
 
@@ -264,12 +396,9 @@ A machine to install needs:
   mounted at `/boot` and an ext4 root filling the rest, and boots it with
   GRUB on both BIOS and UEFI, which is nixos-anywhere's own example layout.
   `Modules` must then not define the root file system or the boot loader.
-- `Input("disko", "github:nix-community/disko")` in std's settings, which
-  the Disk's module comes from, locked by `kai update`; kai refuses a Disk
-  without it as Kaifile.roc compiles. `Follows("disko", "nixpkgs",
-  "default")` makes disko's own nixpkgs the project's instead of a second
-  one locked apart; the system, disko's module included, builds from the
-  project's `default` source either way.
+  disko, which the layout's module comes from, and nixos-images, which the
+  installer comes from, are pinned by kai and locked by `kai update`, their
+  nixpkgs the project's.
 - `Ssh` and a `User` with `SshKeys`, since those keys are how you reach the
   server once it runs the machine. Logging in as root afterwards needs
   `User("root", [SshKeys([...])])`; a user other than root needs
@@ -281,19 +410,43 @@ the machine will be reached afterwards. kai refuses an install without
 `--to`, of a machine without `Disk`, or without `Ssh`, before planning.
 
 The plan needs `nix` and `ssh` on `PATH`. It writes the flake and builds the
-system as `kai machine build` does, so a system that fails to build fails
-before anything is erased, then asks for confirmation naming the target and
-the disk it will erase, and runs nixos-anywhere from the project's locked
-nixpkgs, with no separate install:
+system as `kai machine build` does, then builds the installer
+nixos-anywhere boots, nixos-images' noninteractive kexec installer for the
+machine's `System`, from the project's locked nixpkgs, into
+`.kai/machines/NAME-installer`, so what fails to build fails before
+anything is erased. It then asks for confirmation naming the target
+and the disk it will erase, and runs nixos-anywhere from the project's
+locked nixpkgs, with no separate install:
 
 ```sh
 nix run --inputs-from path:.kai/generated/nix default#nixos-anywhere -- \
-  --flake path:.kai/generated/nix#NAME --target-host TARGET
+  --flake path:.kai/generated/nix#NAME --target-host TARGET \
+  --option pure-eval false \
+  --kexec .kai/machines/NAME-installer/nixos-kexec-installer-noninteractive-SYSTEM.tar.gz \
+  --generate-hardware-config nixos-facter PROJECT/machines/NAME/facter.json
 ```
 
-It runs with `pure-eval = false` added to any `NIX_CONFIG` you have, which lets nixos-anywhere's own `nix build` read the machine's
-module files by their absolute paths, as `--impure` does for `kai machine
-build`. The install asks before erasing anything, so it needs a terminal or
+`--option pure-eval false`, which nixos-anywhere passes to each of its nix
+commands, lets them read the machine's module files and hardware facts by
+their absolute paths, as `--impure` does for `kai machine build`.
+
+With a port, TARGET is the target without it, followed by
+`--ssh-port PORT --post-kexec-ssh-port PORT`: the installer nixos-anywhere
+boots answers on port 22, and the installed machine does too, so the port
+must lead there both before and after, as a port forward does, such as a
+local VM's. kai cannot yet install a server whose old system's SSH itself
+listens on another port.
+
+The installer comes from the same nixpkgs as the system, so disko's
+partitioning runs its tools, such as `udevadm`, in an installer of the
+same release. nixos-anywhere's own default installer is an older NixOS
+release, whose udev the newer `udevadm` of an unstable nixpkgs does not
+wait for: the partitions' links are missing when disko formats them. Like
+the system, the installer is built here for the machine's `System`, so a
+host of another architecture needs a remote builder or emulation for it,
+such as NixOS's `boot.binfmt.emulatedSystems`.
+
+The install asks before erasing anything, so it needs a terminal or
 `--yes`; `kai --dry-run machine install NAME --to TARGET` prints the whole
 plan and runs none of it.
 
@@ -305,21 +458,99 @@ command needs `--identity` when your key is not `~/.ssh/id_ed25519`.
 
 Afterwards the server runs the machine, and `kai machine switch NAME --to
 USER@ADDRESS`, or `Host`, changes it as [Remote machines](#remote-machines)
-describes.
+describes, trusting the host key the install placed, for a machine with
+`Operators` (see [The target's host key](#the-targets-host-key)). kai
+leaves the install's own connections as nixos-anywhere makes them: they
+reach the server's previous system and the installer it boots, each with
+a host key other than the machine's.
+
+### Hardware facts
+
+A server's hardware decides which kernel modules its system needs, such as
+virtio's on most virtual servers or NVMe's, and kai learns it as it
+installs, so a machine with `Disk` needs no hand-written hardware module.
+nixos-anywhere runs [nixos-facter](https://github.com/nix-community/nixos-facter)
+on the server once it has booted the installer, writes its report to
+`machines/NAME/facter.json` in the project, and only then builds the
+system it installs, so that system has the facts. kai then prints that it
+wrote the file: commit it, since later builds and switches read it from
+there. When the project is a git work tree, nixos-anywhere also marks the
+file with `git add --intent-to-add`.
+
+A machine with `Disk` sets NixOS's `hardware.facter.reportPath` to that
+file when it exists, so NixOS loads the drivers, firmware and CPU
+microcode the report calls for. Until the first install, and in the build
+the install runs before erasing anything, the file is missing and the
+machine builds without it. NixOS has this module from 25.11 on, so the
+project's `default` package source must be at least that release, as
+`Auto`'s nixpkgs unstable is; an older one fails to build a machine with
+`Disk`, saying the option `hardware.facter` does not exist.
+
+Installing again detects the hardware again and replaces the file, since
+the server behind the address may have changed. The report holds hardware
+facts only: the architecture, the kind of virtualisation, UEFI support,
+each device's model and drivers, and the firmware's vendor and version.
+It holds no keys or passwords, and nixos-facter leaves out the firmware's
+serial numbers and UUIDs, though a device such as a disk may report its
+own serial number, so it is safe to commit.
+
+### Many servers from one machine
+
+A tool that launches the same machine many times, such as a catalog of
+server recipes, installs each server as an instance of it, named with
+`--as`:
+
+```console
+$ kai machine install web --as demo --to root@203.0.113.7
+$ kai machine install web --as staging --to root@198.51.100.4
+$ printf %s "$API_KEY" | kai secret set web app-key --as demo
+$ kai machine switch web --as demo --to admin@203.0.113.7
+```
+
+Everything kai records of a server is kept under its instance's name
+instead of the machine's, so one project serves every server, without a
+copy of it per server, and installs do not overwrite each other:
+
+| File | Holds |
+|---|---|
+| `machines/INSTANCE/facter.json` | The instance's [hardware facts](#hardware-facts). |
+| `secrets/hosts/INSTANCE.age`, `.pub` | Its host key, as [The host key comes first](#the-host-key-comes-first) describes. |
+| `secrets/INSTANCE/SECRET.age` | Each secret, encrypted to the Operators and the instance's host key. |
+| `.kai/machines/INSTANCE` | A switch's out-link, and `INSTANCE-installer` an install's. |
+
+`kai machine build`, `install`, `switch`, `rollback` and `generations`,
+and `kai secret set` and `rekey`, take `--as`. Without it, the instance is
+the machine itself, as before, and so is `--as` with the machine's own
+name. Each instance's system is the machine's settings with its own
+hardware facts and secrets: the command naming it adds
+`nixosConfigurations.INSTANCE` to the generated flake beside the declared
+machines, and builds that. Its `networking.hostName` is the instance's
+name, unless `HostName` sets one for every instance. Remote commands
+trust the instance's host key, `-o HostKeyAlias=INSTANCE`, as [The
+target's host key](#the-targets-host-key) describes for a machine.
+
+Each instance has its own copy of each secret, encrypted to its own host
+key, so set an instance's secrets with `kai secret set ... --as INSTANCE`,
+before or after installing it, as for a machine. An instance's name is a
+machine name that is also a host name: a letter, then up to 62 letters,
+digits, `-` or `_`, ending in a letter or digit. It cannot be another
+declared machine's name; kai refuses either before planning.
+
+`Host` is where the declared machine itself lives, so an instance never
+acts on it: give each command on an instance `--to`, as an install
+already needs. Without `--to`, an instance's `switch`, `rollback` and
+`generations` act on the host kai runs on, which must be named after the
+instance, as for a machine without `Host`. When `Host`'s user is a `User`
+of the machine, every instance trusts that user to copy systems in.
 
 ## Secrets
 
 A machine's secrets, such as an API key a service reads, are encrypted
 files in the project, decrypted on the machine as it activates by
-[agenix](https://github.com/ryantm/agenix):
+[agenix](https://github.com/ryantm/agenix), which kai pins and `kai update`
+locks, so std's settings need no `Input` for it:
 
 ```roc
-project = [
-	Name("site"),
-	Input("disko", "github:nix-community/disko"),
-	Input("agenix", "github:ryantm/agenix"),
-]
-
 Machine("web", [
 	...,
 	Operators(["age1...", "ssh-ed25519 AAAA... admin@example"]),
@@ -379,6 +610,11 @@ Operators only and says so; the install then adds the host key. For a
 machine installed some other way, copy its
 `/etc/ssh/ssh_host_ed25519_key.pub` to `secrets/hosts/NAME.pub` and run
 `kai secret rekey NAME`.
+
+The same public key is the one remote `switch`, `rollback` and
+`generations` trust when they reach the machine over SSH, as [The target's
+host key](#the-targets-host-key) describes, so after an install they need
+no entry in your `known_hosts`.
 
 ### What is safe to commit
 
@@ -483,4 +719,5 @@ layer for the common cases.
 project's own builds, `kai machine image` for providers that boot from
 images, test machines with microvm, and `kai machine gc` come next; see
 [#463](https://github.com/thebrandonlucas/kai/issues/463). Guix System is
-not planned yet, though only `Modules` in the settings is Nix-specific.
+not planned yet, though only `Modules` and `InputModules` in the settings
+are Nix-specific.

@@ -3,6 +3,7 @@
 # commands, which NixosBackend implements on the nix backend from
 # MachineModel.
 import pf.Command
+import pf.Implementation
 import pf.Plugin
 import std.Config
 import std.EnvName
@@ -20,18 +21,23 @@ Machine := [].{
 	Setting : [Machine(Str, List(MachineSetting))]
 
 	## System and StateVersion are required, and every setting but User
-	## occurs at most once. HostName defaults to the machine's name. Host is
-	## the SSH target, `user@host` or `host`, that switch, rollback and
-	## generations act on instead of the host kai runs on. Ssh runs
+	## occurs at most once. HostName defaults to the machine's name, or an
+	## instance's. Host is the SSH target, `user@host` or `host`, that
+	## switch, rollback and generations act on instead of the host kai runs
+	## on, unless they name an instance. Ssh runs
 	## OpenSSH with key logins only, root's only when root has keys. Firewall
 	## opens ports beside OpenSSH's. Use puts a std environment's tools on
 	## the system's PATH. Disk is the disk layout `kai machine install`
-	## partitions, which the system mounts and boots from. Operators are the
+	## partitions, which the system mounts and boots from, its drivers from
+	## the hardware facts the install records. Operators are the
 	## age recipients or SSH public keys of whoever may decrypt the machine's
 	## host key and Secrets, which `kai secret set` writes and the system
 	## decrypts into /run/secrets. Services are the typed services it runs,
 	## each at most once. Modules are NixOS module files relative to the
-	## project, which receive the flake's `inputs`.
+	## project, which receive the flake's `inputs`. InputModules, which may
+	## repeat, are module files relative to a locked flake input that std's
+	## settings declare or a plugin asks std to lock, such as a provider's
+	## profiles.
 	MachineSetting : [
 		System(System),
 		HostName(Str),
@@ -47,6 +53,7 @@ Machine := [].{
 		Secrets(List(SecretSetting)),
 		Services(List(ServiceSetting)),
 		Modules(List(Str)),
+		InputModules(Str, List(Str)),
 	]
 
 	## A typed service, whose settings, checks and model are its module's in
@@ -76,8 +83,9 @@ Machine := [].{
 	Machines : List(MachineModel.Machine)
 
 	## `project` is std's settings, whose environments and inputs machines
-	## use; a machine's System must be one of its Systems. Machines keep
-	## std's "default" package source locked, which they are built from.
+	## use; a machine's System must be one of its Systems. Machines ask std
+	## to lock the "default" package source they are built from, and disko
+	## and agenix when a machine has a Disk or Secrets.
 	plugin : List(Config.Setting), List(Setting) -> Plugin
 	plugin = |project, settings|
 		match Machine.checked(project, settings) {
@@ -93,7 +101,10 @@ Machine := [].{
 						NixosBackend.secret_implementation(project, machines),
 					],
 				})
-					.locking(if (machines.is_empty()) [] else [Source("default")])
+					.locking(NixosBackend.lock_requests(machines))
+					.checking_lock_requests(
+						|requested| Machine.undeclared_inputs(project, machines, requested),
+					)
 			Err(problems) => Plugin.invalid("machine", problems)
 		}
 
@@ -119,9 +130,10 @@ Machine := [].{
 				Value({
 					name: "to",
 					short: "",
-					help: "Act on this SSH target, user@host, not the machine's Host; "
+					help: "Act on this SSH target, user@host[:port], not the machine's Host; "
 						.concat("install needs it, since it erases the target's disk."),
 				}),
+				Machine.instance,
 				Machine.identity,
 				Trailing({
 					name: "machine",
@@ -140,6 +152,7 @@ Machine := [].{
 		examples: [
 			"kai machine build web",
 			"kai machine install web --to root@203.0.113.7",
+			"kai machine install web --as demo --to root@198.51.100.4",
 			"kai --dry-run machine switch web",
 			"kai machine switch web --to admin@203.0.113.7",
 			"kai machine rollback web",
@@ -149,14 +162,26 @@ Machine := [].{
 			"Machine(\"web\", [System(\"x86_64-linux\"), StateVersion(\"25.05\"),",
 			"  Host(\"admin@web.example.com\"),",
 			"  User(\"admin\", [SshKeys([\"ssh-ed25519 AAAA...\"])]), Ssh,",
-			"  Disk(SingleDisk(\"/dev/sda\")),",
+			"  Disk(SingleDisk(\"/dev/sda\")),                   # kai locks disko",
 			"  Operators([\"age1...\"]),",
-			"  Secrets([Secret(\"app-key\", [Owner(\"app\")])]),",
+			"  Secrets([Secret(\"app-key\", [Owner(\"app\")])]),   # kai locks agenix",
 			"  Services([Caddy([Site(\"example.com\",",
 			"    ReverseProxy(\"localhost:8080\"))])]),",
-			"  Modules([\"nixos/web.nix\"])]),",
+			"  Modules([\"nixos/web.nix\"]),",
+			"  InputModules(\"profiles\", [\"digitalocean.nix\"])]),",
 		],
 	}
+
+	## The instance of a machine a command acts on: one server of several
+	## installed from the same declaration, whose hardware facts, host key
+	## and secrets are kept under its name instead of the machine's.
+	instance : Command.Arg
+	instance = Value({
+		name: "as",
+		short: "",
+		help: "Act on this instance of the machine, one server of several, which "
+			.concat("keeps its own facts, host key and secrets (default the machine)."),
+	})
 
 	## The age or SSH identity that decrypts a machine's host key and
 	## secrets.
@@ -185,6 +210,7 @@ Machine := [].{
 					].map(|(value, summary)| { value, summary, details: [] }),
 					default: Required,
 				}),
+				Machine.instance,
 				Machine.identity,
 				Trailing({
 					name: "names",
@@ -204,9 +230,9 @@ Machine := [].{
 			"printf %s \"$API_KEY\" | kai secret set web app-key",
 			"kai secret rekey web",
 			"kai secret rekey web --identity ~/.ssh/id_ed25519",
+			"printf %s \"$API_KEY\" | kai secret set web app-key --as demo",
 		],
 		config: [
-			"Input(\"agenix\", \"github:ryantm/agenix\"),   # in std's settings",
 			"Machine(\"web\", [..., Operators([\"age1...\", \"ssh-ed25519 AAAA...\"]),",
 			"  Secrets([Secret(\"app-key\", [Owner(\"app\"), Mode(\"0400\")])])]),",
 		],
@@ -225,7 +251,7 @@ Machine := [].{
 			m = Machine.machine(name, parts)
 			given = parts
 				.map(Machine.setting_name)
-				.drop_if(|s| s == "User")
+				.drop_if(|s| s == "User" or s == "InputModules")
 			# An empty Host or Operators folds to none, so it is found here.
 			empty_host = parts.any(
 				|part|
@@ -274,7 +300,7 @@ Machine := [].{
 				.concat(if (empty_operators) [no_operator] else [])
 				.concat(repeated_options)
 				.concat(Machine.problems(model, m))
-				.concat(NixosBackend.problems(project, m))
+				.concat(NixosBackend.problems(m))
 			$problems = $problems.concat(found.map(|p| "machine ${name}: ${p}"))
 			$machines = $machines.append(m)
 		}
@@ -297,6 +323,38 @@ Machine := [].{
 				},
 		)
 
+	## Each input InputModules names that neither std's settings `project`
+	## declare nor a plugin asks std to lock, as a problem. Kaifile.roc's
+	## check finds them once it knows every plugin's lock requests.
+	undeclared_inputs :
+		List(Config.Setting), Machines, List(Implementation.Requested) -> List(Str)
+	undeclared_inputs = |project, machines, requested| {
+		declared = match StdModel.from_settings(project) {
+			Ok(model) => model.inputs.map(|input| input.name)
+			Err(_) => []
+		}
+		locked = requested.join_map(
+			|asked|
+				match asked.request {
+					Input(name, _, _) => [name]
+					Source(_) => []
+				},
+		)
+		known = declared.concat(locked)
+		var $found = []
+		for m in machines {
+			for file in m.input_modules {
+				problem = "machine ${m.name}: InputModules names input ${file.input}, "
+					.concat("which neither std's settings declare nor a plugin locks; ")
+					.concat("add Input(\"${file.input}\", ...) to them")
+				if !known.contains(file.input) and !$found.contains(problem) {
+					$found = $found.append(problem)
+				}
+			}
+		}
+		$found
+	}
+
 	setting_name : MachineSetting -> Str
 	setting_name = |setting|
 		match setting {
@@ -314,6 +372,7 @@ Machine := [].{
 			Secrets(_) => "Secrets"
 			Services(_) => "Services"
 			Modules(_) => "Modules"
+			InputModules(_, _) => "InputModules"
 		}
 
 	option_name : SecretOption -> Str
@@ -331,8 +390,9 @@ Machine := [].{
 		parts.fold(
 			{
 				name,
+				instance: name,
 				system: "",
-				host_name: name,
+				host_name: "",
 				host: "",
 				users: [],
 				ssh: Bool.False,
@@ -346,6 +406,7 @@ Machine := [].{
 				secrets: [],
 				services: [],
 				modules: [],
+				input_modules: [],
 			},
 			|m, part|
 				match part {
@@ -385,6 +446,12 @@ Machine := [].{
 						services: services.map(|Caddy(caddy)| Caddy(Caddy.server(caddy))),
 					}
 					Modules(modules) => { ..m, modules }
+					InputModules(input, paths) => {
+						..m,
+						input_modules: m.input_modules.concat(
+							paths.map(|path| { input, path }),
+						),
+					}
 				},
 		)
 
@@ -438,9 +505,10 @@ Machine := [].{
 				"StateVersion is required, as a release such as \"25.05\"",
 			)
 		}
-		if !Machine.valid_host_name(m.host_name) {
+		host_name = MachineModel.host_name(m)
+		if !Machine.valid_host_name(host_name) {
 			$found = $found.append(
-				"HostName ${m.host_name} is no host name; "
+				"HostName ${host_name} is no host name; "
 					.concat("use letters, digits, - or _"),
 			)
 		}
@@ -664,7 +732,6 @@ Machine := [].{
 	}
 }
 
-import pf.Implementation
 import pf.Layout
 import pf.Plan
 import pf.Kaifile
@@ -694,8 +761,8 @@ flake_lock =
 	\\  "version": 7
 	\\}
 
-# The flake.lock nix flake update writes for the project's nixpkgs and
-# disko, whose own nixpkgs is locked apart.
+# The flake.lock nix flake update writes for the project's nixpkgs, disko
+# and nixos-images, whose own nixpkgs follow the project's.
 disko_lock =
 	\\{
 	\\  "nodes": {
@@ -714,7 +781,7 @@ disko_lock =
 	\\      }
 	\\    },
 	\\    "disko": {
-	\\      "inputs": { "nixpkgs": "nixpkgs" },
+	\\      "inputs": { "nixpkgs": ["default"] },
 	\\      "locked": {
 	\\        "lastModified": 1790100000,
 	\\        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -727,21 +794,28 @@ disko_lock =
 	\\        "owner": "nix-community", "repo": "disko", "type": "github"
 	\\      }
 	\\    },
-	\\    "nixpkgs": {
+	\\    "nixos-images": {
+	\\      "inputs": {
+	\\        "nixos-stable": ["default"], "nixos-unstable": ["default"]
+	\\      },
 	\\      "locked": {
-	\\        "lastModified": 1790185690,
-	\\        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
-	\\        "owner": "NixOS",
-	\\        "repo": "nixpkgs",
-	\\        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
+	\\        "lastModified": 1790100000,
+	\\        "narHash": "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=",
+	\\        "owner": "nix-community",
+	\\        "repo": "nixos-images",
+	\\        "rev": "fedcba9876543210fedcba9876543210fedcba98",
 	\\        "type": "github"
 	\\      },
 	\\      "original": {
-	\\        "owner": "NixOS", "ref": "nixpkgs-unstable",
-	\\        "repo": "nixpkgs", "type": "github"
+	\\        "owner": "nix-community", "repo": "nixos-images", "type": "github"
 	\\      }
 	\\    },
-	\\    "root": { "inputs": { "default": "default", "disko": "disko" } }
+	\\    "root": {
+	\\      "inputs": {
+	\\        "default": "default", "disko": "disko",
+	\\        "nixos-images": "nixos-images"
+	\\      }
+	\\    }
 	\\  },
 	\\  "root": "root",
 	\\  "version": 7
@@ -785,14 +859,21 @@ context = {
 	lock_requests: [],
 }
 
-# The project with disko declared, which a machine with a Disk needs.
-disko_project = project.append(Input("disko", "github:nix-community/disko"))
+# What plugins ask std to lock, each with the asking plugin's name.
+Requests : List(Implementation.Requested)
 
-# The lock std's update publishes for `settings` from Nix's `nix_lock`.
-published : List(Config.Setting), Str -> [Absent, Present(Str)]
-published = |settings, nix_lock| {
+# Every plugin's lock requests in a Kaifile of std for `settings` and the
+# machine `plugin`.
+requests_of : List(Config.Setting), Plugin -> Requests
+requests_of = |settings, plugin|
+	Kaifile.lock_requests(Kaifile.new([Std.plugin(settings), plugin]))
+
+# The lock std's update publishes for `settings` and every plugin's
+# `requests` from Nix's `nix_lock`.
+published : List(Config.Setting), Requests, Str -> [Absent, Present(Str)]
+published = |settings, requests, nix_lock| {
 	observed = [{ path: "/generated/nix/flake.lock", contents: Text(nix_lock) }]
-	resumed = { ..context, phase: 1, observed }
+	resumed = { ..context, phase: 1, observed, lock_requests: requests }
 	update = Std.plugin(settings).implementations
 		.find_first(|i| i.command == "update" and i.backend == On("nix"))
 	match update.map_ok(|i| (i.plan)(resumed)) {
@@ -832,8 +913,10 @@ planned_in = |locked, machine_settings, action, to| {
 		.first()
 		.map_err(|_| Plan.fail("no implementation"))?
 	(found.fit)(args).map_err(Plan.fail)?
-	lock = published(settings, nix_lock)
-	(found.plan)({ ..context, args, host: { system: system }, lock })
+	requests = requests_of(settings, plugin)
+	lock = published(settings, requests, nix_lock)
+	host = { system: system }
+	(found.plan)({ ..context, args, host, lock, lock_requests: requests })
 }
 
 # Whether machine web's rendered lines, trimmed, hold `expected` in order.
@@ -859,26 +942,34 @@ problems_of : List(MachineSetting) -> List(Str)
 problems_of = |settings|
 	Machine.plugin(project, [Machine("web", settings)]).problems
 
-# Machine web as it installs: with a Disk, in the project with disko.
+# Machine web as it installs: with a Disk.
 installed_web = web.append(Disk(SingleDisk("/dev/sda")))
 
 # The plan of `kai machine install web --to TO` ("" for no --to) for machine
-# web's `settings` in the project with disko.
+# web's `settings`, its disko locked.
 installed : List(MachineSetting), Str -> Try(Plan, Plan.Failure)
 installed = |settings, to| {
 	system = "x86_64-linux"
-	locked = { settings: disko_project, nix_lock: disko_lock, system }
+	locked = { settings: project, nix_lock: disko_lock, system }
 	planned_in(locked, settings, "install", to)
 }
 
-# An install expects nix and ssh, builds as `build` does, confirms naming
-# the target and the disk it erases, then runs nixos-anywhere from the
-# project's locked nixpkgs on the generated flake, read impurely as a build
-# reads it.
+# An install expects nix and ssh, builds as `build` does, then builds the
+# kexec installer of the locked nixpkgs into the workspace, confirms naming
+# the target and the disk it erases, says what it is doing, then runs
+# nixos-anywhere from the project's locked nixpkgs on the generated flake,
+# read impurely as a build reads it, booting that installer, with its
+# progress shown, recording the server's hardware facts in the project and
+# saying so.
 expect {
 	target = "root@203.0.113.7"
 	flake = "path:/generated/nix"
+	facts = "/project/machines/web/facter.json"
+	link = "/work/machines/web-installer"
+	tarball = "${link}/nixos-kexec-installer-noninteractive-x86_64-linux.tar.gz"
 	anywhere = ["--flake", "${flake}#web", "--target-host", target]
+		.concat(["--option", "pure-eval", "false", "--kexec", tarball])
+		.concat(["--generate-hardware-config", "nixos-facter", facts])
 	toplevel = "nixosConfigurations.web.config.system.build.toplevel"
 	match installed(installed_web, target) {
 		Ok({ steps, next: Done }) =>
@@ -886,17 +977,29 @@ expect {
 				[ExpectPrograms(tools), CheckSource(_), .. as rest] =>
 					tools.programs == ["nix", "ssh"]
 						and match rest.drop_first(1) {
-							[Run(built), Confirm(prompt), Run(install)] =>
+							[Run(built), Run(installer), .. as after] =>
 								built.argv.last() == Ok("${flake}#${toplevel}")
-									and prompt
-										== "Install machine web on ${target}, ERASING its disk "
-											.concat("/dev/sda and everything on it?")
-									and match install.argv {
-										["sh", "-c", script, "sh", .. as given] =>
-											given == [flake].concat(anywhere)
-												and script.contains("\$NIX_CONFIG\npure-eval = false")
-												and script.contains("default#nixos-anywhere")
-												and !script.contains(target)
+									and installer.argv.last()
+										== Ok("${flake}#kexecInstallers.x86_64-linux")
+									and installer.argv.contains(link)
+									and match after {
+										[Confirm(prompt), Note(saying), Run(ran), Note(wrote)] =>
+											wrote
+												== "wrote ${facts}, the machine's hardware facts; commit it"
+												and prompt
+													== "Install machine web on ${target}, ERASING its disk "
+														.concat("/dev/sda and everything on it?")
+												and saying
+													== "installing machine web on ${target}: this erases "
+														.concat("/dev/sda and takes several minutes")
+												and ran.output == Inherit
+												and match ran.argv {
+													["sh", "-c", script, "sh", .. as given] =>
+														given == [flake].concat(anywhere)
+															and script.contains("default#nixos-anywhere")
+															and !script.contains(target)
+													_ => Bool.False
+												}
 										_ => Bool.False
 									}
 							_ => Bool.False
@@ -905,6 +1008,34 @@ expect {
 			}
 		_ => Bool.False
 	}
+}
+
+# An install on a target with a port gives nixos-anywhere the host without
+# it, and the port both before and after the installer boots.
+expect {
+	target = "root@[2001:db8::1]:2222"
+	ran = match installed(installed_web, target) {
+		Ok({ steps, .. }) => argvs(steps).last() ?? []
+		Err(_) => []
+	}
+	expected = ["--flake", "path:/generated/nix#web"]
+		.concat(["--target-host", "root@2001:db8::1"])
+		.concat(["--ssh-port", "2222", "--post-kexec-ssh-port", "2222"])
+	ran.drop_first(5).take_first(8) == expected
+}
+
+# A machine with a Disk adds nixos-images' noninteractive kexec installer
+# for each system to the flake, which install builds; without one, the
+# flake has none.
+expect {
+	mapped = "kexecInstallers = builtins.mapAttrs"
+	installer = [
+		mapped,
+		"(system: packages:",
+		"packages.kexec-installer-nixos-unstable-noninteractive)",
+		"inputs.\"nixos-images\".packages;",
+	]
+	renders(installed_web, installer) and !renders(web, [mapped])
 }
 
 # An install goes only where --to says, never to Host, and refuses a
@@ -934,8 +1065,14 @@ expect {
 
 # A Disk renders disko's module and nixos-anywhere's layout on the device:
 # a BIOS boot partition, an EFI system partition at /boot and an ext4 root,
-# with GRUB installed for BIOS and UEFI. Without a Disk, neither renders.
+# with GRUB installed for BIOS and UEFI, and the hardware facts install
+# records, once they exist. Without a Disk, none of them renders.
 expect {
+	facts = "/. + \"/project/machines/web/facter.json\""
+	facter = [
+		"hardware.facter.reportPath = let report = ${facts}; in",
+		"if builtins.pathExists report then report else null;",
+	]
 	layout = [
 		"imports = [ inputs.\"disko\".nixosModules.disko ];",
 		"disko.devices.disk.main = {",
@@ -954,31 +1091,27 @@ expect {
 		"efiSupport = true;",
 		"efiInstallAsRemovable = true;",
 	]
-	renders(installed_web, layout)
+	renders(installed_web, layout.concat(facter))
 		and !renders(web, ["disko.devices.disk.main = {"])
 		and !renders(web, ["efiSupport = true;"])
+		and !renders(web, facter.take_first(1))
 }
 
-# A Disk is a /dev path of plain characters, given once, and needs disko
-# declared in std's settings; each is refused as Kaifile.roc compiles.
+# A Disk is a /dev path of plain characters, given once; each is refused as
+# Kaifile.roc compiles.
 expect {
-	in_disko = |settings|
-		Machine.plugin(disko_project, [Machine("web", settings)]).problems
 	disk = |device| Disk(SingleDisk(device))
-	declare = "add Input(\"disko\", \"github:nix-community/disko\")"
 	bad = |device|
 		"machine web: Disk device ${device} is no /dev/... path, "
 			.concat("such as \"/dev/sda\"")
 	valid = ["/dev/sda", "/dev/nvme0n1", "/dev/disk/by-path/pci-0000:00:04.0"]
 	invalid = ["sda", "/dev/", "/dev/../etc/passwd", "/dev/sd a", "/dev/x;y"]
-	in_disko(installed_web) == []
+	problems_of(installed_web) == []
 		and valid.all(Machine.valid_device)
 		and !invalid.any(Machine.valid_device)
-		and in_disko(web.append(disk("/dev/sd\"a"))) == [bad("/dev/sd\"a")]
-		and in_disko(web.concat([disk("/dev/sda"), disk("/dev/sdb")]))
+		and problems_of(web.append(disk("/dev/sd\"a"))) == [bad("/dev/sd\"a")]
+		and problems_of(web.concat([disk("/dev/sda"), disk("/dev/sdb")]))
 			== ["machine web: Disk is given more than once"]
-		and problems_of(installed_web)
-			== ["machine web: Disk needs disko; ${declare} to std's settings"]
 }
 
 # A build checks the machine's modules, writes std's flake with the machine
@@ -1013,43 +1146,71 @@ argvs = |steps|
 			},
 	)
 
+# Where switch, rollback and generations record the generations, and the
+# script, sh -c SCRIPT sh PROFILE AS_ROOT..., each runs to activate or list,
+# recording its stdout there.
+generations = "/generated/machine/generations"
+
+recording = |script, as_root|
+	NixosBackend.recorded(
+		generations,
+		["sh", "-c", script, "sh", profile].concat(as_root),
+	)
+
+# Run steps' outputs, in order.
+outputs : List(Plan.Step) -> List(Plan.Output)
+outputs = |steps|
+	steps.keep_oks(
+		|step|
+			match step {
+				Run({ output, .. }) => Ok(output)
+				_ => Err({})
+			},
+	)
+
 # A switch checks the host first, builds as `build` does but leaves an
-# out-link, confirms, then sets the system profile to it and activates it as
-# root. The whole plan is known up front, so --dry-run prints all of it.
+# out-link, confirms, says what it does, then quietly sets the system
+# profile to it and activates it as root, recording the generation it is.
+# The whole plan is known up front, so --dry-run prints all of it.
 expect {
-	activate = ["sudo", "${profile}/bin/switch-to-configuration", "switch"]
+	activate = recording(NixosBackend.activation, ["sudo"])
 	link = "/work/machines/web"
 	set = ["sudo", "nix", "build", "--no-link", "--profile", profile, link]
 	plan = planned("switch", "x86_64-linux")
-	done = plan.map_ok(|p| p.next) == Ok(Done)
+	observes = plan.map_ok(|p| p.next) == Ok(Observe([generations]))
 	match plan.map_ok(|p| p.steps) {
-		Ok([Run(check), _, _, Run(built), Confirm(prompt), .. as rest]) =>
-			done
+		Ok([Run(check), _, _, Run(built), Confirm(prompt), Note(note), .. as rest]) =>
+			observes
 				and check.argv == NixosBackend.host_check("switch", web_machine)
 				and built.argv.contains("--out-link")
 				and built.argv.contains(link)
 				and !built.argv.contains("--no-link")
 				and prompt.starts_with("Switch this host to machine web,")
+				and note == "activating machine web's system on this host"
 				and argvs(rest) == [set, activate]
+				and outputs(rest) == [Quiet, Quiet]
 		_ => Bool.False
 	}
 }
 
 # A rollback checks the host and confirms before rolling the profile back and
 # activating it; generations only lists, with nothing to confirm or run as
-# root.
+# root. Each runs quietly and records the generations.
 expect {
-	activate = ["sudo", "${profile}/bin/switch-to-configuration", "switch"]
+	activate = recording(NixosBackend.activation, ["sudo"])
 	back = ["sudo", "nix", "profile", "rollback", "--profile", profile]
+	observes = Observe([generations])
 	rolled_back = match planned("rollback", "x86_64-linux") {
-		Ok({ steps: [Run(check), Confirm(_), .. as rest], next: Done }) =>
+		Ok({ steps: [Run(check), Confirm(_), Note(_), .. as rest], next }) =>
 			check.argv == NixosBackend.host_check("rollback", web_machine)
 				and argvs(rest) == [back, activate]
+				and outputs(rest) == [Quiet, Quiet]
+				and next == observes
 		_ => Bool.False
 	}
 	listed = match planned("generations", "x86_64-linux") {
-		Ok({ steps: [Run(_), Run({ argv, .. })], next: Done }) =>
-			argv == ["nixos-rebuild", "list-generations"]
+		Ok({ steps: [Run(_), Run({ argv, output: Quiet, .. })], next }) =>
+			argv == recording(NixosBackend.listing, []) and next == observes
 		_ => Bool.False
 	}
 	rolled_back and listed
@@ -1072,7 +1233,7 @@ expect {
 		["sh", "-c", script, "sh", "www", why] =>
 			!script.contains("www")
 				and why
-					== "kai machine switch without Host or --to acts on the host it "
+					== "kai machine switch web without Host or --to acts on the host it "
 						.concat("runs on; run it on www, or name its SSH target with ")
 						.concat("Host or --to")
 		_ => Bool.False
@@ -1086,27 +1247,36 @@ remote_web = web.append(Host("admin@web.example.com"))
 remote_nix = ["nix", "--extra-experimental-features", "nix-command"]
 
 # A remote switch expects nix and ssh, checks the target, builds here as a
-# local switch does, confirms naming the target, copies the system there,
-# sets its profile to the store path and activates it, through sudo for a
-# user other than root.
+# local switch does, confirms naming the target, then quietly copies the
+# system there, sets its profile to the store path and activates it, through
+# sudo for a user other than root, recording the generation it is. A note
+# says what each does.
 expect {
 	target = "admin@web.example.com"
 	link = "/work/machines/web"
-	copy = ["nix", "copy", "--substitute-on-destination", "--to"]
-		.concat(["ssh-ng://${target}", link])
+	copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
+		.concat(["--to", "ssh-ng://${target}", link])
 	profile_command = ["sudo"]
 		.concat(remote_nix)
 		.concat(["build", "--no-link", "--profile", profile])
-	set = NixosBackend.remote_profile(link, target, profile_command)
-	activate = ["ssh", target, "--", "sudo"]
-		.concat(["${profile}/bin/switch-to-configuration", "switch"])
+	set = NixosBackend.remote_profile(link, target, profile_command, [])
+	activation = ["sh", "-c", NixosBackend.activation, "sh", profile, "sudo"]
+	activate = NixosBackend.recorded(
+		generations,
+		["ssh", target, "--"].concat(activation.map(NixosBackend.shell_quote)),
+	)
 	machine = Machine.machine("web", remote_web)
+	notes = [
+		"copying machine web's system to ${target}",
+		"activating it on ${target}",
+	]
 	match planned_with(remote_web, "switch", "x86_64-linux", "") {
-		Ok({ steps, next: Done }) =>
+		Ok({ steps, next: Observe([observed]) }) =>
 			match steps {
 				[ExpectPrograms(tools), Run(check), _, _, Run(built), .. as rest] =>
 					tools.programs == ["nix", "ssh"]
-						and check.argv == NixosBackend.remote_check(machine, target)
+						and observed == generations
+						and check.argv == NixosBackend.remote_check(machine, target, [])
 						and built.argv.contains(link)
 						and match rest {
 							[Confirm(prompt), ..] =>
@@ -1114,6 +1284,15 @@ expect {
 							_ => Bool.False
 						}
 						and argvs(rest) == [copy, set, activate]
+						and outputs(rest) == [Quiet, Quiet, Quiet]
+						and rest.keep_oks(
+							|step|
+								match step {
+									Note(note) => Ok(note)
+									_ => Err({})
+								},
+						)
+							== notes
 						and set.last()
 							== Ok(
 								"sudo nix --extra-experimental-features nix-command build "
@@ -1126,51 +1305,270 @@ expect {
 }
 
 # --to overrides Host; as root, a remote rollback and listing run nothing
-# through sudo. Rollback confirms first; generations only lists.
+# through sudo. Rollback confirms first; generations only lists. Both run
+# quietly and record the generations.
 expect {
 	target = "root@203.0.113.7"
 	on_target = |argv| ["ssh", target, "--"].concat(argv)
+	remote_recording = |script|
+		NixosBackend.recorded(
+			generations,
+			on_target(
+				["sh", "-c", script, "sh", profile].map(NixosBackend.shell_quote),
+			),
+		)
 	back = on_target(
 		remote_nix.concat(["profile", "rollback", "--profile", profile]),
 	)
-	activate = on_target(["${profile}/bin/switch-to-configuration", "switch"])
+	activate = remote_recording(NixosBackend.activation)
 	on = |action| planned_with(remote_web, action, "x86_64-linux", target)
 	rolled_back = match on("rollback").map_ok(|plan| plan.steps) {
 		Ok([ExpectPrograms(tools), Run(check), Confirm(prompt), .. as rest]) =>
 			tools.programs == ["ssh"]
 				and check.argv.get(4) == Ok(target)
 				and prompt.starts_with("Switch ${target} back")
+				and rest.first() == Ok(Note("activating the previous system on ${target}"))
 				and argvs(rest) == [back, activate]
+				and outputs(rest) == [Quiet, Quiet]
 		_ => Bool.False
 	}
 	listed = match on("generations") {
-		Ok({ steps: [ExpectPrograms(_), Run(_), Run({ argv, .. })], next: Done }) =>
-			argv == on_target(["nixos-rebuild", "list-generations"])
+		Ok({ steps: [ExpectPrograms(_), Run(_), Run({ argv, output, .. })], .. }) =>
+			argv == remote_recording(NixosBackend.listing)
+				and output == Quiet
 		_ => Bool.False
 	}
 	rolled_back and listed
 }
 
-# The remote check passes the target, architecture and messages as the
-# script's arguments, and the profile step quotes its command for the remote
-# shell while the store path stays an argument too.
+# A target's port reaches every SSH connection apart from its host: ssh's
+# -p in the host check, the profile and the activation, and NIX_SSHOPTS for
+# nix copy, whose store URL holds the host alone.
+expect {
+	target = "admin@[2001:db8::1]:2222"
+	destination = "admin@2001:db8::1"
+	port = ["-p", "2222"]
+	link = "/work/machines/web"
+	copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
+		.concat(["--to", "ssh-ng://${destination}", link])
+	activation = ["sh", "-c", NixosBackend.activation, "sh", profile, "sudo"]
+	activate = NixosBackend.recorded(
+		generations,
+		["ssh", "-p", "2222", destination, "--"]
+			.concat(activation.map(NixosBackend.shell_quote)),
+	)
+	match planned_with(remote_web, "switch", "x86_64-linux", target) {
+		Ok({ steps: [_, Run(check), .. as rest], .. }) => {
+			ran = argvs(rest)
+			(copied, set) = match ran.drop_first(ran.len() - 3) {
+				[c, s, a] if a == activate => (c, s)
+				_ => ([], [])
+			}
+			check.argv.get(4) == Ok(target)
+				and check.argv.get(5) == Ok(destination)
+				and check.argv.drop_first(9) == port
+				and set.drop_first(5).first() == Ok(destination)
+				and set.drop_first(7) == port
+				and copied == NixosBackend.with_ssh_options(port, copy)
+				and copied.get(4) == Ok("-p 2222")
+		}
+		_ => Bool.False
+	}
+}
+
+# The plan of `kai machine ACTION web --to TO` continuing once its last step
+# recorded `text` as the generations.
+reported : Str, Str, Str -> Try(Plan, Plan.Failure)
+reported = |action, to, text| {
+	plugin = Machine.plugin(project, [Machine("web", remote_web)])
+	args = [{ name: "action", value: Present(action) }]
+		.append({ name: "machine", value: Many(["web"]) })
+		.concat(if (to.is_empty()) [] else [{ name: "to", value: Present(to) }])
+	observed = [{ path: generations, contents: Text(text) }]
+	found = plugin.implementations
+		.first()
+		.map_err(|_| Plan.fail("no implementation"))?
+	(found.plan)({ ..context, args, phase: 1, observed })
+}
+
+# Once it has run, a switch says which generation the machine now runs and
+# where, a rollback which generation the host now runs, and generations
+# prints one line each, oldest first, marking the current one, to the
+# minute.
+expect {
+	listing =
+		\\system-43-link
+		\\system-9-link 2026-11-01 08:15:42.123456789 +0000
+		\\system-43-link 2026-11-14 10:03:12.000000000 +0000
+	target = "root@203.0.113.7"
+	steps = |action, to, text| reported(action, to, text).map_ok(|p| p.steps)
+	running = "is now running generation"
+	steps("switch", "", "system-43-link\n")
+		== Ok([Note("machine web ${running} 43 on admin@web.example.com")])
+		and steps("rollback", target, "system-42-link\n")
+			== Ok([Note("${target} ${running} 42")])
+		and steps("generations", "", listing)
+			== Ok([
+				Print("generation 9  2026-11-01 08:15"),
+				Print("generation 43  2026-11-14 10:03  (current)"),
+			])
+		and reported("switch", "", "").map_ok(|p| p.next) == Ok(Done)
+}
+
+# The remote check passes the target, the destination ssh connects to,
+# architecture and messages as the script's arguments, and the profile step
+# quotes its command for the remote shell while the store path stays an
+# argument too.
 expect {
 	target = "admin@web.example.com"
 	machine = Machine.machine("web", remote_web)
-	checked = match NixosBackend.remote_check(machine, target) {
-		["sh", "-c", script, "sh", "admin@web.example.com", "x86_64", is, then] =>
+	checked = match NixosBackend.remote_check(machine, target, []) {
+		["sh", "-c", script, "sh", given, destination, "x86_64", is, then] =>
 			!script.contains(target)
+				and given == target
+				and destination == target
 				and is == "machine web is x86_64-linux"
 				and then == "run kai machine install web --to ${target} first"
 		_ => Bool.False
 	}
 	command = ["a b", "it's", "c"]
-	set = match NixosBackend.remote_profile("/work/x", target, command) {
+	set = match NixosBackend.remote_profile("/work/x", target, command, []) {
 		["sh", "-c", script, "sh", "/work/x", "admin@web.example.com", quoted] =>
 			!script.contains(target) and quoted == "'a b' 'it'\\''s' c"
 		_ => Bool.False
 	}
 	checked and set
+}
+
+# Machine web at its Host with Operators, so a remote action reads its host
+# key first.
+keyed_web = remote_web.append(Operators([operator]))
+
+# Files a continuation read.
+Observed : List({ path : Str, contents : [Missing, Text(Str)] })
+
+# The plan of `kai machine ACTION web` for `settings` at `phase`, having
+# read `observed`.
+continued : List(MachineSetting), Str, U64, Observed -> Try(Plan, Plan.Failure)
+continued = |settings, action, phase, observed| {
+	plugin = Machine.plugin(project, [Machine("web", settings)])
+	args = [{ name: "action", value: Present(action) }]
+		.append({ name: "machine", value: Many(["web"]) })
+	requests = requests_of(project, plugin)
+	lock = published(project, requests, flake_lock)
+	found = plugin.implementations
+		.first()
+		.map_err(|_| Plan.fail("no implementation"))?
+	planning = { ..context, args, lock, lock_requests: requests, phase, observed }
+	(found.plan)(planning)
+}
+
+# Where a remote action copies the host public key, and the known hosts file
+# it writes from it.
+host_key_copy = "/generated/machine/host-key.pub"
+
+known_hosts = "/generated/machine/known_hosts"
+
+# A remote action on a machine with Operators first copies its host public
+# key, if any, into the generated files, quietly, and reads the copy back.
+expect {
+	match continued(keyed_web, "switch", 0, []) {
+		Ok({ steps: [Run({ argv, output: Quiet, .. })], next }) =>
+			next == Observe([host_key_copy])
+				and argv.drop_first(3)
+					== ["sh", "/project/secrets/hosts/web.pub", host_key_copy]
+		_ => Bool.False
+	}
+}
+
+# With the key, every SSH connection trusts it alone: a known hosts file
+# holding it under the machine's name, written before the host check, and
+# ssh options naming it, passed to ssh and, in NIX_SSHOPTS, to nix copy.
+expect {
+	target = "admin@web.example.com"
+	pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5host root@web\n"
+	options = ["-o", "UserKnownHostsFile=${known_hosts}"]
+		.concat(["-o", "GlobalKnownHostsFile=/dev/null"])
+		.concat(["-o", "StrictHostKeyChecking=yes", "-o", "HostKeyAlias=web"])
+	written = { path: known_hosts, contents: "web ${pub}" }
+	link = "/work/machines/web"
+	copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
+		.concat(["--to", "ssh-ng://${target}", link])
+	profile_command = ["sudo"]
+		.concat(remote_nix)
+		.concat(["build", "--no-link", "--profile", profile])
+	set = NixosBackend.remote_profile(link, target, profile_command, options)
+	on_target = |argv|
+		["ssh"]
+			.concat(options)
+			.concat([target, "--"])
+			.concat(argv.map(NixosBackend.shell_quote))
+	activation = ["sh", "-c", NixosBackend.activation, "sh", profile, "sudo"]
+	activate = NixosBackend.recorded(generations, on_target(activation))
+	rollback = ["profile", "rollback", "--profile", profile]
+	back = on_target(["sudo"].concat(remote_nix).concat(rollback))
+	observed = [{ path: host_key_copy, contents: Text(pub) }]
+	on = |action| continued(keyed_web, action, 1, observed)
+	machine = Machine.machine("web", keyed_web)
+	copied = NixosBackend.with_ssh_options(options, copy)
+	switched = match on("switch") {
+		Ok({ steps: [_, Write([file]), Run(check), .. as rest], next }) =>
+			file == written
+				and next == Observe([generations])
+				and check.argv == NixosBackend.remote_check(machine, target, options)
+				and argvs(rest).drop_first(argvs(rest).len() - 3)
+					== [copied, set, activate]
+		_ => Bool.False
+	}
+	nix_options = match copied {
+		["sh", "-c", script, "sh", joined, .. as rest] =>
+			rest == copy
+				and script.contains("options=\"$options $NIX_SSHOPTS\"")
+				and joined == Str.join_with(options, " ")
+		_ => Bool.False
+	}
+	rolled_back = match on("rollback") {
+		Ok({ steps: [_, Write([file]), Run(_), Confirm(_), _, .. as rest], .. }) =>
+			file == written and argvs(rest) == [back, activate]
+		_ => Bool.False
+	}
+	switched and nix_options and rolled_back
+}
+
+# With the key and a port, ssh and nix copy take the port before the trust;
+# the known hosts file names the machine, not the address or port.
+expect {
+	keyed_port = web
+		.append(Host("admin@web.example.com:2222"))
+		.append(Operators([operator]))
+	pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5host root@web\n"
+	options = ["-p", "2222", "-o", "UserKnownHostsFile=${known_hosts}"]
+		.concat(["-o", "GlobalKnownHostsFile=/dev/null"])
+		.concat(["-o", "StrictHostKeyChecking=yes", "-o", "HostKeyAlias=web"])
+	copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
+		.concat(["--to", "ssh-ng://admin@web.example.com", "/work/machines/web"])
+	observed = [{ path: host_key_copy, contents: Text(pub) }]
+	match continued(keyed_port, "switch", 1, observed) {
+		Ok({ steps: [_, Write([file]), Run(_), .. as rest], .. }) =>
+			file == { path: known_hosts, contents: "web ${pub}" }
+				and argvs(rest).contains(NixosBackend.with_ssh_options(options, copy))
+		_ => Bool.False
+	}
+}
+
+# Without the key, a machine with Operators connects as one without does,
+# trusting the operator's known hosts, and reports a phase later; an empty
+# key fails.
+expect {
+	missing = [{ path: host_key_copy, contents: Missing }]
+	steps = |settings, phase, observed|
+		continued(settings, "generations", phase, observed).map_ok(|p| p.steps)
+	empty = [{ path: host_key_copy, contents: Text("\n") }]
+	recorded = [{ path: generations, contents: Text("system-43-link\n") }]
+	failure = continued(keyed_web, "generations", 1, empty).map_err(|f| f.message)
+	steps(keyed_web, 1, missing) == steps(remote_web, 0, [])
+		and steps(keyed_web, 2, recorded) == steps(remote_web, 1, recorded)
+		and failure == Err("secrets/hosts/web.pub holds no public key")
 }
 
 # A build stays here: it ignores Host and refuses --to, and a --to that is no
@@ -1193,11 +1591,23 @@ expect {
 }
 
 # SSH targets are a host, a name or an IPv4 or IPv6 address, after an
-# optional account name; never an option, a port, spaces or control
+# optional account name, then an optional port from 1 to 65535, an IPv6
+# host in brackets before one; never an option, spaces or control
 # characters. A bad Host is refused as Kaifile.roc compiles.
 expect {
-	valid = ["web", "root@203.0.113.7", "admin@web.example.com"]
-		.append("root@2001:db8::1")
+	parts = |target|
+		MachineModel.parse_target(target)
+			.map_ok(|{ user, host, port }| (user, host, port))
+	parsed =
+		parts("web") == Ok(("", "web", ""))
+			and parts("root@203.0.113.7") == Ok(("root", "203.0.113.7", ""))
+			and parts("web:2222") == Ok(("", "web", "2222"))
+			and parts("admin@web.example.com:22")
+				== Ok(("admin", "web.example.com", "22"))
+			and parts("root@2001:db8::1") == Ok(("root", "2001:db8::1", ""))
+			and parts("root@[2001:db8::1]") == Ok(("root", "2001:db8::1", ""))
+			and parts("root@[2001:db8::1]:65535")
+				== Ok(("root", "2001:db8::1", "65535"))
 	invalid = [
 		"",
 		"-oProxyCommand=x",
@@ -1205,16 +1615,24 @@ expect {
 		"Admin@web",
 		"@web",
 		"admin@",
-		"web:22",
+		"web:",
+		"web:0",
+		"web:65536",
+		"web:+22",
+		"web:2x",
+		"-p:22",
+		"[web]:22",
+		"[2001:db8::1]2222",
+		"[2001:db8::1]:",
 		"web example",
 		"web\n",
 		"a@b@c",
 	]
 	required = [System("x86_64-linux"), StateVersion("25.05")]
-	valid.all(MachineModel.valid_target)
+	parsed
 		and !invalid.any(MachineModel.valid_target)
-		and problems_of(required.append(Host("web:22")))
-			== ["machine web: Host web:22 is no SSH target; ${MachineModel.target_form}"]
+		and problems_of(required.append(Host("web:0")))
+			== ["machine web: Host web:0 is no SSH target; ${MachineModel.target_form}"]
 		and problems_of(required.append(Host("")))
 			== ["machine web: Host is empty; ${MachineModel.target_form}"]
 		and problems_of(required.concat([Host("a"), Host("b")]))
@@ -1335,8 +1753,65 @@ expect {
 		and twice.problems == ["machine web is declared more than once"]
 }
 
-# The flake.lock nix flake update writes for the project's nixpkgs, disko
-# and agenix, whose own nixpkgs are locked apart.
+# Machine web with a provider's profile from the locked input "profiles".
+profiled_web =
+	web.append(InputModules("profiles", ["digitalocean.nix", "do/net.nix"]))
+
+# Modules of a locked input follow the project's, as paths inside the
+# input's store path, which a pure evaluation reads; InputModules repeats.
+expect
+	renders(
+		profiled_web.append(InputModules("extra", ["x.nix"])),
+		[
+			"(/. + \"/project/nixos/web.nix\")",
+			"(inputs.\"profiles\" + \"/digitalocean.nix\")",
+			"(inputs.\"profiles\" + \"/do/net.nix\")",
+			"(inputs.\"extra\" + \"/x.nix\")",
+			"];",
+		],
+	)
+
+# A module of an input is a relative .nix path that stays inside it.
+expect {
+	paths = ["../web.nix", "/web.nix", "a//web.nix", "./web.nix", "web"]
+	problems_of(web.append(InputModules("profiles", paths)))
+		== paths.map(
+			|path|
+				"machine web: module ${path} is no .nix file inside input profiles",
+		)
+}
+
+# The input InputModules names is one std's settings declare or a plugin
+# asks std to lock; any other is refused as Kaifile.roc compiles.
+expect {
+	declared = project.append(Input("profiles", "github:org/kai-profiles"))
+	reference = "github:org/kai-profiles"
+	provider = Plugin.new({
+		name: "digitalocean",
+		version: "",
+		describe: "",
+		commands: [],
+		backends: [],
+		implementations: [],
+	})
+		.locking([Input("profiles", reference, [])])
+	validated = |settings, others| {
+		machine = Machine.plugin(settings, [Machine("web", profiled_web)])
+		plugins = [Std.plugin(settings), machine].concat(others)
+		Kaifile.validate(Kaifile.new(plugins)).map_ok(|_| {})
+	}
+	validated(declared, []) == Ok({})
+		and validated(project, [provider]) == Ok({})
+		and validated(project, [])
+			== Err(
+				"machine: machine web: InputModules names input profiles, "
+					.concat("which neither std's settings declare nor a plugin ")
+					.concat("locks; add Input(\"profiles\", ...) to them"),
+			)
+}
+
+# The flake.lock nix flake update writes for the project's nixpkgs, disko,
+# nixos-images and agenix, whose own nixpkgs follow the project's.
 agenix_lock =
 	\\{
 	\\  "nodes": {
@@ -1355,7 +1830,7 @@ agenix_lock =
 	\\      }
 	\\    },
 	\\    "disko": {
-	\\      "inputs": { "nixpkgs": "nixpkgs" },
+	\\      "inputs": { "nixpkgs": ["default"] },
 	\\      "locked": {
 	\\        "lastModified": 1790100000,
 	\\        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
@@ -1369,7 +1844,7 @@ agenix_lock =
 	\\      }
 	\\    },
 	\\    "agenix": {
-	\\      "inputs": { "nixpkgs": "nixpkgs" },
+	\\      "inputs": { "nixpkgs": ["default"] },
 	\\      "locked": {
 	\\        "lastModified": 1790100000,
 	\\        "narHash": "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBA=",
@@ -1380,23 +1855,26 @@ agenix_lock =
 	\\      },
 	\\      "original": { "owner": "ryantm", "repo": "agenix", "type": "github" }
 	\\    },
-	\\    "nixpkgs": {
+	\\    "nixos-images": {
+	\\      "inputs": {
+	\\        "nixos-stable": ["default"], "nixos-unstable": ["default"]
+	\\      },
 	\\      "locked": {
-	\\        "lastModified": 1790185690,
-	\\        "narHash": "sha256-xJ+X4hBtOcAFGBOe5nAMyMUeF9foJBmIOu3NjBqBycU=",
-	\\        "owner": "NixOS",
-	\\        "repo": "nixpkgs",
-	\\        "rev": "4975466d324710c576dc11ad614684e6bd8cad8e",
+	\\        "lastModified": 1790100000,
+	\\        "narHash": "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=",
+	\\        "owner": "nix-community",
+	\\        "repo": "nixos-images",
+	\\        "rev": "fedcba9876543210fedcba9876543210fedcba98",
 	\\        "type": "github"
 	\\      },
 	\\      "original": {
-	\\        "owner": "NixOS", "ref": "nixpkgs-unstable",
-	\\        "repo": "nixpkgs", "type": "github"
+	\\        "owner": "nix-community", "repo": "nixos-images", "type": "github"
 	\\      }
 	\\    },
 	\\    "root": {
 	\\      "inputs": {
-	\\        "default": "default", "disko": "disko", "agenix": "agenix"
+	\\        "default": "default", "disko": "disko", "agenix": "agenix",
+	\\        "nixos-images": "nixos-images"
 	\\      }
 	\\    }
 	\\  },
@@ -1404,12 +1882,10 @@ agenix_lock =
 	\\  "version": 7
 	\\}
 
-# The project with disko and agenix declared, as a machine with Secrets
-# needs, locked on an x86_64-linux host.
-agenix_project = disko_project.append(Input("agenix", "github:ryantm/agenix"))
-
+# The project with disko, nixos-images and agenix locked, as a machine with
+# a Disk and Secrets asks, on an x86_64-linux host.
 agenix_locked = {
-	settings: agenix_project,
+	settings: project,
 	nix_lock: agenix_lock,
 	system: "x86_64-linux",
 }
@@ -1427,18 +1903,29 @@ secret_web = installed_web.concat(
 secret_planned :
 	List(MachineSetting), Str, List(Str), Str -> Try(Plan, Plan.Failure)
 secret_planned = |settings, action, words, identity| {
-	plugin = Machine.plugin(agenix_project, [Machine("web", settings)])
-	option = { name: "identity", value: Present(identity) }
-	given = if (identity.is_empty()) [] else [option]
+	given = if (identity.is_empty()) [] else [("identity", identity)]
+	secret_planned_with(settings, action, words, given)
+}
+
+# Options, each a name and its value.
+Options : List((Str, Str))
+
+# The plan of `kai secret ACTION WORDS...` with `options` for machine web's
+# `settings`.
+secret_planned_with :
+	List(MachineSetting), Str, List(Str), Options -> Try(Plan, Plan.Failure)
+secret_planned_with = |settings, action, words, options| {
+	plugin = Machine.plugin(project, [Machine("web", settings)])
 	args = [{ name: "action", value: Present(action) }]
 		.append({ name: "names", value: Many(words) })
-		.concat(given)
+		.concat(options.map(|(name, value)| { name, value: Present(value) }))
 	found = plugin.implementations
 		.find_first(|i| i.command == "secret")
 		.map_err(|_| Plan.fail("no implementation"))?
 	(found.fit)(args).map_err(Plan.fail)?
-	lock = published(agenix_project, agenix_lock)
-	(found.plan)({ ..context, args, lock })
+	requests = requests_of(project, plugin)
+	lock = published(project, requests, agenix_lock)
+	(found.plan)({ ..context, args, lock, lock_requests: requests })
 }
 
 # age and ssh-keygen from the locked nixpkgs, running a script.
@@ -1472,7 +1959,7 @@ expect {
 											"web",
 											"app-key",
 											operators,
-											NixosBackend.without_host_key("web"),
+											NixosBackend.without_host_key(web_machine),
 										]
 									and script.contains("mktemp -d")
 									and script.contains("trap 'rm -rf \"$work\"' EXIT")
@@ -1543,31 +2030,37 @@ expect {
 
 # With Operators, install runs nixos-anywhere inside one script under age and
 # ssh-keygen from the locked nixpkgs: it decrypts or makes the host key in its
-# own temporary directory and places it with --extra-files. The target and
-# every name and key are arguments.
+# own temporary directory and places it with --extra-files, and boots the
+# installer built just before. The target and every name and key are
+# arguments.
 expect {
 	target = "root@203.0.113.7"
 	flake = "path:/generated/nix"
+	facts = "/project/machines/web/facter.json"
+	tarball = "/work/machines/web-installer/"
+		.concat("nixos-kexec-installer-noninteractive-x86_64-linux.tar.gz")
 	match planned_in(agenix_locked, secret_web, "install", target) {
 		Ok({ steps, next: Done }) =>
-			match argvs(steps).last() {
-				Ok(argv) =>
-					match argv.split_at(with_age.len()) {
-						{ before, others: [script, "sh", .. as given] } =>
-							before == with_age
-								and given
-									== [flake, "", "/project/secrets", "web", "${operator}\n${key}"]
-										.concat(["--flake", "${flake}#web", "--target-host", target])
-								and script.contains("--extra-files \"$files\"")
-								and script.contains("ssh-keygen -q -t ed25519 -N ''")
-								and script.contains("age -d -i \"$identity\" -o \"$key\"")
-								and script.contains("default#nixos-anywhere")
-								and script.contains("pure-eval = false")
-								and !script.contains(target)
-								and !script.contains("exec ")
-						_ => Bool.False
-					}
-				Err(_) => Bool.False
+			match argvs(steps).take_last(2) {
+				[installer, argv] =>
+					installer.last() == Ok("${flake}#kexecInstallers.x86_64-linux")
+						and match argv.split_at(with_age.len()) {
+							{ before, others: [script, "sh", .. as given] } =>
+								before == with_age
+									and given
+										== [flake, "", "/project/secrets", "web", "${operator}\n${key}"]
+											.concat(["--flake", "${flake}#web", "--target-host", target])
+											.concat(["--option", "pure-eval", "false", "--kexec", tarball])
+											.concat(["--generate-hardware-config", "nixos-facter", facts])
+									and script.contains("--extra-files \"$files\"")
+									and script.contains("ssh-keygen -q -t ed25519 -N ''")
+									and script.contains("age -d -i \"$identity\" -o \"$key\"")
+									and script.contains("default#nixos-anywhere")
+									and !script.contains(target)
+									and !script.contains("exec ")
+							_ => Bool.False
+						}
+				_ => Bool.False
 			}
 		_ => Bool.False
 	}
@@ -1581,8 +2074,9 @@ expect {
 		Ok({ steps: [CheckSource(_), Run(found), CheckSource(checked), ..], .. }) =>
 			checked == file
 				and match found.argv {
-					["sh", "-c", script, "sh", "web", given] =>
-						given == file and script.contains("run kai secret set $name $secret")
+					["sh", "-c", script, "sh", "web", "", given] =>
+						given == file
+							and script.contains("set=\"kai secret set $name $secret$instance\"")
 					_ => Bool.False
 				}
 		_ => Bool.False
@@ -1616,11 +2110,8 @@ expect {
 }
 
 # Operators and Secrets are checked as Kaifile.roc compiles: keys, names,
-# owners, groups and modes, duplicates, Secrets without Operators, and
-# Secrets without the agenix input.
+# owners, groups and modes, duplicates, and Secrets without Operators.
 expect {
-	in_agenix = |settings|
-		Machine.plugin(agenix_project, [Machine("web", settings)]).problems
 	installed_with = |settings| installed_web.concat(settings)
 	bad_key = "ssh-ed25519 short"
 	ecdsa = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY="
@@ -1660,19 +2151,12 @@ expect {
 			["secret db: Mode is given more than once"],
 		),
 	]
-	declare = "add Input(\"agenix\", \"github:ryantm/agenix\") to std's settings"
-	without_agenix = Machine.plugin(
-		disko_project,
-		[Machine("web", installed_with([operators, secret("db", [])]))],
-	)
 	accepted = installed_with([operators, secret("app.env_1-x", [Mode("640")])])
 	checks.all(
 		|(settings, expected)|
-			in_agenix(settings) == expected.map(|p| "machine web: ${p}"),
+			problems_of(settings) == expected.map(|p| "machine web: ${p}"),
 	)
-		and in_agenix(accepted) == []
-		and without_agenix.problems
-			== ["machine web: Secrets needs agenix; ${declare}"]
+		and problems_of(accepted) == []
 }
 
 # Caddy serving a proxied site and a directory, with an email.
@@ -1778,4 +2262,245 @@ expect {
 		and Kaifile.validate(Kaifile.new([Std.plugin(bare), machine])).is_ok()
 		and locks_default([Std.plugin(bare), machine])
 		and !locks_default([Std.plugin(bare), Machine.plugin(bare, [])])
+}
+
+# A machine with a Disk asks std to lock disko and nixos-images, and one
+# with Secrets agenix, each with its nixpkgs following the project's, as the
+# flake `kai update` resolves declares. A project that declares disko alike
+# is accepted; one declaring another disko is told to remove it.
+expect {
+	following = [Follows("nixpkgs", "default")]
+	disko = Input("disko", "github:nix-community/disko", following)
+	images = Input(
+		"nixos-images",
+		"github:nix-community/nixos-images",
+		[Follows("nixos-unstable", "default"), Follows("nixos-stable", "default")],
+	)
+	agenix = Input("agenix", "github:ryantm/agenix", following)
+	secrets = [Operators([operator]), Secrets([Secret("db", [])])]
+	requested = |settings|
+		Machine.plugin(project, [Machine("web", settings)]).lock_requests
+	validated = |settings| {
+		machine = Machine.plugin(settings, [Machine("web", installed_web)])
+		Kaifile.validate(Kaifile.new([Std.plugin(settings), machine]))
+			.map_ok(|_| {})
+	}
+	machine = Machine.plugin(project, [Machine("web", secret_web)])
+	flake = update_files(project, [Std.plugin(project), machine])
+	follows = |input, nixpkgs|
+		flake.any(
+			|text|
+				text.contains("\"${input}\".inputs.\"${nixpkgs}\".follows = \"default\";"),
+		)
+	requested(web) == [Source("default")]
+		and requested(installed_web) == [Source("default"), disko, images]
+		and requested(web.concat(secrets)) == [Source("default"), agenix]
+		and follows("disko", "nixpkgs")
+		and follows("agenix", "nixpkgs")
+		and follows("nixos-images", "nixos-unstable")
+		and follows("nixos-images", "nixos-stable")
+		and validated(project.append(Input("disko", "github:nix-community/disko")))
+			== Ok({})
+		and validated(project.append(Input("disko", "github:example/disko")))
+			== Err(
+				"std: machine asks to lock Input disko at github:nix-community/disko, "
+					.concat("but the project declares github:example/disko; ")
+					.concat("remove disko from std's settings to use machine's"),
+			)
+}
+
+# Machine web at its Host, installed with Operators and a secret, beside
+# machine db.
+instance_web = secret_web.append(Host("admin@web.example.com"))
+
+# The plan of `kai machine ACTION web` with `options` for machine web's
+# `settings`, beside machine db, at `phase`, having read `observed`.
+instanced : List(MachineSetting), Str, Options, U64, Observed -> Planned
+instanced = |settings, action, options, phase, observed| {
+	machines = [Machine("web", settings), Machine("db", web)]
+	plugin = Machine.plugin(project, machines)
+	args = [{ name: "action", value: Present(action) }]
+		.append({ name: "machine", value: Many(["web"]) })
+		.concat(options.map(|(name, value)| { name, value: Present(value) }))
+	found = plugin.implementations
+		.first()
+		.map_err(|_| Plan.fail("no implementation"))?
+	(found.fit)(args).map_err(Plan.fail)?
+	requests = requests_of(project, plugin)
+	lock = published(project, requests, agenix_lock)
+	planning = { ..context, args, lock, lock_requests: requests, phase, observed }
+	(found.plan)(planning)
+}
+
+Planned : Try(Plan, Plan.Failure)
+
+# Steps' notes and prompts, in order.
+said : List(Plan.Step) -> List(Str)
+said = |steps|
+	steps.keep_oks(
+		|step|
+			match step {
+				Note(text) => Ok(text)
+				Confirm(text) => Ok(text)
+				_ => Err({})
+			},
+	)
+
+# The contents of the files steps write.
+written_text : List(Plan.Step) -> Str
+written_text = |steps|
+	steps
+		.join_map(
+			|step|
+				match step {
+					Write(files) => files.map(|file| file.contents)
+					_ => []
+				},
+		)
+		.fold("", Str.concat)
+
+# `install web --as demo` keeps everything it records of the server under
+# demo: the flake gains nixosConfigurations.demo, whose hostName is demo and
+# which reads demo's hardware facts and secrets, beside web's own; the
+# build, the installer's out-link, nixos-anywhere's flake attribute and the
+# facts it records, the host key and the secrets it encrypts are demo's.
+expect {
+	target = "root@203.0.113.7"
+	flake = "path:/generated/nix"
+	toplevel = "nixosConfigurations.demo.config.system.build.toplevel"
+	secret = "/project/secrets/demo/app-key.age"
+	facts = "/project/machines/demo/facter.json"
+	options = [("as", "demo"), ("to", target)]
+	match instanced(instance_web, "install", options, 0, []) {
+		Ok({ steps, next: Done }) => {
+			ran = argvs(steps)
+			anywhere = ran.last() ?? []
+			given = anywhere.drop_first(with_age.len() + 2)
+			flake_text = written_text(steps)
+			checked = ["sh", "web", " --as demo", secret]
+			ran.any(|argv| argv.last() == Ok("${flake}#${toplevel}"))
+				and ran.any(|argv| argv.contains("/work/machines/demo-installer"))
+				and ran.any(|argv| argv.drop_first(3) == checked)
+				and steps.contains(CheckSource(secret))
+				and given.take_first(4) == [flake, "", "/project/secrets", "demo"]
+				and anywhere.contains("${flake}#demo")
+				and anywhere.contains(facts)
+				and flake_text.contains("\"web\" = inputs.\"default\".lib.nixosSystem")
+				and flake_text.contains("\"demo\" = inputs.\"default\".lib.nixosSystem")
+				and flake_text.contains("networking.hostName = \"demo\";")
+				and flake_text.contains("(/. + \"${secret}\")")
+				and flake_text.contains("/. + \"${facts}\"")
+				and said(steps)
+					== [
+						"Install machine web as demo on ${target}, ERASING its disk "
+							.concat("/dev/sda and everything on it?"),
+						"installing machine web as demo on ${target}: this erases "
+							.concat("/dev/sda and takes several minutes"),
+						"wrote ${facts}, the machine's hardware facts; commit it",
+					]
+		}
+		_ => Bool.False
+	}
+}
+
+# HostName still names an instance's host.
+expect {
+	declared = Machine.machine("web", web.append(HostName("www")))
+	www = { ..declared, instance: "demo" }
+	rendered = NixosBackend.outputs([www], "/project")
+	rendered.contains("\"demo\" = inputs.\"default\".lib.nixosSystem")
+		and rendered.contains("networking.hostName = \"www\";")
+}
+
+# An instance never acts on Host, the machine's own server: without --to, a
+# switch acts on this host, which must be named demo, and leaves its
+# out-link under demo.
+expect {
+	why = "kai machine switch web --as demo without --to acts on the host it "
+		.concat("runs on; run it on demo, or name its SSH target with --to")
+	match instanced(instance_web, "switch", [("as", "demo")], 0, []) {
+		Ok({ steps: [Run(check), .. as rest], .. }) =>
+			match check.argv {
+				["sh", "-c", _, "sh", "demo", given] =>
+					given == why
+						and argvs(rest).any(|argv| argv.contains("/work/machines/demo"))
+						and said(rest).drop_first(1)
+							== ["activating machine web as demo's system on this host"]
+				_ => Bool.False
+			}
+		_ => Bool.False
+	}
+}
+
+# A remote action on an instance reads and trusts demo's host key, under
+# demo's name, checks the target naming the install that makes demo, and
+# says which instance runs which generation.
+expect {
+	target = "root@203.0.113.7"
+	options = [("as", "demo"), ("to", target)]
+	pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5host root@demo\n"
+	at = |phase, observed|
+		instanced(instance_web, "switch", options, phase, observed)
+	read = match at(0, []) {
+		Ok({ steps: [Run({ argv, .. })], .. }) =>
+			argv.drop_first(3)
+				== ["sh", "/project/secrets/hosts/demo.pub", host_key_copy]
+		_ => Bool.False
+	}
+	switched = match at(1, [{ path: host_key_copy, contents: Text(pub) }]) {
+		Ok({ steps: [_, Write([file]), Run(check), .. as rest], .. }) =>
+			file == { path: known_hosts, contents: "demo ${pub}" }
+				and check.argv.contains("HostKeyAlias=demo")
+				and check.argv.contains("machine web as demo is x86_64-linux")
+				and check.argv.contains(
+					"run kai machine install web --as demo --to ${target} first",
+				)
+				and argvs(rest).any(|argv| argv.contains("/work/machines/demo"))
+				and said(rest).contains(
+					"copying machine web as demo's system to ${target}",
+				)
+		_ => Bool.False
+	}
+	recorded = [{ path: generations, contents: Text("system-43-link\n") }]
+	running = "machine web as demo is now running generation 43 on ${target}"
+	reports = at(2, recorded).map_ok(|plan| plan.steps) == Ok([Note(running)])
+	read and switched and reports
+}
+
+# --as names an instance as a machine name that is also a host name, and
+# never another machine; --as web is web itself.
+expect {
+	refused = |instance|
+		match instanced(instance_web, "generations", [("as", instance)], 0, []) {
+			Err({ message, .. }) => message
+			Ok(_) => ""
+		}
+	no_instance = |instance|
+		"--as ${instance} is no instance name; use a letter, then up to 62 "
+			.concat("letters, digits, - or _, ending in a letter or digit")
+	plain = instanced(instance_web, "generations", [], 0, [])
+	refused("1x") == no_instance("1x")
+		and refused("web-") == no_instance("web-")
+		and refused("db") == "--as db names another machine; name another instance"
+		and instanced(instance_web, "generations", [("as", "web")], 0, []) == plain
+}
+
+# `kai secret set web app-key --as demo` encrypts to demo's host key as
+# secrets/demo/app-key.age, and rekey --as demo rekeys demo's secrets; both
+# name the commands for demo when its host key is missing.
+expect {
+	demo = { ..Machine.machine("web", secret_web), instance: "demo" }
+	unknown_host = NixosBackend.without_host_key(demo)
+	given = |action, words|
+		match secret_planned_with(secret_web, action, words, [("as", "demo")]) {
+			Ok({ steps, .. }) =>
+				argvs(steps).first().map_ok(|argv| argv.drop_first(with_age.len() + 2))
+					?? []
+			Err(_) => []
+		}
+	set = ["/project/secrets", "demo", "app-key", "${operator}\n${key}"]
+	given("set", ["web", "app-key"]) == set.append(unknown_host)
+		and given("rekey", ["web"]).take_first(3) == ["", "/project/secrets", "demo"]
+		and unknown_host.starts_with("kai machine install web --as demo makes")
+		and unknown_host.ends_with("run kai secret rekey web --as demo")
 }
