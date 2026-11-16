@@ -56,7 +56,7 @@ Every setting but `User` occurs at most once in a machine.
 | `System(system)` | Required. `x86_64-linux` or `aarch64-linux`, and one of the project's `Systems`. |
 | `StateVersion(release)` | Required. NixOS's `system.stateVersion`, a release such as `"25.05"`: the release whose state formats the machine keeps. Set it once, when the machine is installed. |
 | `HostName(name)` | `networking.hostName`. Optional (default: the machine's name). |
-| `Host(target)` | The SSH target, `user@host` or `host`, that `switch`, `rollback` and `generations` act on; see [Remote machines](#remote-machines). Optional (default: the host kai runs on). |
+| `Host(target)` | The SSH target, `user@host` or `host`, with an optional `:port`, that `switch`, `rollback` and `generations` act on; see [Remote machines](#remote-machines). Optional (default: the host kai runs on). |
 | `User(name, [...])` | An ordinary user, with `SshKeys([...])`, its authorized OpenSSH public keys, and `Groups([...])`, its supplementary groups such as `wheel`. `User("root", [SshKeys([...])])` authorizes keys for root, which takes no groups. |
 | `Ssh` | OpenSSH, with key logins only: no passwords or keyboard-interactive logins, and root only with keys when root has some. It needs a `User` with `SshKeys`, and opens its port in the firewall. |
 | `Firewall([Tcp([...]), Udp([...])])` | Ports the firewall opens, beside OpenSSH's. NixOS's firewall is on either way. |
@@ -226,9 +226,15 @@ $ kai machine rollback web --to root@203.0.113.7
 ```
 
 A target is `host` or `user@host`, where host is a name, such as an alias
-from `~/.ssh/config`, or an IPv4 or IPv6 address. It takes no port: set one,
-and any other SSH option, in `~/.ssh/config`. kai refuses a `Host` that is no
-target as Kaifile.roc compiles, and a `--to` that is none before planning.
+from `~/.ssh/config`, or an IPv4 or IPv6 address, then `:port` for an SSH
+port other than ssh's own, such as `admin@203.0.113.7:2222`. An IPv6 host
+goes in brackets before a port, `root@[2001:db8::1]:2222`, and may stand
+bare without one. kai passes the port to `ssh` as `-p PORT`, to
+nixos-anywhere as `--ssh-port`, and to `nix copy` in `NIX_SSHOPTS`, so a
+local VM that forwards a port to its SSH, or a host on another port, needs
+no `~/.ssh/config` entry; set any other SSH option there. kai refuses a
+`Host` that is no target, or a port outside 1 to 65535, as Kaifile.roc
+compiles, and a `--to` that is none before planning.
 `kai machine build` always builds here: it ignores `Host` and refuses
 `--to`.
 
@@ -248,6 +254,8 @@ ssh TARGET -- sudo /nix/var/nix/profiles/system/bin/switch-to-configuration swit
 ```
 
 where STORE_PATH is the system the out-link names, read as the step runs.
+With a port, TARGET is the target without it, `ssh` takes `-p PORT` and
+`nix copy` takes it in `NIX_SSHOPTS`.
 The target downloads what it can from its own substituters and receives the
 rest. A system built here carries no signature, so the copy skips the
 signature check, which only a user the target trusts may do. `kai machine rollback NAME` checks the target, asks, then runs
@@ -283,8 +291,8 @@ with
 -o HostKeyAlias=NAME
 ```
 
-so the key is looked up under the machine's name, whatever address or
-`~/.ssh/config` alias the target is. A key that differs fails the step, at
+so the key is looked up under the machine's name, whatever address, port or
+`~/.ssh/config` alias the target names. A key that differs fails the step, at
 a terminal or not, and your `known_hosts` is neither read nor changed. A
 tool that creates a server thus needs no `known_hosts` editing before
 `kai machine switch`. Your own `NIX_SSHOPTS` follow kai's options. ssh and
@@ -373,6 +381,13 @@ nix run --inputs-from path:.kai/generated/nix default#nixos-anywhere -- \
 `--option pure-eval false`, which nixos-anywhere passes to each of its nix
 commands, lets them read the machine's module files and hardware facts by
 their absolute paths, as `--impure` does for `kai machine build`.
+
+With a port, TARGET is the target without it, followed by
+`--ssh-port PORT --post-kexec-ssh-port PORT`: the installer nixos-anywhere
+boots answers on port 22, and the installed machine does too, so the port
+must lead there both before and after, as a port forward does, such as a
+local VM's. kai cannot yet install a server whose old system's SSH itself
+listens on another port.
 
 The installer comes from the same nixpkgs as the system, so disko's
 partitioning runs its tools, such as `udevadm`, in an installer of the

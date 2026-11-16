@@ -208,10 +208,16 @@ ConfigFixtures := [].{
 			name: "MachineHostOption",
 			expected: Rejected(
 				"machine web: Host -oProxyCommand=x is no SSH target; "
-					.concat("use user@host or host, without a port"),
+					.concat("use host or user@host, then :port for a port other than 22"),
 			),
 			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
 				\\  Host("-oProxyCommand=x")])
+		},
+		{
+			name: "MachineHostPort",
+			expected: Rejected("machine web: Host admin@web:0 is no SSH target"),
+			body: \\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+				\\  Host("admin@web:0")])
 		},
 		{
 			name: "MachineDarwinMachine",

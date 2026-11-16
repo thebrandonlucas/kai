@@ -121,7 +121,7 @@ Machine := [].{
 				Value({
 					name: "to",
 					short: "",
-					help: "Act on this SSH target, user@host, not the machine's Host; "
+					help: "Act on this SSH target, user@host[:port], not the machine's Host; "
 						.concat("install needs it, since it erases the target's disk."),
 				}),
 				Machine.identity,
@@ -944,6 +944,20 @@ expect {
 	}
 }
 
+# An install on a target with a port gives nixos-anywhere the host without
+# it, and the port both before and after the installer boots.
+expect {
+	target = "root@[2001:db8::1]:2222"
+	ran = match installed(installed_web, target) {
+		Ok({ steps, .. }) => argvs(steps).last() ?? []
+		Err(_) => []
+	}
+	expected = ["--flake", "path:/generated/nix#web"]
+		.concat(["--target-host", "root@2001:db8::1"])
+		.concat(["--ssh-port", "2222", "--post-kexec-ssh-port", "2222"])
+	ran.drop_first(5).take_first(8) == expected
+}
+
 # A machine with a Disk adds nixos-images' noninteractive kexec installer
 # for each system to the flake, which install builds; without one, the
 # flake has none.
@@ -1261,6 +1275,41 @@ expect {
 	rolled_back and listed
 }
 
+# A target's port reaches every SSH connection apart from its host: ssh's
+# -p in the host check, the profile and the activation, and NIX_SSHOPTS for
+# nix copy, whose store URL holds the host alone.
+expect {
+	target = "admin@[2001:db8::1]:2222"
+	destination = "admin@2001:db8::1"
+	port = ["-p", "2222"]
+	link = "/work/machines/web"
+	copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
+		.concat(["--to", "ssh-ng://${destination}", link])
+	activation = ["sh", "-c", NixosBackend.activation, "sh", profile, "sudo"]
+	activate = NixosBackend.recorded(
+		generations,
+		["ssh", "-p", "2222", destination, "--"]
+			.concat(activation.map(NixosBackend.shell_quote)),
+	)
+	match planned_with(remote_web, "switch", "x86_64-linux", target) {
+		Ok({ steps: [_, Run(check), .. as rest], .. }) => {
+			ran = argvs(rest)
+			(copied, set) = match ran.drop_first(ran.len() - 3) {
+				[c, s, a] if a == activate => (c, s)
+				_ => ([], [])
+			}
+			check.argv.get(4) == Ok(target)
+				and check.argv.get(5) == Ok(destination)
+				and check.argv.drop_first(9) == port
+				and set.drop_first(5).first() == Ok(destination)
+				and set.drop_first(7) == port
+				and copied == NixosBackend.with_ssh_options(port, copy)
+				and copied.get(4) == Ok("-p 2222")
+		}
+		_ => Bool.False
+	}
+}
+
 # The plan of `kai machine ACTION web --to TO` continuing once its last step
 # recorded `text` as the generations.
 reported : Str, Str, Str -> Try(Plan, Plan.Failure)
@@ -1300,15 +1349,18 @@ expect {
 		and reported("switch", "", "").map_ok(|p| p.next) == Ok(Done)
 }
 
-# The remote check passes the target, architecture and messages as the
-# script's arguments, and the profile step quotes its command for the remote
-# shell while the store path stays an argument too.
+# The remote check passes the target, the destination ssh connects to,
+# architecture and messages as the script's arguments, and the profile step
+# quotes its command for the remote shell while the store path stays an
+# argument too.
 expect {
 	target = "admin@web.example.com"
 	machine = Machine.machine("web", remote_web)
 	checked = match NixosBackend.remote_check(machine, target, []) {
-		["sh", "-c", script, "sh", "admin@web.example.com", "x86_64", is, then] =>
+		["sh", "-c", script, "sh", given, destination, "x86_64", is, then] =>
 			!script.contains(target)
+				and given == target
+				and destination == target
 				and is == "machine web is x86_64-linux"
 				and then == "run kai machine install web --to ${target} first"
 		_ => Bool.False
@@ -1417,6 +1469,27 @@ expect {
 	switched and nix_options and rolled_back
 }
 
+# With the key and a port, ssh and nix copy take the port before the trust;
+# the known hosts file names the machine, not the address or port.
+expect {
+	keyed_port = web
+		.append(Host("admin@web.example.com:2222"))
+		.append(Operators([operator]))
+	pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5host root@web\n"
+	options = ["-p", "2222", "-o", "UserKnownHostsFile=${known_hosts}"]
+		.concat(["-o", "GlobalKnownHostsFile=/dev/null"])
+		.concat(["-o", "StrictHostKeyChecking=yes", "-o", "HostKeyAlias=web"])
+	copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
+		.concat(["--to", "ssh-ng://admin@web.example.com", "/work/machines/web"])
+	observed = [{ path: host_key_copy, contents: Text(pub) }]
+	match continued(keyed_port, "switch", 1, observed) {
+		Ok({ steps: [_, Write([file]), Run(_), .. as rest], .. }) =>
+			file == { path: known_hosts, contents: "web ${pub}" }
+				and argvs(rest).contains(NixosBackend.with_ssh_options(options, copy))
+		_ => Bool.False
+	}
+}
+
 # Without the key, a machine with Operators connects as one without does,
 # trusting the operator's known hosts, and reports a phase later; an empty
 # key fails.
@@ -1452,11 +1525,23 @@ expect {
 }
 
 # SSH targets are a host, a name or an IPv4 or IPv6 address, after an
-# optional account name; never an option, a port, spaces or control
+# optional account name, then an optional port from 1 to 65535, an IPv6
+# host in brackets before one; never an option, spaces or control
 # characters. A bad Host is refused as Kaifile.roc compiles.
 expect {
-	valid = ["web", "root@203.0.113.7", "admin@web.example.com"]
-		.append("root@2001:db8::1")
+	parts = |target|
+		MachineModel.parse_target(target)
+			.map_ok(|{ user, host, port }| (user, host, port))
+	parsed =
+		parts("web") == Ok(("", "web", ""))
+			and parts("root@203.0.113.7") == Ok(("root", "203.0.113.7", ""))
+			and parts("web:2222") == Ok(("", "web", "2222"))
+			and parts("admin@web.example.com:22")
+				== Ok(("admin", "web.example.com", "22"))
+			and parts("root@2001:db8::1") == Ok(("root", "2001:db8::1", ""))
+			and parts("root@[2001:db8::1]") == Ok(("root", "2001:db8::1", ""))
+			and parts("root@[2001:db8::1]:65535")
+				== Ok(("root", "2001:db8::1", "65535"))
 	invalid = [
 		"",
 		"-oProxyCommand=x",
@@ -1464,16 +1549,24 @@ expect {
 		"Admin@web",
 		"@web",
 		"admin@",
-		"web:22",
+		"web:",
+		"web:0",
+		"web:65536",
+		"web:+22",
+		"web:2x",
+		"-p:22",
+		"[web]:22",
+		"[2001:db8::1]2222",
+		"[2001:db8::1]:",
 		"web example",
 		"web\n",
 		"a@b@c",
 	]
 	required = [System("x86_64-linux"), StateVersion("25.05")]
-	valid.all(MachineModel.valid_target)
+	parsed
 		and !invalid.any(MachineModel.valid_target)
-		and problems_of(required.append(Host("web:22")))
-			== ["machine web: Host web:22 is no SSH target; ${MachineModel.target_form}"]
+		and problems_of(required.append(Host("web:0")))
+			== ["machine web: Host web:0 is no SSH target; ${MachineModel.target_form}"]
 		and problems_of(required.append(Host("")))
 			== ["machine web: Host is empty; ${MachineModel.target_form}"]
 		and problems_of(required.concat([Host("a"), Host("b")]))

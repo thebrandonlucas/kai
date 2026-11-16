@@ -157,42 +157,70 @@ MachineModel :: [].{
 			Ok({})
 		}
 
-	target_form = "use user@host or host, without a port"
+	target_form = "use host or user@host, then :port for a port other than 22, "
+		.concat("with an IPv6 host in brackets, such as root@[2001:db8::1]:2222")
 
-	## An SSH target both `ssh` and `nix copy --to ssh-ng://` take: `host` or
-	## `user@host`, where host is a name or an IPv4 or IPv6 address, and a
-	## port comes from ~/.ssh/config. It never starts with `-`, so ssh cannot
-	## read it as an option.
-	valid_target : Str -> Bool
-	valid_target = |target| {
-		(user, host) = match target.split_first("@") {
-			Ok({ before, after }) => (Ok(before), after)
-			Err(_) => (Err(NoUser), target)
+	## An SSH target's parts: the user, "" when ssh chooses it; the host, a
+	## name or an IPv4 or IPv6 address, without brackets; and the port, ""
+	## for ssh's own, which ~/.ssh/config may set.
+	Target : { user : Str, host : Str, port : Str }
+
+	## Parses an SSH target, `host` or `user@host`, then `:port` for a port
+	## from 1 to 65535. An IPv6 host stands bare, or in brackets, which a
+	## port needs. The host never starts with `-`, so ssh cannot read it as
+	## an option.
+	parse_target : Str -> Try(Target, [NotTarget])
+	parse_target = |target| {
+		(user, address) = match target.split_first("@") {
+			Ok({ before, after }) if MachineModel.valid_account(before) =>
+				(before, after)
+			Ok(_) => return Err(NotTarget)
+			Err(_) => ("", target)
+		}
+		colons = |text| text.to_utf8().keep_if(|b| b == ':').len()
+		# The port follows a colon, or "" stands for none.
+		(host, port) = if address.starts_with("[") {
+			match address.drop_prefix("[").split_first("]") {
+				Ok({ before, after }) if colons(before) >= 2 => (before, after)
+				_ => return Err(NotTarget)
+			}
+		} else if colons(address) == 1 {
+			match address.split_first(":") {
+				Ok({ before, after }) => (before, ":${after}")
+				Err(_) => return Err(NotTarget)
+			}
+		} else {
+			# Two colons or more are a bare IPv6 address.
+			(address, "")
 		}
 		host_byte = |b|
 			(b >= 'a' and b <= 'z')
 				or (b >= 'A' and b <= 'Z')
 				or (b >= '0' and b <= '9')
 				or ".-_:".to_utf8().contains(b)
-		# A single colon is a port, which ssh would read as part of the name.
-		colons = host.to_utf8().keep_if(|b| b == ':').len()
-		valid_user = match user {
-			Ok(name) => MachineModel.valid_account(name)
-			Err(NoUser) => Bool.True
-		}
-		valid_user
-			and !host.is_empty()
+		number = port.drop_prefix(":")
+		valid_host = !host.is_empty()
 			and !host.starts_with("-")
 			and host.to_utf8().all(host_byte)
-			and colons != 1
+		valid_port = port.is_empty()
+			or (port.starts_with(":") and Caddy.valid_port(number))
+		if valid_host and valid_port {
+			Ok({ user, host, port: number })
+		} else {
+			Err(NotTarget)
+		}
 	}
+
+	## Whether `target` is an SSH target, as `parse_target` takes.
+	valid_target : Str -> Bool
+	valid_target = |target| MachineModel.parse_target(target).is_ok()
 
 	## The user a target names, or "" when ssh chooses it.
 	target_user : Str -> Str
 	target_user = |target|
-		match target.split_first("@") {
-			Ok({ before, .. }) => before
-			Err(_) => ""
+		match MachineModel.parse_target(target) {
+			Ok({ user, .. }) => user
+			Err(NotTarget) => ""
 		}
 
 	## A user or group name: a-z or _, then at most 31 of a-z, 0-9, _ or -.

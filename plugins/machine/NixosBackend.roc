@@ -154,9 +154,9 @@ NixosBackend :: [].{
 	## must run NixOS on the machine's architecture. The system is built
 	## here and copied there; only the profile and the activation run as
 	## root there, through sudo unless the target logs in as root. Each
-	## records the generations for `report`. Every SSH connection trusts
-	## the machine's host key when `read_host_key` found it, else the
-	## operator's known hosts.
+	## records the generations for `report`. Every SSH connection goes to
+	## the target's port, and trusts the machine's host key when
+	## `read_host_key` found it, else the operator's known hosts.
 	on_remote : Project, List(Machine), Machine, Context, Str, Str -> Planned
 	on_remote = |project, machines, m, ctx, action, target| {
 		description = "machine ${action} ${m.name} on ${target}"
@@ -172,11 +172,13 @@ NixosBackend :: [].{
 		as_root = |argv| if (root) argv else ["sudo"].concat(argv)
 		# The remote nix may not enable `nix profile` and `nix build`.
 		nix = ["nix", "--extra-experimental-features", "nix-command"]
+		reach = NixosBackend.ssh_target(target)
+		options = reach.options.concat(trust.options)
 		# ssh joins the words for the remote shell, so each is quoted for it.
 		remote = |argv|
 			["ssh"]
-				.concat(trust.options)
-				.concat([target, "--"])
+				.concat(options)
+				.concat([reach.destination, "--"])
 				.concat(argv.map(NixosBackend.shell_quote))
 		quiet = |argv| NixosBackend.run(description, Quiet, argv)
 		file = NixosBackend.generations_file(ctx)
@@ -191,7 +193,8 @@ NixosBackend :: [].{
 				link = "${ctx.layout.workspace}/machines/${m.name}"
 				built = NixosBackend.build(project, machines, m, ctx, link)?
 				prompt = "Switch ${target} to machine ${m.name}, ${restarting}"
-				store = "ssh-ng://${target}"
+				# The URL holds no port: NIX_SSHOPTS passes it to ssh.
+				store = "ssh-ng://${reach.destination}"
 				# A system built here is unsigned; the target still refuses it from
 				# a user it does not trust.
 				copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
@@ -204,7 +207,7 @@ NixosBackend :: [].{
 					.concat([
 						Confirm(prompt),
 						Note("copying machine ${m.name}'s system to ${target}"),
-						quiet(NixosBackend.with_ssh_options(trust.options, copy)),
+						quiet(NixosBackend.with_ssh_options(options, copy)),
 						Note("activating it on ${target}"),
 						quiet(set),
 						activate,
@@ -459,11 +462,21 @@ NixosBackend :: [].{
 	## machine's module files and hardware facts are read by their absolute
 	## paths, which pure evaluation refuses, as `kai machine build`'s --impure
 	## allows. Flake commands ignore `pure-eval` from NIX_CONFIG, so it is an
-	## option, which nixos-anywhere passes to each of its nix commands.
+	## option, which nixos-anywhere passes to each of its nix commands. A
+	## target's port is its own option, and holds once the server has booted
+	## the installer, as through a port forward to port 22.
 	anywhere_arguments : Str, Str, Str -> List(Str)
-	anywhere_arguments = |flake, name, target|
-		["--flake", "${flake}#${name}", "--target-host", target]
+	anywhere_arguments = |flake, name, target| {
+		reach = NixosBackend.ssh_target(target)
+		port = if reach.port.is_empty() {
+			[]
+		} else {
+			["--ssh-port", reach.port, "--post-kexec-ssh-port", reach.port]
+		}
+		["--flake", "${flake}#${name}", "--target-host", reach.destination]
+			.concat(port)
 			.concat(["--option", "pure-eval", "false"])
+	}
 
 	## nixos-anywhere as `nixos_anywhere` runs it, placing machine `m`'s SSH
 	## host key with `--extra-files`. The key is decrypted from
@@ -646,16 +659,30 @@ NixosBackend :: [].{
 			Err(_) => m.system
 		}
 
+	## How ssh reaches `target`, an SSH target `MachineModel.parse_target`
+	## takes: its `destination`, `user@host` or `host`, and its `port`, ""
+	## for ssh's own, which `options` name as ssh takes it. Neither the
+	## destination nor an `ssh-ng://` store URL holds the port.
+	ssh_target : Str -> { destination : Str, port : Str, options : List(Str) }
+	ssh_target = |target| {
+		{ user, host, port } = MachineModel.parse_target(target)
+			?? { user: "", host: target, port: "" }
+		destination = if (user.is_empty()) host else "${user}@${host}"
+		options = if (port.is_empty()) [] else ["-p", port]
+		{ destination, port, options }
+	}
+
 	## A shell check, as the switch runs, that `target` runs NixOS on the
-	## machine's architecture, connecting with ssh `options`. The target, the
-	## messages and the options are arguments, never part of the script;
-	## when ssh fails, it exits with ssh's status.
+	## machine's architecture, connecting with ssh `options` and its port.
+	## The target, the messages and the options are arguments, never part
+	## of the script; when ssh fails, it exits with ssh's status.
 	remote_check : Machine, Str, List(Str) -> List(Str)
 	remote_check = |m, target, options| {
+		reach = NixosBackend.ssh_target(target)
 		script =
-			\\target=$1 architecture=$2 machine=$3 install=$4
-			\\shift 4
-			\\found=$(ssh "$@" "$target" -- 'uname -m && test -e /etc/NIXOS')
+			\\target=$1 destination=$2 architecture=$3 machine=$4 install=$5
+			\\shift 5
+			\\found=$(ssh "$@" "$destination" -- 'uname -m && test -e /etc/NIXOS')
 			\\status=$?
 			\\[ "$status" -gt 1 ] && exit "$status"
 			\\if [ "$found" != "$architecture" ]; then
@@ -671,19 +698,22 @@ NixosBackend :: [].{
 			script,
 			"sh",
 			target,
+			reach.destination,
 			NixosBackend.architecture(m),
 			"machine ${m.name} is ${m.system}",
 			"run kai machine install ${m.name} --to ${target} first",
 		]
+			.concat(reach.options)
 			.concat(options)
 	}
 
 	## A shell step setting `target`'s system profile to the store path
 	## `link` names, known only once the build has run: `command`, quoted
 	## for the remote shell, then the store path, which holds no quote. ssh
-	## connects with `options`, the last arguments.
+	## connects with the target's port and `options`, the last arguments.
 	remote_profile : Str, Str, List(Str), List(Str) -> List(Str)
 	remote_profile = |link, target, command, options| {
+		reach = NixosBackend.ssh_target(target)
 		script =
 			\\link=$1 target=$2 command=$3
 			\\shift 3
@@ -695,7 +725,9 @@ NixosBackend :: [].{
 			\\echo "unexpected store path: $store_path" >&2
 			\\exit 1
 		quoted = Str.join_with(command.map(NixosBackend.shell_quote), " ")
-		["sh", "-c", script, "sh", link, target, quoted].concat(options)
+		["sh", "-c", script, "sh", link, reach.destination, quoted]
+			.concat(reach.options)
+			.concat(options)
 	}
 
 	## `word` as one word for a POSIX shell: bare when it holds only plain
