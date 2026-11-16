@@ -197,7 +197,10 @@ plugin_build = |build, name|
 	)
 
 # The bare kai binary for a Roc target, embedding the URLs this release
-# publishes the bundles built here at.
+# publishes the bundles built here at. Given KAI_REVISION, git describe's
+# v0.0.12-5-g1a307ed, its version names the commit after VERSION's,
+# 0.0.12+1a307ed, and ends .dirty when the checkout has uncommitted changes;
+# at a release tag (v0.0.12), or without one, it is VERSION's alone.
 # One Roc worker: the code roc emits depends on how many it uses
 # (roc-lang/roc#11449), so a fixed count builds the same binary anywhere.
 # Use the default once a Roc nightly emits the same code for any count.
@@ -208,6 +211,13 @@ binary_script = |target, prepare, finish|
 		\\bundle() { basename "$KAI_ARTIFACTS/$1"/*.tar.zst; }
 		\\echo "$base/$(bundle kai-platform)" > platform-release
 		\\echo "$base/std-$(bundle kai-std)" > plugins/std-release
+		\\revision="$(printenv KAI_REVISION || true)"
+		\\commit="$(echo "$revision" | sed 's/-dirty$//; s/.*-g//; s/^v.*//')"
+		\\case "$commit:$revision" in
+		\\  :*-dirty) commit=dirty ;;
+		\\  *-dirty) commit="$commit.dirty" ;;
+		\\esac
+		\\if [ -n "$commit" ]; then echo "$(cat VERSION)+$commit" > VERSION; fi
 		\\flags="--opt=size --target=${target} --jobs=1"
 		\\"$roc" build cli/main.roc $flags --output=kai
 		\\
@@ -257,7 +267,7 @@ binary_files = [
 	"plugins/std-release",
 ]
 
-binary = |name, script, extra_inputs|
+binary = |name, script, extra_inputs, revision|
 	Build(
 		name,
 		[
@@ -267,8 +277,35 @@ binary = |name, script, extra_inputs|
 			Run(["sh", "-c", script]),
 			Output("bin"),
 			Files(binary_files),
-		],
+		].concat(revision),
 	)
+
+# For each Roc target, a kai whose version names the commit, and the one a
+# release archive holds, whose version is VERSION's alone, so that any commit
+# of a release builds the same archive.
+binaries = |name, release_name, script, extra_inputs| [
+	binary(name, script, extra_inputs, [Revision]),
+	binary(release_name, script, extra_inputs, []),
+]
+
+binary_builds =
+	binaries("kai-x64musl", "kai-x64musl-release", linux_script("x64musl"), [])
+		.concat(
+			binaries(
+				"kai-arm64musl",
+				"kai-arm64musl-release",
+				linux_script("arm64musl"),
+				[],
+			),
+		)
+		.concat(
+			binaries(
+				"kai-arm64mac",
+				"kai-arm64mac-release",
+				darwin_script,
+				inputs(roc_darwin),
+			),
+		)
 
 # A release archive of a binary.
 release_script =
@@ -373,12 +410,10 @@ kaifile = Std.kaifile(
 				Output("bundle"),
 			],
 		),
-		binary("kai-x64musl", linux_script("x64musl"), []),
-		binary("kai-arm64musl", linux_script("arm64musl"), []),
-		binary("kai-arm64mac", darwin_script, inputs(roc_darwin)),
-		release("release-x86-64-linux", "kai-x64musl"),
-		release("release-aarch64-linux", "kai-arm64musl"),
-		release("release-aarch64-darwin", "kai-arm64mac"),
+	]).concat(binary_builds).concat([
+		release("release-x86-64-linux", "kai-x64musl-release"),
+		release("release-aarch64-linux", "kai-arm64musl-release"),
+		release("release-aarch64-darwin", "kai-arm64mac-release"),
 		plugin_build("kai-guix", "guix"),
 		plugin_build("kai-machine", "machine"),
 		plugin_build("kai-sbom", "sbom"),

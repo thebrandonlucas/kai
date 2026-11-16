@@ -503,7 +503,7 @@ pub fn build(b: *std.Build) void {
         .aarch64 => "arm64musl",
         else => "x64musl",
     };
-    const native_kai = b.fmt("kai-{s}", .{native_target});
+    const native_kai = b.fmt("kai-{s}-release", .{native_target});
 
     // The same static musl kai, built by roc outside Kai's sandbox so Roc's
     // cache can serve it: what CI's end-to-end jobs run. It embeds the

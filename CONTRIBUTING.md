@@ -27,6 +27,8 @@ kai shell default -- sh -c 'cd platform && zig build --release'
 
 `kai-arm64musl` is the aarch64 build, and `kai-arm64mac` the Apple Silicon macOS one, cross-built on Linux. The project's Kaifile.roc then names the checkout's platform and std by relative path, as `examples/` do, such as `pf: platform "../kai/platform/main.roc"` and `std: "../kai/plugins/std/main.roc"`: Roc refuses an absolute platform path.
 
+Its `kai --version` names the commit it was built from after the release's version, such as `0.0.12+1a307ed`, with `.dirty` added when the checkout has uncommitted changes, so it is not mistaken for the release; the `-release` builds, such as `kai-x64musl-release`, are the ones release archives hold, whose version is the release's alone. `nix run github:thebrandonlucas/kai/<commit>` runs the last release, not that commit: build the commit's kai from a checkout of it as above.
+
 ## How the code is laid out
 
 The code follows the pipeline:
