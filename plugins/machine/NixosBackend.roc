@@ -307,28 +307,26 @@ NixosBackend :: [].{
 		Ok(Plan.{ steps, next: Done })
 	}
 
-	## nixos-anywhere from the locked nixpkgs on machine `name` of `flake`. The
-	## machine's module files are read by their absolute paths, which pure
-	## evaluation refuses, as `kai machine build`'s --impure allows: the script
-	## adds `pure-eval = false` to any NIX_CONFIG the user has.
+	## nixos-anywhere from the locked nixpkgs on machine `name` of `flake`.
 	nixos_anywhere : Str, Str, Str -> List(Str)
 	nixos_anywhere = |flake, name, target| {
 		script =
 			\\flake=$1
 			\\shift
 			\\exec nix run --inputs-from "$flake" default#nixos-anywhere -- "$@"
-		["sh", "-c", Str.join_with([NixosBackend.impure, script], "\n"), "sh", flake]
-			.concat(["--flake", "${flake}#${name}", "--target-host", target])
+		["sh", "-c", script, "sh", flake]
+			.concat(NixosBackend.anywhere_arguments(flake, name, target))
 	}
 
-	## Adds `pure-eval = false` to any NIX_CONFIG the user has.
-	impure =
-		\\case $NIX_CONFIG in
-		\\'') NIX_CONFIG='pure-eval = false' ;;
-		\\*) NIX_CONFIG="$NIX_CONFIG
-		\\pure-eval = false" ;;
-		\\esac
-		\\export NIX_CONFIG
+	## nixos-anywhere's arguments for machine `name` of `flake` on `target`. The
+	## machine's module files and hardware facts are read by their absolute
+	## paths, which pure evaluation refuses, as `kai machine build`'s --impure
+	## allows. Flake commands ignore `pure-eval` from NIX_CONFIG, so it is an
+	## option, which nixos-anywhere passes to each of its nix commands.
+	anywhere_arguments : Str, Str, Str -> List(Str)
+	anywhere_arguments = |flake, name, target|
+		["--flake", "${flake}#${name}", "--target-host", target]
+			.concat(["--option", "pure-eval", "false"])
 
 	## nixos-anywhere as `nixos_anywhere` runs it, placing machine `m`'s SSH
 	## host key with `--extra-files`. The key is decrypted from
@@ -371,12 +369,12 @@ NixosBackend :: [].{
 			\\chmod 644 "$key.pub"
 			\\anywhere=default#nixos-anywhere
 			\\nix run --inputs-from "$flake" "$anywhere" -- "$@" --extra-files "$files"
-		script = [arguments, NixosBackend.decrypting, NixosBackend.impure, installing]
+		script = [arguments, NixosBackend.decrypting, installing]
 		identity = Command.path(ctx.args, "identity") ?? ""
 		secrets = "${ctx.layout.project_root}/secrets"
 		NixosBackend.with_age(flake, Str.join_with(script, "\n"))
 			.concat([flake, identity, secrets, m.name, Str.join_with(m.operators, "\n")])
-			.concat(["--flake", "${flake}#${m.name}", "--target-host", target])
+			.concat(NixosBackend.anywhere_arguments(flake, m.name, target))
 	}
 
 	## `sh -c script sh` with age and ssh-keygen from the locked nixpkgs of

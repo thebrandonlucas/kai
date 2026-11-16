@@ -877,6 +877,7 @@ expect {
 	flake = "path:/generated/nix"
 	facts = "/project/machines/web/facter.json"
 	anywhere = ["--flake", "${flake}#web", "--target-host", target]
+		.concat(["--option", "pure-eval", "false"])
 		.concat(["--generate-hardware-config", "nixos-facter", facts])
 	toplevel = "nixosConfigurations.web.config.system.build.toplevel"
 	match installed(installed_web, target) {
@@ -899,7 +900,6 @@ expect {
 									and match ran.argv {
 										["sh", "-c", script, "sh", .. as given] =>
 											given == [flake].concat(anywhere)
-												and script.contains("\$NIX_CONFIG\npure-eval = false")
 												and script.contains("default#nixos-anywhere")
 												and !script.contains(target)
 										_ => Bool.False
@@ -1647,12 +1647,12 @@ expect {
 								and given
 									== [flake, "", "/project/secrets", "web", "${operator}\n${key}"]
 										.concat(["--flake", "${flake}#web", "--target-host", target])
+										.concat(["--option", "pure-eval", "false"])
 										.concat(["--generate-hardware-config", "nixos-facter", facts])
 								and script.contains("--extra-files \"$files\"")
 								and script.contains("ssh-keygen -q -t ed25519 -N ''")
 								and script.contains("age -d -i \"$identity\" -o \"$key\"")
 								and script.contains("default#nixos-anywhere")
-								and script.contains("pure-eval = false")
 								and !script.contains(target)
 								and !script.contains("exec ")
 						_ => Bool.False

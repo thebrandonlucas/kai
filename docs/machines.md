@@ -324,12 +324,13 @@ nixpkgs, with no separate install:
 ```sh
 nix run --inputs-from path:.kai/generated/nix default#nixos-anywhere -- \
   --flake path:.kai/generated/nix#NAME --target-host TARGET \
+  --option pure-eval false \
   --generate-hardware-config nixos-facter PROJECT/machines/NAME/facter.json
 ```
 
-It runs with `pure-eval = false` added to any `NIX_CONFIG` you have, which lets nixos-anywhere's own `nix build` read the machine's
-module files by their absolute paths, as `--impure` does for `kai machine
-build`. The install asks before erasing anything, so it needs a terminal or
+`--option pure-eval false`, which nixos-anywhere passes to each of its nix
+commands, lets them read the machine's module files and hardware facts by
+their absolute paths, as `--impure` does for `kai machine build`. The install asks before erasing anything, so it needs a terminal or
 `--yes`; `kai --dry-run machine install NAME --to TARGET` prints the whole
 plan and runs none of it.
 
