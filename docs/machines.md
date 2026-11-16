@@ -3,7 +3,7 @@
 The machine plugin declares machines in Kaifile.roc, beside std's
 environments, shells, tasks and builds, and lives in `plugins/machine`. It
 implements `kai machine` on the nix backend, where each machine is a NixOS
-system; `Modules` is Nix's alone.
+system; `Modules` and `InputModules` are Nix's alone.
 
 ```roc
 app [kaifile] {
@@ -49,7 +49,7 @@ plugins/machine` in a checkout of that release makes it, to host as
 
 ## Settings
 
-Every setting but `User` occurs at most once in a machine.
+Every setting but `User` and `InputModules` occurs at most once in a machine.
 
 | Setting | Meaning |
 |---|---|
@@ -67,6 +67,7 @@ Every setting but `User` occurs at most once in a machine.
 | `Secrets([Secret(name, [...])])` | Files the system decrypts into `/run/secrets/NAME` as it activates, with `Owner(user)` (default `root`), `Group(group)` (default `root`) and `Mode("0400")`, an octal mode (default `"0400"`); see [Secrets](#secrets). They need `Operators`; kai pins agenix, which decrypts them, itself. Optional. |
 | `Services([...])` | Typed services the machine runs, each at most once: for now `Caddy([...])`, which serves sites over HTTPS; see [Services](#services). Optional. |
 | `Modules([...])` | NixOS module files, relative to the project and inside it, for everything else: services, and the hardware, disks and boot loader when there is no `Disk`. They receive the flake's `inputs` as a module argument, so a module can import another flake's module, such as `inputs.home-manager.nixosModules.home-manager` after `Input("home-manager", "github:nix-community/home-manager")` in std's settings. |
+| `InputModules(input, [...])` | NixOS module files, relative to a locked flake input and inside it, such as a provider's profile shared by many projects; see [Provider profiles](#provider-profiles). The input is one std's settings declare with `Input(...)`, or one a plugin asks `kai update` to lock. It may be given more than once, such as once per input. Optional. |
 
 `kai check` refuses, as Kaifile.roc compiles, a machine name that is not a
 letter followed by letters, digits, `-` or `_`; a missing or non-Linux
@@ -80,8 +81,10 @@ digits and `._:+-`; an operator that is no age recipient, `ssh-ed25519` or
 a secret name that is not a letter followed by letters, digits, `-`, `_` or
 `.`, a secret declared twice, an owner or group NixOS would refuse, or a
 mode that is not three or four octal digits; a service given twice, and
-what [Services](#services) lists for each; and a module path that is
-absolute, uses `.` or `..` segments, or is not a `.nix` file.
+what [Services](#services) lists for each; a module path that is
+absolute, uses `.` or `..` segments, or is not a `.nix` file; and an
+`InputModules` input that neither std's settings declare nor a plugin
+asks to lock.
 
 ## How a machine reaches the flake
 
@@ -95,6 +98,7 @@ nixosConfigurations."web" = inputs."default".lib.nixosSystem {
   modules = [
     { nixpkgs.hostPlatform = "x86_64-linux"; ... }   # the typed settings
     (/. + "/path/to/project/nixos/web.nix")
+    (inputs."profiles" + "/digitalocean.nix")   # InputModules("profiles", ...)
   ];
 };
 ```
@@ -339,7 +343,51 @@ destroy server
 
 What a provider needs of the machine itself, such as DigitalOcean's metadata
 networking or a disk named `/dev/vda` rather than `/dev/sda`, is a NixOS
-module file the Kaifile includes with `Modules([...])`, not a kai setting.
+module file, not a kai setting: one of the project's own with
+`Modules([...])`, or a shared profile with `InputModules`.
+
+#### Provider profiles
+
+A tool or provider plugin that creates servers for many projects keeps its
+profiles, the NixOS modules a provider's servers need, in one repository
+rather than a copy in each project. A project declares that repository as a
+flake input in std's settings, and its machines name the files they use:
+
+```roc
+project = [
+	Name("site"),
+	Input("profiles", "github:org/kai-profiles"),
+]
+
+Machine("web", [
+	...,
+	Disk(SingleDisk("/dev/vda")),
+	InputModules("profiles", ["digitalocean.nix"]),
+])
+```
+
+`kai update` locks the input with the rest of `.kai/lock.json`, and the
+machine imports `(inputs."profiles" + "/digitalocean.nix")`, a file of the
+locked input in the Nix store, so `kai update` moves the profile and
+reading it needs no `--impure`. kai refuses, as Kaifile.roc compiles, an
+input std's settings do not declare and no plugin asks to lock, and a path
+that is absolute, uses `.` or `..` segments, or is not a `.nix` file; a path
+missing from the input fails the build.
+
+A provider plugin can ship its profiles without the project declaring the
+input: it asks std to lock its repository with `Plugin.locking`, as the
+machine plugin does disko (see
+[plugin.md](plugin.md#asking-std-to-lock-inputs)), and its users name that
+input in `InputModules`:
+
+```roc
+# In the provider plugin:
+Plugin.new({ name: "digitalocean", ... })
+	.locking([Input("do-profiles", "github:org/kai-digitalocean", [])])
+
+# In a Kaifile that uses it:
+Machine("web", [..., InputModules("do-profiles", ["droplet.nix"])])
+```
 
 A machine to install needs:
 
@@ -671,4 +719,5 @@ layer for the common cases.
 project's own builds, `kai machine image` for providers that boot from
 images, test machines with microvm, and `kai machine gc` come next; see
 [#463](https://github.com/thebrandonlucas/kai/issues/463). Guix System is
-not planned yet, though only `Modules` in the settings is Nix-specific.
+not planned yet, though only `Modules` and `InputModules` in the settings
+are Nix-specific.

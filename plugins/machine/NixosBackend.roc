@@ -12,7 +12,8 @@ import MachineModel exposing [Machine]
 
 ## Each machine is `lib.nixosSystem` of the "default" package source, with
 ## one module holding its typed settings, then its own module files by
-## absolute path. Modules receive the flake's `inputs` as an argument.
+## absolute path and its inputs' module files by store path. Modules
+## receive the flake's `inputs` as an argument.
 NixosBackend :: [].{
 
 	Project : List(Config.Setting)
@@ -72,10 +73,19 @@ NixosBackend :: [].{
 
 	## What only Nix can honour that is wrong with machine `m`.
 	problems : Machine -> List(Str)
-	problems = |m|
+	problems = |m| {
+		outside = |file| !NixosBackend.valid_module_path(file.path)
+		not_in_input = |{ input, path }|
+			"module ${path} is no .nix file inside input ${input}"
 		m.modules
 			.drop_if(NixosBackend.valid_module_path)
 			.map(|path| "module ${path} is no .nix file inside the project")
+			.concat(
+				m.input_modules
+					.keep_if(outside)
+					.map(not_in_input),
+			)
+	}
 
 	## What std's update locks for `machines`: the "default" package source
 	## they are built from, and disko and nixos-images for a Disk and agenix
@@ -99,7 +109,8 @@ NixosBackend :: [].{
 			.concat(when(machines.any(|m| !m.secrets.is_empty()), [agenix]))
 	}
 
-	## A relative path to a .nix file that stays inside the project.
+	## A relative path to a .nix file that stays inside the project, or the
+	## input.
 	valid_module_path : Str -> Bool
 	valid_module_path = |path|
 		path.ends_with(".nix")
@@ -899,6 +910,9 @@ NixosBackend :: [].{
 	machine : Machine, Str -> Str
 	machine = |m, project_root| {
 		file = |path| "(/. + ${NixosBackend.quote("${project_root}/${path}")})"
+		# A file of a locked input is in the store, so reading it is pure.
+		input_file = |{ input, path }|
+			"(inputs.${NixosBackend.quote(input)} + ${NixosBackend.quote("/${path}")})"
 		settings = NixosBackend.settings(m, project_root)
 		NixosBackend.lines(
 			[
@@ -911,6 +925,7 @@ NixosBackend :: [].{
 				.concat(settings.map(|line| "              ${line}"))
 				.append("            }")
 				.concat(m.modules.map(|path| "            ${file(path)}"))
+				.concat(m.input_modules.map(input_file).map(|line| "            ${line}"))
 				.concat(["          ];", "        };"]),
 		)
 	}

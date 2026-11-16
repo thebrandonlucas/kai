@@ -3,6 +3,7 @@
 # commands, which NixosBackend implements on the nix backend from
 # MachineModel.
 import pf.Command
+import pf.Implementation
 import pf.Plugin
 import std.Config
 import std.EnvName
@@ -33,7 +34,10 @@ Machine := [].{
 	## host key and Secrets, which `kai secret set` writes and the system
 	## decrypts into /run/secrets. Services are the typed services it runs,
 	## each at most once. Modules are NixOS module files relative to the
-	## project, which receive the flake's `inputs`.
+	## project, which receive the flake's `inputs`. InputModules, which may
+	## repeat, are module files relative to a locked flake input that std's
+	## settings declare or a plugin asks std to lock, such as a provider's
+	## profiles.
 	MachineSetting : [
 		System(System),
 		HostName(Str),
@@ -49,6 +53,7 @@ Machine := [].{
 		Secrets(List(SecretSetting)),
 		Services(List(ServiceSetting)),
 		Modules(List(Str)),
+		InputModules(Str, List(Str)),
 	]
 
 	## A typed service, whose settings, checks and model are its module's in
@@ -97,6 +102,9 @@ Machine := [].{
 					],
 				})
 					.locking(NixosBackend.lock_requests(machines))
+					.checking_lock_requests(
+						|requested| Machine.undeclared_inputs(project, machines, requested),
+					)
 			Err(problems) => Plugin.invalid("machine", problems)
 		}
 
@@ -159,7 +167,8 @@ Machine := [].{
 			"  Secrets([Secret(\"app-key\", [Owner(\"app\")])]),   # kai locks agenix",
 			"  Services([Caddy([Site(\"example.com\",",
 			"    ReverseProxy(\"localhost:8080\"))])]),",
-			"  Modules([\"nixos/web.nix\"])]),",
+			"  Modules([\"nixos/web.nix\"]),",
+			"  InputModules(\"profiles\", [\"digitalocean.nix\"])]),",
 		],
 	}
 
@@ -242,7 +251,7 @@ Machine := [].{
 			m = Machine.machine(name, parts)
 			given = parts
 				.map(Machine.setting_name)
-				.drop_if(|s| s == "User")
+				.drop_if(|s| s == "User" or s == "InputModules")
 			# An empty Host or Operators folds to none, so it is found here.
 			empty_host = parts.any(
 				|part|
@@ -314,6 +323,38 @@ Machine := [].{
 				},
 		)
 
+	## Each input InputModules names that neither std's settings `project`
+	## declare nor a plugin asks std to lock, as a problem. Kaifile.roc's
+	## check finds them once it knows every plugin's lock requests.
+	undeclared_inputs :
+		List(Config.Setting), Machines, List(Implementation.Requested) -> List(Str)
+	undeclared_inputs = |project, machines, requested| {
+		declared = match StdModel.from_settings(project) {
+			Ok(model) => model.inputs.map(|input| input.name)
+			Err(_) => []
+		}
+		locked = requested.join_map(
+			|asked|
+				match asked.request {
+					Input(name, _, _) => [name]
+					Source(_) => []
+				},
+		)
+		known = declared.concat(locked)
+		var $found = []
+		for m in machines {
+			for file in m.input_modules {
+				problem = "machine ${m.name}: InputModules names input ${file.input}, "
+					.concat("which neither std's settings declare nor a plugin locks; ")
+					.concat("add Input(\"${file.input}\", ...) to them")
+				if !known.contains(file.input) and !$found.contains(problem) {
+					$found = $found.append(problem)
+				}
+			}
+		}
+		$found
+	}
+
 	setting_name : MachineSetting -> Str
 	setting_name = |setting|
 		match setting {
@@ -331,6 +372,7 @@ Machine := [].{
 			Secrets(_) => "Secrets"
 			Services(_) => "Services"
 			Modules(_) => "Modules"
+			InputModules(_, _) => "InputModules"
 		}
 
 	option_name : SecretOption -> Str
@@ -364,6 +406,7 @@ Machine := [].{
 				secrets: [],
 				services: [],
 				modules: [],
+				input_modules: [],
 			},
 			|m, part|
 				match part {
@@ -403,6 +446,12 @@ Machine := [].{
 						services: services.map(|Caddy(caddy)| Caddy(Caddy.server(caddy))),
 					}
 					Modules(modules) => { ..m, modules }
+					InputModules(input, paths) => {
+						..m,
+						input_modules: m.input_modules.concat(
+							paths.map(|path| { input, path }),
+						),
+					}
 				},
 		)
 
@@ -683,7 +732,6 @@ Machine := [].{
 	}
 }
 
-import pf.Implementation
 import pf.Layout
 import pf.Plan
 import pf.Kaifile
@@ -1703,6 +1751,63 @@ expect {
 			problems_of(settings) == expected.map(|p| "machine web: ${p}"),
 	)
 		and twice.problems == ["machine web is declared more than once"]
+}
+
+# Machine web with a provider's profile from the locked input "profiles".
+profiled_web =
+	web.append(InputModules("profiles", ["digitalocean.nix", "do/net.nix"]))
+
+# Modules of a locked input follow the project's, as paths inside the
+# input's store path, which a pure evaluation reads; InputModules repeats.
+expect
+	renders(
+		profiled_web.append(InputModules("extra", ["x.nix"])),
+		[
+			"(/. + \"/project/nixos/web.nix\")",
+			"(inputs.\"profiles\" + \"/digitalocean.nix\")",
+			"(inputs.\"profiles\" + \"/do/net.nix\")",
+			"(inputs.\"extra\" + \"/x.nix\")",
+			"];",
+		],
+	)
+
+# A module of an input is a relative .nix path that stays inside it.
+expect {
+	paths = ["../web.nix", "/web.nix", "a//web.nix", "./web.nix", "web"]
+	problems_of(web.append(InputModules("profiles", paths)))
+		== paths.map(
+			|path|
+				"machine web: module ${path} is no .nix file inside input profiles",
+		)
+}
+
+# The input InputModules names is one std's settings declare or a plugin
+# asks std to lock; any other is refused as Kaifile.roc compiles.
+expect {
+	declared = project.append(Input("profiles", "github:org/kai-profiles"))
+	reference = "github:org/kai-profiles"
+	provider = Plugin.new({
+		name: "digitalocean",
+		version: "",
+		describe: "",
+		commands: [],
+		backends: [],
+		implementations: [],
+	})
+		.locking([Input("profiles", reference, [])])
+	validated = |settings, others| {
+		machine = Machine.plugin(settings, [Machine("web", profiled_web)])
+		plugins = [Std.plugin(settings), machine].concat(others)
+		Kaifile.validate(Kaifile.new(plugins)).map_ok(|_| {})
+	}
+	validated(declared, []) == Ok({})
+		and validated(project, [provider]) == Ok({})
+		and validated(project, [])
+			== Err(
+				"machine: machine web: InputModules names input profiles, "
+					.concat("which neither std's settings declare nor a plugin ")
+					.concat("locks; add Input(\"profiles\", ...) to them"),
+			)
 }
 
 # The flake.lock nix flake update writes for the project's nixpkgs, disko,

@@ -250,6 +250,41 @@ ConfigFixtures := [].{
 		.concat(ConfigFixtures.disk_fixtures)
 		.concat(ConfigFixtures.secret_fixtures)
 		.concat(ConfigFixtures.caddy_fixtures)
+		.concat(ConfigFixtures.input_module_fixtures)
+
+	# A machine with a module of the input "profiles": accepted when std's
+	# settings declare it, refused when they do not or its path leaves it.
+	input_module_fixtures : List(Fixture)
+	input_module_fixtures = {
+		profiles = "Input(\"profiles\", \"github:org/kai-profiles\"), "
+		machine =
+			\\Machine("web", [System("x86_64-linux"), StateVersion("25.05"),
+			\\  InputModules("profiles", ["digitalocean.nix"])])
+		[
+			{
+				name: "MachineInputModules",
+				expected: Valid,
+				body: ConfigFixtures.machine_kaifile_with(profiles, machine),
+			},
+			{
+				name: "MachineInputModulesUndeclared",
+				expected: Rejected(
+					"machine web: InputModules names input profiles, which neither ",
+				),
+				body: ConfigFixtures.machine_kaifile(machine),
+			},
+			{
+				name: "MachineInputModuleOutside",
+				expected: Rejected(
+					"machine web: module ../web.nix is no .nix file inside input profiles",
+				),
+				body: ConfigFixtures.machine_kaifile_with(
+					profiles,
+					machine.replace_each("digitalocean.nix", "../web.nix"),
+				),
+			},
+		]
+	}
 
 	# A machine with a Disk, whose disko input kai locks itself: accepted
 	# without the input, or beside the same one, and refused beside another.

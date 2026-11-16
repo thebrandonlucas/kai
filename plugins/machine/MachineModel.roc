@@ -6,8 +6,9 @@ import services.Caddy
 
 MachineModel :: [].{
 
-	## A machine's settings, folded. Modules is Nix's alone: the nix
-	## implementation checks it, and another backend would refuse it.
+	## A machine's settings, folded. Modules and InputModules are Nix's
+	## alone: the nix implementation checks them, and another backend would
+	## refuse them. `input_modules` are module files inside locked inputs.
 	## `instance` names the server it is installed on, by default its `name`:
 	## what kai records of that server is kept under it. `host_name` is
 	## HostName, "" for the instance's name. `host` is the SSH target it
@@ -34,6 +35,7 @@ MachineModel :: [].{
 		secrets : List(Secret),
 		services : List(Service),
 		modules : List(Str),
+		input_modules : List({ input : Str, path : Str }),
 	}
 
 	## A typed service, as its module in the services package folds it.
