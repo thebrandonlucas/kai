@@ -62,7 +62,7 @@ Every setting but `User` occurs at most once in a machine.
 | `Firewall([Tcp([...]), Udp([...])])` | Ports the firewall opens, beside OpenSSH's. NixOS's firewall is on either way. |
 | `TimeZone(zone)` | `time.timeZone`, such as `"Etc/UTC"`. Optional (default NixOS's, UTC). |
 | `Use(environment)` | Puts a std environment's tools on the system's `PATH` (`environment.systemPackages`). The environment's variables stay in its shells and tasks. It cannot be one only the direct backend serves. |
-| `Disk(SingleDisk(device))` | The disk `kai machine install` partitions and the system boots from, the whole of `device`, an absolute `/dev/...` path such as `"/dev/sda"` or `"/dev/disk/by-id/..."`; see [Installing on a server](#installing-on-a-server). kai pins disko, the Disk's module, itself, and the install records the server's hardware in `machines/NAME/facter.json`. Optional (default: the file systems, boot loader and hardware come from `Modules`). |
+| `Disk(SingleDisk(device))` | The disk `kai machine install` partitions and the system boots from, the whole of `device`, an absolute `/dev/...` path such as `"/dev/sda"` or `"/dev/disk/by-id/..."`; see [Installing on a server](#installing-on-a-server). kai pins disko, the Disk's module, and nixos-images, the installer it boots, itself, and the install records the server's hardware in `machines/NAME/facter.json`. Optional (default: the file systems, boot loader and hardware come from `Modules`). |
 | `Operators([...])` | The public keys of whoever may decrypt the machine's host key and secrets: age recipients (`age1...`) or `ssh-ed25519` and `ssh-rsa` public keys, at least one; see [Secrets](#secrets). Optional. |
 | `Secrets([Secret(name, [...])])` | Files the system decrypts into `/run/secrets/NAME` as it activates, with `Owner(user)` (default `root`), `Group(group)` (default `root`) and `Mode("0400")`, an octal mode (default `"0400"`); see [Secrets](#secrets). They need `Operators`; kai pins agenix, which decrypts them, itself. Optional. |
 | `Services([...])` | Typed services the machine runs, each at most once: for now `Caddy([...])`, which serves sites over HTTPS; see [Services](#services). Optional. |
@@ -104,9 +104,11 @@ The system comes from the project's `default` package source, so
 picks the NixOS release, and `kai update` moves it with the rest of the
 lock. Machines need no `Input` lines: the plugin asks std's `kai update` to
 lock the `default` source, and for a machine with a `Disk`
-`github:nix-community/disko`, or with `Secrets` `github:ryantm/agenix`, as
-the flake's `disko` and `agenix` inputs, each with its `nixpkgs` following
-`default` so the project locks one nixpkgs. A project that declares
+`github:nix-community/disko` and `github:nix-community/nixos-images`, or
+with `Secrets` `github:ryantm/agenix`, as the flake's `disko`,
+`nixos-images` and `agenix` inputs, each with its nixpkgs inputs
+(`nixpkgs`, or nixos-images' `nixos-unstable` and `nixos-stable`)
+following `default` so the project locks one nixpkgs. A project that declares
 `Input("disko", ...)` or `Input("agenix", ...)` itself keeps working when
 the reference is the same; another reference is refused as Kaifile.roc
 compiles, and removing the line from std's settings fixes it.
@@ -305,8 +307,9 @@ A machine to install needs:
   mounted at `/boot` and an ext4 root filling the rest, and boots it with
   GRUB on both BIOS and UEFI, which is nixos-anywhere's own example layout.
   `Modules` must then not define the root file system or the boot loader.
-  disko, which the layout's module comes from, is pinned by kai and locked
-  by `kai update`, its nixpkgs the project's.
+  disko, which the layout's module comes from, and nixos-images, which the
+  installer comes from, are pinned by kai and locked by `kai update`, their
+  nixpkgs the project's.
 - `Ssh` and a `User` with `SshKeys`, since those keys are how you reach the
   server once it runs the machine. Logging in as root afterwards needs
   `User("root", [SshKeys([...])])`; a user other than root needs
@@ -318,21 +321,36 @@ the machine will be reached afterwards. kai refuses an install without
 `--to`, of a machine without `Disk`, or without `Ssh`, before planning.
 
 The plan needs `nix` and `ssh` on `PATH`. It writes the flake and builds the
-system as `kai machine build` does, so a system that fails to build fails
-before anything is erased, then asks for confirmation naming the target and
-the disk it will erase, and runs nixos-anywhere from the project's locked
-nixpkgs, with no separate install:
+system as `kai machine build` does, then builds the installer
+nixos-anywhere boots, nixos-images' noninteractive kexec installer for the
+machine's `System`, from the project's locked nixpkgs, into
+`.kai/machines/NAME-installer`, so what fails to build fails before
+anything is erased. It then asks for confirmation naming the target
+and the disk it will erase, and runs nixos-anywhere from the project's
+locked nixpkgs, with no separate install:
 
 ```sh
 nix run --inputs-from path:.kai/generated/nix default#nixos-anywhere -- \
   --flake path:.kai/generated/nix#NAME --target-host TARGET \
   --option pure-eval false \
+  --kexec .kai/machines/NAME-installer/nixos-kexec-installer-noninteractive-SYSTEM.tar.gz \
   --generate-hardware-config nixos-facter PROJECT/machines/NAME/facter.json
 ```
 
 `--option pure-eval false`, which nixos-anywhere passes to each of its nix
 commands, lets them read the machine's module files and hardware facts by
-their absolute paths, as `--impure` does for `kai machine build`. The install asks before erasing anything, so it needs a terminal or
+their absolute paths, as `--impure` does for `kai machine build`.
+
+The installer comes from the same nixpkgs as the system, so disko's
+partitioning runs its tools, such as `udevadm`, in an installer of the
+same release. nixos-anywhere's own default installer is an older NixOS
+release, whose udev the newer `udevadm` of an unstable nixpkgs does not
+wait for: the partitions' links are missing when disko formats them. Like
+the system, the installer is built here for the machine's `System`, so a
+host of another architecture needs a remote builder or emulation for it,
+such as NixOS's `boot.binfmt.emulatedSystems`.
+
+The install asks before erasing anything, so it needs a terminal or
 `--yes`; `kai --dry-run machine install NAME --to TARGET` prints the whole
 plan and runs none of it.
 

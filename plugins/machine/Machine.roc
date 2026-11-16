@@ -695,8 +695,8 @@ flake_lock =
 	\\  "version": 7
 	\\}
 
-# The flake.lock nix flake update writes for the project's nixpkgs and
-# disko, whose own nixpkgs follows the project's.
+# The flake.lock nix flake update writes for the project's nixpkgs, disko
+# and nixos-images, whose own nixpkgs follow the project's.
 disko_lock =
 	\\{
 	\\  "nodes": {
@@ -728,7 +728,28 @@ disko_lock =
 	\\        "owner": "nix-community", "repo": "disko", "type": "github"
 	\\      }
 	\\    },
-	\\    "root": { "inputs": { "default": "default", "disko": "disko" } }
+	\\    "nixos-images": {
+	\\      "inputs": {
+	\\        "nixos-stable": ["default"], "nixos-unstable": ["default"]
+	\\      },
+	\\      "locked": {
+	\\        "lastModified": 1790100000,
+	\\        "narHash": "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=",
+	\\        "owner": "nix-community",
+	\\        "repo": "nixos-images",
+	\\        "rev": "fedcba9876543210fedcba9876543210fedcba98",
+	\\        "type": "github"
+	\\      },
+	\\      "original": {
+	\\        "owner": "nix-community", "repo": "nixos-images", "type": "github"
+	\\      }
+	\\    },
+	\\    "root": {
+	\\      "inputs": {
+	\\        "default": "default", "disko": "disko",
+	\\        "nixos-images": "nixos-images"
+	\\      }
+	\\    }
 	\\  },
 	\\  "root": "root",
 	\\  "version": 7
@@ -867,17 +888,21 @@ installed = |settings, to| {
 	planned_in(locked, settings, "install", to)
 }
 
-# An install expects nix and ssh, builds as `build` does, confirms naming
+# An install expects nix and ssh, builds as `build` does, then builds the
+# kexec installer of the locked nixpkgs into the workspace, confirms naming
 # the target and the disk it erases, says what it is doing, then runs
 # nixos-anywhere from the project's locked nixpkgs on the generated flake,
-# read impurely as a build reads it, with its progress shown, recording the
-# server's hardware facts in the project and saying so.
+# read impurely as a build reads it, booting that installer, with its
+# progress shown, recording the server's hardware facts in the project and
+# saying so.
 expect {
 	target = "root@203.0.113.7"
 	flake = "path:/generated/nix"
 	facts = "/project/machines/web/facter.json"
+	link = "/work/machines/web-installer"
+	tarball = "${link}/nixos-kexec-installer-noninteractive-x86_64-linux.tar.gz"
 	anywhere = ["--flake", "${flake}#web", "--target-host", target]
-		.concat(["--option", "pure-eval", "false"])
+		.concat(["--option", "pure-eval", "false", "--kexec", tarball])
 		.concat(["--generate-hardware-config", "nixos-facter", facts])
 	toplevel = "nixosConfigurations.web.config.system.build.toplevel"
 	match installed(installed_web, target) {
@@ -886,22 +911,29 @@ expect {
 				[ExpectPrograms(tools), CheckSource(_), .. as rest] =>
 					tools.programs == ["nix", "ssh"]
 						and match rest.drop_first(1) {
-							[Run(built), Confirm(prompt), Note(saying), Run(ran), Note(wrote)] =>
+							[Run(built), Run(installer), .. as after] =>
 								built.argv.last() == Ok("${flake}#${toplevel}")
-									and wrote
-										== "wrote ${facts}, the machine's hardware facts; commit it"
-									and prompt
-										== "Install machine web on ${target}, ERASING its disk "
-											.concat("/dev/sda and everything on it?")
-									and saying
-										== "installing machine web on ${target}: this erases "
-											.concat("/dev/sda and takes several minutes")
-									and ran.output == Inherit
-									and match ran.argv {
-										["sh", "-c", script, "sh", .. as given] =>
-											given == [flake].concat(anywhere)
-												and script.contains("default#nixos-anywhere")
-												and !script.contains(target)
+									and installer.argv.last()
+										== Ok("${flake}#kexecInstallers.x86_64-linux")
+									and installer.argv.contains(link)
+									and match after {
+										[Confirm(prompt), Note(saying), Run(ran), Note(wrote)] =>
+											wrote
+												== "wrote ${facts}, the machine's hardware facts; commit it"
+												and prompt
+													== "Install machine web on ${target}, ERASING its disk "
+														.concat("/dev/sda and everything on it?")
+												and saying
+													== "installing machine web on ${target}: this erases "
+														.concat("/dev/sda and takes several minutes")
+												and ran.output == Inherit
+												and match ran.argv {
+													["sh", "-c", script, "sh", .. as given] =>
+														given == [flake].concat(anywhere)
+															and script.contains("default#nixos-anywhere")
+															and !script.contains(target)
+													_ => Bool.False
+												}
 										_ => Bool.False
 									}
 							_ => Bool.False
@@ -910,6 +942,20 @@ expect {
 			}
 		_ => Bool.False
 	}
+}
+
+# A machine with a Disk adds nixos-images' noninteractive kexec installer
+# for each system to the flake, which install builds; without one, the
+# flake has none.
+expect {
+	mapped = "kexecInstallers = builtins.mapAttrs"
+	installer = [
+		mapped,
+		"(system: packages:",
+		"packages.kexec-installer-nixos-unstable-noninteractive)",
+		"inputs.\"nixos-images\".packages;",
+	]
+	renders(installed_web, installer) and !renders(web, [mapped])
 }
 
 # An install goes only where --to says, never to Host, and refuses a
@@ -1438,8 +1484,8 @@ expect {
 		and twice.problems == ["machine web is declared more than once"]
 }
 
-# The flake.lock nix flake update writes for the project's nixpkgs, disko
-# and agenix, whose own nixpkgs follow the project's.
+# The flake.lock nix flake update writes for the project's nixpkgs, disko,
+# nixos-images and agenix, whose own nixpkgs follow the project's.
 agenix_lock =
 	\\{
 	\\  "nodes": {
@@ -1483,9 +1529,26 @@ agenix_lock =
 	\\      },
 	\\      "original": { "owner": "ryantm", "repo": "agenix", "type": "github" }
 	\\    },
+	\\    "nixos-images": {
+	\\      "inputs": {
+	\\        "nixos-stable": ["default"], "nixos-unstable": ["default"]
+	\\      },
+	\\      "locked": {
+	\\        "lastModified": 1790100000,
+	\\        "narHash": "sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCA=",
+	\\        "owner": "nix-community",
+	\\        "repo": "nixos-images",
+	\\        "rev": "fedcba9876543210fedcba9876543210fedcba98",
+	\\        "type": "github"
+	\\      },
+	\\      "original": {
+	\\        "owner": "nix-community", "repo": "nixos-images", "type": "github"
+	\\      }
+	\\    },
 	\\    "root": {
 	\\      "inputs": {
-	\\        "default": "default", "disko": "disko", "agenix": "agenix"
+	\\        "default": "default", "disko": "disko", "agenix": "agenix",
+	\\        "nixos-images": "nixos-images"
 	\\      }
 	\\    }
 	\\  },
@@ -1493,8 +1556,8 @@ agenix_lock =
 	\\  "version": 7
 	\\}
 
-# The project with disko and agenix locked, as a machine with a Disk and
-# Secrets asks, on an x86_64-linux host.
+# The project with disko, nixos-images and agenix locked, as a machine with
+# a Disk and Secrets asks, on an x86_64-linux host.
 agenix_locked = {
 	settings: project,
 	nix_lock: agenix_lock,
@@ -1631,33 +1694,37 @@ expect {
 
 # With Operators, install runs nixos-anywhere inside one script under age and
 # ssh-keygen from the locked nixpkgs: it decrypts or makes the host key in its
-# own temporary directory and places it with --extra-files. The target and
-# every name and key are arguments.
+# own temporary directory and places it with --extra-files, and boots the
+# installer built just before. The target and every name and key are
+# arguments.
 expect {
 	target = "root@203.0.113.7"
 	flake = "path:/generated/nix"
 	facts = "/project/machines/web/facter.json"
+	tarball = "/work/machines/web-installer/"
+		.concat("nixos-kexec-installer-noninteractive-x86_64-linux.tar.gz")
 	match planned_in(agenix_locked, secret_web, "install", target) {
 		Ok({ steps, next: Done }) =>
-			match argvs(steps).last() {
-				Ok(argv) =>
-					match argv.split_at(with_age.len()) {
-						{ before, others: [script, "sh", .. as given] } =>
-							before == with_age
-								and given
-									== [flake, "", "/project/secrets", "web", "${operator}\n${key}"]
-										.concat(["--flake", "${flake}#web", "--target-host", target])
-										.concat(["--option", "pure-eval", "false"])
-										.concat(["--generate-hardware-config", "nixos-facter", facts])
-								and script.contains("--extra-files \"$files\"")
-								and script.contains("ssh-keygen -q -t ed25519 -N ''")
-								and script.contains("age -d -i \"$identity\" -o \"$key\"")
-								and script.contains("default#nixos-anywhere")
-								and !script.contains(target)
-								and !script.contains("exec ")
-						_ => Bool.False
-					}
-				Err(_) => Bool.False
+			match argvs(steps).take_last(2) {
+				[installer, argv] =>
+					installer.last() == Ok("${flake}#kexecInstallers.x86_64-linux")
+						and match argv.split_at(with_age.len()) {
+							{ before, others: [script, "sh", .. as given] } =>
+								before == with_age
+									and given
+										== [flake, "", "/project/secrets", "web", "${operator}\n${key}"]
+											.concat(["--flake", "${flake}#web", "--target-host", target])
+											.concat(["--option", "pure-eval", "false", "--kexec", tarball])
+											.concat(["--generate-hardware-config", "nixos-facter", facts])
+									and script.contains("--extra-files \"$files\"")
+									and script.contains("ssh-keygen -q -t ed25519 -N ''")
+									and script.contains("age -d -i \"$identity\" -o \"$key\"")
+									and script.contains("default#nixos-anywhere")
+									and !script.contains(target)
+									and !script.contains("exec ")
+							_ => Bool.False
+						}
+				_ => Bool.False
 			}
 		_ => Bool.False
 	}
@@ -1860,13 +1927,18 @@ expect {
 		and !locks_default([Std.plugin(bare), Machine.plugin(bare, [])])
 }
 
-# A machine with a Disk asks std to lock disko, and one with Secrets
-# agenix, each with its nixpkgs following the project's, as the flake
-# `kai update` resolves declares. A project that declares disko alike is
-# accepted; one declaring another disko is told to remove it.
+# A machine with a Disk asks std to lock disko and nixos-images, and one
+# with Secrets agenix, each with its nixpkgs following the project's, as the
+# flake `kai update` resolves declares. A project that declares disko alike
+# is accepted; one declaring another disko is told to remove it.
 expect {
 	following = [Follows("nixpkgs", "default")]
 	disko = Input("disko", "github:nix-community/disko", following)
+	images = Input(
+		"nixos-images",
+		"github:nix-community/nixos-images",
+		[Follows("nixos-unstable", "default"), Follows("nixos-stable", "default")],
+	)
 	agenix = Input("agenix", "github:ryantm/agenix", following)
 	secrets = [Operators([operator]), Secrets([Secret("db", [])])]
 	requested = |settings|
@@ -1878,16 +1950,18 @@ expect {
 	}
 	machine = Machine.plugin(project, [Machine("web", secret_web)])
 	flake = update_files(project, [Std.plugin(project), machine])
-	follows = |input|
+	follows = |input, nixpkgs|
 		flake.any(
 			|text|
-				text.contains("\"${input}\".inputs.\"nixpkgs\".follows = \"default\";"),
+				text.contains("\"${input}\".inputs.\"${nixpkgs}\".follows = \"default\";"),
 		)
 	requested(web) == [Source("default")]
-		and requested(installed_web) == [Source("default"), disko]
+		and requested(installed_web) == [Source("default"), disko, images]
 		and requested(web.concat(secrets)) == [Source("default"), agenix]
-		and follows("disko")
-		and follows("agenix")
+		and follows("disko", "nixpkgs")
+		and follows("agenix", "nixpkgs")
+		and follows("nixos-images", "nixos-unstable")
+		and follows("nixos-images", "nixos-stable")
 		and validated(project.append(Input("disko", "github:nix-community/disko")))
 			== Ok({})
 		and validated(project.append(Input("disko", "github:example/disko")))

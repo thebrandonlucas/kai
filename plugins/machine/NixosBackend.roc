@@ -21,6 +21,10 @@ NixosBackend :: [].{
 
 	Context : Implementation.Context
 
+	## What a build of the flake builds: its attribute, the name kai prints
+	## its store path by, its description, and its out-link ("" for none).
+	Built : { attribute : Str, name : Str, description : Str, out_link : Str }
+
 	implementation : Project, List(Machine) -> Implementation
 	implementation = |project, machines|
 		Implementation.{
@@ -59,17 +63,24 @@ NixosBackend :: [].{
 			.map(|path| "module ${path} is no .nix file inside the project")
 
 	## What std's update locks for `machines`: the "default" package source
-	## they are built from, and disko for a Disk and agenix for Secrets,
-	## each with its nixpkgs following that source. agenix's darwin and
-	## home-manager inputs follow its nixpkgs, and so that source too.
+	## they are built from, and disko and nixos-images for a Disk and agenix
+	## for Secrets, each with its nixpkgs following that source. agenix's
+	## darwin and home-manager inputs follow its nixpkgs, and so that source
+	## too. Both of nixos-images' nixpkgs follow it, so install boots an
+	## installer of the same nixpkgs as the disko it runs.
 	lock_requests : List(Machine) -> List(Implementation.LockRequest)
 	lock_requests = |machines| {
 		following = [Follows("nixpkgs", "default")]
 		disko = Input("disko", "github:nix-community/disko", following)
 		agenix = Input("agenix", "github:ryantm/agenix", following)
+		images = Input(
+			"nixos-images",
+			"github:nix-community/nixos-images",
+			[Follows("nixos-unstable", "default"), Follows("nixos-stable", "default")],
+		)
 		when = |present, requests| if (present) requests else []
 		when(!machines.is_empty(), [Source("default")])
-			.concat(when(machines.any(|m| m.disk != NoDisk), [disko]))
+			.concat(when(machines.any(|m| m.disk != NoDisk), [disko, images]))
 			.concat(when(machines.any(|m| !m.secrets.is_empty()), [agenix]))
 	}
 
@@ -274,15 +285,39 @@ NixosBackend :: [].{
 
 	## Installing erases the Disk of the server at `target`, any Linux that
 	## logs in over SSH as root or with sudo, and installs the machine with
-	## nixos-anywhere from the project's locked nixpkgs. The system is
-	## built here first, so what fails to build fails before anything is
-	## erased. nixos-anywhere then records the server's hardware with
-	## nixos-facter in the project, and builds the system again with it.
+	## nixos-anywhere from the project's locked nixpkgs. The system, and
+	## the kexec installer nixos-anywhere boots the server into, of the same
+	## nixpkgs as the disko it runs there, are built here first, so what
+	## fails to build fails before anything is erased. nixos-anywhere then
+	## records the server's hardware with nixos-facter in the project, and
+	## builds the system again with it.
 	install : Project, List(Machine), Machine, Context, Str -> Planned
 	install = |project, machines, m, ctx, target| {
 		description = "machine install ${m.name} on ${target}"
 		tools = ExpectPrograms({ description, programs: ["nix", "ssh"] })
 		built = NixosBackend.build(project, machines, m, ctx, "")?
+		installer_link = "${ctx.layout.workspace}/machines/${m.name}-installer"
+		installer = NixosBackend.flake_build(
+			project,
+			machines,
+			ctx,
+			{
+				attribute: "kexecInstallers.${m.system}",
+				name: "${m.name}-installer",
+				description: "machine install ${m.name}: installer",
+				out_link: installer_link,
+			},
+		)?
+		# The system's build has written the flake already.
+		installer_build = installer.steps.keep_if(
+			|step|
+				match step {
+					Run(_) => Bool.True
+					_ => Bool.False
+				},
+		)
+		tarball = "${installer_link}/nixos-kexec-installer-noninteractive-"
+			.concat("${m.system}.tar.gz")
 		device = match m.disk {
 			SingleDisk(path) => path
 			NoDisk => ""
@@ -296,7 +331,8 @@ NixosBackend :: [].{
 			NixosBackend.keyed_install(ctx, flake, m, target)
 		}
 		facts = NixosBackend.facts_file(m, ctx.layout.project_root)
-		recording = ["--generate-hardware-config", "nixos-facter", facts]
+		recording = ["--kexec", tarball]
+			.concat(["--generate-hardware-config", "nixos-facter", facts])
 		# nixos-anywhere's progress shows, as it runs for minutes and may stall.
 		run = NixosBackend.run(description, Inherit, anywhere.concat(recording))
 		installing = Note(
@@ -306,6 +342,7 @@ NixosBackend :: [].{
 		wrote = Note("wrote ${facts}, the machine's hardware facts; commit it")
 		steps = [tools]
 			.concat(built.steps)
+			.concat(installer_build)
 			.concat([Confirm(prompt), installing, run, wrote])
 		Ok(Plan.{ steps, next: Done })
 	}
@@ -607,6 +644,14 @@ NixosBackend :: [].{
 	flake_output = |project, machines, machine, ctx, out_link| {
 		attribute = "nixosConfigurations.${machine.name}"
 			.concat(".config.system.build.toplevel")
+		description = "machine build ${machine.name}"
+		wanted = { attribute, name: machine.name, description, out_link }
+		NixosBackend.flake_build(project, machines, ctx, wanted)
+	}
+
+	## std's flake with every machine, and the build `wanted` describes.
+	flake_build : Project, List(Machine), Context, Built -> Planned
+	flake_build = |project, machines, ctx, wanted|
 		Std.build_flake_output(
 			project,
 			ctx,
@@ -615,13 +660,12 @@ NixosBackend :: [].{
 				environments: machines
 					.keep_if(|m| !m.environment.is_empty())
 					.map(|m| m.environment),
-				attribute,
-				name: machine.name,
-				description: "machine build ${machine.name}",
-				out_link,
+				attribute: wanted.attribute,
+				name: wanted.name,
+				description: wanted.description,
+				out_link: wanted.out_link,
 			},
 		)
-	}
 
 	## Where install records machine `m`'s hardware facts, beneath
 	## `project_root`.
@@ -665,16 +709,27 @@ NixosBackend :: [].{
 		})
 
 	## The flake outputs defining every machine, with module paths beneath
-	## `project_root`; "" when there are none.
+	## `project_root`, and, when one has a Disk, the noninteractive kexec
+	## installer nixos-images builds for each system, which install boots;
+	## "" when there are none.
 	outputs : List(Machine), Str -> Str
 	outputs = |machines, project_root|
 		if machines.is_empty() {
 			""
 		} else {
 			defined = machines.map(|m| NixosBackend.machine(m, project_root))
+			# nixos-images names it unstable, but both its nixpkgs follow the
+			# project's.
+			installers =
+				\\      kexecInstallers = builtins.mapAttrs
+				\\        (system: packages:
+				\\          packages.kexec-installer-nixos-unstable-noninteractive)
+				\\        inputs."nixos-images".packages;
+				\\
 			"      nixosConfigurations = {\n"
 				.concat(Str.join_with(defined, ""))
 				.concat("      };\n")
+				.concat(if (machines.any(|m| m.disk != NoDisk)) installers else "")
 		}
 
 	machine : Machine, Str -> Str
