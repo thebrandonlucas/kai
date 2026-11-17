@@ -160,7 +160,17 @@ run! = |shown, mode| {
 		Help(text) if command_word(shown).is_err() =>
 			Stdout.line!("${Help.versioned(text, version)}\n\n${Help.notes}")
 		Help(text) => Stdout.line!(Help.versioned(text, version))
-		Usage(text) => Err(Usage(text))
+		# A command without the name it needs, such as `kai run`, shows its
+		# help and its names to a person at a terminal, as `kai` alone does.
+		Usage(text) =>
+			if needs_name(shown, text) and mode == Human and is_terminal!("1") {
+				match ask!({ ..asked, shown: shown.append("--help") }, Fresh)? {
+					Help(page) => Stdout.line!(Help.versioned(page, version))
+					_ => Err(Usage(text))
+				}
+			} else {
+				Err(Usage(text))
+			}
 		Refused(text) => Err(Refused(text))
 		Describe({ plugins, commands, backends }) => {
 			versioned = |p|
@@ -292,6 +302,16 @@ operand = |args|
 		["--backend", _, .. as rest] => operand(rest)
 		[arg, .. as rest] =>
 			if (arg.starts_with("-")) operand(rest) else command_word(rest) ?? ""
+	}
+
+# Whether a usage error is the platform's `kai run needs a task; ...` for a
+# command given without its name and with nothing after --.
+needs_name : List(Str), Str -> Bool
+needs_name = |args, message|
+	match command_word(args) {
+		Ok(command) =>
+			message.starts_with("kai ${command} needs a ") and !args.contains("--")
+		Err(NoCommand) => Bool.False
 	}
 
 # `kai init`: write a starting Kaifile.roc, never replacing an existing file.
@@ -629,6 +649,16 @@ expect [
 	(["--", "check"], Err(NoCommand)),
 ].all(|(args, expected)| command_word(args) == expected)
 	and operand(["--json", "workflow", "ci", "--dry-run"]) == "ci"
+
+# Only a command's missing name shows help at a terminal: not a mistyped
+# name or command, nor words after -- without a name.
+expect [
+	(["--dry-run", "run"], "kai run needs a task; available tasks: a", Bool.True),
+	(["machine"], "kai machine needs a action; available actions: x", Bool.True),
+	(["run", "--", "x"], "kai run needs a task; available tasks: a", Bool.False),
+	(["run", "b"], "no task named b; available tasks: a", Bool.False),
+	(["rn"], "no command named rn; available commands: run", Bool.False),
+].all(|(args, message, expected)| needs_name(args, message) == expected)
 
 # bundle-plugin takes a directory, --output-dir, --platform and --std among
 # kai's own options.

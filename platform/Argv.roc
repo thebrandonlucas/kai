@@ -58,7 +58,10 @@ Argv := [].{
 			Err(Help(message)) =>
 				if message == top(parser.config) {
 					config = parser.config
-					shown = top({ ..config, subcommands: Argv.summarized(config) })
+					shown = Argv.project_names(
+						commands,
+						top({ ..config, subcommands: Argv.summarized(config) }),
+					)
 					Err(Help(Argv.indented(root, commands, shown)))
 				} else {
 					shown = Argv.listed(parser.config, commands, style, message)
@@ -379,13 +382,47 @@ Argv := [].{
 					_ => Err({})
 				},
 		)
+		if (chosen) [Argv.table("Arguments:", rows)] else []
+	}
+
+	## A heading, then a row for each label with its text aligned after it.
+	table : Str, List((Str, Str)) -> Str
+	table = |heading, rows| {
 		width = rows.fold(
 			0,
 			|widest, (label, _)| widest.max(label.count_utf8_bytes()),
 		)
-		row = |(label, help)|
-			"  ${label}${Str.repeat(" ", width + 2 - label.count_utf8_bytes())}${help}"
-		if (chosen) ["Arguments:\n${Str.join_with(rows.map(row), "\n")}"] else []
+		row = |(label, text)|
+			"  ${label}${Str.repeat(" ", width + 2 - label.count_utf8_bytes())}${text}"
+				.trim_end()
+		Str.join_with([heading].concat(rows.map(row)), "\n")
+	}
+
+	## kai's own help lists, before its options, the names a project defines
+	## for each command, such as its tasks under `Tasks (kai run):`.
+	project_names : List(Command), Str -> Str
+	project_names = |commands, text| {
+		listed = commands.join_map(
+			|command|
+				command.args.join_map(
+					|arg|
+						match arg {
+							Name(n) if !n.choices.is_empty() => {
+								rows = n.choices.map(
+									|c| (c.value, Argv.summary(c.summary).replace_each("\n", " ")),
+								)
+								plural = Argv.capitalized("${n.name}s")
+								[Argv.table("${plural} (kai ${command.name}):", rows)]
+							}
+							_ => []
+						},
+				),
+		)
+		parts = text.split_on("\n\n")
+		Str.join_with(
+			parts.drop_last(1).concat(listed).concat(parts.take_last(1)),
+			"\n\n",
+		)
 	}
 
 	summary : Str -> Str
@@ -726,6 +763,38 @@ expect
 			Err(Help(text)) => text.contains("Tasks:") and !text.contains("Commands:")
 			_ => Bool.False
 		}
+
+# kai's own help lists each command's choices, under their plural and the
+# command, before its options.
+expect {
+	help = match parsed(["--help"]) {
+		Err(Help(text)) => text
+		_ => ""
+	}
+	help.contains("\n\nShells (kai shell):\n  default\n  ci\n\n")
+		and help.contains("\n\nTasks (kai run):\n  args\n\nOptions:\n")
+		and !help.contains("(kai build)")
+}
+
+# The rows of a listing align each summary after the longest name.
+expect {
+	moo = { value: "moo", summary: "Says moo\n\nDetails.", details: [] }
+	quiet = { value: "be-quiet", summary: "", details: [] }
+	workflow = Command.{
+		name: "workflow",
+		summary: "",
+		help: page,
+		args: [
+			Name(
+				{ name: "workflow", help: "", choices: [moo, quiet], default: Required },
+			),
+		],
+		lock: ReadsLock,
+	}
+	Argv.project_names([workflow], "Usage\n\nOptions:")
+		== "Usage\n\nWorkflows (kai workflow):\n  moo       Says moo\n"
+			.concat("  be-quiet\n\nOptions:")
+}
 
 # A missing name lists the choices, and an unknown command or name suggests
 # the closest without running it.

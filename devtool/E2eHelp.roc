@@ -1,7 +1,8 @@
 # Run what a built kai's help teaches: gather every command's examples and
 # Kaifile.roc settings from its plain help, compile the settings as one real
-# Kaifile.roc, then run each non-interactive example against real Nix. Then
-# kai init: it writes a Kaifile.roc whose shell works, and never replaces one.
+# Kaifile.roc, check that kai's help lists its tasks, then run each
+# non-interactive example against real Nix. Then kai init: it writes a
+# Kaifile.roc whose shell works, and never replaces one.
 import pf.Cmd
 import pf.Env
 import pf.OsStr
@@ -116,6 +117,11 @@ E2eHelp := [].{
 			)
 		}
 		write!($settings)?
+		# kai's own help then lists the project's names, such as its tasks.
+		listed = kai!(["--help"])?.stdout_utf8
+		if !listed.contains("\nTasks (kai run):\n") {
+			return Err(NoTasksInHelp(listed))
+		}
 		_ = kai!(["update"])?
 		for example in $examples {
 			args = example.split_on(" ").drop_first(1)

@@ -169,7 +169,10 @@ where the shell needs braces. A backslash starts a Roc escape (`\\`, `\"`,
 `\1`, are an "invalid escape sequence": write `\\(x\\)`, `\\1`, and `\\` for a
 trailing line continuation. Every command has
 help with examples, e.g. `kai run --help`; inside a project, help lists its
-shells, tasks, builds and workflows.
+shells, tasks, builds and workflows, and `kai --help` lists them all, each
+under its command, as in `Tasks (kai run):`. At a terminal, `kai run` without
+a task shows its help, listing the tasks; in a script, or with `--json`, it
+is a usage error.
 `kai build -L` (`--print-build-logs`) shows the build's log as it runs, and
 `kai build --out-link PATH` links PATH to the artifact and keeps it from
 garbage collection.
