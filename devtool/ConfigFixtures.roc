@@ -1328,6 +1328,25 @@ ConfigFixtures := [].{
 				\\  OnSystems(["aarch64-darwin"], [Env([("GPU", "off")])])])]
 		},
 		{
+			# Systems compare, so list functions pick some of them.
+			name: "CompareSystems",
+			expected: Valid,
+			body: \\import std.System
+				\\
+				\\systems : List(System)
+				\\systems = ["x86_64-linux", "aarch64-linux", "aarch64-darwin"]
+				\\
+				\\darwin : List(System)
+				\\darwin = ["aarch64-darwin"]
+				\\
+				\\config = [Name("compare-systems"), Systems(systems),
+				\\ Environment("dev", [
+				\\  OnSystems(systems.drop_if(|system| darwin.contains(system)),
+				\\   [Env([("KERNEL", "Linux")])]),
+				\\  OnSystems(systems.keep_if(|system| system == "aarch64-darwin"),
+				\\   [Env([("KERNEL", "Darwin")])])])]
+		},
+		{
 			name: "OnSystemsUndeclared",
 			expected: Rejected(
 				"OnSystems in environment dev names undeclared system aarch64-darwin",
@@ -1340,6 +1359,32 @@ ConfigFixtures := [].{
 			expected: Rejected("DuplicateTools: OnSystems in environment dev"),
 			body: \\config = [Name("bad"), Environment("dev",
 				\\ [OnSystems(["x86_64-linux"], [Tools(["a"]), Tools(["b"])])])]
+		},
+		{
+			name: "OnSystemsPackageEnv",
+			expected: Valid,
+			body: \\config = [Name("on-systems-package-env"),
+				\\ Systems(["x86_64-linux", "aarch64-darwin"]),
+				\\ Environment("dev", [Env([("LIBS", "")]),
+				\\  OnSystems(["x86_64-linux"], [Tools(["wayland"]),
+				\\   PackageEnv([("LIBS", LibraryPath(["wayland"]))])])])]
+		},
+		{
+			name: "PackageEnvOtherSystemTool",
+			expected: Rejected(
+				"PackageEnv's LIBS names wayland, which environment dev lacks "
+					.concat("on aarch64-darwin"),
+			),
+			body: \\config = [Name("bad"),
+				\\ Systems(["x86_64-linux", "aarch64-darwin"]),
+				\\ Environment("dev", [PackageEnv([("LIBS", LibraryPath(["wayland"]))]),
+				\\  OnSystems(["x86_64-linux"], [Tools(["wayland"])])])]
+		},
+		{
+			name: "DuplicateOnSystemsPackageEnv",
+			expected: Rejected("DuplicatePackageEnv: OnSystems in environment dev"),
+			body: \\config = [Name("bad"), Environment("dev",
+				\\ [OnSystems(["x86_64-linux"], [PackageEnv([]), PackageEnv([])])])]
 		},
 		{
 			name: "RawEnvironment",

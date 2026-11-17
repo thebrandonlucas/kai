@@ -161,6 +161,12 @@ jobs:
     needs: [aarch64, darwin]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    # id-token and attestations let the job sign and store the release
+    # assets' build provenance.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
     steps:
       - name: Check out repository
@@ -182,6 +188,16 @@ jobs:
           KAI_AARCH64_VERIFIED_COMMIT: ${{ needs.aarch64.outputs.verified-commit }}
           KAI_AARCH64_DARWIN_VERIFIED_COMMIT: ${{ needs.darwin.outputs.verified-commit }}
         run: kai shell default -- zig build publish-release
+
+      # publish-release succeeds only when the release serves exactly the
+      # files it built in dist/, whether it published them now or found them
+      # already published, so this attests only published assets. A rerun
+      # attests the same digests again, which is harmless and fills in a run
+      # that failed here.
+      - name: Attest the release assets
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
 
       - name: Check that the flake installs the published release
         run: nix build --no-link .#default

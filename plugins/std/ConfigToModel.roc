@@ -473,21 +473,34 @@ ConfigToModel :: [].{
 	on_systems_setting :
 		Str, List(System), List(Config.SystemSetting) -> Try(Model.OnSystems, Str)
 	on_systems_setting = |name, systems, settings| {
-		(tools, envs) = settings.fold(
-			([], []),
-			|(tools_so_far, envs_so_far), setting|
+		draft = settings.fold(
+			{ tools: [], envs: [], package_envs: [] },
+			|acc, setting|
 				match setting {
-					Tools(list) => (tools_so_far.append(list.map(|t| t.to_ir())), envs_so_far)
-					Env(pairs) => (tools_so_far, envs_so_far.append(variables(pairs)))
+					Tools(list) => { ..acc, tools: acc.tools.append(list.map(|t| t.to_ir())) }
+					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
+					PackageEnv(pairs) => {
+						..acc,
+						package_envs: acc.package_envs.append(
+							pairs.map(
+								|(variable, value)| { name: variable, value: package_value(value) },
+							),
+						),
+					}
 				},
 		)
-		if tools.len() > 1 {
-			return Err("DuplicateTools: OnSystems in environment ${name}")
+		declaration = "OnSystems in environment ${name}"
+		if draft.tools.len() > 1 {
+			return Err("DuplicateTools: ${declaration}")
+		}
+		if draft.package_envs.len() > 1 {
+			return Err("DuplicatePackageEnv: ${declaration}")
 		}
 		Ok({
 			systems: systems.map(|s| s.to_str()),
-			tools: tools.first() ?? [],
-			env: single_env(envs, "OnSystems in environment ${name}")?,
+			tools: draft.tools.first() ?? [],
+			env: single_env(draft.envs, declaration)?,
+			package_env: draft.package_envs.first() ?? [],
 		})
 	}
 
@@ -779,7 +792,12 @@ ConfigToModel :: [].{
 	uses_aliases = |acc| acc.environments.any(|e| !e.aliases.is_empty())
 
 	uses_package_env : Acc -> Bool
-	uses_package_env = |acc| acc.environments.any(|e| !e.package_env.is_empty())
+	uses_package_env = |acc|
+		acc.environments.any(
+			|e|
+				!e.package_env.is_empty()
+					or e.on_systems.any(|on| !on.package_env.is_empty()),
+		)
 
 	uses_rust_toolchain_with : Acc -> Bool
 	uses_rust_toolchain_with = |acc|

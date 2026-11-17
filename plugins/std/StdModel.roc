@@ -25,6 +25,13 @@ StdModel := [].{
 	lock_report : Str -> Try(Str, Str)
 	lock_report = LockReport.json
 
+	## The lines `kai update` notes for what it changed in a lock section,
+	## from each entry's name and pin before and after, as std's backends
+	## note theirs: `name old → new`, `name added at new`, `name removed`.
+	lock_changes :
+		List({ name : Str, pin : Str }), List({ name : Str, pin : Str }) -> List(Str)
+	lock_changes = LockReport.lines
+
 	## The settings' model, or why std refuses them.
 	from_settings : List(Config.Setting) -> Try(Model, Str)
 	from_settings = ConfigToModel.convert

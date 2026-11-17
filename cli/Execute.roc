@@ -215,15 +215,31 @@ Execute := [].{
 	run! = |plan, lock, layout, mode, options, workflow| {
 		Execute.validate(plan, layout, lock)?
 		if options.dry_run {
-			text = Sexpr.to_str(plan)
-			fields = [("plan", Output.text(text))]
-			return Output.result!(mode, text, Output.event("plan", "dry run", fields))
+			shown = Sexpr.to_str(Execute.sized(plan))
+			fields = [("plan", Output.text(Sexpr.to_str(plan)))]
+			return Output.result!(mode, shown, Output.event("plan", "dry run", fields))
 		}
 		Execute.confirmable(plan, options)?
 		if plan.steps.any(Execute.uses_workspace) {
 			Workspace.prepare!(layout)?
 		}
 		Execute.steps!(plan, layout, mode, workflow, options)
+	}
+
+	# The plan a person's --dry-run shows: each written file's size in place of
+	# its contents, such as a whole flake.lock, which would bury the steps.
+	# --json keeps the contents.
+	sized : Plan -> Plan
+	sized = |plan| {
+		size = |file| "<${file.contents.count_utf8_bytes().to_str()} bytes>"
+		steps = plan.steps.map(
+			|step|
+				match step {
+					Write(files) => Write(files.map(|file| { ..file, contents: size(file) }))
+					_ => step
+				},
+		)
+		Plan.{ steps, next: plan.next }
 	}
 
 	# A symbolic link in the workspace naming its holder's process ID is the
@@ -388,6 +404,8 @@ Execute := [].{
 					failed = match result {
 						Err(ChildExited(description, code)) =>
 							Ok("${description} failed with code ${code.to_str()}")
+						Err(ChildFailed(description, _, reason)) =>
+							Ok("${description} failed: ${reason}")
 						Err(MissingPrograms(description, missing)) =>
 							Ok(Execute.missing_programs(description, missing))
 						_ => Err({})
@@ -667,6 +685,7 @@ Execute := [].{
 					Present(text) => Present(text.to_utf8())
 					Absent => Absent
 				}
+				Workspace.prepare_lock!(layout)?
 				Update.publish!(layout.lock_path, prior, contents)?
 				if previous == Present(contents) {
 					return Ok({})
@@ -752,9 +771,10 @@ Execute := [].{
 		Ok({})
 	}
 
-	# What a Remembered run's record holds: its argv and its files.
+	# What a Remembered run's record holds: its argv and its files, and a
+	# newline at its end, as checks for text files expect.
 	remembrance : List(Str), List(Plan.File) -> Str
-	remembrance = |argv, files| Sexpr.to_str({ argv, files })
+	remembrance = |argv, files| "${Sexpr.to_str({ argv, files })}\n"
 
 	# A record's file name: the run's description, with every character
 	# other than a lowercase letter or digit replaced by '-'.
@@ -767,7 +787,8 @@ Execute := [].{
 
 	# Run a child process prepared by `process_command!`, which also sets its
 	# working directory to the project root, with inherited stdio; a captured
-	# stderr is shown only when the child fails.
+	# stderr is shown only when the child fails, and the reason it gives
+	# there ends kai's error in place of its exit code.
 	child! = |process_command, description, stderr| {
 		ran = process_command.inherit_stdio().stderr(stderr).run!()?
 		if ran.status != Exited(0) {
@@ -775,7 +796,11 @@ Execute := [].{
 		}
 		match ran.status {
 			Exited(0) => Ok({})
-			Exited(code) => Err(ChildExited(description, code))
+			Exited(code) =>
+				match Execute.reported_reason(ran.stderr_bytes) {
+					Ok(reason) => Err(ChildFailed(description, code, reason))
+					Err(_) => Err(ChildExited(description, code))
+				}
 			Signaled(signal) =>
 				Err(ChildExited(description, Execute.signal_status(signal)))
 		}
@@ -919,6 +944,21 @@ Execute := [].{
 		$found
 	}
 
+	# Nix ends an evaluation's trace with its innermost error, such as the
+	# message of a `throw` that names a missing tool, on an "error: " line;
+	# the last such line is the reason the child failed.
+	reported_reason : List(U8) -> Try(Str, [NotReported])
+	reported_reason = |stderr| {
+		var $found = Err(NotReported)
+		for line in Str.from_utf8_lossy(stderr).split_on("\n") {
+			reason = line.trim().drop_prefix("error: ").trim()
+			if line.trim().starts_with("error: ") and !reason.is_empty() {
+				$found = Ok(reason)
+			}
+		}
+		$found
+	}
+
 	leading_number : Str -> Try(I32, _)
 	leading_number = |text| {
 		var $digits = []
@@ -936,6 +976,24 @@ Execute := [].{
 	# such as a signal report, become a generic failure.
 	exit_code : I32 -> I32
 	exit_code = |code| if (code > 0 and code < 256) code else 1
+}
+
+# A failed child's reason is Nix's innermost error; without an "error: "
+# line it gave none.
+expect {
+	trace =
+		\\error:
+		\\       … while evaluating the attribute 'drvPath'
+		\\
+		\\       error: tool helloo not found in source default of environment dev
+	missing = "tool helloo not found in source default of environment dev"
+	[
+		(trace, Ok(missing)),
+		("error: no flake\nwarning: dirty\n", Ok("no flake")),
+		("error:\n", Err(NotReported)),
+		("fatal: no repository\n", Err(NotReported)),
+		("", Err(NotReported)),
+	].all(|(report, reason)| Execute.reported_reason(report.to_utf8()) == reason)
 }
 
 # A failing child's status is kept rather than collapsed to 1.
@@ -1088,6 +1146,13 @@ expect {
 		.all(|(report, exit)| Execute.builder_code(report.to_utf8(), 1) == exit)
 }
 
+# A person's dry run shows a written file's path and size, not its contents.
+expect {
+	written = |contents| Write([{ path: "/p/.kai/generated/flake.nix", contents }])
+	plan = |step| Plan.{ steps: [Note("n"), step], next: Done }
+	Execute.sized(plan(written("{ }\n"))) == plan(written("<4 bytes>"))
+}
+
 # A dotenv file gives exact values: comments and blank lines are skipped, one
 # pair of quotes is removed, and a malformed line is named by number only.
 expect [
@@ -1114,7 +1179,7 @@ remembering = |file|
 expect validated([remembering("/p/.kai/generated/flake.nix")]) == Ok({})
 
 # A remembered run is skipped only for the same argv and the same contents
-# of the same files.
+# of the same files. Its record ends with a newline.
 expect {
 	flake = { path: "/g/flake.nix", contents: "{ }" }
 	lock = { path: "/g/flake.lock", contents: "{}" }
@@ -1127,6 +1192,7 @@ expect {
 		Execute.remembrance(["nix eval"], [flake, lock]),
 	]
 	key == Execute.remembrance(["nix", "eval"], [flake, lock])
+		and key.ends_with("\n")
 		and changed.all(|other| other != key)
 }
 

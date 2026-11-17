@@ -401,7 +401,7 @@ requests = |args, flag|
 # status, 2 for a usage error, 6 when a step needs confirmation, else 1.
 exit_status = |err|
 	match err {
-		ChildExited(_, code) => Execute.exit_code(code)
+		ChildExited(_, code) | ChildFailed(_, code, _) => Execute.exit_code(code)
 		Refused(_) => 2
 		ConfirmationRequired(_) => 6
 		_ => 1
@@ -431,7 +431,7 @@ error_code = |err|
 		UpdateLocked(_) | AuthorityChanged => "update_conflict"
 		ConfirmationRequired(_) => "confirmation_required"
 		Declined(_) => "declined"
-		ChildExited(_, _) => "child_exited"
+		ChildExited(_, _) | ChildFailed(_, _, _) => "child_exited"
 		MissingPrograms(_, _) => "missing_programs"
 		MissingSecret(_, _) => "missing_secret"
 		InvalidDotenv(_) => "invalid_dotenv"
@@ -543,6 +543,7 @@ describe = |err|
 			Execute.missing_programs(description, missing)
 		ChildExited(description, code) =>
 			"${description} exited with code ${code.to_str()}"
+		ChildFailed(description, _, reason) => "${description} failed: ${reason}"
 		MissingSecret(description, name) =>
 			"${description} needs secret ${name}; set it in .env or kai's environment"
 		InvalidDotenv(line) => ".env line ${line.to_str()} is not NAME=value"
@@ -598,7 +599,7 @@ unbuilt = |output|
 
 needs_compiler =
 	"kai evaluates Kaifile.roc with Roc ${Load.pinned_compiler}; put it on "
-		.concat("PATH or set ROC to its path; otherwise kai gets it with Nix, ")
+		.concat("PATH or set KAI_ROC to its path; otherwise kai gets it with Nix, ")
 		.concat("or downloads it without Nix")
 
 # --file is found where the parser reads it, and never after --.
@@ -658,6 +659,7 @@ expect [
 # A failing child's status becomes kai's, a refusal is a usage error, a
 # needed confirmation is 6, and every other failure is 1.
 expect exit_status(ChildExited("task fail", 7)) == 7
+	and exit_status(ChildFailed("evaluating", 3, "no flake")) == 3
 	and exit_status(Refused("--backend must be one of nix, guix")) == 2
 	and exit_status(ConfirmationRequired("deploy?")) == 6
 	and exit_status(PlanFailed(Plan.fail("no lock file"))) == 1

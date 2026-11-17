@@ -100,7 +100,7 @@ Config :: [].{
 	## that runs the tool's `bin/<binary>`, without the tool's other
 	## binaries; it needs Nix.
 	## RustToolchain takes a rust-toolchain.toml's text and adds the toolchain
-	## its [toolchain] table pins, overriding the parent's; it needs Nix and an
+	## its `[toolchain]` table pins, overriding the parent's; it needs Nix and an
 	## Overlay providing rust-bin, such as rust-overlay. RustToolchainWith
 	## takes the same text and adds, to what the file pins, the components
 	## and targets its settings name.
@@ -109,7 +109,9 @@ Config :: [].{
 	## task's or build's Env overrides them. It needs Nix.
 	## OnSystems(systems, settings) adds tools and variables on the named
 	## declared systems only: its Tools after the environment's own, its Env
-	## overriding the environment's. Nix evaluates only the host's.
+	## and PackageEnv overriding the environment's variables by name. Nix
+	## evaluates only the host's. A PackageEnv may name a tool the environment
+	## has only through OnSystems Tools only on the systems that add it.
 	## RocPackages lists released Roc package bundle URLs, each `https://` and
 	## ending in `<hash>.tar.zst`, that are placed in Roc's package cache before
 	## a shell or task starts, so Roc resolves them without downloading. The
@@ -135,7 +137,11 @@ Config :: [].{
 	RustToolchainSetting : [Components(List(Str)), Targets(List(Str))]
 
 	## What OnSystems adds; each occurs at most once.
-	SystemSetting : [Tools(List(Tool)), Env(List((Str, Str)))]
+	SystemSetting : [
+		Tools(List(Tool)),
+		Env(List((Str, Str))),
+		PackageEnv(List((Str, PackageValue))),
+	]
 
 	## Tools' `lib` or `bin` directories joined with `:`, or one tool's path.
 	PackageValue : [
@@ -169,6 +175,11 @@ Config :: [].{
 	## Builds require Use, Run and one relative Output. Optional Inputs select
 	## non-flake Sources, Fetches or CargoVendors; Needs selects build
 	## artifacts, not tasks.
+	## Output's file or directory is the artifact itself, not a tree holding
+	## it: `Output("bin")` gives `result/voltage`, not `result/bin/voltage`,
+	## at `kai build --out-link result` and in `$KAI_ARTIFACTS/<name>`. To
+	## keep a layout, gather it in one directory, such as `out/bin`, and
+	## output that: `Output("out")`. `.` is refused.
 	## Sources and artifacts remain separate read-only inputs, never merged.
 	## Files limits the project copy to the given project-relative paths.
 	## Revision sets KAI_REVISION, the project's `git describe --tags --always

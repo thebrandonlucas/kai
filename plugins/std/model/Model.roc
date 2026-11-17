@@ -53,6 +53,16 @@ Model := {
 					systems : List(Str),
 					tools : List({ source : Str, name : Str }),
 					env : List({ name : Str, value : Str }),
+					package_env : List(
+						{
+							name : Str,
+							value : [
+								LibraryPath(List({ source : Str, name : Str })),
+								BinPath(List({ source : Str, name : Str })),
+								PackagePath({ source : Str, name : Str }),
+							],
+						},
+					),
 				},
 			),
 		},
@@ -150,8 +160,14 @@ Model := {
 	}
 
 	## Tools and variables an environment adds on `systems` only: the tools
-	## after its own, the variables overriding its own.
-	OnSystems : { systems : List(Str), tools : List(Tool), env : List(Variable) }
+	## after its own, the variables, `env` and `package_env`, overriding its
+	## own by name.
+	OnSystems : {
+		systems : List(Str),
+		tools : List(Tool),
+		env : List(Variable),
+		package_env : List(PackageVariable),
+	}
 
 	## The text of a rust-toolchain.toml, whose [toolchain] table the backend
 	## reads, and the components and targets added to those it pins.

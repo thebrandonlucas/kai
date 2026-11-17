@@ -15,6 +15,20 @@ Workspace := [].{
 	marker = ".kai-workspace"
 	marker_contents = "Kai project workspace\n"
 
+	# Git leaves what Kai generates untracked, apart from the lock.
+	ignore = ".gitignore"
+	ignore_contents =
+		\\# Kai's workspace: commit lock.json; the rest is generated.
+		\\*
+		\\!/lock.json
+		\\
+
+	# A KAI_DIR holds only generated files: the lock stays in .kai.
+	generated_ignore_contents =
+		\\# Kai's generated files; the lock is .kai/lock.json.
+		\\*
+		\\
+
 	# Names that would alias version control or configuration, lowercased.
 	reserved = [
 		".bzr",
@@ -58,7 +72,8 @@ Workspace := [].{
 		}
 	}
 
-	# The whole authority and generated state move together with KAI_DIR.
+	# KAI_DIR moves generated files and caches; the lock, which a project
+	# commits, stays in .kai whatever KAI_DIR is.
 	locate : Str, Str -> Layout
 	locate = |root, dir| {
 		workspace = Workspace.normalize("${root}/${dir}")
@@ -66,7 +81,9 @@ Workspace := [].{
 			project_root: root,
 			workspace,
 			generated_root: "${workspace}/generated",
-			lock_path: "${workspace}/lock.json",
+			lock_path: Workspace.normalize(
+				"${root}/${Workspace.default_dir}/lock.json",
+			),
 		}
 	}
 
@@ -80,6 +97,18 @@ Workspace := [].{
 		Workspace.validate_dir(dir).map_err(|message| InvalidWorkspace(message))?
 		chosen = Workspace.locate(root, dir)
 		Layout.validate(chosen).map_err(|message| InvalidWorkspace(message))?
+		# Kai once kept the lock in KAI_DIR; say where it goes now rather than
+		# plan as if the project had none.
+		earlier = "${chosen.workspace}/lock.json"
+		if
+			dir != Workspace.default_dir
+				and (Workspace.path(earlier).is_file!() ?? Bool.False)
+				and !(Workspace.path(chosen.lock_path).exists!() ?? Bool.False)
+				{
+					moved = "kai reads the lock from ${chosen.lock_path} "
+						.concat("whatever KAI_DIR is; move ${earlier} there")
+					return Err(InvalidWorkspace(moved))
+				}
 		Ok(chosen)
 	}
 
@@ -104,37 +133,70 @@ Workspace := [].{
 		if (result.is_empty()) "/" else result
 	}
 
-	# A default workspace is Kai's by name; a custom one must carry Kai's
-	# marker so KAI_DIR cannot adopt an unrelated existing directory.
+	# The default workspace is Kai's by name. Kai overwrites and deletes files
+	# in a custom one, so KAI_DIR adopts only a new or empty directory, which
+	# it marks, or one with Kai's marker, never an unrelated directory.
 	prepare! : Layout => Try({}, _)
 	prepare! = |layout| {
 		root = layout.workspace
+		if root == Workspace.parent(layout.lock_path) {
+			return Workspace.prepare_lock!(layout)
+		}
 		Workspace.safe_path!(root)?
 		marker_path = "${root}/${Workspace.marker}"
-		default = root == "${layout.project_root}/${Workspace.default_dir}"
 		match Workspace.path(root).type!() {
-			Ok(IsDir) if default => Ok({})
 			Ok(IsDir) => {
 				Workspace.safe_path!(marker_path)?
 				owned = Workspace.path(marker_path).is_file!()?
 					and Workspace.path(marker_path).read_utf8!()?
 						== Workspace.marker_contents
-				if owned {
-					Ok({})
-				} else {
-					Err(UnsafeWorkspace("${root} is not a Kai workspace"))
+				if !owned {
+					if !Workspace.path(root).list!()?.is_empty() {
+						return Err(UnsafeWorkspace(Workspace.refusal(root)))
+					}
+					Workspace.path(marker_path).write_utf8!(Workspace.marker_contents)?
 				}
 			}
-			Ok(_) => Err(UnsafeWorkspace("${root} must be a directory"))
+			Ok(_) => return Err(UnsafeWorkspace("${root} must be a directory"))
 			Err(PathErr(NotFound, _)) => {
 				Workspace.path(root).create_dir!()?
-				if default {
-					Ok({})
-				} else {
-					Workspace.path(marker_path).write_utf8!(Workspace.marker_contents)
-				}
+				Workspace.path(marker_path).write_utf8!(Workspace.marker_contents)?
 			}
-			Err(err) => Err(err)
+			Err(err) => return Err(err)
+		}
+		Workspace.ignore!(root, Workspace.generated_ignore_contents)
+	}
+
+	# Why KAI_DIR may not name a directory Kai did not make, and what to do.
+	refusal : Str -> Str
+	refusal = |root|
+		"${root} is not a Kai workspace: kai writes and deletes files in KAI_DIR, "
+			.concat("so it uses only a new or empty directory, or one it made, ")
+			.concat("which holds ${Workspace.marker}; set KAI_DIR to such a name")
+
+	# The lock's directory, .kai, is Kai's by name; Kai makes it to publish
+	# the lock when KAI_DIR moved everything else.
+	prepare_lock! : Layout => Try({}, _)
+	prepare_lock! = |layout| {
+		root = Workspace.parent(layout.lock_path)
+		Workspace.safe_path!(root)?
+		match Workspace.path(root).type!() {
+			Ok(IsDir) => {}
+			Ok(_) => return Err(UnsafeWorkspace("${root} must be a directory"))
+			Err(PathErr(NotFound, _)) => Workspace.path(root).create_dir!()?
+			Err(err) => return Err(err)
+		}
+		Workspace.ignore!(root, Workspace.ignore_contents)
+	}
+
+	# A workspace without a .gitignore, such as a fresh clone's, gets Kai's;
+	# one already there, such as the user's own, is left alone.
+	ignore! : Str, Str => Try({}, _)
+	ignore! = |root, contents| {
+		ignore_path = "${root}/${Workspace.ignore}"
+		match Workspace.path(ignore_path).type!() {
+			Err(PathErr(NotFound, _)) => Workspace.atomic_write!(ignore_path, contents)
+			_ => Ok({})
 		}
 	}
 
@@ -251,7 +313,8 @@ expect [
 	("kaifile.lock", Bool.False),
 ].all(|(dir, ok)| Workspace.validate_dir(dir).is_ok() == ok)
 
-# The whole authority and generated state live under the chosen KAI_DIR.
+# Generated state lives under the chosen KAI_DIR, and the lock, which a
+# project commits, in .kai whatever KAI_DIR is.
 expect [(".kai", "/project/.kai"), ("state", "/project/state")].all(
 	|(dir, workspace)| {
 		layout = Workspace.locate("/project", dir)
@@ -265,7 +328,7 @@ expect [(".kai", "/project/.kai"), ("state", "/project/state")].all(
 				"/project",
 				workspace,
 				"${workspace}/generated",
-				"${workspace}/lock.json",
+				"/project/.kai/lock.json",
 			]
 	},
 )
@@ -293,4 +356,34 @@ expect {
 		|(target, ok)|
 			Workspace.stageable({ path: target, contents: "" }, layout) == ok,
 	)
+}
+
+# Kai's .gitignore ignores the whole workspace but its lock, and ends with a
+# newline as checks for text files expect.
+expect {
+	layout = Workspace.locate("/project", ".kai")
+	lines = Workspace.ignore_contents.split_on("\n")
+	lines.contains("*")
+		and lines.contains("!${layout.lock_path.drop_prefix(layout.workspace)}")
+		and Workspace.ignore_contents.ends_with("\n")
+}
+
+# A custom KAI_DIR's .gitignore ignores everything in it, for the lock is not
+# there.
+expect {
+	lines = Workspace.generated_ignore_contents.split_on("\n")
+	lines.contains("*")
+		and !lines.any(|line| line.starts_with("!"))
+		and Workspace.generated_ignore_contents.ends_with("\n")
+}
+
+# Refusing a directory says why and how to choose another.
+expect {
+	message = Workspace.refusal("/project/.zig-cache")
+	[
+		"/project/.zig-cache",
+		"writes and deletes",
+		"new or empty",
+		Workspace.marker,
+	].all(|part| message.contains(part))
 }

@@ -264,10 +264,15 @@ environment_tools :
 	Model.Environment -> List({ tool : Model.Tool, systems : List(Str) })
 environment_tools = |environment| {
 	everywhere = StdModel.environment_tools({ ..environment, on_systems: [] })
+	# One OnSystems' tools, its PackageEnv's included.
+	only = |on|
+		StdModel.environment_tools(
+			{ ..environment, tools: [], aliases: [], package_env: [], on_systems: [on] },
+		)
 	everywhere.map(|tool| { tool, systems: [] })
 		.concat(
 			environment.on_systems.join_map(
-				|on| on.tools.map(|tool| { tool, systems: on.systems }),
+				|on| only(on).map(|tool| { tool, systems: on.systems }),
 			),
 		)
 }

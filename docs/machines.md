@@ -133,7 +133,8 @@ nix build --no-link --print-out-paths --impure \
 printing the system's store path. `--impure` lets the flake read the module
 files by their absolute paths; remote builders stay allowed, so a host with a
 builder for the machine's system can build it. `kai --dry-run machine build
-NAME` prints the plan, the generated flake included, instead.
+NAME` prints the plan, the generated flake by its path and size (`--json`
+adds its contents), instead.
 
 A system needs a root file system, a boot loader and the kernel modules its
 hardware needs. On a machine with `Disk`, they come from the layout and the

@@ -2,8 +2,9 @@
 # publish the caller's namespace witness beside it, replacing the previous
 # snapshot only once the new one is completely staged. What the project's
 # .gitignore files ignore is left out, and so is what the build's files leave
-# out. Symbolic links into the store, such as out-links, are left out; links
-# that resolve inside the project are copied as links; other links and special
+# out, and so is every Kai workspace, such as a nested project's .kai.
+# Symbolic links into the store, such as out-links, are left out; links that
+# resolve inside the project are copied as links; other links and special
 # files are refused, never followed. Callers hold the workspace's build lock
 # and must not mutate the project concurrently.
 import pf.Cmd
@@ -278,6 +279,7 @@ Snapshot := [].{
 					and !Snapshot.excluded(exclusions, full, name)
 				if kept {
 					match entry.type!()? {
+						IsDir if Snapshot.workspace!(source, name) => {}
 						IsDir => {
 							Path.unix_bytes(Snapshot.join(target_root, relative))
 								.create_dir!()?
@@ -293,7 +295,11 @@ Snapshot := [].{
 							resolved = entry.canonicalize!().map_ok(Snapshot.bytes) ?? []
 							if !Snapshot.within(store.to_utf8(), target) {
 								if !Snapshot.link_kept(project, [], resolved) {
-									return Err(Snapshot.refused(Symlink, entry))
+									return Err(
+										SnapshotFailed(
+											Snapshot.link_refusal(root, full, target, resolved),
+										),
+									)
 								}
 								$names = $names.append(name)
 							}
@@ -310,12 +316,52 @@ Snapshot := [].{
 		Snapshot.check_files!(source_root, target_root, $files)
 	}
 
+	# What leaves a refused entry out of the build's copy.
+	remedy : Str
+	remedy = "ignore it in .gitignore or leave it out of the build's Files"
+
+	# Which link is refused, where it points and why.
+	link_refusal : Str, List(U8), List(U8), List(U8) -> Str
+	link_refusal = |root, link, target, resolved| {
+		(path, points) = (Str.from_utf8_lossy(link), Str.from_utf8_lossy(target))
+		reason = if resolved.is_empty() {
+			"which does not exist"
+		} else {
+			"which is outside ${root}"
+		}
+		"snapshot refuses symlink ${path} -> ${points}, ${reason}; "
+			.concat("point it inside ${root}, or ${Snapshot.remedy}")
+	}
+
 	refused = |kind, path|
 		match kind {
-			Symlink => SnapshotFailed("snapshot refuses symlink: ${path.display()}")
+			Symlink =>
+				SnapshotFailed(
+					"snapshot refuses ${path.display()}, which became a link while copied",
+				)
 			Special =>
-				SnapshotFailed("snapshot refuses special file: ${path.display()}")
+				SnapshotFailed(
+					"snapshot refuses special file ${path.display()}; ${Snapshot.remedy}",
+				)
 		}
+
+	# A Kai workspace: a directory with Kai's marker, which a custom KAI_DIR
+	# has, or a default workspace, a .kai beside a Kaifile.roc.
+	workspace! : List(U8), List(U8) => Bool
+	workspace! = |parent, name| {
+		directory = Snapshot.join(parent, name)
+		marker = Path.unix_bytes(
+			Snapshot.join(directory, Workspace.marker.to_utf8()),
+		)
+		kaifile = Path.unix_bytes(Snapshot.join(parent, "Kaifile.roc".to_utf8()))
+		marked = match marker.type!() {
+			Ok(IsFile) =>
+				(marker.read_utf8!() ?? "") == Workspace.marker_contents
+			_ => Bool.False
+		}
+		marked
+			or (name == Workspace.default_dir.to_utf8() and kaifile.type!().is_ok())
+	}
 
 	# basic-cli cannot open without following links or set file modes, so
 	# cp -P copies without following links (a file swapped for a link or
@@ -460,4 +506,23 @@ expect {
 		("/etc/passwd", Bool.False),
 		("", Bool.False),
 	].all(|(resolved, expected)| kept(resolved) == expected)
+}
+
+# A refused link names where it points, why it is refused and how to leave it
+# out.
+expect {
+	refusal = |target, resolved|
+		Snapshot.link_refusal(
+			"/p",
+			"/p/stray".to_utf8(),
+			target.to_utf8(),
+			resolved.to_utf8(),
+		)
+	message = |pointed|
+		"snapshot refuses symlink /p/stray -> ${pointed}; point it inside /p, "
+			.concat("or ignore it in .gitignore or leave it out of the build's Files")
+	[
+		(refusal("/etc/passwd", "/etc/passwd"), "/etc/passwd, which is outside /p"),
+		(refusal("gone", ""), "gone, which does not exist"),
+	].all(|(refused, pointed)| refused == message(pointed))
 }
