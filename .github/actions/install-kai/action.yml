@@ -6,15 +6,13 @@ description: >-
 runs:
   using: composite
   steps:
-    # KAI_AARCH64_DARWIN_SHA256 stays empty until KAI_VERSION names a release
-    # that publishes an aarch64-darwin archive, from 0.0.12 on.
     - name: Install Kai
       shell: bash
       env:
-        KAI_VERSION: 0.0.11
-        KAI_X86_64_LINUX_SHA256: ffd3d8e5326ab54fa8d2bcedc2bfc97f8734f539004e089e9d617f61a9a0b3f6
-        KAI_AARCH64_LINUX_SHA256: 1d69937fa6e0a969be25130776f11ff08e6d323d90c1a70e82715f4a7ffe9bdd
-        KAI_AARCH64_DARWIN_SHA256: ""
+        KAI_VERSION: 0.0.12
+        KAI_X86_64_LINUX_SHA256: 20b33c98376f4e0d93196b8a01fc4610ded167646c9aa7b9211135c133453245
+        KAI_AARCH64_LINUX_SHA256: 64d6601770c27b043404cf6131f4912c2f4f52291e4e13427968b464b10d2cfd
+        KAI_AARCH64_DARWIN_SHA256: bfa613810fbd44c513999c9454f7b0adeabeee09a00e20b0fe321875b304a191
       run: |
         set -euo pipefail
         dir="$RUNNER_TEMP/kai"
