@@ -529,10 +529,14 @@ is a `note` event. `kai shell`, `run`, `build` and `workflow` only read it, and
 ask you to run `kai update` when it is missing, when a source, input or an
 environment's overlay order changed, or when a locked local source has
 changed. An environment or tool using only locked sources needs no update.
-Commit the lock; the rest of `.kai` is generated. Kai writes `.kai/.gitignore`,
-which ignores everything there but `lock.json`, so git lists only the lock
-and your own `.gitignore` needs no `.kai` lines. Kai leaves a `.gitignore`
-already in `.kai` as it is, so to ignore other files there, write your own.
+The lock is JSON with one line for each entry, such as a downloaded file, a
+Nix input or a Guix channel, so `git diff` shows an update entry by entry.
+Kai reads a lock in any JSON layout, and the next `kai update` rewrites an
+older one-line lock in this form. Commit the lock; the rest of `.kai` is
+generated. Kai writes `.kai/.gitignore`, which ignores everything there but
+`lock.json`, so git lists only the lock and your own `.gitignore` needs no
+`.kai` lines. Kai leaves a `.gitignore` already in `.kai` as it is, so to
+ignore other files there, write your own.
 
 `KAI_DIR=<name>` moves Kai's generated files and caches, everything in
 `.kai` but the lock, to another top-level directory in the project, such as

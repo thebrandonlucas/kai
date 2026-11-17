@@ -54,12 +54,36 @@ LockFile := [].{
 			}
 		}
 		sections = $sections
-		Ok(
-			LockJson.encode(
-				Object([{ name: "version", value: Number("2") }].concat(sections)),
-			)
-				.concat("\n"),
-		)
+		version = { name: "version", value: Number("2") }
+		Ok(LockFile.layout(Object([version].concat(sections)), 0).concat("\n"))
+	}
+
+	## The lock's text, laid out so that `git diff` shows one changed entry,
+	## such as a downloaded file, a Nix input or a Guix channel, as one
+	## changed line. Objects open one member per line for the first four
+	## levels, down to each section's entries, and arrays one item per line;
+	## everything deeper, and each array's item, is compact JSON.
+	layout : LockJson, U64 -> Str
+	layout = |value, depth| {
+		indent = "  ".repeat(depth + 1)
+		close = "  ".repeat(depth)
+		lines = |opening, members, closing|
+			"${opening}\n${Str.join_with(members, ",\n")}\n${close}${closing}"
+		match value {
+			Object(fields) if depth < 4 and !fields.is_empty() =>
+				lines(
+					"{",
+					fields.map(
+						|f|
+							"${indent}${LockJson.quote(f.name)}: "
+								.concat(LockFile.layout(f.value, depth + 1)),
+					),
+					"}",
+				)
+			Array(items) if depth < 4 and !items.is_empty() =>
+				lines("[", items.map(|item| "${indent}${LockJson.encode(item)}"), "]")
+			_ => LockJson.encode(value)
+		}
 	}
 }
 
@@ -86,4 +110,55 @@ expect {
 		and kept == Ok(nix)
 		and spliced.map_ok(|text| LockFile.section(text, "guix"))
 			== Ok(Ok(Present(section)))
+}
+
+# Each section's entries are one line each, so changing one download changes
+# one line; the old one-line lock reads the same and is rewritten unchanged
+# in value.
+expect {
+	file = |key, size|
+		Object([
+			{ name: "key", value: String(key) },
+			{ name: "size", value: Number(size) },
+		])
+	direct = |size|
+		Object([{ name: "files", value: Array([file("a", "1"), file("b", size)]) }])
+	input = Object([{ name: "flake", value: Boolean(True) }])
+	default = Object([{ name: "default", value: input }])
+	inputs = Object([{ name: "inputs", value: default }])
+	nix = Object([{ name: "identity", value: inputs }])
+	one_line = "{\"version\":2,\"direct\":${LockJson.encode(direct("2"))},"
+		.concat("\"nix\":${LockJson.encode(nix)}}\n")
+	match LockFile.splice(Present(one_line), "direct", direct("2")) {
+		Ok(written) => {
+			moved = LockFile.splice(Present(written), "direct", direct("3")) ?? ""
+			before = written.split_on("\n")
+			changed = moved.split_on("\n").keep_if(|line| !before.contains(line))
+			written
+				== (
+					\\{
+					\\  "version": 2,
+					\\  "direct": {
+					\\    "files": [
+					\\      {"key":"a","size":1},
+					\\      {"key":"b","size":2}
+					\\    ]
+					\\  },
+					\\  "nix": {
+					\\    "identity": {
+					\\      "inputs": {
+					\\        "default": {"flake":true}
+					\\      }
+					\\    }
+					\\  }
+					\\}
+					\\
+				)
+				and LockJson.decode(written) == LockJson.decode(one_line)
+				and LockFile.splice(Present(written), "direct", direct("2"))
+					== Ok(written)
+				and changed == ["      {\"key\":\"b\",\"size\":3}"]
+		}
+		Err(_) => False
+	}
 }

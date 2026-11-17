@@ -9,6 +9,10 @@ even when `Kaifile.roc` has changed since `kai update`; `kai shell`, `run`,
 with `missing_lock`, and with a malformed one with `invalid_lock`. With
 `--json`, the document is the `message` of a `result` event.
 
+The lock itself is JSON with one line for each pinned entry, so that
+`git diff` shows what an update changed; its sections and fields are Kai's
+to change, so tools read `kai lock` instead.
+
 `schema_version` is 1. A new field keeps the version; a field that changes
 meaning or goes away bumps it.
 
