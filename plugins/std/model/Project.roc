@@ -676,6 +676,10 @@ Project :: [].{
 			check_aliases(resolved.aliases, env.name)?
 			for t in environment_tools(resolved) {
 				parsed = tool("${t.source}#${t.name}")?
+				if model.fetches.any(|f| f.name == parsed.source and f.source_file) {
+					why = "is no program: environment ${env.name} names it as a tool"
+					return Err("SourceFile ${t.source} ${why}")
+				}
 				if model.fetches.any(|f| f.name == parsed.source) {
 					if !valid_name(t.name) {
 						return Err("invalid executable name for Fetch ${t.source}: ${t.name}")
@@ -2476,7 +2480,7 @@ expect {
 		..fixture([tooled]),
 		systems: ["x86_64-linux", "aarch64-darwin"],
 		requires_: ["fetches"],
-		fetches: [{ name: "tool", files, unavailable }],
+		fetches: [{ name: "tool", files, unavailable, source_file: Bool.False }],
 	}
 	linux_only = model([file("x86_64-linux")], ["aarch64-darwin"])
 	on = |system| Project.check_fetches_on(linux_only, ["tooled"], [], system)

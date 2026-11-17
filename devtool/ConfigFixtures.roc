@@ -875,6 +875,34 @@ ConfigFixtures := [].{
 				\\ Shell("default", [Use("dev")])]
 		},
 		{
+			name: "FetchBareTool",
+			expected: Valid,
+			body: \\config = [Name("fetch-bare-tool"), Systems(["x86_64-linux"]),
+				\\ Environment("dev", [Tools(["tool", "hello"]),
+				\\  Alias("t", "tool", "tool")]),
+				\\ Fetch("tool", [{ system: "x86_64-linux",
+				\\  url: "https://example.com/tool",
+				\\  sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" }]),
+				\\ Shell("default", [Use("dev")])]
+		},
+		{
+			name: "SourceFile",
+			expected: Valid,
+			body: \\config = [Name("source-file"),
+				\\ SourceFile("dep", { url: "https://example.com/dep.tar.zst",
+				\\  sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" }),
+				\\ Environment("dev", [Tools(["default#dep"])]),
+				\\ Shell("default", [Use("dev")])]
+		},
+		{
+			name: "SourceFileTool",
+			expected: Rejected("SourceFile dep is no program"),
+			body: \\config = [Name("bad"),
+				\\ SourceFile("dep", { url: "https://example.com/dep.tar.zst",
+				\\  sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=" }),
+				\\ Environment("dev", [Tools(["dep"])])]
+		},
+		{
 			name: "FetchLockedPlainHttp",
 			expected: Rejected("FetchLocked tool needs HTTPS URLs"),
 			body: \\config = [Name("bad"), Systems(["x86_64-linux"]),

@@ -95,6 +95,7 @@ Model := {
 				},
 			),
 			unavailable : List(Str),
+			source_file : Bool,
 		},
 	),
 	cargo_vendors : List({ name : Str, lock : Str }),
@@ -218,8 +219,15 @@ Model := {
 
 	## A file per system, pinned by its SRI sha256 hash rather than the lock,
 	## or with an empty hash by the lock's `direct` section, except on the
-	## declared systems it is unavailable on.
-	Fetch : { name : Str, files : List(FetchFile), unavailable : List(Str) }
+	## declared systems it is unavailable on. A source file is pinned to be
+	## named, as an SBOM names a dependency's source, not run: no tool may
+	## name it.
+	Fetch : {
+		name : Str,
+		files : List(FetchFile),
+		unavailable : List(Str),
+		source_file : Bool,
+	}
 	FetchFile : {
 		system : Str,
 		url : Str,

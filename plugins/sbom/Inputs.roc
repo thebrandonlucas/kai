@@ -10,10 +10,11 @@ import Profile
 Inputs := [].{
 
 	## The project's inputs. Each download is a `program` per system, except
-	## one URL and SHA-256 for every system that no environment puts on
-	## PATH (a FetchAll), which is a `source` file; RocPackages bundles are
-	## Roc packages and build sources, as Blueprint's RocPackages are; the
-	## lock's Nix package sources, overlays and flake inputs are sources.
+	## a SourceFile, and one URL and SHA-256 for every system that no
+	## environment puts on PATH (a FetchAll), which are `source` files, as
+	## Blueprint's SourceFile is; RocPackages bundles are Roc packages and
+	## build sources, as Blueprint's RocPackages are; the lock's Nix package
+	## sources, overlays and flake inputs are sources.
 	## A download the lock should pin and does not is `missing_direct_lock`,
 	## and one it pins for another URL `stale_lock`.
 	from : Model, [Absent, Present(Str)] -> Try(Profile.Inputs, Plan.Failure)
@@ -85,8 +86,10 @@ Inputs := [].{
 					and one(files.map(|(f, _)| f.url))
 					and one(files.map(|(_, sha256)| sha256))
 					and files.all(|(f, _)| f.mirrors.is_empty() and f.unpack == File)
+				source = fetch.source_file
+					or (single and !downloaded.contains(fetch.name))
 				match files {
-					[(first, sha256), ..] if single and !downloaded.contains(fetch.name) => {
+					[(first, sha256), ..] if source => {
 						$sources = $sources.append({
 							name: fetch.name,
 							provider: "file",

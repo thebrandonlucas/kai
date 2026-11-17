@@ -543,8 +543,13 @@ model = {
 	systems: ["x86_64-linux"],
 	environments: [environment],
 	fetches: [
-		{ name: "tool", files: [archive], unavailable: [] },
-		{ name: "other", files: [published], unavailable: [] },
+		{ name: "tool", files: [archive], unavailable: [], source_file: Bool.False },
+		{
+			name: "other",
+			files: [published],
+			unavailable: [],
+			source_file: Bool.False,
+		},
 	],
 	shells: [{ name: "default", environment: "dev", description: "" }],
 	tasks: [task],
@@ -731,9 +736,12 @@ expect {
 	with_bundle = {
 		..model,
 		environments: [{ ..environment, roc_packages: [url] }],
-		fetches: model.fetches.append(
-			{ name, files: [bundle("x86_64-linux")], unavailable: [] },
-		),
+		fetches: model.fetches.append({
+			name,
+			files: [bundle("x86_64-linux")],
+			unavailable: [],
+			source_file: Bool.False,
+		}),
 	}
 	lock = locked(both.append(pin("${name}/x86_64-linux", url)))
 	planned_steps = DirectBackend.plan(
@@ -749,7 +757,7 @@ expect {
 		_ => Bool.False
 	}
 	everywhere = [bundle("x86_64-linux"), bundle("aarch64-linux")]
-	bundled = { name, files: everywhere, unavailable: [] }
+	bundled = { name, files: everywhere, unavailable: [], source_file: Bool.False }
 	two = { ..model, fetches: [bundled] }
 	result = "/p/.kai/generated/direct/measured"
 	measured = match DirectBackend.update(two, [], layout, Absent, 0, []) {
@@ -778,7 +786,7 @@ expect {
 		unpack: File,
 	}
 	files = [data, { ..data, system: "aarch64-linux" }]
-	data_fetch = { name: "data", files, unavailable: [] }
+	data_fetch = { name: "data", files, unavailable: [], source_file: Bool.False }
 	with_data = {
 		..model,
 		systems: ["x86_64-linux", "aarch64-linux"],

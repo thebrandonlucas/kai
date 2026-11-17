@@ -333,7 +333,7 @@ expect {
 	old = "{\"name\":\"old\",\"path\":\"old\",\"hash\":\"0abc\"},"
 	held = match guix_lock {
 		Present(text) =>
-			Present(text.replace_first("\"sources\":[", "\"sources\":[${old}"))
+			Present(text.replace_first("\"sources\": [", "\"sources\": [${old}"))
 		Absent => Absent
 	}
 	notes(Absent) == ["guix added at 01234567", "assets added at 01234567"]

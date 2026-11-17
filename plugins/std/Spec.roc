@@ -106,6 +106,7 @@ Spec := [].{
 			with_name(
 				f.name,
 				[
+					("kind", text(if (f.source_file) "source_file" else "download")),
 					("pinned_by", text(if (locked) "lock" else "hash")),
 					("files", Array(f.files.map(|one| file(f, one)))),
 					("unavailable_on", texts(f.unavailable)),
@@ -368,5 +369,22 @@ expect {
 		(["fetches", "2", "files", "1", "system"], String("aarch64-linux")),
 		(["fetches", "2", "files", "1", "archive_path"], String("main.roc")),
 		(["fetches", "2", "files", "1", "key"], String("roc-${roc_hash}")),
+		(["fetches", "0", "kind"], String("download")),
+		(["fetches", "2", "kind"], String("download")),
 	].all(|(path, expected)| spec_at(project, path) == Ok(expected))
+}
+
+# A SourceFile is a fetch of kind source_file, pinned by its sha256 once for
+# every system, as a FetchAll is.
+expect {
+	source = SourceFile(
+		"dep",
+		{ url: "https://example.com/dep.tar.gz", sha256: empty_sha256 },
+	)
+	sourced = [Name("spec"), Systems([linux, "aarch64-linux"]), source]
+	[
+		(["fetches", "0", "kind"], String("source_file")),
+		(["fetches", "0", "pinned_by"], String("hash")),
+		(["fetches", "0", "files", "1", "key"], String("dep")),
+	].all(|(path, expected)| spec_at(sourced, path) == Ok(expected))
 }

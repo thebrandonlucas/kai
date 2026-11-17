@@ -127,7 +127,7 @@ expect {
 			== Ok([linux_spdx, linux_spdx2, linux_cdx])
 }
 
-# A FetchAll is Blueprint's SourceFile: the supplier's source SBOM imports
+# A SourceFile, on Blueprint or Kai: the supplier's source SBOM imports
 # into each consumer target with the inventories roc-blueprint committed,
 # and the x86_64-linux one renders as its native-source-import case.
 expect {

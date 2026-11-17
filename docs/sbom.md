@@ -73,7 +73,8 @@ project fits the same project on Kai:
 
 | Kaifile | Name |
 |---|---|
-| `FetchAll(NAME, …)`, or any download that is one URL and one SHA-256 on every system and that no environment puts on `PATH` | `source:NAME`, a file source (Blueprint's `SourceFile`) |
+| `SourceFile(NAME, …)`, a dependency's source pinned for the SBOM | `source:NAME`, a file source, as Blueprint's `SourceFile(NAME, …)` is |
+| A `FetchAll(NAME, …)`, or any download that is one URL and one SHA-256 on every system, that no environment puts on `PATH` | `source:NAME` too, though only `SourceFile` says so in the Kaifile |
 | Any other `Fetch`, `FetchAll` or `FetchLocked` file | `program:NAME:SYSTEM`, for `TARGET` alone unless it is `source` |
 | A package tool, `SOURCE#NAME` (in `OnSystems`, on those systems only) | `tool:SOURCE#NAME` |
 | The package sources tools use, overlays and flake inputs, by their Nix pins | `source:NAME` |

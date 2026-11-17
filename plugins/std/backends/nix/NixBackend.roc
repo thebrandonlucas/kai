@@ -3883,7 +3883,9 @@ expect {
 	model = {
 		..project,
 		requires_: project.requires_.concat(["fetches", "cargo"]),
-		fetches: [{ name: "jq", files: [jq], unavailable: [] }],
+		fetches: [
+			{ name: "jq", files: [jq], unavailable: [], source_file: Bool.False },
+		],
 		cargo_vendors: [{ name: "crates", lock: "version = 4\n" }],
 	}
 	sha256 = |of, encoding, value|

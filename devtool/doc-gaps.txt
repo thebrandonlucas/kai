@@ -25,7 +25,6 @@ plugins/std/System.roc to_str
 plugins/std/TaskName.roc from_quote
 plugins/std/TaskName.roc to_str
 plugins/std/Tool.roc from_quote
-plugins/std/Tool.roc to_ir
 plugins/std/Tool.roc to_str
 plugins/std/Val.roc is_eq
 plugins/std/WorkflowName.roc WorkflowName

@@ -1,5 +1,5 @@
 # Authoring cardinality checks feed the shared whole-project validator.
-import Config
+import Config exposing [SystemSetting]
 import System
 import Val
 import model.Value
@@ -22,7 +22,7 @@ ConfigToModel :: [].{
 		tasks : List(Model.Task),
 		build_sources : List(Model.BuildSource),
 		fetches : List(Model.Fetch),
-		fetch_alls : List({ name : Str, url : Str, hash : Str }),
+		fetch_alls : List({ name : Str, url : Str, hash : Str, source_file : Bool }),
 		unavailable : List((Str, List(Str))),
 		cargo_vendors : List(Model.CargoVendor),
 		builds : List(Model.Build),
@@ -66,7 +66,22 @@ ConfigToModel :: [].{
 			extensions: [],
 			raw: [],
 		}
-		acc = settings.fold(Ok(initial), |result, setting| add(result?, setting))?
+		# A bare tool name names the Fetch of that name, declared anywhere; one
+		# naming a SourceFile is then refused rather than taken as a package.
+		fetch_names = settings.join_map(
+			|setting|
+				match setting {
+					Fetch(fetch, _) => [fetch.to_str()]
+					FetchLocked(fetch, _) => [fetch.to_str()]
+					FetchAll(fetch, _) => [fetch.to_str()]
+					SourceFile(fetch, _) => [fetch.to_str()]
+					_ => []
+				},
+		)
+		acc = settings.fold(
+			Ok(initial),
+			|result, setting| add(result?, setting, fetch_names),
+		)?
 		name = match acc.names {
 			[] => return Err("MissingName: declare Name once")
 			[one] => one
@@ -149,8 +164,8 @@ ConfigToModel :: [].{
 		)
 	}
 
-	add : Acc, Config.Setting -> Try(Acc, Str)
-	add = |acc, setting| {
+	add : Acc, Config.Setting, List(Str) -> Try(Acc, Str)
+	add = |acc, setting, fetch_names| {
 		next = match setting {
 			Name(name) => { ..acc, names: acc.names.append(name) }
 			Systems(systems) => {
@@ -192,7 +207,7 @@ ConfigToModel :: [].{
 			Environment(name, inner) => {
 				..acc,
 				environments: acc.environments.append(
-					environment(name.to_str(), inner)?,
+					environment(name.to_str(), inner, fetch_names)?,
 				),
 			}
 			Shell(name, inner) => {
@@ -226,6 +241,7 @@ ConfigToModel :: [].{
 							}),
 					)?,
 					unavailable: [],
+					source_file: Bool.False,
 				}),
 			}
 			FetchLocked(name, files) => {
@@ -242,6 +258,7 @@ ConfigToModel :: [].{
 						},
 					),
 					unavailable: [],
+					source_file: Bool.False,
 				}),
 			}
 			FetchAll(name, { url, sha256 }) => {
@@ -251,6 +268,17 @@ ConfigToModel :: [].{
 					url,
 					hash: Project.sri_sha256(sha256)
 						.map_err(|_| "invalid sha256 in FetchAll ${name.to_str()}")?,
+					source_file: Bool.False,
+				}),
+			}
+			SourceFile(name, { url, sha256 }) => {
+				..acc,
+				fetch_alls: acc.fetch_alls.append({
+					name: name.to_str(),
+					url,
+					hash: Project.sri_sha256(sha256)
+						.map_err(|_| "invalid sha256 in SourceFile ${name.to_str()}")?,
+					source_file: Bool.True,
 				}),
 			}
 			FetchUnavailable(name, systems) => {
@@ -336,8 +364,8 @@ ConfigToModel :: [].{
 		}
 
 	environment :
-		Str, List(Config.EnvironmentSetting) -> Try(Model.Environment, Str)
-	environment = |name, inner| {
+		Str, List(Config.EnvironmentSetting), List(Str) -> Try(Model.Environment, Str)
+	environment = |name, inner, fetch_names| {
 		draft = inner.fold(
 			{
 				tools: [],
@@ -356,7 +384,7 @@ ConfigToModel :: [].{
 				match setting {
 					Tools(tools) => {
 						..acc,
-						tools: acc.tools.append(tools.map(|tool| tool.to_ir())),
+						tools: acc.tools.append(tools.map(|tool| tool.to_ir(fetch_names))),
 					}
 					Overlays(overlays) => {
 						..acc,
@@ -370,7 +398,9 @@ ConfigToModel :: [].{
 					Expect(programs) => { ..acc, expects: acc.expects.append(programs) }
 					Alias(alias, tool, binary) => {
 						..acc,
-						aliases: acc.aliases.append({ name: alias, tool: tool.to_ir(), binary }),
+						aliases: acc.aliases.append(
+							{ name: alias, tool: tool.to_ir(fetch_names), binary },
+						),
 					}
 					RustToolchain(text) => {
 						..acc,
@@ -384,7 +414,10 @@ ConfigToModel :: [].{
 						..acc,
 						package_envs: acc.package_envs.append(
 							pairs.map(
-								|(variable, value)| { name: variable, value: package_value(value) },
+								|(variable, value)| {
+									name: variable,
+									value: package_value(value, fetch_names),
+								},
 							),
 						),
 					}
@@ -399,7 +432,8 @@ ConfigToModel :: [].{
 			return Err("DuplicateTools: environment ${name}")
 		}
 		on_systems = draft.on_systems.map_try(
-			|(systems, settings)| on_systems_setting(name, systems, settings),
+			|(systems, settings)|
+				on_systems_setting(name, systems, settings, fetch_names),
 		)?
 		if draft.overlays.len() > 1 {
 			return Err("DuplicateOverlays: environment ${name}")
@@ -471,19 +505,25 @@ ConfigToModel :: [].{
 
 	## One OnSystems setting of environment `name`.
 	on_systems_setting :
-		Str, List(System), List(Config.SystemSetting) -> Try(Model.OnSystems, Str)
-	on_systems_setting = |name, systems, settings| {
+		Str, List(System), List(SystemSetting), List(Str) -> Try(Model.OnSystems, Str)
+	on_systems_setting = |name, systems, settings, fetch_names| {
 		draft = settings.fold(
 			{ tools: [], envs: [], package_envs: [] },
 			|acc, setting|
 				match setting {
-					Tools(list) => { ..acc, tools: acc.tools.append(list.map(|t| t.to_ir())) }
+					Tools(list) => {
+						..acc,
+						tools: acc.tools.append(list.map(|t| t.to_ir(fetch_names))),
+					}
 					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
 					PackageEnv(pairs) => {
 						..acc,
 						package_envs: acc.package_envs.append(
 							pairs.map(
-								|(variable, value)| { name: variable, value: package_value(value) },
+								|(variable, value)| {
+									name: variable,
+									value: package_value(value, fetch_names),
+								},
 							),
 						),
 					}
@@ -680,19 +720,20 @@ ConfigToModel :: [].{
 		})
 	}
 
-	package_value : Config.PackageValue -> Model.PackageValue
-	package_value = |value|
+	package_value : Config.PackageValue, List(Str) -> Model.PackageValue
+	package_value = |value, fetch_names|
 		match value {
-			LibraryPath(tools) => LibraryPath(tools.map(|tool| tool.to_ir()))
-			BinPath(tools) => BinPath(tools.map(|tool| tool.to_ir()))
-			PackagePath(tool) => PackagePath(tool.to_ir())
+			LibraryPath(tools) => LibraryPath(tools.map(|tool| tool.to_ir(fetch_names)))
+			BinPath(tools) => BinPath(tools.map(|tool| tool.to_ir(fetch_names)))
+			PackagePath(tool) => PackagePath(tool.to_ir(fetch_names))
 		}
 
 	variables : List((Str, Str)) -> List(Model.Variable)
 	variables = |pairs| pairs.map(|(name, value)| { name, value })
 
-	## Every Fetch, a FetchAll with one file for each of `systems` it is
-	## available on, and each marked with the systems FetchUnavailable names.
+	## Every Fetch, a FetchAll or SourceFile with one file for each of
+	## `systems` it is available on, and each marked with the systems
+	## FetchUnavailable names.
 	fetches : Acc, List(Str) -> Try(List(Model.Fetch), Str)
 	fetches = |acc, systems| {
 		var $named = []
@@ -720,6 +761,7 @@ ConfigToModel :: [].{
 						},
 					),
 				unavailable: [],
+				source_file: f.source_file,
 			},
 		)
 		# Each RocPackages bundle once, as an archive on every system that the
@@ -733,7 +775,8 @@ ConfigToModel :: [].{
 				bundle = |system|
 					{ system, url, hash: "", mirrors: [], unpack: Archive("main.roc") }
 				files = systems.map(bundle)
-				Ok({ name: Project.roc_package_fetch(url), files, unavailable: [] })
+				name = Project.roc_package_fetch(url)
+				Ok({ name, files, unavailable: [], source_file: Bool.False })
 			},
 		)?
 		all = acc.fetches.concat(every_system).concat(bundles)
