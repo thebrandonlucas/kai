@@ -22,9 +22,9 @@ import "tests/weaver/lock.json" as weaver_lock : Str
 
 Release := [].{
 
-	## weaver's Kaifile on Kai: Blueprint.roc's SourceFiles as FetchAll, its
-	## Programs as FetchLocked downloads, its RocPackages, environments and
-	## tasks, as weaver's port declares them.
+	## weaver's Kaifile on Kai: Blueprint.roc's SourceFiles as SourceFile, its
+	## Programs as FetchLocked downloads, and its RocPackages, environments
+	## and tasks as weaver's port declares them.
 	weaver : List(Config.Setting)
 	weaver = {
 		automation = "https://github.com/lukewilliamboswell/roc-automation/releases/"
@@ -51,14 +51,14 @@ Release := [].{
 		[
 			Name("weaver"),
 			Systems(systems),
-			FetchAll(
+			SourceFile(
 				"roc-ansi",
 				{
 					url: "${ansi}/BioPdu7WjVhTB2j1HaomKMi8htxsuwqwr79GbXY5nAUf.tar.zst",
 					sha256: "93750a9b9993e4e2996feac0ddd6f199b6f3fd9ba81154a74f09f47481e1e2ba",
 				},
 			),
-			FetchAll(
+			SourceFile(
 				"path",
 				{
 					url: "${path_rel}/7YfABZPwJAXtLBY2vm8FqMyGAtNxncCJ65HdNKHFGNnE.tar.zst",
@@ -265,24 +265,26 @@ inventory_sha256 =
 fixture : List(Config.Setting)
 fixture = [Name("fixture"), Systems(["x86_64-linux", "aarch64-linux"])]
 
-## The source-import case on Kai: its file source is a FetchAll.
-source_import : List(Config.Setting)
-source_import = fixture.append(
-	FetchAll(
-		"dep",
-		{
-			url: "https://example.org/releases/1.2.0/dep-abc.tar.zst",
-			sha256: "3945bb64314f2f25732bb36f3bc7f52a2087cfde17439086cf3acd785e3fdfca",
-		},
-	),
-)
+## The source-import case's file source: its URL and published SHA-256.
+dep_file : { url : Str, sha256 : Str }
+dep_file = {
+	url: "https://example.org/releases/1.2.0/dep-abc.tar.zst",
+	sha256: "3945bb64314f2f25732bb36f3bc7f52a2087cfde17439086cf3acd785e3fdfca",
+}
 
-# On Kai, the blueprint cases' settings give their inputs: a FetchAll is
-# Blueprint's SourceFile, a file source pinned by its published SHA-256.
+## The source-import case on Kai: its file source is a SourceFile.
+source_import : List(Config.Setting)
+source_import = fixture.append(SourceFile("dep", dep_file))
+
+# On Kai, the blueprint cases' settings give their inputs: a SourceFile is
+# Blueprint's SourceFile, a file source pinned by its published SHA-256, and
+# so is a FetchAll that no environment puts on PATH.
 expect
 	inputs_of(fixture, Absent)
 		== Ok({ ..Profile.no_inputs, systems: Cases.systems })
 		and inputs_of(source_import, Absent) == Ok(Cases.source_import)
+		and inputs_of(fixture.append(FetchAll("dep", dep_file)), Absent)
+			== Ok(Cases.source_import)
 
 # weaver's Kaifile names the 28 inputs its reviewed composition disposes of.
 expect {

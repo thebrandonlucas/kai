@@ -18,7 +18,7 @@ meaning or goes away bumps it. Lists keep declaration order.
 | `overlays` | `Overlay`: `name`, `ref` and `follows` (`input`, `source`). |
 | `flake_inputs` | Other flake inputs: `name`, `ref` and `follows` (`input`, `source`). |
 | `sources` | `Source`: `name`, `ref`. |
-| `fetches` | `Fetch`, `FetchAll` (one file per available system), `FetchLocked`, and one per `RocPackages` bundle, pinned by the lock: `name`, `pinned_by` (`hash` when the Kaifile gives each sha256, `lock` for `FetchLocked`), `unavailable_on`, and `files`: `key` (`<fetch>/<system>`, or `<fetch>` for one file several systems share, as a `FetchAll`'s or a `RocPackages` bundle's is, which the lock pins once), `system`, `url`, `mirrors`, `hash` (`null` when the lock pins it, else `algorithm` `sha256`, `of` `file`, `encoding` `sri` and `value`) and `archive_path` (the program inside an archive, else `null`). |
+| `fetches` | `Fetch`, `FetchAll` and `SourceFile` (one file per available system), `FetchLocked`, and one per `RocPackages` bundle, pinned by the lock: `name`, `kind` (`source_file` for a `SourceFile`, a dependency's source no tool may name, else `download`), `pinned_by` (`hash` when the Kaifile gives each sha256, `lock` for `FetchLocked`), `unavailable_on`, and `files`: `key` (`<fetch>/<system>`, or `<fetch>` for one file several systems share, as a `FetchAll`'s or a `RocPackages` bundle's is, which the lock pins once), `system`, `url`, `mirrors`, `hash` (`null` when the lock pins it, else `algorithm` `sha256`, `of` `file`, `encoding` `sri` and `value`) and `archive_path` (the program inside an archive, else `null`). |
 | `cargo_vendors` | `CargoVendor`: `name`. |
 | `environments` | Each environment with what it extends already merged in: `name`, `tools`, `overlays`, `env`, `package_env` (`name`, `kind`: `library_path`, `bin_path` or `package_path`, `tools`), `pure`, `aliases` (`name`, `tool`, `binary`), `roc_packages` (the `fetches` that pin its `RocPackages` bundles, each named `roc-<hash>` after the hash its URL ends in, an archive whose `archive_path` is `main.roc`), `rust_toolchain` (`null`, or `toml`, `components`, `targets`) and `on_systems` (`systems`, `tools`, `env`, `package_env`). |
 | `shells` | `name`, `description`, `environment`. |
@@ -70,6 +70,7 @@ kaifile = Std.kaifile([
   "fetches": [
     {
       "name": "tool",
+      "kind": "download",
       "pinned_by": "lock",
       "files": [
         {
@@ -85,6 +86,7 @@ kaifile = Std.kaifile([
     },
     {
       "name": "jq",
+      "kind": "download",
       "pinned_by": "hash",
       "files": [
         {

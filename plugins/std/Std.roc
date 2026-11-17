@@ -1144,6 +1144,41 @@ expect {
 			== Ok(Bool.True)
 }
 
+# A SourceFile is a FetchAll marked as a source: a build may read it, but no
+# Tools, Alias, OnSystems or PackageEnv may name it, as "dep#dep" or by its
+# bare name, which does not fall back to the package; "default#dep" may.
+expect {
+	source = SourceFile(
+		"dep",
+		{
+			url: "https://example.com/dep.tar.zst",
+			sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+		},
+	)
+	build = Build(
+		"app",
+		[Use("dev"), Run(["true"]), Output("out"), Inputs(["dep"])],
+	)
+	convert = |settings|
+		ConfigToModel.convert([Name("p"), source].concat(settings))
+	declaring = |setting| convert([Environment("dev", [setting])])
+	refused = "SourceFile dep is no program: environment dev names it as a tool"
+	on_linux = |settings| OnSystems(["x86_64-linux"], settings)
+	marked = convert([Environment("dev", []), build])
+		.map_ok(|m| m.fetches.map(|f| (f.name, f.source_file, f.files.len())))
+	marked == Ok([("dep", Bool.True, 2)])
+		and declaring(Tools(["default#dep"])).is_ok()
+		and [
+			Tools(["dep"]),
+			Tools(["dep#dep"]),
+			Alias("d", "dep", "dep"),
+			on_linux([Tools(["dep"])]),
+			PackageEnv([("DEP", PackagePath("dep"))]),
+			on_linux([PackageEnv([("DEP", BinPath(["dep#dep"]))])]),
+		]
+			.all(|setting| declaring(setting).map_ok(|_| {}) == Err(refused))
+}
+
 # On Nix, an environment's RocPackages bundles are fetched as fixed-output
 # files by the SHA-256 the lock pins, and sh places them in Roc's package
 # cache before the task runs; the lock must pin them.

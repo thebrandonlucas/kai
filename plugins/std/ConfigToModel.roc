@@ -22,7 +22,7 @@ ConfigToModel :: [].{
 		tasks : List(Model.Task),
 		build_sources : List(Model.BuildSource),
 		fetches : List(Model.Fetch),
-		fetch_alls : List({ name : Str, url : Str, hash : Str }),
+		fetch_alls : List({ name : Str, url : Str, hash : Str, source_file : Bool }),
 		unavailable : List((Str, List(Str))),
 		cargo_vendors : List(Model.CargoVendor),
 		builds : List(Model.Build),
@@ -66,13 +66,15 @@ ConfigToModel :: [].{
 			extensions: [],
 			raw: [],
 		}
-		# A bare tool name names the Fetch of that name, declared anywhere.
+		# A bare tool name names the Fetch of that name, declared anywhere; one
+		# naming a SourceFile is then refused rather than taken as a package.
 		fetch_names = settings.join_map(
 			|setting|
 				match setting {
 					Fetch(fetch, _) => [fetch.to_str()]
 					FetchLocked(fetch, _) => [fetch.to_str()]
 					FetchAll(fetch, _) => [fetch.to_str()]
+					SourceFile(fetch, _) => [fetch.to_str()]
 					_ => []
 				},
 		)
@@ -239,6 +241,7 @@ ConfigToModel :: [].{
 							}),
 					)?,
 					unavailable: [],
+					source_file: Bool.False,
 				}),
 			}
 			FetchLocked(name, files) => {
@@ -255,6 +258,7 @@ ConfigToModel :: [].{
 						},
 					),
 					unavailable: [],
+					source_file: Bool.False,
 				}),
 			}
 			FetchAll(name, { url, sha256 }) => {
@@ -264,6 +268,17 @@ ConfigToModel :: [].{
 					url,
 					hash: Project.sri_sha256(sha256)
 						.map_err(|_| "invalid sha256 in FetchAll ${name.to_str()}")?,
+					source_file: Bool.False,
+				}),
+			}
+			SourceFile(name, { url, sha256 }) => {
+				..acc,
+				fetch_alls: acc.fetch_alls.append({
+					name: name.to_str(),
+					url,
+					hash: Project.sri_sha256(sha256)
+						.map_err(|_| "invalid sha256 in SourceFile ${name.to_str()}")?,
+					source_file: Bool.True,
 				}),
 			}
 			FetchUnavailable(name, systems) => {
@@ -716,8 +731,9 @@ ConfigToModel :: [].{
 	variables : List((Str, Str)) -> List(Model.Variable)
 	variables = |pairs| pairs.map(|(name, value)| { name, value })
 
-	## Every Fetch, a FetchAll with one file for each of `systems` it is
-	## available on, and each marked with the systems FetchUnavailable names.
+	## Every Fetch, a FetchAll or SourceFile with one file for each of
+	## `systems` it is available on, and each marked with the systems
+	## FetchUnavailable names.
 	fetches : Acc, List(Str) -> Try(List(Model.Fetch), Str)
 	fetches = |acc, systems| {
 		var $named = []
@@ -745,6 +761,7 @@ ConfigToModel :: [].{
 						},
 					),
 				unavailable: [],
+				source_file: f.source_file,
 			},
 		)
 		# Each RocPackages bundle once, as an archive on every system that the
@@ -758,7 +775,8 @@ ConfigToModel :: [].{
 				bundle = |system|
 					{ system, url, hash: "", mirrors: [], unpack: Archive("main.roc") }
 				files = systems.map(bundle)
-				Ok({ name: Project.roc_package_fetch(url), files, unavailable: [] })
+				name = Project.roc_package_fetch(url)
+				Ok({ name, files, unavailable: [], source_file: Bool.False })
 			},
 		)?
 		all = acc.fetches.concat(every_system).concat(bundles)

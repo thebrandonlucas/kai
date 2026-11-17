@@ -11,9 +11,9 @@
 #     kai sbom check --manifest greeting.tar.zst.sbom-manifest.json \
 #       --inventory inventory.json
 #
-# `path` is a dependency fetched by its published SHA-256 on every
-# system, a file source (`source:path`); `jq` is a program per system, here
-# pinned by its SHA-256 (`program:jq:<system>`); the task is `task:check`.
+# `path` is a dependency's source, a SourceFile pinned by its published
+# SHA-256 (`source:path`); `jq` is a program per system, here pinned by its
+# SHA-256 (`program:jq:<system>`); the task is `task:check`.
 # subject.json states the release file's digest and size, which kai never
 # reads, and context.json the documents' namespace, author and generator.
 app [kaifile] {
@@ -35,7 +35,7 @@ project : List(Config.Setting)
 project = [
 	Name("greeting"),
 	Systems(["x86_64-linux"]),
-	FetchAll(
+	SourceFile(
 		"path",
 		{
 			url: "${releases}/7YfABZPwJAXtLBY2vm8FqMyGAtNxncCJ65HdNKHFGNnE.tar.zst",

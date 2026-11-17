@@ -38,6 +38,7 @@ Config :: [].{
 		Source(InputName, FlakeRef),
 		Fetch(InputName, List(FetchFile)),
 		FetchAll(InputName, { url : Str, sha256 : Str }),
+		SourceFile(InputName, { url : Str, sha256 : Str }),
 		FetchUnavailable(InputName, List(System)),
 		FetchLocked(InputName, List(LockedFile)),
 		CargoVendor(InputName, Str),
@@ -69,6 +70,9 @@ Config :: [].{
 	## tool "<name>" puts it on PATH as the executable <name>, and a tool
 	## "<name>#<binary>" as <binary>.
 	## FetchAll is one file for every system, such as a data archive.
+	## SourceFile is a FetchAll pinned to be named, not run: a dependency's
+	## source, such as an archive whose supplier SBOM the sbom plugin imports
+	## as `source:<name>`. A build may list it in Inputs; no tool may name it.
 	## FetchUnavailable names the declared systems a Fetch or FetchAll has no
 	## file for: an environment or build using it is refused there, rather
 	## than the Kaifile everywhere.
