@@ -43,7 +43,11 @@ LockFile := [].{
 				Present(text) => LockFile.section(text, other)
 				Absent => Ok(Absent)
 			}
-		var $sections = []
+		# The version starts the list rather than being concatenated before
+		# it: a Kaifile compiled by Roc nightly-2026-10-21-5349569 wrote
+		# `[version].concat(sections)`'s first member zeroed, `"": []`, on
+		# some hosts (not yet reported upstream).
+		var $sections = [{ name: "version", value: Number("2") }]
 		for name in ["direct", "guix", "nix"] {
 			found = if (name == backend) Present(contents) else kept(name)?
 			match found {
@@ -53,9 +57,7 @@ LockFile := [].{
 				Absent => {}
 			}
 		}
-		sections = $sections
-		version = { name: "version", value: Number("2") }
-		Ok(LockFile.layout(Object([version].concat(sections)), 0).concat("\n"))
+		Ok(LockFile.layout(Object($sections), 0).concat("\n"))
 	}
 
 	## The lock's text, laid out so that `git diff` shows one changed entry,
