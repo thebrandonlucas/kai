@@ -1100,6 +1100,50 @@ expect {
 	}
 }
 
+# A bare tool name names the project's Fetch of that name, declared before or
+# after it, in Tools, Alias, OnSystems and PackageEnv, as "tool#tool" does;
+# "default#tool", and a name no Fetch has, stay packages.
+expect {
+	fetch = FetchAll(
+		"tool",
+		{
+			url: "https://example.com/tool",
+			sha256: "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+		},
+	)
+	bare = Environment(
+		"dev",
+		[
+			Tools(["tool", "hello"]),
+			Alias("t", "tool", "tool"),
+			OnSystems(
+				["x86_64-linux"],
+				[Tools(["tool"]), PackageEnv([("TOOL", PackagePath("tool"))])],
+			),
+		],
+	)
+	qualified = Environment(
+		"dev",
+		[
+			Tools(["tool#tool", "hello"]),
+			Alias("t", "tool#tool", "tool"),
+			OnSystems(
+				["x86_64-linux"],
+				[Tools(["tool#tool"]), PackageEnv([("TOOL", PackagePath("tool#tool"))])],
+			),
+		],
+	)
+	packaged = Environment("dev", [Tools(["default#tool"])])
+	convert = |settings| ConfigToModel.convert([Name("p")].concat(settings))
+	tools = |settings|
+		convert(settings).map_ok(|m| m.environments.join_map(|e| e.tools))
+	convert([bare, fetch]).is_ok()
+		and convert([bare, fetch]) == convert([fetch, qualified])
+		and tools([packaged, fetch]) == Ok([{ source: "default", name: "tool" }])
+		and tools([bare]).map_ok(|t| t.all(|tool| tool.source == "default"))
+			== Ok(Bool.True)
+}
+
 # On Nix, an environment's RocPackages bundles are fetched as fixed-output
 # files by the SHA-256 the lock pins, and sh places them in Roc's package
 # cache before the task runs; the lock must pin them.

@@ -180,7 +180,7 @@ garbage collection.
 | --- | --- |
 | `Name(name)` | Project name. Required. |
 | `Systems([...])` | Systems the generated flake declares. Optional (default `x86_64-linux` and `aarch64-linux`); must include the system of the host Kai runs on. `x86_64-darwin` and `x86_64-windows`, which neither Nix nor Guix serves, take only environments the [direct backend](#running-without-nix-or-guix) serves there: `kai check` refuses any other, naming it, unless `OnSystems` leaves its package tools to other systems. The generated flake leaves them out. |
-| `Packages(name, source)` | A package source: `Auto`, `From(NixPackages(flakeRef))` or `From(GuixPackages(...))`, which only the [guix plugin](#guix) serves. Tools use the `default` source (`Auto`: nixpkgs unstable on Nix, the installed channels on Guix) unless written `"source#tool"`; `kai update` locks `default` only when something uses it. |
+| `Packages(name, source)` | A package source: `Auto`, `From(NixPackages(flakeRef))` or `From(GuixPackages(...))`, which only the [guix plugin](#guix) serves. Tools use the `default` source (`Auto`: nixpkgs unstable on Nix, the installed channels on Guix) unless written `"source#tool"`, or named by a `Fetch` (below); `kai update` locks `default` only when something uses it. |
 | `Overlay(name, flakeRef)` | A Nix overlay, applied only where an environment selects it. |
 | `Follows(overlay, input, source)` | Makes an overlay's or `Input`'s own flake input, such as `nixpkgs`, the project's Nix package source `source` (`default` unless declared), so it is neither downloaded nor locked separately. |
 | `Environment(name, [...])` | A set of tools: `Tools([...])`, `Overlays([...])` in order, and `Extend(parent)` to inherit the parent's tools, overlays and aliases first. `Alias(command, tool, binary)` (Nix only) puts `command` on PATH running the tool's `bin/<binary>`, e.g. for two tools that both install `bin/roc`. `RustToolchain(text)` (Nix only) adds the Rust toolchain a `rust-toolchain.toml` pins (its `channel`, `profile`, `components` and `targets`), given its text with `import "rust-toolchain.toml" as toolchain : Str`; the environment must select an `Overlay` of [rust-overlay](https://github.com/oxalica/rust-overlay). `RustToolchainWith(text, [Components([...]), Targets([...])])` adds components, such as `"llvm-tools-preview"`, and targets, such as `"wasm32-unknown-unknown"`, to those the file pins, for what only Kai's environment needs. |
@@ -194,7 +194,7 @@ garbage collection.
 | `Shell(name, [Use(environment)])` | A shell for `kai shell`. |
 | `Task(name, [Use(environment), Run(argv)])` | A task for `kai run`. Optionally `Secrets([...])`: the names of the variables it receives when it runs, `OptionalEnvironmentVariables([...])`: those it receives from kai's environment only when set there, `Needs([...])`: builds kai builds first, in `$KAI_ARTIFACTS/<name>`, and `Dir(path)`: the project-relative directory it runs in, in place of the project root. |
 | `Source(name, flakeRef)` | A locked, non-flake source that builds can read. |
-| `Fetch(name, [{ system, url, sha256 }, ...])` | A file pinned by its published sha256 (hex or SRI), one per system; the host's system picks it. Nix needs no lock entry for it; the direct backend's `kai update` records its size in the lock, after checking the file is the one its sha256 publishes. Builds read it in `Inputs([...])`, and the tool `"name#binary"` puts it on `PATH` as the executable `binary`. |
+| `Fetch(name, [{ system, url, sha256 }, ...])` | A file pinned by its published sha256 (hex or SRI), one per system; the host's system picks it. Nix needs no lock entry for it; the direct backend's `kai update` records its size in the lock, after checking the file is the one its sha256 publishes. Builds read it in `Inputs([...])`, and the tool `"name"` puts it on `PATH` as the executable `name`, or `"name#binary"` as `binary`; `"default#name"` is the package `name` instead. The same holds for a `FetchAll` or `FetchLocked`. |
 | `FetchAll(name, { url, sha256 })` | A `Fetch` of one file for every system, such as a data archive or a source tarball. `kai update` on the direct backend downloads it once, and the lock pins it once, under its name. |
 | `FetchUnavailable(name, [...])` | The declared systems a `Fetch` or `FetchAll` has no file for, such as a tool with no macOS build. On them, Kai refuses only the shells, tasks and builds that use it, saying why, rather than the whole Kaifile; `OnSystems` can leave the tool out there instead. |
 | `FetchLocked(name, [{ system, url, mirrors, program }, ...])` | A `Fetch` with no published sha256: `kai update` records each file's SHA-256 and size in the lock's `direct` section, and the [direct backend](#running-without-nix-or-guix) runs it, as does Nix beside package-source tools; a build cannot use it. `program` is `File`, or `Archive(path)` for a tar.gz, tar.xz or zip with the program at `path`; `mirrors` are other URLs for the same bytes. |
@@ -414,7 +414,7 @@ kaifile = Std.kaifile([
 	Name("site"),
 	Systems(["x86_64-linux", "aarch64-linux"]),
 	FetchLocked("zig", [zig("x86_64-linux"), zig("aarch64-linux")]),
-	Environment("dev", [Tools(["zig#zig"]), Expect(["git"])]),
+	Environment("dev", [Tools(["zig"]), Expect(["git"])]),
 	Task("test", [Use("dev"), Run(["zig", "build", "test"])]),
 ])
 ```

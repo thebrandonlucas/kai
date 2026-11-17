@@ -1,5 +1,5 @@
 # Authoring cardinality checks feed the shared whole-project validator.
-import Config
+import Config exposing [SystemSetting]
 import System
 import Val
 import model.Value
@@ -66,7 +66,20 @@ ConfigToModel :: [].{
 			extensions: [],
 			raw: [],
 		}
-		acc = settings.fold(Ok(initial), |result, setting| add(result?, setting))?
+		# A bare tool name names the Fetch of that name, declared anywhere.
+		fetch_names = settings.join_map(
+			|setting|
+				match setting {
+					Fetch(fetch, _) => [fetch.to_str()]
+					FetchLocked(fetch, _) => [fetch.to_str()]
+					FetchAll(fetch, _) => [fetch.to_str()]
+					_ => []
+				},
+		)
+		acc = settings.fold(
+			Ok(initial),
+			|result, setting| add(result?, setting, fetch_names),
+		)?
 		name = match acc.names {
 			[] => return Err("MissingName: declare Name once")
 			[one] => one
@@ -149,8 +162,8 @@ ConfigToModel :: [].{
 		)
 	}
 
-	add : Acc, Config.Setting -> Try(Acc, Str)
-	add = |acc, setting| {
+	add : Acc, Config.Setting, List(Str) -> Try(Acc, Str)
+	add = |acc, setting, fetch_names| {
 		next = match setting {
 			Name(name) => { ..acc, names: acc.names.append(name) }
 			Systems(systems) => {
@@ -192,7 +205,7 @@ ConfigToModel :: [].{
 			Environment(name, inner) => {
 				..acc,
 				environments: acc.environments.append(
-					environment(name.to_str(), inner)?,
+					environment(name.to_str(), inner, fetch_names)?,
 				),
 			}
 			Shell(name, inner) => {
@@ -336,8 +349,8 @@ ConfigToModel :: [].{
 		}
 
 	environment :
-		Str, List(Config.EnvironmentSetting) -> Try(Model.Environment, Str)
-	environment = |name, inner| {
+		Str, List(Config.EnvironmentSetting), List(Str) -> Try(Model.Environment, Str)
+	environment = |name, inner, fetch_names| {
 		draft = inner.fold(
 			{
 				tools: [],
@@ -356,7 +369,7 @@ ConfigToModel :: [].{
 				match setting {
 					Tools(tools) => {
 						..acc,
-						tools: acc.tools.append(tools.map(|tool| tool.to_ir())),
+						tools: acc.tools.append(tools.map(|tool| tool.to_ir(fetch_names))),
 					}
 					Overlays(overlays) => {
 						..acc,
@@ -370,7 +383,9 @@ ConfigToModel :: [].{
 					Expect(programs) => { ..acc, expects: acc.expects.append(programs) }
 					Alias(alias, tool, binary) => {
 						..acc,
-						aliases: acc.aliases.append({ name: alias, tool: tool.to_ir(), binary }),
+						aliases: acc.aliases.append(
+							{ name: alias, tool: tool.to_ir(fetch_names), binary },
+						),
 					}
 					RustToolchain(text) => {
 						..acc,
@@ -384,7 +399,10 @@ ConfigToModel :: [].{
 						..acc,
 						package_envs: acc.package_envs.append(
 							pairs.map(
-								|(variable, value)| { name: variable, value: package_value(value) },
+								|(variable, value)| {
+									name: variable,
+									value: package_value(value, fetch_names),
+								},
 							),
 						),
 					}
@@ -399,7 +417,8 @@ ConfigToModel :: [].{
 			return Err("DuplicateTools: environment ${name}")
 		}
 		on_systems = draft.on_systems.map_try(
-			|(systems, settings)| on_systems_setting(name, systems, settings),
+			|(systems, settings)|
+				on_systems_setting(name, systems, settings, fetch_names),
 		)?
 		if draft.overlays.len() > 1 {
 			return Err("DuplicateOverlays: environment ${name}")
@@ -471,19 +490,25 @@ ConfigToModel :: [].{
 
 	## One OnSystems setting of environment `name`.
 	on_systems_setting :
-		Str, List(System), List(Config.SystemSetting) -> Try(Model.OnSystems, Str)
-	on_systems_setting = |name, systems, settings| {
+		Str, List(System), List(SystemSetting), List(Str) -> Try(Model.OnSystems, Str)
+	on_systems_setting = |name, systems, settings, fetch_names| {
 		draft = settings.fold(
 			{ tools: [], envs: [], package_envs: [] },
 			|acc, setting|
 				match setting {
-					Tools(list) => { ..acc, tools: acc.tools.append(list.map(|t| t.to_ir())) }
+					Tools(list) => {
+						..acc,
+						tools: acc.tools.append(list.map(|t| t.to_ir(fetch_names))),
+					}
 					Env(pairs) => { ..acc, envs: acc.envs.append(variables(pairs)) }
 					PackageEnv(pairs) => {
 						..acc,
 						package_envs: acc.package_envs.append(
 							pairs.map(
-								|(variable, value)| { name: variable, value: package_value(value) },
+								|(variable, value)| {
+									name: variable,
+									value: package_value(value, fetch_names),
+								},
 							),
 						),
 					}
@@ -680,12 +705,12 @@ ConfigToModel :: [].{
 		})
 	}
 
-	package_value : Config.PackageValue -> Model.PackageValue
-	package_value = |value|
+	package_value : Config.PackageValue, List(Str) -> Model.PackageValue
+	package_value = |value, fetch_names|
 		match value {
-			LibraryPath(tools) => LibraryPath(tools.map(|tool| tool.to_ir()))
-			BinPath(tools) => BinPath(tools.map(|tool| tool.to_ir()))
-			PackagePath(tool) => PackagePath(tool.to_ir())
+			LibraryPath(tools) => LibraryPath(tools.map(|tool| tool.to_ir(fetch_names)))
+			BinPath(tools) => BinPath(tools.map(|tool| tool.to_ir(fetch_names)))
+			PackagePath(tool) => PackagePath(tool.to_ir(fetch_names))
 		}
 
 	variables : List((Str, Str)) -> List(Model.Variable)
