@@ -4,6 +4,8 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-11-17
+
 ### Added
 
 - `kai machine switch`, `rollback` and `generations` act on a remote NixOS server over SSH: give the machine `Host("admin@web.example.com")`, or pass `--to admin@203.0.113.7`, which overrides `Host`. A target may name an SSH port, as in `admin@203.0.113.7:2222` or `root@[2001:db8::1]:2222`, which kai passes to `ssh`, `nix copy` and nixos-anywhere (for `kai machine install`), so a local VM or a host on another port needs no `~/.ssh/config` entry. kai builds the system locally, checks that the server runs NixOS on the machine's architecture, asks, copies the system with `nix copy` and activates it there, through `sudo` unless the target logs in as root. When `Host`'s user is one of the machine's `User`s, the machine trusts it to receive systems (`nix.settings.trusted-users`); a `--to` user must be root or already trusted. For a machine with `Operators` whose host key kai made or was given (`secrets/hosts/NAME.pub`), every SSH connection trusts exactly that key, through a known hosts file kai writes, so a freshly installed server needs no `~/.ssh/known_hosts` entry and a reused address with an old key there does not stop it; otherwise ssh checks `known_hosts` as usual. Without `Host` or `--to`, the commands act on the local host as before.
