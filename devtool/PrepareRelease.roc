@@ -99,6 +99,9 @@ PrepareRelease := [].{
 	}
 	rollback_release_branch! = |starting_head, branch| {
 		PrepareRelease.git!(["reset", "--hard", "refs/remotes/origin/master"])?
+		# A plugin's first release added its URL file, which reset leaves.
+		clean = ["clean", "--force", "--quiet", "--"]
+		PrepareRelease.git!(clean.concat(Release.url_files))?
 		PrepareRelease.remove_release_outputs!()?
 		PrepareRelease.git!(["switch", "--quiet", "master"]) ?? {}
 		current_branch = PrepareRelease.git_output!([
