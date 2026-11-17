@@ -169,7 +169,10 @@ where the shell needs braces. A backslash starts a Roc escape (`\\`, `\"`,
 `\1`, are an "invalid escape sequence": write `\\(x\\)`, `\\1`, and `\\` for a
 trailing line continuation. Every command has
 help with examples, e.g. `kai run --help`; inside a project, help lists its
-shells, tasks, builds and workflows.
+shells, tasks, builds and workflows, and `kai --help` lists them all, each
+under its command, as in `Tasks (kai run):`. At a terminal, `kai run` without
+a task shows its help, listing the tasks; in a script, or with `--json`, it
+is a usage error.
 `kai build -L` (`--print-build-logs`) shows the build's log as it runs, and
 `kai build --out-link PATH` links PATH to the artifact and keeps it from
 garbage collection.
@@ -526,7 +529,10 @@ another host. See
 added, moved or removed: `kai: default 1d060086 → 7dcdd873`, `kai: tools/utils
 removed`. It names Nix inputs and direct files as [`kai lock`](docs/lock.md)
 does, and Guix channels and sources by their names. With `--json` each line
-is a `note` event. `kai shell`, `run`, `build` and `workflow` only read it, and
+is a `note` event. `kai update NAME...` moves only the inputs named, and
+`kai update --help` lists the names it takes, among them those a plugin,
+such as the machine plugin, asks it to lock, marked with that plugin.
+`kai shell`, `run`, `build` and `workflow` only read it, and
 ask you to run `kai update` when it is missing, when a source, input or an
 environment's overlay order changed, or when a locked local source has
 changed. An environment or tool using only locked sources needs no update.

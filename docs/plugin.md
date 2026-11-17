@@ -94,14 +94,22 @@ reference; and a `Source` the project does not declare. The platform hands
 every plugin's requests, each with the requesting plugin's name, to every
 plan as `ctx.lock_requests`, so std's `update`, its check that the lock is
 current, and `Std.build_flake_output` all include them. `kai update` moves
-them with the rest; `kai update NAME` takes only names std's settings
-declare. The machine plugin asks for `Source("default")`, which its
-systems are built from, disko and nixos-images when a machine has a
-`Disk`, and agenix when one has `Secrets`, their nixpkgs following it.
+them with the rest, and `kai update NAME` moves one alone, such as
+`kai update disko`; `kai update --help` lists them among the inputs, each
+marked with the plugin that asked, such as
+`disko  github:nix-community/disko, for machine`. The machine plugin asks
+for `Source("default")`, which its systems are built from, disko and
+nixos-images when a machine has a `Disk`, and agenix when one has
+`Secrets`, their nixpkgs following it.
 
 `Plugin.checking_lock_requests(plugin, check)` is how the lock's owner,
 std, checks them: `check` takes every plugin's requests and returns its
 problems, which fail Kaifile.roc as a plugin's problems do.
+`Plugin.revising_args(plugin, revise)` is how it takes their names:
+`revise` takes every plugin's requests and one of the plugin's commands,
+and gives that command's arguments, which kai's parser and help use
+instead of those it declares. std's `update` gives the `Trailing` choices
+of its inputs this way, the requested ones included.
 
 ## Commands
 
@@ -121,7 +129,8 @@ Arguments are data; the platform builds kai's parser and help from them.
 A command takes at most one `Name` (a project entry; each choice becomes a
 subcommand, so help and usage errors list the project's names; no choices
 means any name) and at most one `Trailing` (everything after `--`,
-exact; with choices, only the project's names), and any `Flag` (`--name`,
+exact; with choices, only the project's names, which its help page lists
+under the argument's name, such as `Inputs:`), and any `Flag` (`--name`,
 or `-short`), `Path` (`--name PATH`, made absolute against the directory kai
 runs in) and `Value` (`--name VALUE`, taken exactly, such as an SSH target),
 given anywhere before `--`. `Command.name(args, "host")`,

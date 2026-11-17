@@ -67,6 +67,14 @@ Std := [].{
 								Err(problem) => [problem]
 							},
 					)
+					.revising_args(
+						|requested, command|
+							if command.name == "update" {
+								[Std.update_inputs(model, requested)]
+							} else {
+								command.args
+							},
+					)
 			Err(problem) => Plugin.invalid("std", [problem])
 		}
 
@@ -227,22 +235,7 @@ Std := [].{
 			command(
 				"update",
 				Pages.update,
-				[
-					Trailing({
-						name: "inputs",
-						help: "Inputs, or FetchLocked files to measure again (default: all).",
-						choices: (Locks.inputs(model) ?? [])
-							.map(|input| choice(input.name, "", input.ref))
-							.concat(
-								model.fetches
-									.keep_if(|f| Project.locked_fetch(model, f.name))
-									.map(|f| choice(f.name, "", "FetchLocked")),
-							)
-							.concat(
-								model.cargo_vendors.map(|c| choice(c.name, "", "CargoVendor")),
-							),
-					}),
-				],
+				[Std.update_inputs(model, [])],
 				OwnsLock,
 			),
 			command("model", Pages.model, [], ReadsLock),
@@ -268,6 +261,39 @@ Std := [].{
 			),
 			command("lock", Pages.lock, [], ReadsLock),
 		]
+	}
+
+	## The names `kai update` takes: each input std locks, those a plugin asks
+	## for marked with the plugin, then FetchLocked files and CargoVendors.
+	## Requests std refuses fail Kaifile.roc instead, as it compiles.
+	update_inputs : Model, List(Implementation.Requested) -> Command.Arg
+	update_inputs = |model, requested| {
+		declared = (Locks.inputs(model) ?? []).map(|input| input.name)
+		requesting = StdModel.with_lock_requests(model, requested) ?? model
+		named = |request|
+			match request {
+				Input(name, _, _) => name
+				Source(name) => name
+			}
+		listed = |value, summary| { value, summary, details: [] }
+		input = |locked|
+			match requested.find_first(|r| named(r.request) == locked.name) {
+				Ok({ plugin: asker, .. }) if !declared.contains(locked.name) =>
+					listed(locked.name, "${locked.ref}, for ${asker}")
+				_ => listed(locked.name, locked.ref)
+			}
+		Trailing({
+			name: "inputs",
+			help: "Inputs, or FetchLocked files to measure again (default: all).",
+			choices: (Locks.inputs(requesting) ?? [])
+				.map(input)
+				.concat(
+					model.fetches
+						.keep_if(|f| Project.locked_fetch(model, f.name))
+						.map(|f| listed(f.name, "FetchLocked")),
+				)
+				.concat(model.cargo_vendors.map(|c| listed(c.name, "CargoVendor"))),
+		})
 	}
 
 	step_text : Model.WorkflowStep -> Str
@@ -1599,5 +1625,42 @@ expect {
 				and planned("requirements", context).map_ok(|plan| plan.steps)
 					== Ok([Print("no environment expects programs")])
 		Err(_) => Bool.False
+	}
+}
+
+# `kai update` takes and lists the inputs a plugin asks std to lock, marked
+# with the plugin, and moves one named alone; a mistyped name is refused
+# with the input it may mean.
+expect {
+	machine = Plugin.new({
+		name: "machine",
+		version: "",
+		describe: "",
+		commands: [],
+		backends: [],
+		implementations: [],
+	})
+		.locking(disko_requests.map(|r| r.request))
+	update_args = Kaifile.commands(Kaifile.new([Std.plugin(planning), machine]))
+		.keep_if(|c| c.name == "update")
+		.join_map(|c| c.args)
+	disko = {
+		value: "disko",
+		summary: "github:nix-community/disko, for machine",
+		details: [],
+	}
+	inputs = |names| [{ name: "inputs", value: Many(names) }]
+	requesting = { ..context, lock_requests: disko_requests }
+	moved = runs(planned("update", { ..requesting, args: inputs(["disko"]) }))
+		.map_ok(|ran| ran.map(|r| r.argv.last()))
+	mistyped = planned("update", { ..requesting, args: inputs(["dsko"]) })
+	match update_args {
+		[Trailing({ choices, .. })] =>
+			choices.contains(disko)
+				and choices.any(|c| c.value == "default" and !c.summary.contains(", for "))
+				and moved == Ok([Ok("disko")])
+				and mistyped.map_err(|f| (f.code, f.suggestions))
+					== Err(("unknown_input", ["disko"]))
+		_ => Bool.False
 	}
 }

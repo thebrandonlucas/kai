@@ -58,7 +58,10 @@ Argv := [].{
 			Err(Help(message)) =>
 				if message == top(parser.config) {
 					config = parser.config
-					shown = top({ ..config, subcommands: Argv.summarized(config) })
+					shown = Argv.project_names(
+						commands,
+						top({ ..config, subcommands: Argv.summarized(config) }),
+					)
 					Err(Help(Argv.indented(root, commands, shown)))
 				} else {
 					shown = Argv.listed(parser.config, commands, style, message)
@@ -83,10 +86,19 @@ Argv := [].{
 						values = t.choices.map(|c| c.value)
 						words = Command.trailing(args, t.name)
 						unknown = words.drop_if(|word| values.contains(word))
+						close = unknown.join_map(|word| Plan.closest(word, values))
+						suggested = match close {
+							[] => ""
+							_ => {
+								quoted = close.map(|c| "`${c}`")
+								"; did you mean ${Str.join_with(quoted, " or ")}?"
+							}
+						}
 						if !unknown.is_empty() {
 							return Err(
 								"kai ${name}: unknown ${Str.join_with(unknown, ", ")}; "
-									.concat("the ${t.name} are ${Str.join_with(values, ", ")}"),
+									.concat("the ${t.name} are ${Str.join_with(values, ", ")}")
+									.concat(suggested),
 							)
 						}
 					}
@@ -175,6 +187,7 @@ Argv := [].{
 							parts.drop_last(1)
 								.drop_if(|part| !ours.is_empty() and part.contains("Arguments:"))
 								.concat(ours)
+								.concat(Argv.trailing_choices(args))
 								.concat(parts.take_last(1)),
 							"\n\n",
 						)
@@ -379,13 +392,64 @@ Argv := [].{
 					_ => Err({})
 				},
 		)
+		if (chosen) [Argv.table("Arguments:", rows)] else []
+	}
+
+	## A command's page lists the words its `Trailing` takes, if limited,
+	## under the argument's name, such as `Inputs:` for `kai update`.
+	trailing_choices : List(Command.Arg) -> List(Str)
+	trailing_choices = |args|
+		args.join_map(
+			|arg|
+				match arg {
+					Trailing(t) if !t.choices.is_empty() => {
+						rows = t.choices.map(
+							|c| (c.value, Argv.summary(c.summary).replace_each("\n", " ")),
+						)
+						[Argv.table("${Argv.capitalized(t.name)}:", rows)]
+					}
+					_ => []
+				},
+		)
+
+	## A heading, then a row for each label with its text aligned after it.
+	table : Str, List((Str, Str)) -> Str
+	table = |heading, rows| {
 		width = rows.fold(
 			0,
 			|widest, (label, _)| widest.max(label.count_utf8_bytes()),
 		)
-		row = |(label, help)|
-			"  ${label}${Str.repeat(" ", width + 2 - label.count_utf8_bytes())}${help}"
-		if (chosen) ["Arguments:\n${Str.join_with(rows.map(row), "\n")}"] else []
+		row = |(label, text)|
+			"  ${label}${Str.repeat(" ", width + 2 - label.count_utf8_bytes())}${text}"
+				.trim_end()
+		Str.join_with([heading].concat(rows.map(row)), "\n")
+	}
+
+	## kai's own help lists, before its options, the names a project defines
+	## for each command, such as its tasks under `Tasks (kai run):`.
+	project_names : List(Command), Str -> Str
+	project_names = |commands, text| {
+		listed = commands.join_map(
+			|command|
+				command.args.join_map(
+					|arg|
+						match arg {
+							Name(n) if !n.choices.is_empty() => {
+								rows = n.choices.map(
+									|c| (c.value, Argv.summary(c.summary).replace_each("\n", " ")),
+								)
+								plural = Argv.capitalized("${n.name}s")
+								[Argv.table("${plural} (kai ${command.name}):", rows)]
+							}
+							_ => []
+						},
+				),
+		)
+		parts = text.split_on("\n\n")
+		Str.join_with(
+			parts.drop_last(1).concat(listed).concat(parts.take_last(1)),
+			"\n\n",
+		)
 	}
 
 	summary : Str -> Str
@@ -727,6 +791,38 @@ expect
 			_ => Bool.False
 		}
 
+# kai's own help lists each command's choices, under their plural and the
+# command, before its options.
+expect {
+	help = match parsed(["--help"]) {
+		Err(Help(text)) => text
+		_ => ""
+	}
+	help.contains("\n\nShells (kai shell):\n  default\n  ci\n\n")
+		and help.contains("\n\nTasks (kai run):\n  args\n\nOptions:\n")
+		and !help.contains("(kai build)")
+}
+
+# The rows of a listing align each summary after the longest name.
+expect {
+	moo = { value: "moo", summary: "Says moo\n\nDetails.", details: [] }
+	quiet = { value: "be-quiet", summary: "", details: [] }
+	workflow = Command.{
+		name: "workflow",
+		summary: "",
+		help: page,
+		args: [
+			Name(
+				{ name: "workflow", help: "", choices: [moo, quiet], default: Required },
+			),
+		],
+		lock: ReadsLock,
+	}
+	Argv.project_names([workflow], "Usage\n\nOptions:")
+		== "Usage\n\nWorkflows (kai workflow):\n  moo       Says moo\n"
+			.concat("  be-quiet\n\nOptions:")
+}
+
 # A missing name lists the choices, and an unknown command or name suggests
 # the closest without running it.
 expect
@@ -841,4 +937,38 @@ expect {
 	listing.contains("  moo  Says moo\n")
 		and !listing.contains("cowsay moo")
 		and own.contains("Says moo\n\ncowsay moo [cow]")
+}
+
+# A command's page lists the words its `Trailing` takes, with their
+# summaries; a word outside them is refused, naming the closest.
+expect {
+	disko = "github:nix-community/disko, for machine"
+	inputs = [
+		{ value: "default", summary: "github:NixOS/nixpkgs", details: [] },
+		{ value: "disko", summary: disko, details: [] },
+	]
+	update = Command.{
+		name: "update",
+		summary: "",
+		help: page,
+		args: [Trailing({ name: "inputs", help: "Inputs.", choices: inputs })],
+		lock: OwnsLock,
+	}
+	parse_update = |argv| Argv.parse(page, [update], Plain, "/work", argv)
+	help = match parse_update(["update", "--help"]) {
+		Err(Help(text)) => text
+		_ => ""
+	}
+	help.contains(
+		"\n\nInputs:\n  default  github:NixOS/nixpkgs\n"
+			.concat("  disko    github:nix-community/disko, for machine\n\nOptions:\n"),
+	)
+		and parse_update(["update", "disko"]).is_ok()
+		and parse_update(["update", "disk"])
+			== Err(
+				Usage(
+					"kai update: unknown disk; the inputs are default, disko; "
+						.concat("did you mean `disko`?"),
+				),
+			)
 }

@@ -8,7 +8,8 @@ import Implementation
 ## `describe` is text `kai describe` shows; std gives its project model.
 ## `lock_requests` are what the plugin asks the lock's owner to lock, and
 ## `check_lock_requests` gives the problems the lock's owner finds in every
-## plugin's requests.
+## plugin's requests. `revise_args` gives a command's arguments once every
+## plugin's requests are known.
 Plugin := {
 	name : Str,
 	version : Str,
@@ -19,7 +20,13 @@ Plugin := {
 	problems : List(Str),
 	lock_requests : List(Implementation.LockRequest),
 	check_lock_requests : List(Implementation.Requested) -> List(Str),
+	revise_args : Revise,
 }.{
+
+	## A command's arguments from every plugin's lock requests and the
+	## command as declared.
+	Revise : List(Implementation.Requested), Command -> List(Command.Arg)
+
 	new :
 		{
 			name : Str,
@@ -40,6 +47,7 @@ Plugin := {
 			problems: [],
 			lock_requests: [],
 			check_lock_requests: |_| [],
+			revise_args: |_, command| command.args,
 		}
 
 	## Drop one implementation so another plugin can provide it.
@@ -69,6 +77,7 @@ Plugin := {
 			problems: kept.problems,
 			lock_requests: kept.lock_requests,
 			check_lock_requests: kept.check_lock_requests,
+			revise_args: kept.revise_args,
 		}
 	}
 
@@ -85,6 +94,7 @@ Plugin := {
 			problems: plugin.problems,
 			lock_requests: plugin.lock_requests,
 			check_lock_requests: plugin.check_lock_requests,
+			revise_args: plugin.revise_args,
 		}
 
 	## Ask the lock's owner, std's `kai update`, to lock more:
@@ -103,6 +113,7 @@ Plugin := {
 			problems: plugin.problems,
 			lock_requests: plugin.lock_requests.concat(requests),
 			check_lock_requests: plugin.check_lock_requests,
+			revise_args: plugin.revise_args,
 		}
 
 	## How the lock's owner checks every plugin's lock requests as
@@ -121,6 +132,26 @@ Plugin := {
 			problems: plugin.problems,
 			lock_requests: plugin.lock_requests,
 			check_lock_requests: check,
+			revise_args: plugin.revise_args,
+		}
+
+	## How the plugin's commands take every plugin's lock requests: `revise`
+	## gives a command's arguments from them and the command as declared,
+	## for kai's parser and help. std's `update` this way accepts and lists
+	## the inputs other plugins ask it to lock.
+	revising_args : Plugin, Revise -> Plugin
+	revising_args = |plugin, revise|
+		Plugin.{
+			name: plugin.name,
+			version: plugin.version,
+			describe: plugin.describe,
+			commands: plugin.commands,
+			backends: plugin.backends,
+			implementations: plugin.implementations,
+			problems: plugin.problems,
+			lock_requests: plugin.lock_requests,
+			check_lock_requests: plugin.check_lock_requests,
+			revise_args: revise,
 		}
 
 	## Settings a plugin could not accept; `Kaifile.validate` reports them.
@@ -136,5 +167,6 @@ Plugin := {
 			problems,
 			lock_requests: [],
 			check_lock_requests: |_| [],
+			revise_args: |_, command| command.args,
 		}
 }
