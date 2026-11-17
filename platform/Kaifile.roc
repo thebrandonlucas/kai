@@ -111,6 +111,26 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 			|p| p.lock_requests.map(|request| { plugin: p.name, request }),
 		)
 
+	## Every plugin's commands, as kai parses and lists them: each with the
+	## arguments its plugin gives once every plugin's lock requests are known.
+	commands : Kaifile -> List(Command)
+	commands = |kaifile| {
+		requested = Kaifile.lock_requests(kaifile)
+		kaifile.plugins.join_map(
+			|p|
+				p.commands.map(
+					|c|
+						Command.{
+							name: c.name,
+							summary: c.summary,
+							help: c.help,
+							args: (p.revise_args)(requested, c),
+							lock: c.lock,
+						},
+				),
+		)
+	}
+
 	## The project description kai reads, or why the plugins are invalid:
 	## a plugin's problems, a plugin named twice, a registry rule broken, a
 	## lock request a plugin refuses, or more than one plugin describing the
@@ -159,7 +179,7 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 	## The commands, backends and implementations fit together.
 	registry : Kaifile -> Try({}, Str)
 	registry = |kaifile| {
-		commands = kaifile.plugins.join_map(|p| p.commands.map(|c| (p.name, c)))
+		listed = kaifile.plugins.join_map(|p| p.commands.map(|c| (p.name, c)))
 		declared = kaifile.plugins.join_map(|p| p.backends.map(|b| (p.name, b)))
 		implementations = kaifile.plugins.join_map(
 			|p| p.implementations.map(|i| (p.name, i)),
@@ -168,7 +188,7 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 		lower = |text|
 			!text.is_empty() and text.to_utf8().all(|b| word(b) or b == '-')
 		var $seen = []
-		for (plugin, command) in commands {
+		for (plugin, command) in listed {
 			if !lower(command.name) {
 				return Err("${plugin}: invalid command name \"${command.name}\"")
 			}
@@ -231,7 +251,7 @@ Kaifile := { plugins : List(Plugin), preference : List(Str) }.{
 				return Err("command ${name} mixes backend and backend-free plans")
 			}
 		}
-		owners = commands.keep_if(|(_, c)| c.lock == OwnsLock)
+		owners = listed.keep_if(|(_, c)| c.lock == OwnsLock)
 		if owners.len() > 1 {
 			return Err("only one command may own the lock")
 		}
@@ -434,3 +454,30 @@ expect
 		.backends()
 		.map(|b| b.id)
 		== ["guix", "nix"]
+
+# A plugin's commands take their arguments from every plugin's lock
+# requests, as kai parses and lists them; another's keep theirs.
+expect {
+	asked = |requested, _|
+		[
+			Trailing({
+				name: "inputs",
+				help: "",
+				choices: requested.map(|r| { value: r.plugin, summary: "", details: [] }),
+			}),
+		]
+	owner = plugin("std", [command("update", OwnsLock)], [], [])
+		.revising_args(asked)
+	other = plugin("deploy", [command("deploy", ReadsLock)], [], [])
+		.locking([Source("default")])
+	words = |c|
+		c.args.join_map(
+			|arg|
+				match arg {
+					Trailing(t) => t.choices.map(|choice| choice.value)
+					_ => []
+				},
+		)
+	Kaifile.commands(Kaifile.new([owner, other])).map(|c| (c.name, words(c)))
+		== [("update", ["deploy"]), ("deploy", [])]
+}

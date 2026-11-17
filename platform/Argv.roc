@@ -86,10 +86,19 @@ Argv := [].{
 						values = t.choices.map(|c| c.value)
 						words = Command.trailing(args, t.name)
 						unknown = words.drop_if(|word| values.contains(word))
+						close = unknown.join_map(|word| Plan.closest(word, values))
+						suggested = match close {
+							[] => ""
+							_ => {
+								quoted = close.map(|c| "`${c}`")
+								"; did you mean ${Str.join_with(quoted, " or ")}?"
+							}
+						}
 						if !unknown.is_empty() {
 							return Err(
 								"kai ${name}: unknown ${Str.join_with(unknown, ", ")}; "
-									.concat("the ${t.name} are ${Str.join_with(values, ", ")}"),
+									.concat("the ${t.name} are ${Str.join_with(values, ", ")}")
+									.concat(suggested),
 							)
 						}
 					}
@@ -178,6 +187,7 @@ Argv := [].{
 							parts.drop_last(1)
 								.drop_if(|part| !ours.is_empty() and part.contains("Arguments:"))
 								.concat(ours)
+								.concat(Argv.trailing_choices(args))
 								.concat(parts.take_last(1)),
 							"\n\n",
 						)
@@ -384,6 +394,23 @@ Argv := [].{
 		)
 		if (chosen) [Argv.table("Arguments:", rows)] else []
 	}
+
+	## A command's page lists the words its `Trailing` takes, if limited,
+	## under the argument's name, such as `Inputs:` for `kai update`.
+	trailing_choices : List(Command.Arg) -> List(Str)
+	trailing_choices = |args|
+		args.join_map(
+			|arg|
+				match arg {
+					Trailing(t) if !t.choices.is_empty() => {
+						rows = t.choices.map(
+							|c| (c.value, Argv.summary(c.summary).replace_each("\n", " ")),
+						)
+						[Argv.table("${Argv.capitalized(t.name)}:", rows)]
+					}
+					_ => []
+				},
+		)
 
 	## A heading, then a row for each label with its text aligned after it.
 	table : Str, List((Str, Str)) -> Str
@@ -910,4 +937,38 @@ expect {
 	listing.contains("  moo  Says moo\n")
 		and !listing.contains("cowsay moo")
 		and own.contains("Says moo\n\ncowsay moo [cow]")
+}
+
+# A command's page lists the words its `Trailing` takes, with their
+# summaries; a word outside them is refused, naming the closest.
+expect {
+	disko = "github:nix-community/disko, for machine"
+	inputs = [
+		{ value: "default", summary: "github:NixOS/nixpkgs", details: [] },
+		{ value: "disko", summary: disko, details: [] },
+	]
+	update = Command.{
+		name: "update",
+		summary: "",
+		help: page,
+		args: [Trailing({ name: "inputs", help: "Inputs.", choices: inputs })],
+		lock: OwnsLock,
+	}
+	parse_update = |argv| Argv.parse(page, [update], Plain, "/work", argv)
+	help = match parse_update(["update", "--help"]) {
+		Err(Help(text)) => text
+		_ => ""
+	}
+	help.contains(
+		"\n\nInputs:\n  default  github:NixOS/nixpkgs\n"
+			.concat("  disko    github:nix-community/disko, for machine\n\nOptions:\n"),
+	)
+		and parse_update(["update", "disko"]).is_ok()
+		and parse_update(["update", "disk"])
+			== Err(
+				Usage(
+					"kai update: unknown disk; the inputs are default, disko; "
+						.concat("did you mean `disko`?"),
+				),
+			)
 }

@@ -76,7 +76,7 @@ Answer := [].{
 	body : Kaifile, Protocol.Request -> Protocol.Body
 	body = |kaifile, request| {
 		commands = [Answer.init, Answer.check, Answer.describe]
-			.concat(kaifile.plugins.join_map(|p| p.commands))
+			.concat(Kaifile.commands(kaifile))
 		match Argv.parse(
 			Answer.kai,
 			commands,

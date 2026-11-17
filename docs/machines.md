@@ -112,7 +112,9 @@ lock the `default` source, and for a machine with a `Disk`
 with `Secrets` `github:ryantm/agenix`, as the flake's `disko`,
 `nixos-images` and `agenix` inputs, each with its nixpkgs inputs
 (`nixpkgs`, or nixos-images' `nixos-unstable` and `nixos-stable`)
-following `default` so the project locks one nixpkgs. A project that declares
+following `default` so the project locks one nixpkgs. `kai update disko`
+moves one of them alone, and `kai update --help` lists them, each marked
+`for machine`. A project that declares
 `Input("disko", ...)` or `Input("agenix", ...)` itself keeps working when
 the reference is the same; another reference is refused as Kaifile.roc
 compiles, and removing the line from std's settings fixes it.

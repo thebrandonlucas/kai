@@ -529,7 +529,10 @@ another host. See
 added, moved or removed: `kai: default 1d060086 → 7dcdd873`, `kai: tools/utils
 removed`. It names Nix inputs and direct files as [`kai lock`](docs/lock.md)
 does, and Guix channels and sources by their names. With `--json` each line
-is a `note` event. `kai shell`, `run`, `build` and `workflow` only read it, and
+is a `note` event. `kai update NAME...` moves only the inputs named, and
+`kai update --help` lists the names it takes, among them those a plugin,
+such as the machine plugin, asks it to lock, marked with that plugin.
+`kai shell`, `run`, `build` and `workflow` only read it, and
 ask you to run `kai update` when it is missing, when a source, input or an
 environment's overlay order changed, or when a locked local source has
 changed. An environment or tool using only locked sources needs no update.
