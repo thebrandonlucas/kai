@@ -100,7 +100,15 @@ fn discoverSources(b: *std.Build) SourceTree {
                     fuzz_apps.append(allocator, copy) catch @panic("out of memory");
                     continue;
                 }
-                roc_roots.append(allocator, copy) catch @panic("out of memory");
+                // Roc nightly-2026-10-21 crashes in lir_gen checking the root
+                // Kaifile.roc on GitHub's runners (roc-lang/roc#12968, fixed by
+                // roc-lang/roc#12986). kai type-checks it with that Roc each
+                // time it loads it, as `kai shell` does before these checks,
+                // so check it here again once Kai's Roc is a nightly from
+                // 2026-11-14 on.
+                if (!std.mem.eql(u8, path, "Kaifile.roc")) {
+                    roc_roots.append(allocator, copy) catch @panic("out of memory");
+                }
                 if (kind == .app) {
                     roc_apps.append(allocator, allocator.dupe(u8, path) catch @panic("out of memory")) catch @panic("out of memory");
                 }
