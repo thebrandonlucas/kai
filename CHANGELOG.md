@@ -6,6 +6,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 ### Added
 
+- Machines can set any NixOS option with `Options([("services.tailscale.enable", Bool(Bool.True)), ("services.tailscale.authKeyFile", Str("/run/secrets/tailscale-authkey"))])`, so any service in the locked nixpkgs runs without a typed setting or a module file. Values are std's `Val` tags (`Str`, `Int`, `Bool`, `List`, `Attrs`), and a path segment holding dots is quoted, as in `services.caddy.virtualHosts."box.example.com".extraConfig`. kai quotes every name and string, so a value is data, never Nix code. `Options` may be given more than once, so a Roc function can return a service's settings for a Kaifile to add. `kai check` refuses a malformed path; NixOS reports an unknown option or a wrong type when the machine builds.
 - A remote `kai machine switch` rolls itself back when it cannot be confirmed: before activating the new system it arms a timer on the target, and once the system is active it reconnects over a new SSH connection and stops it. A system that fails to activate, or that cuts kai off, for example by breaking SSH, the firewall or a VPN such as Tailscale, switches back to the generation it ran within 5 minutes, and kai fails saying so.
 
 ## [0.0.13] - 2026-11-17

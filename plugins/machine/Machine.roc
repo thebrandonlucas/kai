@@ -9,6 +9,7 @@ import std.Config
 import std.EnvName
 import std.StdModel exposing [Model]
 import std.System
+import std.Val
 import services.Caddy
 import MachineModel
 import NixosBackend
@@ -37,7 +38,10 @@ Machine := [].{
 	## project, which receive the flake's `inputs`. InputModules, which may
 	## repeat, are module files relative to a locked flake input that std's
 	## settings declare or a plugin asks std to lock, such as a provider's
-	## profiles.
+	## profiles. Options, which may repeat, set any NixOS option by its
+	## path, such as `services.tailscale.enable`, to a value written with
+	## std's Val tags; a segment holding dots is quoted, as in
+	## `services.caddy.virtualHosts."box.example.com".extraConfig`.
 	MachineSetting : [
 		System(System),
 		HostName(Str),
@@ -53,6 +57,7 @@ Machine := [].{
 		Secrets(List(SecretSetting)),
 		Services(List(ServiceSetting)),
 		Modules(List(Str)),
+		Options(List((Str, Val))),
 		InputModules(Str, List(Str)),
 	]
 
@@ -168,6 +173,7 @@ Machine := [].{
 			"  Services([Caddy([Site(\"example.com\",",
 			"    ReverseProxy(\"localhost:8080\"))])]),",
 			"  Modules([\"nixos/web.nix\"]),",
+			"  Options([(\"services.tailscale.enable\", Bool(Bool.True))]),",
 			"  InputModules(\"profiles\", [\"digitalocean.nix\"])]),",
 		],
 	}
@@ -251,7 +257,7 @@ Machine := [].{
 			m = Machine.machine(name, parts)
 			given = parts
 				.map(Machine.setting_name)
-				.drop_if(|s| s == "User" or s == "InputModules")
+				.drop_if(|s| s == "User" or s == "InputModules" or s == "Options")
 			# An empty Host or Operators folds to none, so it is found here.
 			empty_host = parts.any(
 				|part|
@@ -372,6 +378,7 @@ Machine := [].{
 			Secrets(_) => "Secrets"
 			Services(_) => "Services"
 			Modules(_) => "Modules"
+			Options(_) => "Options"
 			InputModules(_, _) => "InputModules"
 		}
 
@@ -407,6 +414,7 @@ Machine := [].{
 				services: [],
 				modules: [],
 				input_modules: [],
+				options: [],
 			},
 			|m, part|
 				match part {
@@ -446,6 +454,7 @@ Machine := [].{
 						services: services.map(|Caddy(caddy)| Caddy(Caddy.server(caddy))),
 					}
 					Modules(modules) => { ..m, modules }
+					Options(options) => { ..m, options: m.options.concat(options) }
 					InputModules(input, paths) => {
 						..m,
 						input_modules: m.input_modules.concat(
