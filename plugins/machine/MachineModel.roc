@@ -3,6 +3,7 @@
 import pf.Command
 import pf.Plan
 import services.Caddy
+import std.Val
 
 MachineModel :: [].{
 
@@ -16,7 +17,7 @@ MachineModel :: [].{
 	## the layout install partitions and the system mounts. `operators` are
 	## the public keys its host key and secrets are encrypted to,
 	## `secrets` what it decrypts as it activates, and `services` what it
-	## runs.
+	## runs. `options` are NixOS option paths and their values.
 	Machine : {
 		name : Str,
 		instance : Str,
@@ -36,6 +37,7 @@ MachineModel :: [].{
 		services : List(Service),
 		modules : List(Str),
 		input_modules : List({ input : Str, path : Str }),
+		options : List((Str, Val)),
 	}
 
 	## A typed service, as its module in the services package folds it.

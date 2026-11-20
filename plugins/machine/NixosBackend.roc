@@ -7,13 +7,14 @@ import pf.Implementation
 import pf.Plan
 import std.Config
 import std.Std
+import std.Val
 import services.Caddy
 import MachineModel exposing [Machine]
 
 ## Each machine is `lib.nixosSystem` of the "default" package source, with
-## one module holding its typed settings, then its own module files by
-## absolute path and its inputs' module files by store path. Modules
-## receive the flake's `inputs` as an argument.
+## one module holding its typed settings, one holding its Options, then
+## its own module files by absolute path and its inputs' module files by
+## store path. Modules receive the flake's `inputs` as an argument.
 NixosBackend :: [].{
 
 	Project : List(Config.Setting)
@@ -85,7 +86,77 @@ NixosBackend :: [].{
 					.keep_if(outside)
 					.map(not_in_input),
 			)
+			.concat(
+				m.options
+					.drop_if(|(path, _)| NixosBackend.option_path(path).is_ok())
+					.map(
+						|(path, _)|
+							"option ${path} is no option path; join names with dots, "
+								.concat("quoting one with other characters, as in ")
+								.concat("services.caddy.virtualHosts.\"example.com\""),
+					),
+			)
 	}
+
+	## The names in NixOS option path `path`, joined by `.`: each of
+	## letters, digits, `_`, `'` or `-`, or quoted, such as a domain, and
+	## holding no `"` or `\`.
+	option_path : Str -> Try(List(Str), [NotOptionPath])
+	option_path = |path| {
+		bare = |b|
+			(b >= 'a' and b <= 'z')
+				or (b >= 'A' and b <= 'Z')
+				or (b >= '0' and b <= '9')
+				or "_'-".to_utf8().contains(b)
+		var $names = []
+		var $name = []
+		# Inside quotes, and just past a closing quote, which a dot follows.
+		var $quoted = Bool.False
+		var $closed = Bool.False
+		for b in path.to_utf8() {
+			if $quoted and b == '"' and !$name.is_empty() {
+				$names = $names.append($name)
+				$name = []
+				$quoted = Bool.False
+				$closed = Bool.True
+			} else if $quoted and b != '"' and b != '\\' {
+				$name = $name.append(b)
+			} else if !$quoted and b == '.' and ($closed or !$name.is_empty()) {
+				$names = if ($closed) $names else $names.append($name)
+				$name = []
+				$closed = Bool.False
+			} else if !$quoted and !$closed and b == '"' and $name.is_empty() {
+				$quoted = Bool.True
+			} else if !$quoted and !$closed and bare(b) {
+				$name = $name.append(b)
+			} else {
+				return Err(NotOptionPath)
+			}
+		}
+		names = if ($closed) $names else $names.append($name)
+		if $quoted or names.any(List.is_empty) {
+			Err(NotOptionPath)
+		} else {
+			Ok(names.map(|name| Str.from_utf8(name) ?? ""))
+		}
+	}
+
+	## A Val as Nix data: its strings are quoted, so none can add an
+	## expression.
+	nix_value : Val -> Str
+	nix_value = |given|
+		match given {
+			Str(text) => NixosBackend.quote(text)
+			Int(number) => if (number < 0) "(${number.to_str()})" else number.to_str()
+			Bool(flag) => if (flag) "true" else "false"
+			List(items) => NixosBackend.list(items.map(NixosBackend.nix_value))
+			Attrs(fields) => {
+				define = |(name, field)|
+					"${NixosBackend.quote(name)} = ${NixosBackend.nix_value(field)};"
+				defined = fields.map(define)
+				if (defined.is_empty()) "{ }" else "{ ${Str.join_with(defined, " ")} }"
+			}
+		}
 
 	## What std's update locks for `machines`: the "default" package source
 	## they are built from, and disko and nixos-images for a Disk and agenix
@@ -945,6 +1016,20 @@ NixosBackend :: [].{
 		input_file = |{ input, path }|
 			"(inputs.${NixosBackend.quote(input)} + ${NixosBackend.quote("/${path}")})"
 		settings = NixosBackend.settings(m, project_root)
+		# Options are a module of their own, so the module system merges
+		# them with the typed settings, or names the option they conflict on.
+		options = m.options.map(
+			|(path, value)| {
+				segments = NixosBackend.option_path(path) ?? []
+				attribute = Str.join_with(segments.map(NixosBackend.quote), ".")
+				"              ${attribute} = ${NixosBackend.nix_value(value)};"
+			},
+		)
+		options_module = if options.is_empty() {
+			[]
+		} else {
+			["            {"].concat(options).append("            }")
+		}
 		NixosBackend.lines(
 			[
 				"        ${NixosBackend.quote(m.instance)} = "
@@ -955,6 +1040,7 @@ NixosBackend :: [].{
 			]
 				.concat(settings.map(|line| "              ${line}"))
 				.append("            }")
+				.concat(options_module)
 				.concat(m.modules.map(|path| "            ${file(path)}"))
 				.concat(m.input_modules.map(input_file).map(|line| "            ${line}"))
 				.concat(["          ];", "        };"]),
