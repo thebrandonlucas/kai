@@ -211,7 +211,8 @@ NixosBackend :: [].{
 		check = NixosBackend.host_check(action, m)
 		here = NixosBackend.run("${description}: host check", Quiet, check)
 		sudo = |argv| NixosBackend.run(description, Quiet, ["sudo"].concat(argv))
-		file = NixosBackend.generations_file(ctx)
+		file = NixosBackend.recorded_file(ctx, action)
+		print_status = NixosBackend.recorded(file, ["sh", NixosBackend.status_script])
 		recording = |script, as_root| {
 			argv = ["sh", "-c", script, "sh", system_profile].concat(as_root)
 			NixosBackend.run(description, Quiet, NixosBackend.recorded(file, argv))
@@ -238,6 +239,7 @@ NixosBackend :: [].{
 				activating = Note("activating this host's previous system")
 				[here, Confirm(prompt), activating, back, activate]
 			}
+			"status" => [here, NixosBackend.run(description, Quiet, print_status)]
 			_ => [here, recording(NixosBackend.listing, [])]
 		}
 		Ok(Plan.{ steps, next: Observe([file]) })
@@ -277,7 +279,9 @@ NixosBackend :: [].{
 				.concat([reach.destination, "--"])
 				.concat(argv.map(NixosBackend.shell_quote))
 		quiet = |argv| NixosBackend.run(description, Quiet, argv)
-		file = NixosBackend.generations_file(ctx)
+		file = NixosBackend.recorded_file(ctx, action)
+		print_status =
+			NixosBackend.recorded(file, remote(["sh", NixosBackend.status_script]))
 		on_profile = |script|
 			remote(["sh", "-c", script, "sh", system_profile].concat(as_root([])))
 		recorded = |script| NixosBackend.recorded(file, on_profile(script))
@@ -324,6 +328,7 @@ NixosBackend :: [].{
 				activating = Note("activating the previous system on ${target}")
 				first.concat([Confirm(prompt), activating, back, activate])
 			}
+			"status" => first.append(quiet(print_status))
 			_ => first.append(quiet(recorded(NixosBackend.listing)))
 		}
 		Ok(Plan.{ steps, next: Observe([file]) })
@@ -420,6 +425,47 @@ NixosBackend :: [].{
 	generations_file : Context -> Str
 	generations_file = |ctx| "${ctx.layout.generated_root}/machine/generations"
 
+	## Where `action` records what `report` reads: the status document for
+	## a status, else the generations.
+	recorded_file : Context, Str -> Str
+	recorded_file = |ctx, action|
+		if action == "status" {
+			"${ctx.layout.generated_root}/machine/status.json"
+		} else {
+			NixosBackend.generations_file(ctx)
+		}
+
+	## Where every machine has `status`, which prints its status as JSON.
+	status_script = "/etc/kai/status"
+
+	## Prints one JSON document: the system's health and failed units as
+	## systemd reports them, the generation it runs, the manifest kai
+	## rendered, and under `extra` each `NAME.json` that something on the
+	## machine, such as a backup, writes to /run/kai/status.d or
+	## /var/lib/kai/status.d about itself.
+	status_document =
+		\\generation=$(readlink /nix/var/nix/profiles/system | tr -cd 0-9)
+		\\health=$(systemctl is-system-running)
+		\\failed=$(systemctl list-units --failed --output=json --no-pager)
+		\\manifest=$(cat /etc/kai/manifest.json 2>/dev/null)
+		\\extra=
+		\\for file in /run/kai/status.d/*.json /var/lib/kai/status.d/*.json; do
+		\\  [ -f "$file" ] || continue
+		\\  name=$(basename "$file" .json)
+		\\  case $name in *[!A-Za-z0-9_-]*) continue ;; esac
+		\\  extra="$extra,"'"'"$name"'":'"$(cat "$file")"
+		\\done
+		\\[ -n "$generation" ] || generation=null
+		\\[ -n "$failed" ] || failed=null
+		\\[ -n "$manifest" ] || manifest=null
+		\\time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+		\\format='{"schema":1,"time":"%s","health":"%s","generation":%s,'
+		\\format="$format"'"failed_units":%s,"manifest":%s,"extra":{%s}}'
+		\\extra=$(printf %s "$extra" | cut -c2-)
+		\\set -- "$time" "$health" "$generation" "$failed" "$manifest" "$extra"
+		\\printf "$format" "$@"
+		\\echo
+
 	## Arms a timer, as root through the words after the system profile
 	## `$1`, that switches the profile back to its current generation in 5
 	## minutes, replacing one an earlier switch left. It names the
@@ -467,15 +513,20 @@ NixosBackend :: [].{
 		["sh", "-c", script, "sh", file].concat(argv)
 	}
 
-	## What a switch or rollback at `destination` says once it has run, or
-	## the generations a listing prints, from what it recorded.
+	## What a switch or rollback at `destination` says once it has run, the
+	## generations a listing prints, or the status document, from what it
+	## recorded.
 	report : Machine, Context, Str, [Here, Remote(Str)] -> Planned
 	report = |m, ctx, action, destination| {
-		file = NixosBackend.generations_file(ctx)
-		lines = match ctx.observed.find_first(|o| o.path == file) {
-			Ok({ contents: Text(text), .. }) => text.split_on("\n").drop_if(Str.is_empty)
+		file = NixosBackend.recorded_file(ctx, action)
+		output = match ctx.observed.find_first(|o| o.path == file) {
+			Ok({ contents: Text(text), .. }) => text
 			_ => return Err(Plan.fail("kai machine ${action} recorded no ${file}"))
 		}
+		if action == "status" {
+			return Ok(Plan.{ steps: [Print(output.trim())], next: Done })
+		}
+		lines = output.split_on("\n").drop_if(Str.is_empty)
 		current = lines.first() ?? ""
 		place = match destination {
 			Here => "this host"
@@ -1126,11 +1177,25 @@ NixosBackend :: [].{
 					],
 				),
 			)
+		# What `kai machine status` reports beside the live state: which
+		# machine this is and the locked inputs it was built from.
+		revision = "(input: input.rev or (input.narHash or null))"
+		status = [
+			"environment.etc.\"kai/status\".text = "
+				.concat("${quote(NixosBackend.status_document)};"),
+			"environment.etc.\"kai/manifest.json\".text = builtins.toJSON {",
+			"  machine = ${quote(m.name)};",
+			"  instance = ${quote(m.instance)};",
+			"  inputs = builtins.mapAttrs (name: ${revision})",
+			"    (builtins.removeAttrs inputs [ \"self\" ]);",
+			"};",
+		]
 		[
 			"nixpkgs.hostPlatform = ${quote(m.system)};",
 			"networking.hostName = ${quote(MachineModel.host_name(m))};",
 			"system.stateVersion = ${quote(m.state_version)};",
 		]
+			.concat(status)
 			.concat(
 				when(
 					!m.time_zone.is_empty(),

@@ -128,6 +128,7 @@ Machine := [].{
 						("switch", "Build the machine's system and switch its host to it."),
 						("rollback", "Switch the machine's host back to its previous system."),
 						("generations", "List the system generations of the machine's host."),
+						("status", "Print the health of the machine's host as JSON."),
 						("install", "Erase the --to server's Disk and install the machine."),
 					].map(|(value, summary)| { value, summary, details: [] }),
 					default: Required,
@@ -162,6 +163,7 @@ Machine := [].{
 			"kai machine switch web --to admin@203.0.113.7",
 			"kai machine rollback web",
 			"kai machine generations web",
+			"kai machine status web --json",
 		],
 		config: [
 			"Machine(\"web\", [System(\"x86_64-linux\"), StateVersion(\"25.05\"),",
