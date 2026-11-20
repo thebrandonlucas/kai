@@ -176,9 +176,12 @@ NixosBackend :: [].{
 	## must run NixOS on the machine's architecture. The system is built
 	## here and copied there; only the profile and the activation run as
 	## root there, through sudo unless the target logs in as root. Each
-	## records the generations for `report`. Every SSH connection goes to
-	## the target's port, and trusts the machine's host key when
-	## `read_host_key` found it, else the operator's known hosts.
+	## records the generations for `report`. A switch arms a timer there
+	## that rolls the target back unless a new SSH connection stops it once
+	## the system is active, so a system that fails to activate, or breaks
+	## SSH, undoes itself. Every SSH connection goes to the target's port,
+	## and trusts the machine's host key when `read_host_key` found it, else
+	## the operator's known hosts.
 	on_remote : Project, List(Machine), Machine, Context, Str, Str -> Planned
 	on_remote = |project, machines, m, ctx, action, target| {
 		description = "machine ${action} ${MachineModel.named(m)} on ${target}"
@@ -204,11 +207,10 @@ NixosBackend :: [].{
 				.concat(argv.map(NixosBackend.shell_quote))
 		quiet = |argv| NixosBackend.run(description, Quiet, argv)
 		file = NixosBackend.generations_file(ctx)
-		recording = |script, sudo| {
-			argv = remote(["sh", "-c", script, "sh", system_profile].concat(sudo))
-			quiet(NixosBackend.recorded(file, argv))
-		}
-		activate = recording(NixosBackend.activation, as_root([]))
+		on_profile = |script|
+			remote(["sh", "-c", script, "sh", system_profile].concat(as_root([])))
+		recorded = |script| NixosBackend.recorded(file, on_profile(script))
+		activate = quiet(recorded(NixosBackend.activation))
 		restarting = "restarting changed services and booting it by default?"
 		steps = match action {
 			"switch" => {
@@ -224,15 +226,24 @@ NixosBackend :: [].{
 				set_profile = ["build", "--no-link", "--profile", system_profile]
 				set_command = as_root(nix.concat(set_profile))
 				set = NixosBackend.remote_profile(link, target, set_command, trust.options)
+				# Until kai reaches the target again once it is active, a timer
+				# there stands ready to roll it back.
+				rolls_back = "${target} rolls back to its previous system in 5 minutes"
+				guarded = |why, argv|
+					NixosBackend.run("${description}: ${why}, so ${rolls_back}", Quiet, argv)
+				disarm = remote(as_root(["systemctl", "stop", "kai-rollback.timer"]))
+				reaching = "which rolls back unless kai reaches it again"
 				first
 					.concat(built.steps)
 					.concat([
 						Confirm(prompt),
 						Note("copying ${MachineModel.called(m)}'s system to ${target}"),
 						quiet(NixosBackend.with_ssh_options(options, copy)),
-						Note("activating it on ${target}"),
+						Note("activating it on ${target}, ${reaching}"),
+						quiet(on_profile(NixosBackend.arming)),
 						quiet(set),
-						activate,
+						guarded("its activation failed", recorded(NixosBackend.activation)),
+						guarded("kai cannot reach it again", disarm),
 					])
 			}
 			"rollback" => {
@@ -242,7 +253,7 @@ NixosBackend :: [].{
 				activating = Note("activating the previous system on ${target}")
 				first.concat([Confirm(prompt), activating, back, activate])
 			}
-			_ => first.append(recording(NixosBackend.listing, []))
+			_ => first.append(quiet(recorded(NixosBackend.listing)))
 		}
 		Ok(Plan.{ steps, next: Observe([file]) })
 	}
@@ -337,6 +348,26 @@ NixosBackend :: [].{
 	## time it was made, oldest first.
 	generations_file : Context -> Str
 	generations_file = |ctx| "${ctx.layout.generated_root}/machine/generations"
+
+	## Arms a timer, as root through the words after the system profile
+	## `$1`, that switches the profile back to its current generation in 5
+	## minutes, replacing one an earlier switch left. It names the
+	## generation rather than stepping back one, which goes too far when
+	## the switch makes no new generation.
+	arming =
+		\\link=$(readlink "$1") || exit
+		\\generation=$(printf %s "$link" | tr -cd 0-9)
+		\\profile=$1
+		\\shift
+		\\unit=kai-rollback
+		\\"$@" systemctl stop "$unit.timer" "$unit.service" 2>/dev/null
+		\\"$@" systemctl reset-failed "$unit.timer" "$unit.service" 2>/dev/null
+		\\back='nix-env --profile "$1" --switch-generation "$2" &&'
+		\\back="$back"' exec "$1/bin/switch-to-configuration" switch'
+		\\run="systemd-run --quiet --unit=$unit --on-active=300"
+		\\run="$run --timer-property=AccuracySec=1s"
+		\\run="$run --setenv=PATH=/run/current-system/sw/bin"
+		\\exec "$@" $run sh -c "$back" sh "$profile" "$generation"
 
 	## Activates the system profile `$1` as root through the words after it,
 	## sudo or none, its output on stderr, then prints the profile's link.
