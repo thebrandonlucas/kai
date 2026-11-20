@@ -4,6 +4,10 @@ All notable changes to Kai are documented in this file. The format is based on [
 
 ## [Unreleased]
 
+### Added
+
+- A remote `kai machine switch` rolls itself back when it cannot be confirmed: before activating the new system it arms a timer on the target, and once the system is active it reconnects over a new SSH connection and stops it. A system that fails to activate, or that cuts kai off, for example by breaking SSH, the firewall or a VPN such as Tailscale, switches back to the generation it ran within 5 minutes, and kai fails saying so.
+
 ## [0.0.13] - 2026-11-17
 
 ### Added

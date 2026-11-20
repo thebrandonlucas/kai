@@ -1248,7 +1248,8 @@ remote_nix = ["nix", "--extra-experimental-features", "nix-command"]
 
 # A remote switch expects nix and ssh, checks the target, builds here as a
 # local switch does, confirms naming the target, then quietly copies the
-# system there, sets its profile to the store path and activates it, through
+# system there, arms the rollback timer, sets its profile to the store path,
+# activates it and stops the timer over a new connection, through
 # sudo for a user other than root, recording the generation it is. A note
 # says what each does.
 expect {
@@ -1260,15 +1261,17 @@ expect {
 		.concat(remote_nix)
 		.concat(["build", "--no-link", "--profile", profile])
 	set = NixosBackend.remote_profile(link, target, profile_command, [])
-	activation = ["sh", "-c", NixosBackend.activation, "sh", profile, "sudo"]
-	activate = NixosBackend.recorded(
-		generations,
-		["ssh", target, "--"].concat(activation.map(NixosBackend.shell_quote)),
-	)
+	on_target = |argv|
+		["ssh", target, "--"].concat(argv.map(NixosBackend.shell_quote))
+	on_profile = |script| on_target(["sh", "-c", script, "sh", profile, "sudo"])
+	arm = on_profile(NixosBackend.arming)
+	activate =
+		NixosBackend.recorded(generations, on_profile(NixosBackend.activation))
+	disarm = on_target(["sudo", "systemctl", "stop", "kai-rollback.timer"])
 	machine = Machine.machine("web", remote_web)
 	notes = [
 		"copying machine web's system to ${target}",
-		"activating it on ${target}",
+		"activating it on ${target}, which rolls back unless kai reaches it again",
 	]
 	match planned_with(remote_web, "switch", "x86_64-linux", "") {
 		Ok({ steps, next: Observe([observed]) }) =>
@@ -1283,8 +1286,8 @@ expect {
 								prompt.starts_with("Switch ${target} to machine web,")
 							_ => Bool.False
 						}
-						and argvs(rest) == [copy, set, activate]
-						and outputs(rest) == [Quiet, Quiet, Quiet]
+						and argvs(rest) == [copy, arm, set, activate, disarm]
+						and outputs(rest) == [Quiet, Quiet, Quiet, Quiet, Quiet]
 						and rest.keep_oks(
 							|step|
 								match step {
@@ -1360,8 +1363,8 @@ expect {
 	match planned_with(remote_web, "switch", "x86_64-linux", target) {
 		Ok({ steps: [_, Run(check), .. as rest], .. }) => {
 			ran = argvs(rest)
-			(copied, set) = match ran.drop_first(ran.len() - 3) {
-				[c, s, a] if a == activate => (c, s)
+			(copied, set) = match ran.drop_first(ran.len() - 5) {
+				[c, _, s, a, _] if a == activate => (c, s)
 				_ => ([], [])
 			}
 			check.argv.get(4) == Ok(target)
@@ -1505,6 +1508,8 @@ expect {
 			.concat(argv.map(NixosBackend.shell_quote))
 	activation = ["sh", "-c", NixosBackend.activation, "sh", profile, "sudo"]
 	activate = NixosBackend.recorded(generations, on_target(activation))
+	arm = on_target(["sh", "-c", NixosBackend.arming, "sh", profile, "sudo"])
+	disarm = on_target(["sudo", "systemctl", "stop", "kai-rollback.timer"])
 	rollback = ["profile", "rollback", "--profile", profile]
 	back = on_target(["sudo"].concat(remote_nix).concat(rollback))
 	observed = [{ path: host_key_copy, contents: Text(pub) }]
@@ -1516,8 +1521,8 @@ expect {
 			file == written
 				and next == Observe([generations])
 				and check.argv == NixosBackend.remote_check(machine, target, options)
-				and argvs(rest).drop_first(argvs(rest).len() - 3)
-					== [copied, set, activate]
+				and argvs(rest).drop_first(argvs(rest).len() - 5)
+					== [copied, arm, set, activate, disarm]
 		_ => Bool.False
 	}
 	nix_options = match copied {
