@@ -3,7 +3,7 @@
 import pf.Command
 import pf.Plan
 import services.Caddy
-import std.Val
+import OptionValue
 
 MachineModel :: [].{
 
@@ -37,7 +37,7 @@ MachineModel :: [].{
 		services : List(Service),
 		modules : List(Str),
 		input_modules : List({ input : Str, path : Str }),
-		options : List((Str, Val)),
+		options : List((Str, OptionValue)),
 	}
 
 	## A typed service, as its module in the services package folds it.

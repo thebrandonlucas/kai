@@ -9,7 +9,7 @@ import std.Config
 import std.EnvName
 import std.StdModel exposing [Model]
 import std.System
-import std.Val
+import OptionValue
 import services.Caddy
 import MachineModel
 import NixosBackend
@@ -40,8 +40,12 @@ Machine := [].{
 	## settings declare or a plugin asks std to lock, such as a provider's
 	## profiles. Options, which may repeat, set any NixOS option by its
 	## path, such as `services.tailscale.enable`, to a value written with
-	## std's Val tags; a segment holding dots is quoted, as in
-	## `services.caddy.virtualHosts."box.example.com".extraConfig`.
+	## OptionValue's tags; a segment holding dots is quoted, as in
+	## `services.caddy.virtualHosts."box.example.com".extraConfig`. A value
+	## may be `SecretPath(secret)`, the path a declared secret decrypts to, or
+	## `Package(name)`, a package of the locked nixpkgs. `Service(name,
+	## options)`, which may repeat, enables `services.NAME` and sets the
+	## options under it.
 	MachineSetting : [
 		System(System),
 		HostName(Str),
@@ -57,7 +61,8 @@ Machine := [].{
 		Secrets(List(SecretSetting)),
 		Services(List(ServiceSetting)),
 		Modules(List(Str)),
-		Options(List((Str, Val))),
+		Options(List((Str, OptionValue))),
+		Service(Str, List((Str, OptionValue))),
 		InputModules(Str, List(Str)),
 	]
 
@@ -175,7 +180,8 @@ Machine := [].{
 			"  Services([Caddy([Site(\"example.com\",",
 			"    ReverseProxy(\"localhost:8080\"))])]),",
 			"  Modules([\"nixos/web.nix\"]),",
-			"  Options([(\"services.tailscale.enable\", Bool(Bool.True))]),",
+			"  Service(\"tailscale\", [(\"authKeyFile\", SecretPath(\"ts-key\"))]),",
+			"  Options([(\"services.tailscale.package\", Package(\"tailscale\"))]),",
 			"  InputModules(\"profiles\", [\"digitalocean.nix\"])]),",
 		],
 	}
@@ -259,7 +265,7 @@ Machine := [].{
 			m = Machine.machine(name, parts)
 			given = parts
 				.map(Machine.setting_name)
-				.drop_if(|s| s == "User" or s == "InputModules" or s == "Options")
+				.drop_if(|s| ["User", "InputModules", "Options", "Service"].contains(s))
 			# An empty Host or Operators folds to none, so it is found here.
 			empty_host = parts.any(
 				|part|
@@ -307,6 +313,7 @@ Machine := [].{
 				.concat(empty)
 				.concat(if (empty_operators) [no_operator] else [])
 				.concat(repeated_options)
+				.concat(Machine.service_problems(parts))
 				.concat(Machine.problems(model, m))
 				.concat(NixosBackend.problems(m))
 			$problems = $problems.concat(found.map(|p| "machine ${name}: ${p}"))
@@ -317,6 +324,22 @@ Machine := [].{
 		problems = $problems.concat(duplicated)
 		if (problems.is_empty()) Ok($machines) else Err(problems)
 	}
+
+	## Each Service whose name is no single NixOS option name, such as
+	## tailscale, which would set options under another's.
+	service_problems : List(MachineSetting) -> List(Str)
+	service_problems = |parts|
+		parts.keep_oks(
+			|part|
+				match part {
+					Service(name, _) =>
+						match NixosBackend.option_path(name) {
+							Ok([_]) => Err({})
+							_ => Ok("Service ${name} is no service name, such as tailscale")
+						}
+					_ => Err({})
+				},
+		)
 
 	## The names that occur more than once in `names`, each once.
 	repeated : List(Str) -> List(Str)
@@ -381,6 +404,7 @@ Machine := [].{
 			Services(_) => "Services"
 			Modules(_) => "Modules"
 			Options(_) => "Options"
+			Service(_, _) => "Service"
 			InputModules(_, _) => "InputModules"
 		}
 
@@ -457,6 +481,12 @@ Machine := [].{
 					}
 					Modules(modules) => { ..m, modules }
 					Options(options) => { ..m, options: m.options.concat(options) }
+					Service(service, options) => {
+						at = |path| "services.${service}.${path}"
+						enabled = [(at("enable"), Bool(Bool.True))]
+						set = options.map(|(path, value)| (at(path), value))
+						{ ..m, options: m.options.concat(enabled).concat(set) }
+					}
 					InputModules(input, paths) => {
 						..m,
 						input_modules: m.input_modules.concat(
@@ -1795,6 +1825,75 @@ expect {
 			|path|
 				"machine web: module ${path} is no .nix file inside input profiles",
 		)
+}
+
+# Options form a module of their own, taking pkgs, after the typed
+# settings: each path's names quoted, each value Nix data. A secret is its
+# path under /run/secrets, a package an attribute of pkgs; Options repeat.
+expect {
+	options = Options([
+		("services.tailscale.enable", Bool(Bool.True)),
+		("services.caddy.virtualHosts.\"box.example.com\".extraConfig", Str("a\"b")),
+		("services.tailscale.port", Int(-1)),
+		("services.tailscale.extraUpFlags", List([Str("--ssh")])),
+		("services.tailscale.authKeyFile", SecretPath("app-key")),
+		("environment.systemPackages", List([Package("python3Packages.requests")])),
+		("services.x.attrs", Attrs([("a b", Attrs([]))])),
+	])
+	renders(
+		secret_web.concat([options, Options([("networking.domain", Str("x"))])]),
+		[
+			"({ pkgs, ... }: {",
+			"\"services\".\"tailscale\".\"enable\" = true;",
+			"\"services\".\"caddy\".\"virtualHosts\".\"box.example.com\"."
+				.concat("\"extraConfig\" = \"a\\\"b\";"),
+			"\"services\".\"tailscale\".\"port\" = (-1);",
+			"\"services\".\"tailscale\".\"extraUpFlags\" = [ \"--ssh\" ];",
+			"\"services\".\"tailscale\".\"authKeyFile\" = \"/run/secrets/app-key\";",
+			"\"environment\".\"systemPackages\" = "
+				.concat("[ pkgs.\"python3Packages\".\"requests\" ];"),
+			"\"services\".\"x\".\"attrs\" = { \"a b\" = { }; };",
+			"\"networking\".\"domain\" = \"x\";",
+			"})",
+		],
+	)
+		and !renders(web, ["({ pkgs, ... }: {"])
+}
+
+# Service(name, options) enables services.NAME and sets each option under
+# it, as Options would; it may repeat.
+expect {
+	service = Service("tailscale", [("authKeyFile", SecretPath("app-key"))])
+	as_options = Options([
+		("services.tailscale.enable", Bool(Bool.True)),
+		("services.tailscale.authKeyFile", SecretPath("app-key")),
+	])
+	machine = |settings| Machine.machine("web", secret_web.concat(settings))
+	machine([service]).options == machine([as_options]).options
+		and problems_of(secret_web.concat([service, Service("caddy", [])])) == []
+}
+
+# A SecretPath names a declared secret, a Package an attribute path, deep in
+# lists and attribute sets too, a Service one option name, and an option's
+# path joins names with dots.
+expect {
+	wrong = [
+		Options([("services.a.file", Attrs([("f", List([SecretPath("nope")]))]))]),
+		Options([("services.a.package", Package("a..b"))]),
+		Service("a.b", []),
+		Options([("services..x", Bool(Bool.False))]),
+	]
+	problems_of(secret_web.concat(wrong))
+		== [
+			"Service a.b is no service name, such as tailscale",
+			"option services..x is no option path; join names with dots, "
+				.concat("quoting one with other characters, as in ")
+				.concat("services.caddy.virtualHosts.\"example.com\""),
+			"option services.a.file names secret nope, which Secrets lacks",
+			"option services.a.package names package a..b, which is no "
+				.concat("attribute path such as python3Packages.requests"),
+		]
+			.map(|p| "machine web: ${p}")
 }
 
 # The input InputModules names is one std's settings declare or a plugin
