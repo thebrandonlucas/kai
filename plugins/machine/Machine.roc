@@ -133,6 +133,12 @@ Machine := [].{
 					help: "Act on this SSH target, user@host[:port], not the machine's Host; "
 						.concat("install needs it, since it erases the target's disk."),
 				}),
+				Flag({
+					name: "no-rollback",
+					short: "",
+					help: "switch: keep the new system even when it fails to activate, "
+						.concat("comes up other than running, or cuts kai off."),
+				}),
 				Machine.instance,
 				Machine.identity,
 				Trailing({
@@ -155,6 +161,7 @@ Machine := [].{
 			"kai machine install web --as demo --to root@198.51.100.4",
 			"kai --dry-run machine switch web",
 			"kai machine switch web --to admin@203.0.113.7",
+			"kai machine switch web --no-rollback",
 			"kai machine rollback web",
 			"kai machine generations web",
 		],
@@ -903,12 +910,21 @@ Locked : { settings : List(Config.Setting), nix_lock : Str, system : Str }
 # machine web's `machine_settings`.
 planned_in : Locked, List(MachineSetting), Str, Str -> Try(Plan, Plan.Failure)
 planned_in = |locked, machine_settings, action, to| {
+	options = if (to.is_empty()) [] else [("to", to)]
+	planned_given(locked, machine_settings, action, options)
+}
+
+# The plan of `kai machine ACTION web` given the command line's `options`, a
+# flag's value "", in a locked project, for machine web's
+# `machine_settings`.
+planned_given :
+	Locked, List(MachineSetting), Str, Options -> Try(Plan, Plan.Failure)
+planned_given = |locked, machine_settings, action, options| {
 	{ settings, nix_lock, system } = locked
 	plugin = Machine.plugin(settings, [Machine("web", machine_settings)])
-	options = if (to.is_empty()) [] else [{ name: "to", value: Present(to) }]
 	args = [{ name: "action", value: Present(action) }]
 		.append({ name: "machine", value: Many(["web"]) })
-		.concat(options)
+		.concat(options.map(|(name, value)| { name, value: Present(value) }))
 	found = plugin.implementations
 		.first()
 		.map_err(|_| Plan.fail("no implementation"))?
@@ -1169,13 +1185,13 @@ outputs = |steps|
 	)
 
 # A switch checks the host first, builds as `build` does but leaves an
-# out-link, confirms, says what it does, then quietly sets the system
-# profile to it and activates it as root, recording the generation it is.
+# out-link, confirms, says what it does, then quietly, as root, sets the
+# system profile to it, activates it and waits for the host to settle,
+# rolling back unless it comes up running, recording the generation it is.
 # The whole plan is known up front, so --dry-run prints all of it.
 expect {
-	activate = recording(NixosBackend.activation, ["sudo"])
 	link = "/work/machines/web"
-	set = ["sudo", "nix", "build", "--no-link", "--profile", profile, link]
+	guarded = recording(NixosBackend.guarded_switch, [link, "sudo"])
 	plan = planned("switch", "x86_64-linux")
 	observes = plan.map_ok(|p| p.next) == Ok(Observe([generations]))
 	match plan.map_ok(|p| p.steps) {
@@ -1186,11 +1202,47 @@ expect {
 				and built.argv.contains(link)
 				and !built.argv.contains("--no-link")
 				and prompt.starts_with("Switch this host to machine web,")
-				and note == "activating machine web's system on this host"
+				and note
+					== "activating machine web's system on this host, "
+						.concat("which rolls back unless it comes up running")
+				and argvs(rest) == [guarded]
+				and outputs(rest) == [Quiet]
+		_ => Bool.False
+	}
+}
+
+# The guarded switch remembers the generation it ran before setting the
+# profile, and on a failed activation or a host other than running lists
+# the failed units and switches back to it, failing.
+expect {
+	script = NixosBackend.guarded_switch
+	script.contains("systemctl is-system-running --wait")
+		and script.contains("systemctl --failed")
+		and script.contains("--switch-generation \"$generation\"")
+		and script.ends_with("exit 1")
+}
+
+# With --no-rollback a switch sets the profile and activates it, keeping
+# whatever comes up; only a switch takes it.
+expect {
+	activate = recording(NixosBackend.activation, ["sudo"])
+	link = "/work/machines/web"
+	set = ["sudo", "nix", "build", "--no-link", "--profile", profile, link]
+	locked = { settings: project, nix_lock: flake_lock, system: "x86_64-linux" }
+	without = |action| planned_given(locked, web, action, [("no-rollback", "")])
+	switched = match without("switch").map_ok(|p| p.steps) {
+		Ok([Run(_), _, _, Run(_), Confirm(_), Note(note), .. as rest]) =>
+			note == "activating machine web's system on this host"
 				and argvs(rest) == [set, activate]
 				and outputs(rest) == [Quiet, Quiet]
 		_ => Bool.False
 	}
+	refused = match without("rollback") {
+		Err({ message, .. }) =>
+			message == "--no-rollback is for kai machine switch alone"
+		Ok(_) => Bool.False
+	}
+	switched and refused
 }
 
 # A rollback checks the host and confirms before rolling the profile back and
@@ -1246,10 +1298,28 @@ remote_web = web.append(Host("admin@web.example.com"))
 
 remote_nix = ["nix", "--extra-experimental-features", "nix-command"]
 
+# A remote switch's activation through `on_target`, which quotes for the
+# remote shell, as root through `as_root`: started in a unit of its own and
+# waited for over a new connection when the first drops, recording the
+# generation.
+detached : (List(Str) -> List(Str)), List(Str) -> List(Str)
+detached = |on_target, as_root| {
+	mode = |m|
+		on_target(
+			["sh", "-c", NixosBackend.detached_activation, "sh", m, profile]
+				.concat(as_root),
+		)
+	NixosBackend.recorded(
+		generations,
+		NixosBackend.reconnecting(mode("start"), mode("wait")),
+	)
+}
+
 # A remote switch expects nix and ssh, checks the target, builds here as a
 # local switch does, confirms naming the target, then quietly copies the
 # system there, arms the rollback timer, sets its profile to the store path,
-# activates it and stops the timer over a new connection, through
+# activates it in a unit of its own and stops the timer over a new
+# connection, each connecting again should its connection drop, through
 # sudo for a user other than root, recording the generation it is. A note
 # says what each does.
 expect {
@@ -1265,9 +1335,9 @@ expect {
 		["ssh", target, "--"].concat(argv.map(NixosBackend.shell_quote))
 	on_profile = |script| on_target(["sh", "-c", script, "sh", profile, "sudo"])
 	arm = on_profile(NixosBackend.arming)
-	activate =
-		NixosBackend.recorded(generations, on_profile(NixosBackend.activation))
-	disarm = on_target(["sudo", "systemctl", "stop", "kai-rollback.timer"])
+	activate = detached(on_target, ["sudo"])
+	stop = on_target(["sudo", "systemctl", "stop", "kai-rollback.timer"])
+	disarm = NixosBackend.reconnecting(stop, stop)
 	machine = Machine.machine("web", remote_web)
 	notes = [
 		"copying machine web's system to ${target}",
@@ -1303,6 +1373,28 @@ expect {
 							)
 				_ => Bool.False
 			}
+		_ => Bool.False
+	}
+}
+
+# With --no-rollback a remote switch arms no timer: it sets the profile and
+# activates it in a unit of its own, and stops nothing.
+expect {
+	target = "admin@web.example.com"
+	link = "/work/machines/web"
+	copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
+		.concat(["--to", "ssh-ng://${target}", link])
+	profile_command = ["sudo"]
+		.concat(remote_nix)
+		.concat(["build", "--no-link", "--profile", profile])
+	set = NixosBackend.remote_profile(link, target, profile_command, [])
+	on_target = |argv|
+		["ssh", target, "--"].concat(argv.map(NixosBackend.shell_quote))
+	locked = { settings: project, nix_lock: flake_lock, system: "x86_64-linux" }
+	match planned_given(locked, remote_web, "switch", [("no-rollback", "")]) {
+		Ok({ steps: [_, Run(_), _, _, Run(_), Confirm(_), .. as rest], .. }) =>
+			argvs(rest) == [copy, set, detached(on_target, ["sudo"])]
+				and said(rest).last() == Ok("activating it on ${target}")
 		_ => Bool.False
 	}
 }
@@ -1354,12 +1446,10 @@ expect {
 	link = "/work/machines/web"
 	copy = ["nix", "copy", "--no-check-sigs", "--substitute-on-destination"]
 		.concat(["--to", "ssh-ng://${destination}", link])
-	activation = ["sh", "-c", NixosBackend.activation, "sh", profile, "sudo"]
-	activate = NixosBackend.recorded(
-		generations,
+	on_target = |argv|
 		["ssh", "-p", "2222", destination, "--"]
-			.concat(activation.map(NixosBackend.shell_quote)),
-	)
+			.concat(argv.map(NixosBackend.shell_quote))
+	activate = detached(on_target, ["sudo"])
 	match planned_with(remote_web, "switch", "x86_64-linux", target) {
 		Ok({ steps: [_, Run(check), .. as rest], .. }) => {
 			ran = argvs(rest)
@@ -1509,7 +1599,9 @@ expect {
 	activation = ["sh", "-c", NixosBackend.activation, "sh", profile, "sudo"]
 	activate = NixosBackend.recorded(generations, on_target(activation))
 	arm = on_target(["sh", "-c", NixosBackend.arming, "sh", profile, "sudo"])
-	disarm = on_target(["sudo", "systemctl", "stop", "kai-rollback.timer"])
+	stop = on_target(["sudo", "systemctl", "stop", "kai-rollback.timer"])
+	disarm = NixosBackend.reconnecting(stop, stop)
+	switching = detached(on_target, ["sudo"])
 	rollback = ["profile", "rollback", "--profile", profile]
 	back = on_target(["sudo"].concat(remote_nix).concat(rollback))
 	observed = [{ path: host_key_copy, contents: Text(pub) }]
@@ -1522,7 +1614,7 @@ expect {
 				and next == Observe([generations])
 				and check.argv == NixosBackend.remote_check(machine, target, options)
 				and argvs(rest).drop_first(argvs(rest).len() - 5)
-					== [copied, arm, set, activate, disarm]
+					== [copied, arm, set, switching, disarm]
 		_ => Bool.False
 	}
 	nix_options = match copied {
@@ -2430,7 +2522,10 @@ expect {
 					given == why
 						and argvs(rest).any(|argv| argv.contains("/work/machines/demo"))
 						and said(rest).drop_first(1)
-							== ["activating machine web as demo's system on this host"]
+							== [
+								"activating machine web as demo's system on this host, "
+									.concat("which rolls back unless it comes up running"),
+							]
 				_ => Bool.False
 			}
 		_ => Bool.False
