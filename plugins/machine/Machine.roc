@@ -137,7 +137,7 @@ Machine := [].{
 					name: "no-rollback",
 					short: "",
 					help: "switch: keep the new system even when it fails to activate, "
-						.concat("comes up other than running, or cuts kai off."),
+						.concat("fails units, or cuts kai off."),
 				}),
 				Machine.instance,
 				Machine.identity,
@@ -1204,22 +1204,54 @@ expect {
 				and prompt.starts_with("Switch this host to machine web,")
 				and note
 					== "activating machine web's system on this host, "
-						.concat("which rolls back unless it comes up running")
+						.concat("which rolls back on a failure it causes")
 				and argvs(rest) == [guarded]
 				and outputs(rest) == [Quiet]
 		_ => Bool.False
 	}
 }
 
-# The guarded switch remembers the generation it ran before setting the
-# profile, and on a failed activation or a host other than running lists
-# the failed units and switches back to it, failing.
+# The guarded switch notes the units that had failed and the generation it
+# ran before setting the profile. Once the host settles it rolls back only
+# for a failed activation or a unit that failed since, never for one that
+# had failed already, listing them, and fails.
 expect {
 	script = NixosBackend.guarded_switch
-	script.contains("systemctl is-system-running --wait")
-		and script.contains("systemctl --failed")
-		and script.contains("--switch-generation \"$generation\"")
+	noted = |line| script.contains(line)
+	ordered = |a, b|
+		match (script.split_first(a), script.split_first(b)) {
+			(Ok(x), Ok(y)) => x.before.count_utf8_bytes() < y.before.count_utf8_bytes()
+			_ => Bool.False
+		}
+	noted("before=\"$(failed) \"")
+		and ordered("before=", "nix build --no-link --profile")
+		and noted("systemctl is-system-running --wait")
+		and noted("*\" $unit \"*) ;;")
+		and noted("[ -z \"$new\" ]")
+		and noted("units that failed once switched:$new")
+		and noted("the activation failed")
+		and noted("--switch-generation \"$generation\"")
 		and script.ends_with("exit 1")
+}
+
+# The rollback never runs beside the activation and allows 5 minutes from
+# its end: the timer's rollback first waits while kai-switch activates, and
+# kai-switch, as it ends, arms the timer again with the generation the
+# arming recorded, when one is armed. Stopping it stops a rollback already
+# waiting and forgets the generation.
+expect {
+	timer = NixosBackend.rollback_timer
+	unit = NixosBackend.detached_activation
+	timer.contains("--on-active=300")
+		and timer.contains("= activating ]; do sleep 1; done;")
+		and timer.contains("kai-switch.service")
+		and timer.contains("systemctl stop \"$unit.timer\" \"$unit.service\"")
+		and NixosBackend.arming.contains("tee /run/kai-rollback")
+		and unit.contains("if [ -e /run/kai-rollback ]; then")
+		and unit.contains("sh -c \"$2\" sh \"$1\" \"$(cat /run/kai-rollback)\"")
+		and unit.contains("sh -c \"$switching\" sh \"$profile\" \"$timer\"")
+		and NixosBackend.disarming.contains("stop kai-rollback.timer kai-rollback.")
+		and NixosBackend.disarming.contains("rm -f /run/kai-rollback")
 }
 
 # With --no-rollback a switch sets the profile and activates it, keeping
@@ -1306,7 +1338,8 @@ detached : (List(Str) -> List(Str)), List(Str) -> List(Str)
 detached = |on_target, as_root| {
 	mode = |m|
 		on_target(
-			["sh", "-c", NixosBackend.detached_activation, "sh", m, profile]
+			["sh", "-c", NixosBackend.detached_activation, "sh", m]
+				.concat([NixosBackend.rollback_timer, profile])
 				.concat(as_root),
 		)
 	NixosBackend.recorded(
@@ -1314,6 +1347,20 @@ detached = |on_target, as_root| {
 		NixosBackend.reconnecting(mode("start"), mode("wait")),
 	)
 }
+
+# A remote switch's arming of the rollback timer, and the stopping of it,
+# through `on_target` as root through `as_root`.
+armed : (List(Str) -> List(Str)), List(Str) -> List(Str)
+armed = |on_target, as_root|
+	on_target(
+		["sh", "-c", NixosBackend.arming, "sh", NixosBackend.rollback_timer]
+			.concat([profile])
+			.concat(as_root),
+	)
+
+disarmed : (List(Str) -> List(Str)), List(Str) -> List(Str)
+disarmed = |on_target, as_root|
+	on_target(["sh", "-c", NixosBackend.disarming, "sh"].concat(as_root))
 
 # A remote switch expects nix and ssh, checks the target, builds here as a
 # local switch does, confirms naming the target, then quietly copies the
@@ -1333,10 +1380,9 @@ expect {
 	set = NixosBackend.remote_profile(link, target, profile_command, [])
 	on_target = |argv|
 		["ssh", target, "--"].concat(argv.map(NixosBackend.shell_quote))
-	on_profile = |script| on_target(["sh", "-c", script, "sh", profile, "sudo"])
-	arm = on_profile(NixosBackend.arming)
+	arm = armed(on_target, ["sudo"])
 	activate = detached(on_target, ["sudo"])
-	stop = on_target(["sudo", "systemctl", "stop", "kai-rollback.timer"])
+	stop = disarmed(on_target, ["sudo"])
 	disarm = NixosBackend.reconnecting(stop, stop)
 	machine = Machine.machine("web", remote_web)
 	notes = [
@@ -1377,8 +1423,9 @@ expect {
 	}
 }
 
-# With --no-rollback a remote switch arms no timer: it sets the profile and
-# activates it in a unit of its own, and stops nothing.
+# With --no-rollback a remote switch arms no timer: it stops one an earlier
+# switch left, sets the profile and
+# activates it in a unit of its own.
 expect {
 	target = "admin@web.example.com"
 	link = "/work/machines/web"
@@ -1393,7 +1440,8 @@ expect {
 	locked = { settings: project, nix_lock: flake_lock, system: "x86_64-linux" }
 	match planned_given(locked, remote_web, "switch", [("no-rollback", "")]) {
 		Ok({ steps: [_, Run(_), _, _, Run(_), Confirm(_), .. as rest], .. }) =>
-			argvs(rest) == [copy, set, detached(on_target, ["sudo"])]
+			argvs(rest)
+				== [copy, disarmed(on_target, ["sudo"]), set, detached(on_target, ["sudo"])]
 				and said(rest).last() == Ok("activating it on ${target}")
 		_ => Bool.False
 	}
@@ -1598,8 +1646,8 @@ expect {
 			.concat(argv.map(NixosBackend.shell_quote))
 	activation = ["sh", "-c", NixosBackend.activation, "sh", profile, "sudo"]
 	activate = NixosBackend.recorded(generations, on_target(activation))
-	arm = on_target(["sh", "-c", NixosBackend.arming, "sh", profile, "sudo"])
-	stop = on_target(["sudo", "systemctl", "stop", "kai-rollback.timer"])
+	arm = armed(on_target, ["sudo"])
+	stop = disarmed(on_target, ["sudo"])
 	disarm = NixosBackend.reconnecting(stop, stop)
 	switching = detached(on_target, ["sudo"])
 	rollback = ["profile", "rollback", "--profile", profile]
@@ -2524,7 +2572,7 @@ expect {
 						and said(rest).drop_first(1)
 							== [
 								"activating machine web as demo's system on this host, "
-									.concat("which rolls back unless it comes up running"),
+									.concat("which rolls back on a failure it causes"),
 							]
 				_ => Bool.False
 			}
