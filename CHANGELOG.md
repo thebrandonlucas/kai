@@ -7,6 +7,7 @@ All notable changes to Kai are documented in this file. The format is based on [
 ### Added
 
 - A remote `kai machine switch` rolls itself back when it cannot be confirmed: before activating the new system it arms a timer on the target, and once the system is active it reconnects over a new SSH connection and stops it. A system that fails to activate, or that cuts kai off, for example by breaking SSH, the firewall or a VPN such as Tailscale, switches back to the generation it ran within 5 minutes, and kai fails saying so.
+- A local `kai machine switch` waits for the host to settle and rolls it back, listing its failed units, when the activation fails or a unit fails that had not failed before the switch; units that had failed already keep no switch from holding. A remote switch activates in a systemd unit of its own, so a dropped SSH connection cannot stop it halfway, and kai connects again to wait for it; its rollback timer counts its 5 minutes from the end of the activation and never runs beside it. `kai machine switch --no-rollback` keeps the new system whatever happens.
 
 ## [0.0.13] - 2026-11-17
 

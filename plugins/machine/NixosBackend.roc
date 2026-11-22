@@ -37,6 +37,9 @@ NixosBackend :: [].{
 				machines = NixosBackend.with_instance(declared, m)
 				action = Command.name(ctx.args, "action")
 				destination = MachineModel.destination(m, ctx.args).map_err(Plan.fail)?
+				if action != "switch" and !NixosBackend.rolls_back(ctx) {
+					return Err(Plan.fail("--no-rollback is for kai machine switch alone"))
+				}
 				if action == "build" {
 					NixosBackend.build(project, machines, m, ctx, "")
 				} else if action == "install" {
@@ -123,7 +126,9 @@ NixosBackend :: [].{
 	## the machine: its System now, its HostName as the plan runs. Only the
 	## profile and the activation run as root, through sudo, which asks for
 	## a password on the terminal itself, so they stay quiet. Each records
-	## the generations for `report`.
+	## the generations for `report`. A switch waits for the host to settle
+	## and, unless --no-rollback, switches back to the system it ran when
+	## the activation fails or a unit fails that had not before.
 	on_host : Project, List(Machine), Machine, Context, Str -> Planned
 	on_host = |project, machines, m, ctx, action| {
 		if ctx.host.system != m.system {
@@ -154,10 +159,19 @@ NixosBackend :: [].{
 				called = MachineModel.called(m)
 				prompt = "Switch this host to ${called}, ${restarting}"
 				set = sudo(["nix", "build", "--no-link", "--profile", system_profile, link])
-				activating = Note("activating ${called}'s system on this host")
+				activating = "activating ${called}'s system on this host"
+				switching =
+					if NixosBackend.rolls_back(ctx) {
+						running = "which rolls back on a failure it causes"
+						guarded = recording(NixosBackend.guarded_switch, [link, "sudo"])
+						[Note("${activating}, ${running}"), guarded]
+					} else {
+						[Note(activating), set, activate]
+					}
 				[here]
 					.concat(built.steps)
-					.concat([Confirm(prompt), activating, set, activate])
+					.append(Confirm(prompt))
+					.concat(switching)
 			}
 			"rollback" => {
 				prompt = "Switch this host back to its previous system, ${restarting}"
@@ -176,10 +190,12 @@ NixosBackend :: [].{
 	## must run NixOS on the machine's architecture. The system is built
 	## here and copied there; only the profile and the activation run as
 	## root there, through sudo unless the target logs in as root. Each
-	## records the generations for `report`. A switch arms a timer there
-	## that rolls the target back unless a new SSH connection stops it once
-	## the system is active, so a system that fails to activate, or breaks
-	## SSH, undoes itself. Every SSH connection goes to the target's port,
+	## records the generations for `report`. A switch activates in a unit of
+	## its own there, which a dropped connection cannot stop, and, unless
+	## --no-rollback, arms a timer there that rolls the target back unless a
+	## new SSH connection stops it once the system is active, so a system
+	## that fails to activate, or breaks SSH, undoes itself. A connection
+	## that drops is made again. Every SSH connection goes to the target's port,
 	## and trusts the machine's host key when `read_host_key` found it, else
 	## the operator's known hosts.
 	on_remote : Project, List(Machine), Machine, Context, Str, Str -> Planned
@@ -226,25 +242,57 @@ NixosBackend :: [].{
 				set_profile = ["build", "--no-link", "--profile", system_profile]
 				set_command = as_root(nix.concat(set_profile))
 				set = NixosBackend.remote_profile(link, target, set_command, trust.options)
-				# Until kai reaches the target again once it is active, a timer
-				# there stands ready to roll it back.
-				rolls_back = "${target} rolls back to its previous system in 5 minutes"
-				guarded = |why, argv|
-					NixosBackend.run("${description}: ${why}, so ${rolls_back}", Quiet, argv)
-				disarm = remote(as_root(["systemctl", "stop", "kai-rollback.timer"]))
-				reaching = "which rolls back unless kai reaches it again"
+				# The activation runs in a unit of its own there, so a connection
+				# it drops cannot stop it; kai then waits for it over a new one.
+				# The unit arms the rollback again once it ends, when one is armed.
+				timer = NixosBackend.rollback_timer
+				detached = |mode|
+					remote(
+						["sh", "-c", NixosBackend.detached_activation, "sh", mode, timer]
+							.concat([system_profile])
+							.concat(as_root([])),
+					)
+				activation = NixosBackend.recorded(
+					file,
+					NixosBackend.reconnecting(detached("start"), detached("wait")),
+				)
+				disarming = ["sh", "-c", NixosBackend.disarming, "sh"]
+				disarm = remote(disarming.concat(as_root([])))
+				activating = "activating it on ${target}"
+				switching =
+					if NixosBackend.rolls_back(ctx) {
+						# Until kai reaches the target again once it is active, a timer
+						# there stands ready to roll it back.
+						rolls_back = "${target} rolls back to its previous system in 5 minutes"
+						guarded = |why, argv|
+							NixosBackend.run("${description}: ${why}, so ${rolls_back}", Quiet, argv)
+						reaching = "which rolls back unless kai reaches it again"
+						arm = remote(
+							["sh", "-c", NixosBackend.arming, "sh", timer, system_profile]
+								.concat(as_root([])),
+						)
+						[
+							Note("${activating}, ${reaching}"),
+							quiet(arm),
+							quiet(set),
+							guarded("its activation failed", activation),
+							guarded(
+								"kai cannot reach it again",
+								NixosBackend.reconnecting(disarm, disarm),
+							),
+						]
+					} else {
+						# A rollback an earlier switch left is stopped first.
+						[Note(activating), quiet(disarm), quiet(set), quiet(activation)]
+					}
 				first
 					.concat(built.steps)
 					.concat([
 						Confirm(prompt),
 						Note("copying ${MachineModel.called(m)}'s system to ${target}"),
 						quiet(NixosBackend.with_ssh_options(options, copy)),
-						Note("activating it on ${target}, ${reaching}"),
-						quiet(on_profile(NixosBackend.arming)),
-						quiet(set),
-						guarded("its activation failed", recorded(NixosBackend.activation)),
-						guarded("kai cannot reach it again", disarm),
 					])
+					.concat(switching)
 			}
 			"rollback" => {
 				prompt = "Switch ${target} back to its previous system, ${restarting}"
@@ -349,25 +397,44 @@ NixosBackend :: [].{
 	generations_file : Context -> Str
 	generations_file = |ctx| "${ctx.layout.generated_root}/machine/generations"
 
-	## Arms a timer, as root through the words after the system profile
-	## `$1`, that switches the profile back to its current generation in 5
-	## minutes, replacing one an earlier switch left. It names the
-	## generation rather than stepping back one, which goes too far when
-	## the switch makes no new generation.
+	## Records the system profile `$2`'s current generation in
+	## /run/kai-rollback, then arms the rollback timer with the script `$1`,
+	## each as root through the words after them. It names the generation
+	## rather than stepping back one, which goes too far when the switch
+	## makes no new generation.
 	arming =
-		\\link=$(readlink "$1") || exit
+		\\timer=$1 profile=$2
+		\\shift 2
+		\\link=$(readlink "$profile") || exit
 		\\generation=$(printf %s "$link" | tr -cd 0-9)
-		\\profile=$1
-		\\shift
+		\\printf '%s\n' "$generation" | "$@" tee /run/kai-rollback >/dev/null || exit
+		\\exec "$@" sh -c "$timer" sh "$profile" "$generation"
+
+	## Run as root, arms the timer kai-rollback, replacing one an earlier
+	## switch left, that in 5 minutes switches the system profile `$1` back
+	## to generation `$2` and activates it. Should it fire while the unit
+	## kai-switch still activates, it waits for it, and kai-switch arms it
+	## again as it ends, so the 5 minutes count from the end of the
+	## activation and the rollback never runs beside it.
+	rollback_timer =
 		\\unit=kai-rollback
-		\\"$@" systemctl stop "$unit.timer" "$unit.service" 2>/dev/null
-		\\"$@" systemctl reset-failed "$unit.timer" "$unit.service" 2>/dev/null
-		\\back='nix-env --profile "$1" --switch-generation "$2" &&'
+		\\systemctl stop "$unit.timer" "$unit.service" 2>/dev/null
+		\\systemctl reset-failed "$unit.timer" "$unit.service" 2>/dev/null
+		\\state='systemctl show --property=ActiveState --value kai-switch.service'
+		\\back="while [ \"\$($state)\" = activating ]; do sleep 1; done;"
+		\\back="$back"' rm -f /run/kai-rollback;'
+		\\back="$back"' nix-env --profile "$1" --switch-generation "$2" &&'
 		\\back="$back"' exec "$1/bin/switch-to-configuration" switch'
 		\\run="systemd-run --quiet --unit=$unit --on-active=300"
 		\\run="$run --timer-property=AccuracySec=1s"
 		\\run="$run --setenv=PATH=/run/current-system/sw/bin"
-		\\exec "$@" $run sh -c "$back" sh "$profile" "$generation"
+		\\exec $run sh -c "$back" sh "$1" "$2"
+
+	## Stops the rollback timer and a rollback waiting to run, as root
+	## through its words, and forgets the generation it returns to.
+	disarming =
+		\\"$@" systemctl stop kai-rollback.timer kai-rollback.service || exit
+		\\exec "$@" rm -f /run/kai-rollback
 
 	## Activates the system profile `$1` as root through the words after it,
 	## sudo or none, its output on stderr, then prints the profile's link.
@@ -376,6 +443,119 @@ NixosBackend :: [].{
 		\\shift
 		\\"$@" "$profile/bin/switch-to-configuration" switch >&2 || exit
 		\\readlink "$profile"
+
+	## Whether a switch rolls back a system that fails: always, unless
+	## --no-rollback.
+	rolls_back : Context -> Bool
+	rolls_back = |ctx| !Command.flag(ctx.args, "no-rollback")
+
+	## Sets the system profile `$1` to the system `$2` links to and
+	## activates it, as root through the words after them, then waits for
+	## the host to settle and prints the profile's link. When the activation
+	## fails, or a unit failed that had not failed before the switch, it
+	## lists them, switches the profile back to the generation it was and
+	## activates that, and fails. Units that had failed already keep no
+	## switch from holding.
+	guarded_switch =
+		\\profile=$1 system=$2
+		\\shift 2
+		\\failed() {
+		\\	systemctl list-units --state=failed --no-legend --plain |
+		\\		while read -r unit _; do printf ' %s' "$unit"; done
+		\\}
+		\\link=$(readlink "$profile") || exit
+		\\generation=$(printf %s "$link" | tr -cd 0-9)
+		\\before="$(failed) "
+		\\"$@" nix build --no-link --profile "$profile" "$system" || exit
+		\\if "$@" "$profile/bin/switch-to-configuration" switch >&2; then
+		\\	systemctl is-system-running --wait >/dev/null
+		\\	new=
+		\\	for unit in $(failed); do
+		\\		case $before in
+		\\		*" $unit "*) ;;
+		\\		*) new="$new $unit" ;;
+		\\		esac
+		\\	done
+		\\	if [ -z "$new" ]; then
+		\\		readlink "$profile"
+		\\		exit
+		\\	fi
+		\\	echo "units that failed once switched:$new" >&2
+		\\else
+		\\	echo "the activation failed; this host's failed units:$(failed)" >&2
+		\\fi
+		\\echo "rolling this host back to generation $generation" >&2
+		\\"$@" nix-env --profile "$profile" --switch-generation "$generation" >&2 &&
+		\\	"$@" "$profile/bin/switch-to-configuration" switch >&2
+		\\exit 1
+
+	## Activates the system profile `$3` as root through the words after
+	## it, sudo or none, in the unit kai-switch, which outlives the SSH
+	## connection that starts it, and prints the profile's link once it is
+	## the running system. `$1` is `start`, which starts the unit and waits
+	## for it, or `wait`, which only waits for one already started. As the
+	## unit ends it arms the rollback again with the script `$2`, when
+	## /run/kai-rollback says one is armed. A failed activation prints its log
+	## and fails.
+	detached_activation =
+		\\mode=$1 timer=$2 profile=$3
+		\\shift 3
+		\\root=$*
+		\\unit=kai-switch.service
+		\\if [ "$mode" = start ]; then
+		\\	switching='"$1/bin/switch-to-configuration" switch
+		\\	status=$?
+		\\	if [ -e /run/kai-rollback ]; then
+		\\		sh -c "$2" sh "$1" "$(cat /run/kai-rollback)"
+		\\	fi
+		\\	exit "$status"'
+		\\	$root systemctl reset-failed "$unit" 2>/dev/null
+		\\	run="systemd-run --quiet --wait --unit=$unit --property=Type=oneshot"
+		\\	run="$run --setenv=PATH=/run/current-system/sw/bin"
+		\\	$root $run sh -c "$switching" sh "$profile" "$timer"
+		\\	ok=$?
+		\\else
+		\\	while
+		\\		state=$(systemctl is-active "$unit")
+		\\		[ "$state" = activating ] || [ "$state" = active ] ||
+		\\			[ "$state" = deactivating ]
+		\\	do sleep 2; done
+		\\	[ "$state" != failed ]
+		\\	ok=$?
+		\\fi
+		\\if [ "$ok" -ne 0 ]; then
+		\\	id=$(systemctl show --property=InvocationID --value "$unit")
+		\\	[ -z "$id" ] ||
+		\\		$root journalctl --quiet --output=cat "_SYSTEMD_INVOCATION_ID=$id" >&2
+		\\	exit 1
+		\\fi
+		\\running=$(readlink -f /run/current-system)
+		\\if [ "$running" != "$(readlink -f "$profile")" ]; then
+		\\	echo "the activated system is not running" >&2
+		\\	exit 1
+		\\fi
+		\\readlink "$profile"
+
+	## Runs the ssh command `first`; when its connection fails, ssh's exit
+	## status 255, runs `again` every 5 seconds until a connection holds,
+	## for 2 minutes at most.
+	reconnecting : List(Str), List(Str) -> List(Str)
+	reconnecting = |first, again| {
+		script =
+			\\eval "$1"
+			\\status=$?
+			\\tries=0
+			\\while [ "$status" -eq 255 ] && [ "$tries" -lt 24 ]; do
+			\\	[ "$tries" -gt 0 ] || echo "kai lost its connection; connecting again" >&2
+			\\	sleep 5
+			\\	eval "$2"
+			\\	status=$?
+			\\	tries=$((tries + 1))
+			\\done
+			\\exit "$status"
+		command = |argv| Str.join_with(argv.map(NixosBackend.shell_quote), " ")
+		["sh", "-c", script, "sh", command(first), command(again)]
+	}
 
 	## Prints the system profile `$1`'s link, then each generation's link
 	## and the time it was made, oldest first.
