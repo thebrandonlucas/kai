@@ -7,7 +7,7 @@ import pf.Implementation
 import pf.Plan
 import std.Config
 import std.Std
-import std.Val
+import OptionValue
 import services.Caddy
 import MachineModel exposing [Machine]
 
@@ -96,6 +96,7 @@ NixosBackend :: [].{
 								.concat("services.caddy.virtualHosts.\"example.com\""),
 					),
 			)
+			.concat(m.options.join_map(|o| NixosBackend.reference_problems(m, o)))
 	}
 
 	## The names in NixOS option path `path`, joined by `.`: each of
@@ -141,9 +142,10 @@ NixosBackend :: [].{
 		}
 	}
 
-	## A Val as Nix data: its strings are quoted, so none can add an
-	## expression.
-	nix_value : Val -> Str
+	## An OptionValue as Nix data: its strings are quoted, so none can add
+	## an expression. A secret is its path under /run/secrets, and a package
+	## the attribute of `pkgs` its path names.
+	nix_value : OptionValue -> Str
 	nix_value = |given|
 		match given {
 			Str(text) => NixosBackend.quote(text)
@@ -156,7 +158,42 @@ NixosBackend :: [].{
 				defined = fields.map(define)
 				if (defined.is_empty()) "{ }" else "{ ${Str.join_with(defined, " ")} }"
 			}
+			SecretPath(name) => NixosBackend.quote("/run/secrets/${name}")
+			Package(path) => {
+				names = NixosBackend.option_path(path) ?? []
+				Str.join_with(["pkgs"].concat(names.map(NixosBackend.quote)), ".")
+			}
 		}
+
+	## The secrets and packages `given` names, deep in lists and attribute
+	## sets too.
+	references : OptionValue -> List(OptionValue)
+	references = |given|
+		match given {
+			List(items) => items.join_map(NixosBackend.references)
+			Attrs(fields) => fields.join_map(|(_, field)| NixosBackend.references(field))
+			SecretPath(_) | Package(_) => [given]
+			_ => []
+		}
+
+	## What is wrong with the secrets and packages option `path`'s value
+	## names: a secret machine `m` lacks, or a package path that is no
+	## attribute path.
+	reference_problems : Machine, (Str, OptionValue) -> List(Str)
+	reference_problems = |m, (path, value)|
+		NixosBackend.references(value).keep_oks(
+			|reference|
+				match reference {
+					SecretPath(name) if !m.secrets.any(|s| s.name == name) =>
+						Ok("option ${path} names secret ${name}, which Secrets lacks")
+					Package(name) if NixosBackend.option_path(name).is_err() =>
+						Ok(
+							"option ${path} names package ${name}, which is no "
+								.concat("attribute path such as python3Packages.requests"),
+						)
+					_ => Err({})
+				},
+		)
 
 	## What std's update locks for `machines`: the "default" package source
 	## they are built from, and disko and nixos-images for a Disk and agenix
@@ -1079,7 +1116,7 @@ NixosBackend :: [].{
 		options_module = if options.is_empty() {
 			[]
 		} else {
-			["            {"].concat(options).append("            }")
+			["            ({ pkgs, ... }: {"].concat(options).append("            })")
 		}
 		NixosBackend.lines(
 			[
